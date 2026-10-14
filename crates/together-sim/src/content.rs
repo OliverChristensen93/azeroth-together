@@ -56,6 +56,9 @@ pub struct AbilityDef {
     /// Yards per second for a [`AbilityKind::Bolt`]; 0 lands at once.
     #[serde(default)]
     pub missile_speed: f32,
+    /// One line for the menu and tooltips; empty for none.
+    #[serde(default)]
+    pub description: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -82,6 +85,12 @@ pub struct EnemyDef {
 pub struct ZoneDef {
     pub key: String,
     pub name: String,
+    /// The continent the menu names under the zone, e.g. "Eastern Kingdoms".
+    #[serde(default)]
+    pub continent: String,
+    /// A line or two for the menu; empty for none.
+    #[serde(default)]
+    pub description: String,
     /// `Map.dbc` id: 0 Eastern Kingdoms, 1 Kalimdor.
     pub map: u32,
     /// The arena's centre in WoW coordinates, written `(x, y, z)`; `z` only seeds the camera.
@@ -113,6 +122,12 @@ pub struct WeaponDef {
 pub struct ClassDef {
     pub key: String,
     pub name: String,
+    /// A line or two for the menu; empty for none.
+    #[serde(default)]
+    pub description: String,
+    /// The class colour (`RAID_CLASS_COLORS`), `0xRRGGBB`.
+    #[serde(default = "white")]
+    pub color: u32,
     /// `ChrClasses.dbc` id.
     pub class_id: u8,
     /// `UNIT_FIELD_BYTES_0` byte 3: 0 mana, 1 rage, 3 energy.
@@ -139,6 +154,10 @@ pub struct ClassDef {
 
 fn one_u8() -> u8 {
     1
+}
+
+fn white() -> u32 {
+    0xFF_FF_FF
 }
 
 /// All the game's data, its cross-references checked.
