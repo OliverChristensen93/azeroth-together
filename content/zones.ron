@@ -1,0 +1,20 @@
+// Arenas. `map` is the Map.dbc id (0 Eastern Kingdoms, 1 Kalimdor); `center` is in WoW
+// coordinates (x, y, z); `leash` is how far heroes may roam; `enemies` are weakest first.
+// Only zones whose terrain is in the game data can be played (Elwynn Forest, Westfall, Duskwood,
+// Gurubashi Arena and the Gates of Ahn'Qiraj with the current data).
+[
+    (
+        key: "elwynn",
+        name: "Elwynn Forest",
+        map: 0,
+        // Open, level ground among Elwynn Forest's own creatures.
+        center: (-9548.5, 115.0, 60.0),
+        leash: 150.0,
+        enemies: [
+            "young_wolf", "timber_wolf", "defias_thug", "mangy_wolf", "stonetusk_boar",
+            "kobold_tunneler", "defias_cutpurse", "forest_spider", "murloc", "kobold_miner",
+            "murloc_streamrunner", "rockhide_boar", "gray_forest_wolf", "defias_bandit",
+            "defias_rogue_wizard", "young_forest_bear",
+        ],
+    ),
+]

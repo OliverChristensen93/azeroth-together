@@ -1,1 +1,45 @@
 @AGENTS.md
+
+# Azeroth Together (this fork)
+
+A co-op survivors game built on the benilla engine. The plan and phase checklist: `docs/PROJECT-PLAN.md`.
+
+## Where things live
+
+- `crates/together-sim/` — the game rules: a pure-Rust, headless simulation at a fixed 30 Hz
+  (`World::step`), plus the content types. No Bevy. Every hero has a `PlayerId`; co-op rules
+  (shared XP, the run waits for every living hero's card pick) are already in.
+- `content/*.ron` — classes, abilities, enemies, zones. Read from disk at startup, so edits need no
+  rebuild. `crates/together-sim/tests/shipped_content.rs` checks they parse and play.
+- `crates/benilla-app/src/together/` — the client: steps the sim from the keyboard and draws it with
+  the engine's unit, spell-visual and combat-text systems. It decides nothing about the game.
+- `crates/azeroth-together/` — the launcher binary.
+- `crates/benilla-app/src/survivors/` — the upstream fork's own single-player mode, kept as reference.
+  Our mode does not depend on it.
+- Keep engine crates untouched where possible so upstream merges stay easy.
+
+## Build, test, run (Windows, GNU toolchain)
+
+The Rust toolchain here is `x86_64-pc-windows-gnu`; MinGW-w64 (WinLibs, installed with winget) must
+be on `PATH` for builds:
+
+```bash
+export PATH="/c/Users/Olivs/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.MSVCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin:$PATH"
+cargo test -p together-sim                      # fast: the game rules, no engine
+cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min cold
+./target/release/azeroth-together.exe           # data from WoW/Data, content from content/
+```
+
+- Game data: `WoW/Data/` (gitignored) holds Aethus's trimmed 1.12 `patch.MPQ` + `patch-2.MPQ`.
+  Terrain exists only for Elwynn Forest, Westfall, Duskwood, Gurubashi Arena and Gates of Ahn'Qiraj.
+- `TOGETHER_CLASS`, `TOGETHER_ZONE`, `TOGETHER_CONTENT` pick class, zone and content folder.
+- Testing without disturbing the user's screen: `WOW_BG=1 WOW_WIN=1280x720` (background window,
+  never focused), `TOGETHER_AUTOPLAY=1` (walks and picks cards by itself), and
+  `WOW_LIVE_SHOT=<png> WOW_LIVE_SHOT_AT=<s> WOW_LIVE_SHOT_COUNT=<n> WOW_LIVE_SHOT_EVERY=<s>` for screenshots,
+  `TOGETHER_CAM_DIST=<yards>` for a close-up starting zoom, `TOGETHER_TRACE_JUMP=1` to log jump heights.
+- Engine change made for the trimmed data: `benilla-formats/src/creatures.rs` drops a
+  CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
+  humanoid NPCs are composited live instead of rendering bodiless.
+  Never launch a normal (fullscreen) run without asking the user first.
+- `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
+  about hard links in the incremental cache (harmless).

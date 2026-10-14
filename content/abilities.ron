@@ -1,0 +1,19 @@
+// Abilities. `visual` is the Spell.dbc id whose cast, missile and impact the client shows.
+// kind: Bolt (missile at the nearest `count` enemies in `range`, `radius` splash),
+//       Strike (instant hit on the nearest `count` in `range`),
+//       Nova (everything within `radius` of the caster).
+// `missile_speed` is the spell's own projectile speed in Spell.dbc (yards/second).
+[
+    (key: "frostbolt", name: "Frostbolt", visual: 116, kind: Bolt,
+     damage: 12.0, cooldown: 1.3, range: 24.0, missile_speed: 28.0),
+    (key: "fireball", name: "Fireball", visual: 133, kind: Bolt,
+     damage: 20.0, cooldown: 2.4, range: 26.0, radius: 3.5, missile_speed: 24.0),
+    (key: "arcane_missiles", name: "Arcane Missiles", visual: 7268, kind: Bolt,
+     damage: 6.0, cooldown: 1.9, range: 22.0, count: 3, missile_speed: 20.0),
+    (key: "frost_nova", name: "Frost Nova", visual: 122, kind: Nova,
+     damage: 8.0, cooldown: 7.0, radius: 9.0),
+    (key: "arcane_explosion", name: "Arcane Explosion", visual: 1449, kind: Nova,
+     damage: 10.0, cooldown: 2.8, radius: 7.0),
+    (key: "fire_blast", name: "Fire Blast", visual: 2136, kind: Strike,
+     damage: 26.0, cooldown: 3.5, range: 18.0),
+]

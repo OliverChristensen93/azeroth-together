@@ -41,49 +41,60 @@ Timelines assume part-time work with AI doing most of the coding. They are rough
 ## 3. Architecture
 
 ```
-upstream benilla crates     untouched, so upstream updates merge cleanly
+upstream benilla crates               untouched, so upstream updates merge cleanly
         │
- ┌──────┴────────────────────────────────────────────────────┐
- │ game-content  RON data: abilities, enemies, zones, cards   │
- │ game-sim      game rules; pure Rust, headless, fixed tick  │
- │ game-net      messages + transport (inputs up, state down) │
- │ game-client   Bevy app: draws sim state with benilla       │
- └────────────────────────────────────────────────────────────┘
+ ┌──────┴──────────────────────────────────────────────────────────────────────┐
+ │ content/*.ron                      data: classes, abilities, enemies, zones  │
+ │ crates/together-sim                game rules + content types; pure Rust,    │
+ │                                    headless, fixed 30 Hz tick                │
+ │ crates/benilla-app/src/together/   draws the sim with the WoW engine         │
+ │ crates/azeroth-together            the launcher (`azeroth-together.exe`)     │
+ │ (Phase 2) game-net                 inputs up, state down                     │
+ └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **game-sim** holds every rule: heroes, enemies, abilities, hits, XP, cards, loot.
+As built in Phase 1: the drawing code lives *inside* `benilla-app` (as the repo's own `survivors`
+mode does), because the engine pieces it uses (unit spawning, spell visuals, combat text) are
+crate-internal. It is one new module plus a few lines in `lib.rs`; the rest of the engine is untouched.
+
+- **together-sim** holds every rule: heroes, enemies, abilities, hits, XP, cards, loot.
   - Fixed 30 Hz tick.
   - No rendering dependencies, so it runs headless on the host and is easy to unit-test.
   - It must not know which WoW version the art comes from.
+  - Every hero belongs to a `PlayerId` from day one; party XP is shared and the run waits until every living hero has picked a card.
 - **game-net** carries messages between host and clients.
   - Clients send inputs (move direction, aim, card picks).
   - The host sends snapshots (~20 Hz, delta-compressed, quantized positions) plus events (casts, hits, deaths, loot).
   - Projectiles and spell effects are spawned on each client from cast events, never replicated one by one.
     This keeps hundreds of enemies affordable.
   - Library: spike `bevy_replicon` (+ renet) against `lightyear` in Phase 2. Check which supports Bevy 0.18.
-- **game-client** turns sim state into WoW visuals.
+- **The together module** (the client) turns sim state into WoW visuals.
   - Maps each sim entity to a creature display ID, each ability to a spell-visual reference, plus sounds.
   - Interpolates remote entities; predicts only the local hero's movement.
   - Owns the HUD and party frames.
 - **Visual references are abstract.** An ability says `visual: "arcane_missiles"`, and a lookup table maps that to
   a 1.12 or 3.3.5 SpellVisual ID. This keeps the WotLK track from touching gameplay code.
+  (Phase 1 stores the 1.12 `Spell.dbc` id directly in `abilities.ron`; the lookup table arrives with Phase 5.)
 
 ## 4. Phases
 
 ### Phase 0: Foundation (≈1 week)
-- [ ] Choose a project location (e.g. `D:\Dev\azeroth-together`) and fork the repo on GitHub.
-- [ ] Install the Rust toolchain from `rust-toolchain.toml` and fetch the 1.12.1 data (~5.5 GB).
-- [ ] **Build and run the existing survivors mode natively on Windows.** This is the biggest unknown.
-- [ ] Add a `CLAUDE.md` with build/test commands and conventions for AI-assisted work.
+- [x] Choose a project location (`D:\Games\azeroth-together`) and fork the repo on GitHub.
+- [x] Install the Rust toolchain from `rust-toolchain.toml` (GNU toolchain + MinGW-w64 via winget).
+- [x] Game data: Aethus's trimmed 1.12 `patch.MPQ` + `patch-2.MPQ`, copied to `WoW/Data` (gitignored).
+      Covers 5 of the repo's 16 zones (Elwynn Forest, Westfall, Duskwood, Gurubashi Arena, Gates of Ahn'Qiraj).
+      The full 1.12.1 client can replace it later with no code change.
+- [x] **Build and run the existing survivors mode natively on Windows.** Works (Vulkan, RTX 3060 Ti).
+- [x] Add a `CLAUDE.md` with build/test commands and conventions for AI-assisted work.
 
 **Done when:** the existing survivors mode runs natively.
 **Gate:** if a native build is not feasible, decide between fixing it and switching to the browser build.
 
 ### Phase 1: Single-player sim core (≈1–2 weeks)
-- [ ] Create `game-sim`, `game-content` and `game-client` crates next to the engine.
-- [ ] One hero moving in one zone. Enemies spawn and chase. 3 abilities. XP, levels and cards.
-- [ ] Ability, enemy and zone data in RON, loaded at startup.
-- [ ] Unit tests for the sim (damage, cooldowns, levelling), running headless.
+- [x] Create `together-sim` (rules + content), the `together` client module and the `azeroth-together` launcher.
+- [x] One hero moving in one zone. Enemies spawn and chase. 6 Mage abilities (Bolt / Strike / Nova kinds). XP, levels and cards.
+- [x] Ability, enemy and zone data in RON (`content/`), loaded at startup from disk (editable without rebuilding).
+- [x] Unit tests for the sim (movement, leash, missiles, levelling, card picks, two-hero co-op rules), running headless.
 
 **Done when:** a playable single-player run in our own code, drawn by benilla.
 

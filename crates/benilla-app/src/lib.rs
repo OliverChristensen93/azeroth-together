@@ -108,6 +108,8 @@ mod sound;
 mod spell;
 /// Warcraft Survivors: the top-down survival mode the `warcraft-survivors` launcher boots.
 mod survivors;
+/// Azeroth Together: the co-op survivors mode the `azeroth-together` launcher boots.
+mod together;
 /// The melee swing refusal's latch + 4 s repeat (`SMSG_ATTACKSWING_*`).
 mod swing_refusal;
 mod target;
@@ -232,6 +234,17 @@ pub fn run_survivors(build: BuildId) -> AppExit {
     launch(build, None)
 }
 
+/// Azeroth Together: the client booted server-less into the co-op survivors mode ([`together`]),
+/// its game rules in `together-sim` and its data in `content/`. Called by the `azeroth-together`
+/// launcher.
+pub fn run_together(build: BuildId) -> AppExit {
+    if let Err(e) = together::prepare(build.project_dir) {
+        eprintln!("azeroth-together: {e}");
+        return AppExit::error();
+    }
+    launch(build, None)
+}
+
 /// What a crate on top of benilla adds to the built app ([`run_with`]).
 type Extension<'a> = Box<dyn FnOnce(&mut App) + 'a>;
 
@@ -306,6 +319,11 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     if survivors {
         benilla_world::world_map::set_start_map(1);
     }
+    // Azeroth Together runs server-less too, on its zone's map.
+    let together = together::active();
+    if together {
+        benilla_world::world_map::set_start_map(together::start_map());
+    }
     // Every instrumented run, captures and live probes, opens in the background so it never takes
     // over a person's screen; `WOW_BG` overrides.
     let background = benilla_world::bgwin::background_run();
@@ -341,7 +359,9 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     // (`embedded://benilla_app/shaders/…`), so no build-machine path reaches the binary.
 
     app.add_plugins(benilla_world::boot::tuned_default_plugins(Window {
-        title: if survivors {
+        title: if together {
+            "Azeroth Together"
+        } else if survivors {
             "Warcraft Survivors"
         } else {
             "benilla"
@@ -433,8 +453,8 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     // The game as one group on top of the engine; `game_plugins.rs` has its members, its
     // load-bearing ordering edges and the test that builds it headless.
     .add_plugins(game_plugins::GamePlugins {
-        connect: !capturing && !survivors,
-        start: if survivors {
+        connect: !capturing && !survivors && !together,
+        start: if survivors || together {
             char_select::ClientState::InWorld
         } else {
             run_mode::start_state()
@@ -442,6 +462,9 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     });
     if survivors {
         app.add_plugins(survivors::SurvivorsPlugin);
+    }
+    if together {
+        app.add_plugins(together::TogetherPlugin);
     }
 
     app.add_plugins(webbridge::WebBridgePlugin);

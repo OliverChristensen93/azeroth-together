@@ -54,6 +54,8 @@ benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 benilla-protocol = { path = "../benilla-protocol" }
 benilla-world = { path = "../benilla-world", default-features = false }
+# Azeroth Together's game rules, which the `together` mode draws.
+together-sim = { path = "../together-sim" }
 # The CVar diff persisted in `benilla-config/config.toml`.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

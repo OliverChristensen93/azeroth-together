@@ -1,0 +1,23 @@
+// Playable classes. `looks` are CreatureDisplayInfo ids of the class's trainers (the bodies a hero
+// can wear); `start` is the ability every run begins with; `pool` is what level-up cards offer.
+[
+    (
+        key: "mage",
+        name: "Mage",
+        class_id: 8,
+        power: 0,
+        looks: [
+            1294, 1470, 1484, 1592, 1600, 2134, 2135, 2644, 2657, 2810, 3108, 3109, 3292, 3293,
+            4522, 4523, 4524, 4526, 4665, 5001, 6058, 6060, 6072, 7669, 10171, 10214, 10215,
+            10216, 10548, 10733, 12849,
+        ],
+        weapons: [
+            (slot: 0, display: 1927, class: 2, subclass: 10, material: 2, inventory_type: 17, sheath: 2),
+        ],
+        sheath: 1,
+        base_hp: 120.0,
+        speed: 7.5,
+        start: "frostbolt",
+        pool: ["frostbolt", "fireball", "arcane_missiles", "frost_nova", "arcane_explosion", "fire_blast"],
+    ),
+]

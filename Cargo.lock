@@ -563,6 +563,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "azeroth-together"
+version = "0.2.0"
+dependencies = [
+ "benilla-app",
+ "benilla-buildstamp",
+]
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -629,6 +637,7 @@ dependencies = [
  "sha1 0.10.6",
  "smithay-clipboard",
  "symphonia",
+ "together-sim",
  "toml",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -6876,6 +6885,14 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "together-sim"
+version = "0.2.0"
+dependencies = [
+ "ron",
+ "serde",
+]
 
 [[package]]
 name = "tokio"
