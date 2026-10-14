@@ -14,6 +14,7 @@
 //! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the four RON files; default
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
+mod actions;
 mod dress;
 mod hud;
 mod ui;
@@ -191,7 +192,13 @@ impl Plugin for TogetherPlugin {
             )
             .add_systems(
                 Update,
-                (hud::refresh, restart, ui::tune_ui)
+                (
+                    actions::fill_action_bar,
+                    actions::drop_manual_casts,
+                    hud::refresh,
+                    restart,
+                    ui::tune_ui,
+                )
                     .chain()
                     .after(WorldStage::Input),
             );

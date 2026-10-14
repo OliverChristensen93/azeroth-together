@@ -95,13 +95,15 @@ pub enum Target {
 /// What happened during a step, for the client to show.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    /// A hero cast `ability` (its `visual` spell) at `targets`, or at the ground at `dest`.
+    /// A hero cast `ability` (its `visual` spell) at `targets`, or at the ground at `dest`; it is
+    /// ready again in `cooldown` seconds.
     Cast {
         caster: PlayerId,
         ability: usize,
         visual: u32,
         targets: Vec<Target>,
         dest: Option<V2>,
+        cooldown: f32,
     },
     Damage {
         target: Target,
@@ -661,6 +663,7 @@ impl World {
     fn cast(&mut self, h: usize, owned: &Owned, def: &crate::content::AbilityDef) -> bool {
         let (player, from) = (self.heroes[h].player, self.heroes[h].pos);
         let base = def.damage * owned.damage_mult();
+        let cooldown = owned.cooldown(def.cooldown);
         match def.kind {
             AbilityKind::Bolt | AbilityKind::Strike => {
                 let targets = self.nearest(from, def.range, owned.count(def.count) as usize);
@@ -689,6 +692,7 @@ impl World {
                     visual: def.visual,
                     targets: targets.iter().map(|&(id, _)| Target::Enemy(id)).collect(),
                     dest: None,
+                    cooldown,
                 });
                 true
             }
@@ -708,6 +712,7 @@ impl World {
                     visual: def.visual,
                     targets: hit.iter().map(|&id| Target::Enemy(id)).collect(),
                     dest: Some(from),
+                    cooldown,
                 });
                 for id in hit {
                     let (damage, crit) = self.roll_damage(base);

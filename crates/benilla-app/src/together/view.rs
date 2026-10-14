@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use together_sim::{Event, PlayerId, Target, V2};
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, Weapon, COLOR_HURT, COLOR_SPELL};
-use super::{dress, Sim, LOCAL_PLAYER};
+use super::{actions, dress, Sim, LOCAL_PLAYER};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::names::{CreatureRecord, NameCache};
 use crate::net::{Guid, GuidIndex, ObjectStore, SelfGuid};
@@ -98,6 +98,7 @@ pub(super) fn apply_events(
     mut views: ResMut<Views>,
     mut stores: Query<&mut ObjectStore>,
     mut fx: Fx,
+    mut cooldowns: ResMut<crate::spell::Cooldowns>,
 ) {
     for event in sim.world.drain_events() {
         match event {
@@ -105,8 +106,12 @@ pub(super) fn apply_events(
                 caster,
                 visual,
                 targets,
+                cooldown,
                 ..
             } => {
+                if caster == LOCAL_PLAYER {
+                    actions::start_cooldown(&mut cooldowns, visual, cooldown);
+                }
                 let Some(me) = views.heroes.get(&caster).copied() else {
                     continue;
                 };
