@@ -1,19 +1,22 @@
 //! The world, drawn: a WoW unit per hero and enemy and an object per gem, kept where the
 //! simulation says they are, and the step's [`Event`]s played as casts, swings and numbers.
 //!
-//! The simulation steps 30 times a second and the screen draws faster, so each body glides from
-//! where it was at the last step to where it is now ([`SimPos`]).
+//! The local hero is a real WoW player: WoW's own character controller moves it (the player
+//! reports its pose to the simulation, [`super::feed_pose`]), and WoW's unit frames read its health
+//! and level. Everything else glides from where it was at the last step to where it is now
+//! ([`SimPos`]), since the simulation steps 30 times a second and the screen draws faster.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use together_sim::{Event, PlayerId, Target, V2};
 
-use super::units::{self, Fx, UnitSpec, Weapon, COLOR_HURT, COLOR_SPELL};
-use super::Sim;
+use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, Weapon, COLOR_HURT, COLOR_SPELL};
+use super::{dress, Sim, LOCAL_PLAYER};
 use crate::creature_anim::{move_flags, MovementState};
-use crate::net::ObjectStore;
+use crate::names::{CreatureRecord, NameCache};
+use crate::net::{Guid, GuidIndex, ObjectStore, SelfGuid};
 
 /// Which entity draws which part of the world.
 #[derive(Resource, Default)]
@@ -21,6 +24,8 @@ pub(super) struct Views {
     pub heroes: HashMap<PlayerId, Entity>,
     pub enemies: HashMap<u32, Entity>,
     pub gems: HashMap<u32, Entity>,
+    /// Creature entries whose names are in the [`NameCache`].
+    named: HashSet<u32>,
 }
 
 impl Views {
@@ -78,8 +83,13 @@ impl SimPos {
 #[derive(Component)]
 pub(super) struct Dying(f32);
 
-/// Hero bodies' guid serials, clear of the enemies' (which are simulation ids).
-const HERO_SERIAL_BASE: u64 = 0x00F0_0000;
+/// Hero guids (player guids, high word 0) are this plus the player id.
+pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
+
+/// The name the local hero's frame shows.
+fn hero_name() -> String {
+    std::env::var("TOGETHER_NAME").unwrap_or_else(|_| "Hero".into())
+}
 
 /// The step's events as visuals. Runs before [`sync`], so a dying enemy is still mapped.
 pub(super) fn apply_events(
@@ -163,6 +173,10 @@ fn gem_display(xp: u32) -> u32 {
 
 /// Bodies for what is new in the world, none for what has left it, and every body's latest
 /// position after a step. Corpses fade once their death has played.
+///
+/// Every unit also goes into the [`GuidIndex`] and the [`NameCache`], as the net layer files a
+/// streamed one, so targeting, tooltips and unit frames find it; the local hero becomes our
+/// [`SelfGuid`], which hands it to WoW's character controller.
 pub(super) fn sync(
     mut commands: Commands,
     time: Res<Time>,
@@ -170,8 +184,12 @@ pub(super) fn sync(
     mut views: ResMut<Views>,
     creatures: Option<Res<crate::entities::Creatures>>,
     world_point: WorldPoint,
+    mut self_guid: ResMut<SelfGuid>,
+    mut names: ResMut<NameCache>,
+    mut index: ResMut<GuidIndex>,
+    mut items: ResMut<crate::items::Items>,
     mut positions: Query<&mut SimPos>,
-    mut dying: Query<(Entity, &mut Dying)>,
+    mut dying: Query<(Entity, &Guid, &mut Dying)>,
 ) {
     let world = &sim.world;
     let content = world.content().clone();
@@ -215,13 +233,22 @@ pub(super) fn sync(
                 )
             })
             .collect();
+        // A player wears items, not display ids: the trainer's outfit and the class's weapons,
+        // as stand-in item templates.
+        let worn = dress::wear(
+            &mut items,
+            &dress::pieces(creatures.display_outfit(display), &class.weapons),
+        );
+        let serial = HERO_SERIAL_BASE + u64::from(hero.player);
+        let guid = units::unit_guid(UnitKind::Player, serial);
         let e = units::spawn_unit(
             &mut commands,
             &UnitSpec {
-                serial: HERO_SERIAL_BASE + u64::from(hero.player),
+                kind: UnitKind::Player,
+                serial,
                 display,
                 scale: 1.0,
-                level: 60,
+                level: world.level,
                 faction: units::FACTION_FRIENDLY,
                 bytes0: u32::from(race)
                     | u32::from(class.class_id) << 8
@@ -229,13 +256,22 @@ pub(super) fn sync(
                     | u32::from(class.power) << 24,
                 weapons: &weapons,
                 sheath: class.sheath,
+                extra: &worn,
             },
             ground(hero.pos, fallback_y),
             units::yaw_of(hero.facing),
         );
-        commands
-            .entity(e)
-            .insert(SimPos::new(hero.pos, hero.facing));
+        index.0.insert(guid, e);
+        if hero.player == LOCAL_PLAYER {
+            // Ours: WoW's controller drives it, from the pose it is spawned in.
+            self_guid.0 = Some(guid);
+            names.insert_player(guid, hero_name(), None);
+        } else {
+            names.insert_player(guid, format!("Player {}", hero.player + 1), None);
+            commands
+                .entity(e)
+                .insert(SimPos::new(hero.pos, hero.facing));
+        }
         views.heroes.insert(hero.player, e);
     }
 
@@ -244,10 +280,31 @@ pub(super) fn sync(
             continue;
         }
         let def = &content.enemies[enemy.def];
+        // One creature template per enemy kind: its entry names it.
+        let entry = enemy.def as u32 + 1;
+        if views.named.insert(entry) {
+            names.insert_creature(
+                entry,
+                Some(CreatureRecord {
+                    name: def.name.clone(),
+                    subname: None,
+                    creature_type: 0,
+                    pet_family: 0,
+                    rank: 0,
+                    type_flags: 0,
+                    civilian: false,
+                    racial_leader: false,
+                    display_id: def.display,
+                }),
+            );
+        }
+        let kind = UnitKind::Creature { entry };
+        let serial = u64::from(enemy.id);
         let e = units::spawn_unit(
             &mut commands,
             &UnitSpec {
-                serial: u64::from(enemy.id),
+                kind,
+                serial,
                 display: def.display,
                 scale: def.scale,
                 level: def.level,
@@ -255,6 +312,7 @@ pub(super) fn sync(
                 bytes0: 1 << 8,
                 weapons: &[],
                 sheath: 0,
+                extra: &[],
             },
             ground(enemy.pos, fallback_y),
             units::yaw_of(enemy.facing),
@@ -262,12 +320,14 @@ pub(super) fn sync(
         commands
             .entity(e)
             .insert(SimPos::new(enemy.pos, enemy.facing));
+        index.0.insert(units::unit_guid(kind, serial), e);
         views.enemies.insert(enemy.id, e);
     }
     // Gone without a death (a restart): no corpse, just gone.
     views.enemies.retain(|id, e| {
         let keep = world.enemy(*id).is_some();
         if !keep {
+            index.0.retain(|_, v| v != e);
             commands.entity(*e).despawn();
         }
         keep
@@ -320,9 +380,10 @@ pub(super) fn sync(
         }
     }
 
-    for (e, mut d) in &mut dying {
+    for (e, guid, mut d) in &mut dying {
         d.0 += time.delta_secs();
         if d.0 > 2.5 {
+            index.0.remove(&guid.0);
             commands
                 .entity(e)
                 .remove::<Dying>()
@@ -331,15 +392,46 @@ pub(super) fn sync(
     }
 }
 
-/// `TOGETHER_TRACE_JUMP=1`: log every airborne frame's height.
-fn trace_jump() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("TOGETHER_TRACE_JUMP").is_some())
+/// Health, maximum and level into every living unit's store, for WoW's player and target frames.
+pub(super) fn write_vitals(
+    sim: Res<Sim>,
+    views: Res<Views>,
+    mut units: Query<(&mut ObjectStore, &mut ShownVitals)>,
+) {
+    let world = &sim.world;
+    for hero in &world.heroes {
+        if let Some((mut store, mut shown)) = views
+            .heroes
+            .get(&hero.player)
+            .and_then(|&e| units.get_mut(e).ok())
+        {
+            let xp = Some((world.xp, together_sim::xp_to_next(world.level)));
+            units::set_vitals(
+                &mut store,
+                &mut shown,
+                hero.hp,
+                hero.max_hp,
+                world.level,
+                xp,
+            );
+        }
+    }
+    for enemy in &world.enemies {
+        if let Some((mut store, mut shown)) = views
+            .enemies
+            .get(&enemy.id)
+            .and_then(|&e| units.get_mut(e).ok())
+        {
+            let level = world.content().enemies[enemy.def].level;
+            units::set_vitals(&mut store, &mut shown, enemy.hp, enemy.max_hp, level, None);
+        }
+    }
 }
 
 /// Every body between its last two steps, on the ground (or above it, jumping), turned the way it
 /// goes, with the run and jump animations. The engine's ground clamp re-seats units on the floor
-/// at the top of each frame, so the jump height is added again here every frame.
+/// at the top of each frame, so the jump height is added again here every frame. The local hero
+/// has no [`SimPos`]: the controller places it.
 pub(super) fn place(
     sim: Res<Sim>,
     world_point: WorldPoint,
@@ -354,14 +446,7 @@ pub(super) fn place(
         if let Some(h) = world_point.terrain_height_under(pos) {
             pos.y = h;
         }
-        let air = p.prev_air + (p.air - p.prev_air) * alpha;
-        pos.y += air;
-        if air > 0.0 && trace_jump() {
-            info!(
-                "together: airborne {air:.2} yd, y {:.2} -> {:.2}, vy {:.2}",
-                tf.translation.y, pos.y, p.vy
-            );
-        }
+        pos.y += p.prev_air + (p.air - p.prev_air) * alpha;
         if tf.translation != pos {
             tf.translation = pos;
         }

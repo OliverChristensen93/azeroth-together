@@ -67,6 +67,17 @@ pub struct PlayerInput {
     pub pick: Option<u8>,
     /// Hop, if on the ground.
     pub jump: bool,
+    /// Where the player's own client put the hero, overriding `move_dir` and `jump`. A client
+    /// running WoW's character controller moves its hero itself, as WoW clients do, and reports
+    /// the pose; the world only keeps it inside the arena.
+    pub pose: Option<HeroPose>,
+}
+
+/// A hero's position and facing as its player's client reports them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HeroPose {
+    pub pos: V2,
+    pub facing: V2,
 }
 
 /// A jump's initial upward speed and the gravity that brings the hero back down, in yards and
@@ -419,6 +430,20 @@ impl World {
         let leash = self.zone().leash;
         for hero in self.heroes.iter_mut().filter(|h| h.alive) {
             let input = self.inputs.get_mut(&hero.player);
+            if let Some(pose) = input.as_ref().and_then(|i| i.pose) {
+                let off = pose.pos - center;
+                let pos = if off.length() > leash {
+                    center + off.normalize_or_zero() * leash
+                } else {
+                    pose.pos
+                };
+                hero.moving = pos.distance(hero.pos) > 1e-3;
+                hero.pos = pos;
+                if pose.facing != V2::ZERO {
+                    hero.facing = pose.facing.normalize_or_zero();
+                }
+                continue;
+            }
             let jump = input.as_ref().is_some_and(|i| i.jump);
             let dir = input.map_or(V2::ZERO, |i| {
                 i.jump = false;
@@ -876,11 +901,35 @@ mod tests {
                 move_dir: V2::new(1.0, 0.0),
                 pick: None,
                 jump: false,
+                pose: None,
             },
         );
         steps(&mut w, TICK_HZ as usize);
         let moved = w.hero(0).unwrap().pos.distance(start);
         assert!((moved - 7.5).abs() < 0.01, "moved {moved}");
+    }
+
+    #[test]
+    fn a_reported_pose_moves_the_hero_inside_the_leash() {
+        let mut w = world();
+        let center = w.center();
+        let pose = |pos: V2| PlayerInput {
+            pose: Some(HeroPose {
+                pos,
+                facing: V2::new(0.0, 2.0),
+            }),
+            ..Default::default()
+        };
+        w.set_input(0, pose(center + V2::new(10.0, 5.0)));
+        w.step();
+        let hero = w.hero(0).unwrap();
+        assert_eq!(hero.pos, center + V2::new(10.0, 5.0));
+        assert_eq!(hero.facing, V2::new(0.0, 1.0));
+        assert!(hero.moving);
+
+        w.set_input(0, pose(center + V2::new(500.0, 0.0)));
+        w.step();
+        assert!((w.hero(0).unwrap().pos.distance(center) - 150.0).abs() < 1e-3);
     }
 
     #[test]
@@ -920,6 +969,7 @@ mod tests {
                 move_dir: V2::new(0.0, 1.0),
                 pick: None,
                 jump: false,
+                pose: None,
             },
         );
         steps(&mut w, TICK_HZ as usize * 60);
@@ -1004,6 +1054,7 @@ mod tests {
                 move_dir: V2::ZERO,
                 pick: Some(0),
                 jump: false,
+                pose: None,
             },
         );
         w.step();
@@ -1036,6 +1087,7 @@ mod tests {
                 move_dir: V2::ZERO,
                 pick: Some(0),
                 jump: false,
+                pose: None,
             },
         );
         w.step();
@@ -1069,6 +1121,7 @@ mod tests {
                 move_dir: V2::ZERO,
                 pick: Some(0),
                 jump: false,
+                pose: None,
             },
         );
         w.step();
@@ -1079,6 +1132,7 @@ mod tests {
                 move_dir: V2::ZERO,
                 pick: Some(0),
                 jump: false,
+                pose: None,
             },
         );
         w.step();
@@ -1100,6 +1154,7 @@ mod tests {
                     move_dir: V2::new(0.3, 1.0),
                     pick: None,
                     jump: false,
+                    pose: None,
                 },
             );
             steps(&mut w, TICK_HZ as usize * 10);

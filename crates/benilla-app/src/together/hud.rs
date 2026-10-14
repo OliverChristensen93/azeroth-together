@@ -2,7 +2,7 @@
 //! kills; the level-up cards while they are up; and the end of the run.
 
 use bevy::prelude::*;
-use together_sim::{xp_to_next, Card};
+use together_sim::Card;
 
 use super::{Sim, LOCAL_PLAYER};
 
@@ -30,34 +30,33 @@ fn text(font: &Handle<Font>, size: f32) -> (Text, TextFont, TextColor, TextShado
 
 pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
-    commands.spawn((
-        Node {
+    // Top centre, clear of WoW's player and target frames (left) and minimap (right).
+    commands
+        .spawn(Node {
             position_type: PositionType::Absolute,
-            left: Val::Px(16.0),
-            top: Val::Px(12.0),
+            width: Val::Percent(100.0),
+            top: Val::Px(6.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
             ..default()
-        },
-        text(&font, 22.0),
-        StatusText,
-    ));
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(16.0),
-            bottom: Val::Px(10.0),
-            ..default()
-        },
-        Text::new(
-            "WASD run   Space jump   1 2 3 pick a card   C free camera (drag a mouse button to turn it)   Wheel zoom",
-        ),
-        TextFont {
-            font: font.clone(),
-            font_size: 16.0,
-            ..default()
-        },
-        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.7)),
-        TextShadow::default(),
-    ));
+        })
+        .with_children(|p| {
+            p.spawn((
+                text(&font, 20.0),
+                TextLayout::new_with_justify(Justify::Center),
+                StatusText,
+            ));
+            p.spawn((
+                Text::new("WoW controls   ·   1 2 3 pick a level-up card"),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
+                TextShadow::default(),
+            ));
+        });
     commands
         .spawn((
             Node {
@@ -111,14 +110,9 @@ pub(super) fn refresh(
             .iter()
             .map(|o| format!("{} {}", content.abilities[o.ability].name, o.level))
             .collect();
+        // Health, level and experience are in WoW's own player frame and XP bar.
         let s = format!(
-            "{}   Health {:.0} / {:.0}   Level {}   XP {:.0} / {:.0}   {}   Kills {}\n{}",
-            world.zone().name,
-            hero.hp,
-            hero.max_hp,
-            world.level,
-            world.xp,
-            xp_to_next(world.level),
+            "{}   Kills {}\n{}",
             clock(world.elapsed),
             world.kills,
             owned.join("   "),

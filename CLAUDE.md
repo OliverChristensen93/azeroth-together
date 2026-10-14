@@ -11,8 +11,16 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   (shared XP, the run waits for every living hero's card pick) are already in.
 - `content/*.ron` — classes, abilities, enemies, zones. Read from disk at startup, so edits need no
   rebuild. `crates/together-sim/tests/shipped_content.rs` checks they parse and play.
-- `crates/benilla-app/src/together/` — the client: steps the sim from the keyboard and draws it with
-  the engine's unit, spell-visual and combat-text systems. It decides nothing about the game.
+- `crates/benilla-app/src/together/` — the client: steps the sim and draws it with the engine's
+  unit, spell-visual and combat-text systems. It decides nothing about the game.
+  - The real WoW 1.12 UI (FrameXML from the MPQ) and character controller are ON (no `CaptureMode`):
+    the local hero is a player-kind unit whose guid is our `SelfGuid`, so the controller drives it
+    and PlayerFrame/TargetFrame/Minimap/BuffFrame read it. `feed_pose` reports the controller's pose
+    to the sim (`PlayerInput::pose`), as a WoW client reports moves; the sim only clamps it to the
+    leash. Units are filed in `GuidIndex`/`NameCache`; `write_vitals` writes health/level/XP fields.
+  - `dress.rs`: players wear item *entries*, so the hero's outfit and weapons are stand-in item
+    templates filed in `Items`. `ui.rs`: Lua run once per UI session (chat window colour/alpha).
+  - Keys 1/2/3 pick cards while cards are up (they also press the empty action buttons; harmless).
 - `crates/azeroth-together/` — the launcher binary.
 - `crates/benilla-app/src/survivors/` — the upstream fork's own single-player mode, kept as reference.
   Our mode does not depend on it.

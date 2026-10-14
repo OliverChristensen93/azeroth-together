@@ -247,6 +247,15 @@ impl Creatures {
         self.catalog.display_race_sex(display_id)
     }
 
+    /// A character-model display's worn `ItemDisplayInfo` ids (`CreatureDisplayInfoExtra`), by
+    /// body slot: head, shoulder, shirt, chest, belt, pants, boots, wrist, gloves, tabard.
+    pub(crate) fn display_outfit(&self, display_id: u32) -> Option<[u32; 10]> {
+        self.catalog
+            .model(display_id)?
+            .npc_appearance
+            .map(|a| a.equipment)
+    }
+
     /// A display's collision height in raw model units; [`CollisionHeight`] is the world value.
     pub(crate) fn collision_height(&self, display_id: u32) -> Option<f32> {
         self.catalog.collision_height(display_id)

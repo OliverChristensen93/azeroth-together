@@ -21,6 +21,6 @@ pub use content::{
 pub use math::V2;
 pub use rng::Rng;
 pub use world::{
-    xp_to_next, Card, Enemy, Event, Gem, Hero, Offer, Owned, PlayerId, PlayerInput, Target, World,
-    WorldError, DT, TICK_HZ,
+    xp_to_next, Card, Enemy, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput,
+    Target, World, WorldError, DT, TICK_HZ,
 };

@@ -1,16 +1,22 @@
 //! Azeroth Together: the co-op survivors mode, started by [`crate::run_together`].
 //!
 //! The game itself is [`together_sim::World`], a headless simulation that knows nothing of Bevy.
-//! This module only feeds it the local player's keys, steps it at its fixed rate, and draws it:
-//! every hero, enemy and gem in the world gets a WoW unit or object ([`view`]), and the events a
-//! step emits become spell visuals, swings and numbers. A co-op client will draw a host's world
-//! the same way, which is why nothing here decides anything about the game.
+//! This module steps it at its fixed rate and draws it: every hero, enemy and gem gets a WoW unit
+//! or object ([`view`]), and the events a step emits become spell visuals, swings and numbers.
+//!
+//! The rest is the real WoW 1.12 client: its interface (player and target frames, minimap, buffs,
+//! key bindings) and its character controller (mouselook, strafing, jumping, the camera). The
+//! controller moves the local hero, and [`feed_pose`] reports where it went, the way a WoW client
+//! reports its moves to the server. A co-op client will draw a host's world the same way, which is
+//! why nothing here decides anything about the game.
 //!
 //! Configuration, for now: `TOGETHER_CLASS` (default `mage`), `TOGETHER_ZONE` (default `elwynn`),
-//! `TOGETHER_CONTENT` (a folder with the four RON files; default the repository's `content/`, and
-//! the copies compiled in when that is missing).
+//! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the four RON files; default
+//! the repository's `content/`, and the copies compiled in when that is missing).
 
+mod dress;
 mod hud;
+mod ui;
 mod units;
 mod view;
 
@@ -19,11 +25,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use benilla_world::schedule::WorldStage;
-use benilla_world::view::WorldCamera;
-use benilla_world::world_point::WorldPoint;
-use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
-use together_sim::{Content, ContentSources, PlayerId, PlayerInput, World, DT, V2};
+use together_sim::{Content, ContentSources, HeroPose, PlayerId, PlayerInput, World, DT, V2};
 
 /// Set by [`crate::run_together`] before the app builds.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -153,24 +156,20 @@ impl Sim {
 #[derive(Component)]
 pub(super) struct TogetherEntity;
 
-/// What the local player's keys say: the run direction, held, and a card pick and a jump, each
-/// used by the next step.
+/// What the local player sends the next step: the hero's pose as the controller left it, and a
+/// card pick, used once.
 #[derive(Resource, Default)]
 struct LocalInput {
-    move_dir: V2,
+    pose: Option<HeroPose>,
     pick: Option<u8>,
-    jump: bool,
 }
 
 pub(crate) struct TogetherPlugin;
 
 impl Plugin for TogetherPlugin {
     fn build(&self, app: &mut App) {
-        // Present before `OnEnter(InWorld)`, where the UI lifecycle decides not to load FrameXML.
-        app.insert_resource(crate::run_mode::CaptureMode)
-            .insert_resource(Sim::new())
+        app.insert_resource(Sim::new())
             .init_resource::<LocalInput>()
-            .init_resource::<CamRig>()
             .init_resource::<view::Views>()
             .add_systems(Startup, hud::setup)
             .add_systems(Update, daylight)
@@ -178,18 +177,23 @@ impl Plugin for TogetherPlugin {
                 Update,
                 (
                     read_keys,
+                    feed_pose,
                     step_sim,
                     view::apply_events,
                     view::sync,
+                    view::write_vitals,
                     view::place,
-                    place_camera,
                 )
                     .chain()
-                    .in_set(WorldStage::Input),
+                    .in_set(WorldStage::Input)
+                    // The controller has moved the hero this frame before its pose is read.
+                    .after(crate::player::PlayerControlSet),
             )
             .add_systems(
                 Update,
-                (hud::refresh, restart).chain().after(WorldStage::Input),
+                (hud::refresh, restart, ui::tune_ui)
+                    .chain()
+                    .after(WorldStage::Input),
             );
     }
 }
@@ -204,51 +208,26 @@ fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState>>) {
     }
 }
 
-/// `TOGETHER_AUTOPLAY=1`: the local hero walks a slow circle and takes the first card, so a test
-/// run shows play without anyone at the keys.
+/// `TOGETHER_AUTOPLAY=1`: the local hero takes the first card, so a test run plays on without
+/// anyone at the keys.
 fn autoplay() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
 }
 
-/// WASD (or the arrows) to run, Space to jump, 1/2/3 to pick a card. W runs away from the camera:
-/// north while it is locked, wherever it looks once `C` frees it.
-fn read_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    sim: Res<Sim>,
-    rig: Res<CamRig>,
-    mut input: ResMut<LocalInput>,
-) {
-    if autoplay() {
-        let a = sim.world.elapsed * 0.35;
-        input.move_dir = V2::new(a.cos(), a.sin());
-        // Hop now and then, so test shots catch a jump.
-        input.jump = (sim.world.elapsed % 4.0) < 0.1;
-        if sim
-            .world
-            .hero(LOCAL_PLAYER)
-            .is_some_and(|h| !h.offers.is_empty())
-        {
-            input.pick = Some(0);
-        }
+/// 1, 2 or 3 picks a card while the cards are up. Everything else (movement, jumping, the camera,
+/// the panels) is WoW's own key bindings.
+fn read_keys(keys: Res<ButtonInput<KeyCode>>, sim: Res<Sim>, mut input: ResMut<LocalInput>) {
+    let choosing = sim
+        .world
+        .hero(LOCAL_PLAYER)
+        .is_some_and(|h| !h.offers.is_empty());
+    if !choosing {
         return;
     }
-    let mut dir = V2::ZERO;
-    if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-        dir.x += 1.0;
-    }
-    if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-        dir.x -= 1.0;
-    }
-    if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-        dir.y += 1.0;
-    }
-    if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-        dir.y -= 1.0;
-    }
-    input.move_dir = rig.relative(dir);
-    if keys.just_pressed(KeyCode::Space) {
-        input.jump = true;
+    if autoplay() {
+        input.pick = Some(0);
+        return;
     }
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
         .into_iter()
@@ -260,35 +239,83 @@ fn read_keys(
     }
 }
 
+/// Bevy's position to WoW's ground plane.
+fn bevy_to_ground(p: Vec3) -> V2 {
+    V2::new(-p.z, -p.x)
+}
+
+/// Where WoW's controller left the local hero, as the pose the next step takes. The arena's edge
+/// is a wall: a hero past the leash is put back on it, so nobody runs off the end of the loaded
+/// world. Until the controller has the hero, the terrain streams around the arena's centre.
+fn feed_pose(
+    views: Res<view::Views>,
+    sim: Res<Sim>,
+    mut player: ResMut<crate::player::Player>,
+    mut input: ResMut<LocalInput>,
+    mut bodies: Query<&mut Transform>,
+) {
+    let center = sim.world.center();
+    let Some(mut tf) = views
+        .heroes
+        .get(&LOCAL_PLAYER)
+        .and_then(|&e| bodies.get_mut(e).ok())
+        .filter(|_| player.active)
+    else {
+        if !player.active {
+            player.pos = units::wow_to_bevy(sim.world.zone().center);
+        }
+        input.pose = None;
+        return;
+    };
+    let mut pos = bevy_to_ground(tf.translation);
+    let leash = sim.world.zone().leash;
+    let off = pos - center;
+    if off.length() > leash {
+        pos = center + off.normalize_or_zero() * leash;
+        let back = units::ground_to_bevy(pos, tf.translation.y);
+        tf.translation.x = back.x;
+        tf.translation.z = back.z;
+        player.pos.x = back.x;
+        player.pos.z = back.z;
+    }
+    let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
+    input.pose = Some(HeroPose {
+        pos,
+        facing: V2::new(yaw.cos(), yaw.sin()),
+    });
+}
+
 /// Run the simulation's fixed steps for the real time that passed. It waits while the loading
-/// screen is up and until the hero has a body, so a run never starts unseen.
+/// screen is up and until the controller has the hero, so a run never starts unseen.
 fn step_sim(
     time: Res<Time<Real>>,
     loading: Res<crate::loading_screen::LoadingScreen>,
-    views: Res<view::Views>,
     mut sim: ResMut<Sim>,
     mut input: ResMut<LocalInput>,
     mut virtual_time: ResMut<Time<Virtual>>,
 ) {
     sim.stepped = false;
-    if loading.covering() || !views.heroes.contains_key(&LOCAL_PLAYER) {
+    let Some(pose) = input.pose else {
+        return;
+    };
+    if loading.covering() {
         return;
     }
     // A long hitch would otherwise replay seconds of play in one frame.
     sim.acc = (sim.acc + time.delta_secs()).min(0.25);
     while sim.acc >= DT {
         sim.acc -= DT;
-        // A key press picks (or jumps) once: the first step takes it.
+        // A key press picks once: the first step takes it.
         let held = PlayerInput {
-            move_dir: input.move_dir,
             pick: input.pick.take(),
-            jump: std::mem::take(&mut input.jump),
+            pose: Some(pose),
+            ..Default::default()
         };
         sim.world.set_input(LOCAL_PLAYER, held);
         sim.world.step();
         sim.stepped = true;
     }
-    // Cards up (or the run over): the world holds still, animations included.
+    // Cards up (or the run over): the world holds still, animations and the hero included.
     let hold = sim.world.paused() || sim.world.game_over();
     if hold && !virtual_time.is_paused() {
         virtual_time.pause();
@@ -297,12 +324,14 @@ fn step_sim(
     }
 }
 
-/// Enter after the run ends: a fresh run on the same zone.
+/// Enter after the run ends: a fresh run on the same zone, the controller taking the new hero.
 fn restart(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut sim: ResMut<Sim>,
     mut views: ResMut<view::Views>,
+    mut index: ResMut<crate::net::GuidIndex>,
+    mut player: ResMut<crate::player::Player>,
     spawned: Query<Entity, With<TogetherEntity>>,
 ) {
     if !sim.world.game_over() || !keys.just_pressed(KeyCode::Enter) {
@@ -311,117 +340,9 @@ fn restart(
     for e in &spawned {
         commands.entity(e).despawn();
     }
+    let gone: std::collections::HashSet<Entity> = spawned.iter().collect();
+    index.0.retain(|_, e| !gone.contains(e));
     *views = view::Views::default();
     *sim = Sim::new();
-}
-
-/// The camera over the local hero. Locked (the default) it looks down from the south, like the
-/// survivors games; `C` frees it to swing around the hero and tilt as in WoW, by dragging with
-/// either mouse button. The wheel zooms in both.
-#[derive(Resource)]
-struct CamRig {
-    dist: f32,
-    free: bool,
-    /// Around the hero, radians; 0 is south of it, looking north.
-    yaw: f32,
-    /// Above the horizon, radians.
-    pitch: f32,
-}
-
-impl Default for CamRig {
-    fn default() -> Self {
-        // `TOGETHER_CAM_DIST=<yards>`: the starting zoom, for close-up test shots.
-        let dist = std::env::var("TOGETHER_CAM_DIST")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30.0);
-        Self {
-            dist,
-            free: false,
-            yaw: 0.0,
-            pitch: LOCKED_PITCH,
-        }
-    }
-}
-
-impl CamRig {
-    /// A screen-relative run direction (x ahead, y left) as a direction in the world: the same
-    /// while locked, turned with the camera while free.
-    fn relative(&self, dir: V2) -> V2 {
-        if !self.free {
-            return dir;
-        }
-        // The camera's yaw turns the view anticlockwise seen from above, as the world's x→y does.
-        let (s, c) = self.yaw.sin_cos();
-        V2::new(dir.x * c - dir.y * s, dir.x * s + dir.y * c)
-    }
-}
-
-/// The locked view's tilt above the horizon.
-const LOCKED_PITCH: f32 = 61.0 * std::f32::consts::PI / 180.0;
-/// The free view's tilt range: from just above the ground to nearly straight down.
-const PITCH_RANGE: (f32, f32) = (0.18, 1.45);
-/// Radians of swing per pixel of mouse drag.
-const ORBIT_RATE: f32 = 0.008;
-
-fn place_camera(
-    mut rig: ResMut<CamRig>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
-    mut wheel: MessageReader<MouseWheel>,
-    views: Res<view::Views>,
-    sim: Res<Sim>,
-    world: WorldPoint,
-    tfs: Query<&Transform, Without<WorldCamera>>,
-    mut player: ResMut<crate::player::Player>,
-    mut cams: Query<&mut Transform, With<WorldCamera>>,
-) {
-    for w in wheel.read() {
-        let notches = match w.unit {
-            MouseScrollUnit::Line => w.y,
-            MouseScrollUnit::Pixel => w.y * 0.02,
-        };
-        rig.dist = (rig.dist * (1.0 - 0.12 * notches).clamp(0.5, 1.5)).clamp(3.0, 70.0);
-    }
-    if keys.just_pressed(KeyCode::KeyC) {
-        rig.free = !rig.free;
-        if !rig.free {
-            rig.yaw = 0.0;
-            rig.pitch = LOCKED_PITCH;
-        }
-    }
-    if rig.free && mouse.any_pressed([MouseButton::Left, MouseButton::Right]) {
-        rig.yaw -= motion.delta.x * ORBIT_RATE;
-        rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_RANGE.0, PITCH_RANGE.1);
-    }
-    // The ground under the hero (before it has a body, the arena's centre): not the hero itself,
-    // or a jump would lift the whole view with it and never show.
-    let mut focus = views
-        .heroes
-        .get(&LOCAL_PLAYER)
-        .and_then(|&e| tfs.get(e).ok())
-        .map(|t| t.translation)
-        .unwrap_or_else(|| units::wow_to_bevy(sim.world.zone().center));
-    if let Some(h) = world.terrain_height_under(focus) {
-        focus.y = h;
-    }
-    // The terrain streams, and the loading screen waits, on the ground under this.
-    player.active = true;
-    player.detached = false;
-    player.settling = false;
-    player.world_stale = false;
-    player.pos = focus;
-
-    let look = focus + Vec3::Y * 1.4;
-    let (sp, cp) = rig.pitch.sin_cos();
-    let (sy, cy) = rig.yaw.sin_cos();
-    let mut eye = look + Vec3::new(cp * sy, sp, cp * cy) * rig.dist;
-    if let Some(h) = world.terrain_height_under(eye) {
-        eye.y = eye.y.max(h + 0.6);
-    }
-    let placed = Transform::from_translation(eye).looking_at(look, Vec3::Y);
-    for mut cam in &mut cams {
-        *cam = placed;
-    }
+    player.active = false;
 }

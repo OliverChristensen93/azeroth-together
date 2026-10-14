@@ -37,6 +37,7 @@ fn every_class_survives_a_minute_in_every_zone_and_kills_something() {
                         move_dir: V2::new(a.cos(), a.sin()),
                         pick: Some(0),
                         jump: false,
+                        pose: None,
                     },
                 );
                 w.step();
