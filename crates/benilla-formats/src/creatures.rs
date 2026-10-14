@@ -440,7 +440,12 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
                     hair_color: u32_at(r, 6).unwrap_or(0) as u8,
                     facial_hair: u32_at(r, 7).unwrap_or(0) as u8,
                     equipment: std::array::from_fn(|i| u32_at(r, 8 + i).unwrap_or(0)),
-                    bake_name: str_at(&rs, r, 18),
+                    // A bake the data does not ship (a trimmed data set) is no bake at all: the
+                    // body is composited live from CharSections and the row's equipment instead
+                    // of wearing a missing atlas, which renders it bodiless.
+                    bake_name: str_at(&rs, r, 18).filter(|bake| {
+                        chain.contains(&format!("Textures\\BakedNpcTextures\\{bake}"))
+                    }),
                 },
             );
         }
