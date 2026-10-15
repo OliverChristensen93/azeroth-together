@@ -10,10 +10,15 @@ still need detail) · 💬 Discussing · 💡 New idea (needs a yes/no) · ⛔ N
 **The Megabonk branch** (`megabonk-systems`, private repo `OliverChristensen93/azeroth-together-megabonk`,
 built by the "Build Megabonk-style shrines and events" session) is a playable experiment. What it
 builds is marked 🧪; we take from it what works when the systems are designed for the main game.
-As of 2026-10-15 it has gold, a hero stat block (damage, cooldown, area, speed, health, regen,
-armor, pickup range, luck, XP, gold, crit, extra projectiles), tome and pact cards, elites, and
-seven interactables (Titan Shrine, Golden Titan Shrine, Cursed Altar, Shrine of Greed, Treasure
-Chest, Challenge Idol, Moonwell); items and a stage boss are in progress.
+Finished and playable (2026-10-15, 3 commits): gold shared like XP (each player pays for their own
+chests), a hero stat block (damage, cooldown, area, speed, health, regen, armor, pickup range, luck,
+XP, gold, crit, extra targets), tome and pact cards, elites from 1:30, a boss per zone every 4
+minutes (Hogger, Sergeant Brashclaw, Fenros, Gurubashi Warlord, Anubisath Guardian), 8 stacking
+items (no slots), and ten interactables used by standing in their circle: Titan Shrine, Golden
+Titan Shrine, Cursed Altar, Shrine of Greed, Treasure Chest, Challenge Idol, Moonwell, Goblin
+Merchant, Blood Shrine (an extra boss copy for double reward) and Champion's Cache. Run it from its
+worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at the main `WoW/Data`;
+`TOGETHER_SHOWCASE=1` rings one of each shrine around the start.
 
 ## Decision table
 
@@ -24,7 +29,7 @@ Chest, Challenge Idol, Moonwell); items and a stage boss are in progress.
 | 0c | Rarity-rolled spell cards, reroll, skip | Azeroth Survivors | ✅ Done | |
 | 0d | Damage meter, WoW party frames | Details!/Recount | ✅ Done | |
 | 1a | **Tomes**: stat upgrades that take no slot | Megabonk | 🟢 Greenlit · 🧪 | Damage, cooldown, area, speed, health, regen, armor, pickup range, luck, XP and gold gain, as cards beside spell cards. Built on the Megabonk branch. |
-| 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 🟢 Greenlit · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). Being built on the Megabonk branch (its slot rules may differ). See [A](#a-items-and-tomes-in-a-run). |
+| 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 🟢 Greenlit · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). The Megabonk branch has 8 items that stack as copies, with no slots; ours differ. See [A](#a-items-and-tomes-in-a-run). |
 | 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Skipped for now | Fixed recipes turn a run into a hunt for the partner piece. We test augments (2c) first and revisit. |
 | 2b | Fusions: two spells merge into one | — | ⛔ Not doing | Fixed recipes force a hunt; any-with-any has no good meaning; and fusing *removes* half of each spell (a trap's summon, a damage spell's damage), stranding the modifiers built for it. |
 | 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). Offered on a bonus Augment screen with Pick / Reroll / Hold (agreed); pauses co-op like a level-up. See [C](#c-augments). |
@@ -32,9 +37,9 @@ Chest, Challenge Idol, Moonwell); items and a stage boss are in progress.
 | 2e | **Unique items that augment or link spells** (e.g. "When Ice Barrier breaks, cast Frost Nova") | Azeroth Survivors | 🟢 Greenlit | Mostly necklaces. Triggered casts use your rank and augments and ignore cooldown. |
 | 2f | **Spell design rules**: about 12 spells per class, each reworked for the genre; single-target spells prioritize bosses and elites | Azeroth Survivors | 🟢 Greenlit | Kidney Shot just damages and stuns. Single-target and area spells both earn a place. We have 68 spells today (~7.5 per class). |
 | 2g | Talents that **add augments to the pool** instead of raw power | — | 💡 New idea | The cleanest "widen, don't narrow" progression. See [C](#c-augments). |
-| 3 | Gold, chests (price rises per open), a goblin merchant | Megabonk, Azeroth Survivors | 🟢 Greenlit · 🧪 | Gold and Treasure Chests built on the Megabonk branch; the merchant is not. Gold also switches on dormant gear (9f). |
-| 4 | Elites (drop chests) and a stage boss on a timer | Azeroth Survivors, VS, Megabonk | 🟢 Greenlit · 🧪 | Elites built on the Megabonk branch, the boss in progress there. Bosses are also where meta equipment drops (9a). |
-| 5 | Risk for reward: greed shrine, cursed altar pacts (boon + bane), cursed tome, boss curse | Megabonk | 🟢 Greenlit · 🧪 | Shrine of Greed and Cursed Altar pacts built on the Megabonk branch; cursed tome and boss curse are not. |
+| 3 | Gold, chests (price rises per open), a goblin merchant | Megabonk, Azeroth Survivors | 🟢 Greenlit · 🧪 | Gold, Treasure Chests and the Goblin Merchant built on the Megabonk branch. Gold also switches on dormant gear (9f). |
+| 4 | Elites (drop chests) and a stage boss on a timer | Azeroth Survivors, VS, Megabonk | 🟢 Greenlit · 🧪 | Elites and a boss per zone (every 4 minutes) built on the Megabonk branch. Bosses are also where meta equipment drops (9a). |
+| 5 | Risk for reward: greed shrine, cursed altar pacts (boon + bane), cursed tome, boss curse | Megabonk | 🟢 Greenlit · 🧪 | Shrine of Greed, Cursed Altar pacts and the Blood Shrine (boss curse) built on the Megabonk branch; the cursed tome is not. |
 | 6 | Ground pickups: food (heal), magnet (all XP), bomb (clear screen) | Vampire Survivors | 🟢 Greenlit · 🧪 | The magnet exists on the Megabonk branch as a Moonwell shrine; food and bomb do not. WoW flavour: Conjured bread, a Seaforium charge. |
 | 7a | **Freeze** the card screen | Your idea | 🟢 Greenlit | Freeze as often as you like. The card you pick from a frozen hand is not replaced, so the next level-up offers one card fewer; unfreezing deals a fresh hand. See [G](#g-the-card-screen-freeze-and-banish). |
 | 7b | **Banish** a spell from the pool, once per run | Vampire Survivors | 🟢 Greenlit | |
