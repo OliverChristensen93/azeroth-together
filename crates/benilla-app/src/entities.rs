@@ -246,6 +246,7 @@ impl Creatures {
     pub(crate) fn display_race_sex(&self, display_id: u32) -> Option<(u8, u8)> {
         self.catalog.display_race_sex(display_id)
     }
+
     /// A display's collision height in raw model units; [`CollisionHeight`] is the world value.
     pub(crate) fn collision_height(&self, display_id: u32) -> Option<f32> {
         self.catalog.collision_height(display_id)
