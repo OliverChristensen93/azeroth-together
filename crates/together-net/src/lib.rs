@@ -20,7 +20,7 @@ pub use client::{Client, ClientEvent};
 pub use host::{ConnId, Host, HostEvent};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;

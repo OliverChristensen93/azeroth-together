@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use together_sim::{Content, ContentSources, Event, PlayerInput, World, TICK_HZ, V2};
+use together_sim::{
+    Content, ContentSources, Event, InteractableKind, PlayerInput, World, TICK_HZ, V2,
+};
 
 fn shipped() -> Content {
     Content::from_ron(ContentSources {
@@ -19,6 +21,25 @@ fn shipped() -> Content {
 fn shipped_content_is_valid() {
     let c = shipped();
     assert!(!c.classes.is_empty() && !c.zones.is_empty());
+}
+
+#[test]
+fn every_zone_scatters_shrines_and_chests_inside_its_arena() {
+    let c = Arc::new(shipped());
+    for zone in &c.zones {
+        let w = World::new(c.clone(), &zone.key, 11).unwrap();
+        let center = w.center();
+        assert!(
+            w.interactables
+                .iter()
+                .any(|i| i.kind == InteractableKind::Chest),
+            "{} has no chest",
+            zone.key
+        );
+        for i in &w.interactables {
+            assert!(i.pos.distance(center) <= zone.leash, "{} {:?}", zone.key, i);
+        }
+    }
 }
 
 #[test]

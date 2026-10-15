@@ -1,6 +1,8 @@
 // Arenas, ported from benilla-app's survivors/data.rs. `map` is the Map.dbc id (0 Eastern Kingdoms,
 // 1 Kalimdor); `center` is in WoW coordinates (x, y, z); `leash` is how far heroes may roam;
-// `enemies` are weakest first. Only zones whose terrain is in the game data can be played.
+// `enemies` are weakest first.
+// `interactables` are the shrines, altars and chests scattered about the arena each run, by kind
+// and count. Only zones whose terrain is in the game data can be played.
 [
     // bosses (later): Mother Fang (2541, 10, 4.6, 1.9), Narg the Taskmaster (774, 10, 4.2, 1.9),
     //   Hogger (384, 11, 4.2, 1.9), Thuros Lightfingers (3341, 11, 4.2, 2.18),
@@ -18,6 +20,15 @@
             "kobold_tunneler", "defias_cutpurse", "forest_spider", "murloc", "kobold_miner",
             "murloc_streamrunner", "rockhide_boar", "gray_forest_wolf", "defias_bandit",
             "young_forest_bear", "defias_rogue_wizard",
+        ],
+        interactables: [
+            (kind: TitanShrine, count: 4),
+            (kind: GoldenShrine, count: 1),
+            (kind: CursedAltar, count: 2),
+            (kind: GreedShrine, count: 2),
+            (kind: Chest, count: 6),
+            (kind: ChallengeIdol, count: 2),
+            (kind: Moonwell, count: 2),
         ],
     ),
     // bosses (later): Brainwashed Noble (3267, 18, 4.2, 2.18),
@@ -38,6 +49,15 @@
             "riverpaw_taskmaster", "defias_highwayman", "westfall_pygmy_venom_web_spider",
             "riverpaw_mystic",
         ],
+        interactables: [
+            (kind: TitanShrine, count: 4),
+            (kind: GoldenShrine, count: 1),
+            (kind: CursedAltar, count: 2),
+            (kind: GreedShrine, count: 2),
+            (kind: Chest, count: 6),
+            (kind: ChallengeIdol, count: 2),
+            (kind: Moonwell, count: 2),
+        ],
     ),
     // bosses (later): Lupos (11412, 23, 5.4, 1.9), Naraxis (963, 27, 4.6, 1.9),
     //   Nightbane Vile Fang (522, 30, 5.4, 1.9), Nightbane Tainted One (1098, 31, 5.4, 1.9),
@@ -55,6 +75,15 @@
             "green_recluse", "young_black_ravager", "black_widow_hatchling", "black_ravager",
             "black_ravager_mastiff", "nightbane_worgen", "nightbane_shadow_weaver",
             "nightbane_dark_runner", "nightbane_vile_fang", "fetid_corpse", "nightbane_tainted_one",
+        ],
+        interactables: [
+            (kind: TitanShrine, count: 4),
+            (kind: GoldenShrine, count: 1),
+            (kind: CursedAltar, count: 2),
+            (kind: GreedShrine, count: 2),
+            (kind: Chest, count: 6),
+            (kind: ChallengeIdol, count: 2),
+            (kind: Moonwell, count: 2),
         ],
     ),
     // bosses (later): King Bangalash (616, 43, 5.8, 3.0), Mokk the Savage (840, 44, 4.8, 2.4),
@@ -74,6 +103,14 @@
             "razzashi_raptor", "gurubashi_blood_drinker", "zulian_tiger", "hakkari_shadowcaster",
             "gurubashi_champion", "gurubashi_bat_rider",
         ],
+        interactables: [
+            (kind: TitanShrine, count: 2),
+            (kind: CursedAltar, count: 1),
+            (kind: GreedShrine, count: 1),
+            (kind: Chest, count: 3),
+            (kind: ChallengeIdol, count: 1),
+            (kind: Moonwell, count: 1),
+        ],
     ),
     // bosses (later): Kurinnaxx (15742, 62, 5.0, 1.15), General Rajaxx (15376, 63, 4.8, 1.15),
     //   Moam (15392, 63, 4.2, 1.6), Buru the Gorger (15654, 63, 4.4, 0.85),
@@ -92,6 +129,15 @@
             "hivezora_wasp", "hivezora_reaver", "hiveregal_ambusher", "vekniss_wasp",
             "qiraji_gladiator", "vekniss_warrior", "obsidian_destroyer", "qiraji_champion",
             "anubisath_sentinel",
+        ],
+        interactables: [
+            (kind: TitanShrine, count: 3),
+            (kind: GoldenShrine, count: 1),
+            (kind: CursedAltar, count: 2),
+            (kind: GreedShrine, count: 1),
+            (kind: Chest, count: 4),
+            (kind: ChallengeIdol, count: 1),
+            (kind: Moonwell, count: 1),
         ],
     ),
 ]

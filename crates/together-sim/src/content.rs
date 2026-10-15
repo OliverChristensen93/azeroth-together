@@ -9,6 +9,8 @@ use std::fmt;
 
 use serde::Deserialize;
 
+use crate::interact::Placement;
+
 /// How an ability picks its targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum AbilityKind {
@@ -99,6 +101,9 @@ pub struct ZoneDef {
     pub leash: f32,
     /// Enemy keys, weakest first: the run brings in stronger ones as it goes on.
     pub enemies: Vec<String>,
+    /// The shrines, altars and chests scattered about the arena each run; none when left out.
+    #[serde(default)]
+    pub interactables: Vec<Placement>,
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
@@ -337,7 +342,9 @@ pub(crate) mod tests {
     ]"#;
     pub(crate) const ZONES: &str = r#"[
         (key: "elwynn", name: "Elwynn Forest", map: 0, center: (-9548.5, 115.0, 60.0),
-         leash: 150.0, enemies: ["wolf"]),
+         leash: 150.0, enemies: ["wolf"],
+         interactables: [(kind: TitanShrine, count: 2), (kind: Chest, count: 3),
+                         (kind: CursedAltar, count: 1)]),
     ]"#;
 
     pub(crate) fn sample() -> Content {

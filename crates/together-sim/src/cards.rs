@@ -1,13 +1,15 @@
-//! Level-up cards: what they offer, how rare they are, and the numbers an ability has at a rank.
+//! Cards: what a level-up, a shrine, an altar or a chest offers, how rare each is, and the numbers
+//! an ability has at a rank.
 //!
 //! A card's rarity decides how strong it is: a new spell starts with a damage bonus, an upgrade adds
-//! one on top of its rank. The client shows these numbers on the cards, so they come from here,
-//! where the simulation uses them too.
+//! one on top of its rank, and a tome or a pact's boon is worth more stat. The client shows these
+//! numbers on the cards, so they come from here, where the simulation uses them too.
 
 use serde::{Deserialize, Serialize};
 
 use crate::content::AbilityDef;
 use crate::rng::Rng;
+use crate::stats::{Pact, Stat, Stats};
 
 /// The highest rank an ability reaches.
 pub const MAX_RANK: u8 = 8;
@@ -74,7 +76,18 @@ impl Rarity {
         }
     }
 
-    /// Chance in 1000 of a card being this rare.
+    /// How many common tomes a tome of this rarity is worth.
+    pub fn scale(self) -> f32 {
+        match self {
+            Rarity::Common => 1.0,
+            Rarity::Uncommon => 1.4,
+            Rarity::Rare => 1.9,
+            Rarity::Epic => 2.6,
+            Rarity::Legendary => 3.5,
+        }
+    }
+
+    /// Chance in 1000 of a card being this rare, without luck.
     fn weight(self) -> u32 {
         match self {
             Rarity::Common => 600,
@@ -85,41 +98,50 @@ impl Rarity {
         }
     }
 
-    pub(crate) fn roll(rng: &mut Rng) -> Rarity {
-        let total: u32 = Rarity::ALL.iter().map(|r| r.weight()).sum();
-        let mut pick = (rng.next_u64() % u64::from(total)) as u32;
+    /// A rarity at random. `luck` (a hero's [`Stat::Luck`]) makes every tier above Common likelier,
+    /// the rarer ones the more: 0.5 luck makes Uncommon 1.5 times as likely, Legendary 5 times.
+    pub(crate) fn roll(rng: &mut Rng, luck: f32) -> Rarity {
+        let weight = |r: Rarity| f64::from(r.weight()) * f64::from(1.0 + luck.max(0.0)).powi(r as i32);
+        let total: f64 = Rarity::ALL.iter().map(|&r| weight(r)).sum();
+        let mut pick = f64::from(rng.f32()) * total;
         for r in Rarity::ALL {
-            if pick < r.weight() {
+            if pick < weight(r) {
                 return r;
             }
-            pick -= r.weight();
+            pick -= weight(r);
         }
-        Rarity::Common
-    }
-
-    /// The bonus this rarity gives a card of `kind`.
-    pub fn bonus(self, kind: CardKind) -> f32 {
-        match kind {
-            CardKind::Learn => self.learn_bonus(),
-            CardKind::Upgrade => self.upgrade_bonus(),
-        }
+        Rarity::Legendary
     }
 }
 
-/// Whether a card teaches a new spell or raises a known one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What a card does when picked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CardKind {
-    Learn,
-    Upgrade,
+    /// Teach a new spell: an index into the content's abilities.
+    Learn(usize),
+    /// Raise a known spell one rank.
+    Upgrade(usize),
+    /// Raise a stat by a tome of the card's rarity ([`Stat::tome_amount`]).
+    Tome(Stat),
+    /// A Cursed Altar's bargain: a boon of the card's rarity, and its bane.
+    Pact(Pact),
 }
 
-/// A level-up card.
+/// A card in a hand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
-    /// Index into the content's abilities.
-    pub ability: usize,
     pub kind: CardKind,
     pub rarity: Rarity,
+}
+
+impl Card {
+    /// The ability it teaches or raises, if it is a spell card.
+    pub fn ability(&self) -> Option<usize> {
+        match self.kind {
+            CardKind::Learn(a) | CardKind::Upgrade(a) => Some(a),
+            CardKind::Tome(_) | CardKind::Pact(_) => None,
+        }
+    }
 }
 
 /// What an ability does at a rank, with a damage `bonus` (0.25 is +25%).
@@ -135,6 +157,9 @@ pub struct AbilityStats {
     pub radius: f32,
 }
 
+/// The shortest a cooldown gets.
+const MIN_COOLDOWN: f32 = 0.2;
+
 /// An ability's numbers at `rank` (1 up to [`MAX_RANK`]): each rank adds 30% damage and takes 7%
 /// off the cooldown, and ranks 3, 5 and 7 each add a target.
 pub fn ability_stats(def: &AbilityDef, rank: u8, bonus: f32) -> AbilityStats {
@@ -142,10 +167,24 @@ pub fn ability_stats(def: &AbilityDef, rank: u8, bonus: f32) -> AbilityStats {
     let extra = [3u8, 5, 7].iter().filter(|&&r| rank >= r).count() as u32;
     AbilityStats {
         damage: def.damage * (1.0 + 0.3 * f32::from(rank - 1)) * (1.0 + bonus),
-        cooldown: (def.cooldown * 0.93f32.powi(i32::from(rank) - 1)).max(0.2),
+        cooldown: (def.cooldown * 0.93f32.powi(i32::from(rank) - 1)).max(MIN_COOLDOWN),
         count: def.count + extra,
         range: def.range,
         radius: def.radius,
+    }
+}
+
+impl AbilityStats {
+    /// These numbers with a hero's [`Stats`] on top: more damage, shorter cooldowns, wider areas
+    /// and more targets.
+    pub fn with(self, stats: &Stats) -> AbilityStats {
+        AbilityStats {
+            damage: self.damage * (1.0 + stats.get(Stat::Damage)),
+            cooldown: (self.cooldown * (1.0 - stats.get(Stat::Cooldown))).max(MIN_COOLDOWN),
+            count: self.count + stats.get(Stat::Projectiles).round() as u32,
+            range: self.range,
+            radius: self.radius * (1.0 + stats.get(Stat::Area)),
+        }
     }
 }
 
@@ -153,15 +192,28 @@ pub fn ability_stats(def: &AbilityDef, rank: u8, bonus: f32) -> AbilityStats {
 mod tests {
     use super::*;
 
-    #[test]
-    fn rarities_roll_in_their_proportions() {
+    fn tally(luck: f32) -> [u32; 5] {
         let mut rng = Rng::new(9);
         let mut seen = [0u32; 5];
         for _ in 0..100_000 {
-            seen[Rarity::roll(&mut rng) as usize] += 1;
+            seen[Rarity::roll(&mut rng, luck) as usize] += 1;
         }
+        seen
+    }
+
+    #[test]
+    fn rarities_roll_in_their_proportions() {
+        let seen = tally(0.0);
         assert!(seen[0] > 55_000 && seen[0] < 65_000, "{seen:?}");
         assert!(seen[4] > 500 && seen[4] < 1_500, "{seen:?}");
+    }
+
+    #[test]
+    fn luck_makes_rare_cards_likelier() {
+        let plain = tally(0.0);
+        let lucky = tally(1.0);
+        assert!(lucky[0] < plain[0], "{lucky:?} vs {plain:?}");
+        assert!(lucky[4] > plain[4] * 8, "{lucky:?} vs {plain:?}");
     }
 
     #[test]
@@ -173,5 +225,22 @@ mod tests {
         assert_eq!(r3.count, r1.count + 1);
         let boosted = ability_stats(&def, 1, 0.5);
         assert!((boosted.damage - r1.damage * 1.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn hero_stats_sharpen_every_ability() {
+        let def = crate::content::tests::sample().abilities[1].clone();
+        let plain = ability_stats(&def, 1, 0.0);
+        let mut stats = Stats::default();
+        stats.add(Stat::Damage, 0.5);
+        stats.add(Stat::Cooldown, 0.2);
+        stats.add(Stat::Area, 0.25);
+        stats.add(Stat::Projectiles, 2.0);
+        let sharp = plain.with(&stats);
+        assert!((sharp.damage - plain.damage * 1.5).abs() < 1e-4);
+        assert!((sharp.cooldown - plain.cooldown * 0.8).abs() < 1e-4);
+        assert!((sharp.radius - plain.radius * 1.25).abs() < 1e-4);
+        assert_eq!(sharp.count, plain.count + 2);
+        assert_eq!(plain.with(&Stats::default()), plain);
     }
 }
