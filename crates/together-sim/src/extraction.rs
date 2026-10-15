@@ -172,7 +172,11 @@ impl ExtractionDef {
 
     /// The skull `heat` stands at: the last whose `at` it has reached.
     pub fn skull_index(&self, heat: f32) -> usize {
-        self.heat.skulls.iter().rposition(|s| heat >= s.at).unwrap_or(0)
+        self.heat
+            .skulls
+            .iter()
+            .rposition(|s| heat >= s.at)
+            .unwrap_or(0)
     }
 
     pub fn skull(&self, heat: f32) -> &SkullDef {
@@ -188,7 +192,10 @@ impl ExtractionDef {
 /// Where heroes may go: the arena's circle, or an extraction map's outline.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Bounds {
-    Circle { center: V2, radius: f32 },
+    Circle {
+        center: V2,
+        radius: f32,
+    },
     /// A convex polygon, corners in order.
     Polygon(Vec<V2>),
 }
@@ -403,7 +410,13 @@ pub(crate) mod tests {
     fn an_exit_outside_the_outline_is_refused() {
         let err = maps_with("pos: (200.0, 0.0)", "pos: (900.0, 0.0)").unwrap_err();
         assert!(
-            matches!(err, ContentError::Invalid { why: "has an exit outside its boundary", .. }),
+            matches!(
+                err,
+                ContentError::Invalid {
+                    why: "has an exit outside its boundary",
+                    ..
+                }
+            ),
             "{err}"
         );
     }

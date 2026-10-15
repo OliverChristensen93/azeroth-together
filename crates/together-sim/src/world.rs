@@ -850,6 +850,7 @@ impl World {
         self.collect_pickups();
         self.use_interactables();
         self.tend_arena();
+        self.tend_extraction();
         self.level_up();
     }
 
@@ -1531,7 +1532,10 @@ impl World {
             } else {
                 0
             };
-            self.drop_gem(pos, worth * reward, gold);
+            let paid = self.reward_of(killer);
+            let scale = |n: u32| (n as f32 * paid).round() as u32;
+            self.drop_gem(pos, scale(worth * reward), scale(gold));
+            self.heat_from_kill(killer);
             if let Some(by) = killer {
                 self.on_kill(by, pos, max_hp, worth);
             }
@@ -1618,7 +1622,7 @@ impl World {
     /// never below rare from an altar. Treasure (from a chest or a cache) is an item, of the
     /// item's own rarity, the rarer ones the less often ([`World::lucky_item`]).
     fn deal(&mut self, h: usize, source: Source) -> Offer {
-        let luck = self.heroes[h].stats.get(Stat::Luck);
+        let luck = self.heroes[h].stats.get(Stat::Luck) + self.reward_luck(self.heroes[h].player);
         let mut options = self.options(h, source);
         let treasure = matches!(
             source,
