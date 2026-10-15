@@ -25,7 +25,7 @@ pub use cards::{
 };
 pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
-    WeaponDef, ZoneDef,
+    Tuning, WeaponDef, ZoneDef,
 };
 pub use extraction::{
     Bounds, ExitDef, ExitState, Extraction, ExtractionDef, ExtractionSettings, HeatDef, HunterDef,

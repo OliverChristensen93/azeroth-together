@@ -456,7 +456,7 @@ impl World {
                 .map(|&(p, _)| p)
                 .collect();
             if !state.open {
-                if elapsed < exit.opens_at {
+                if elapsed < state.opens_at {
                     continue;
                 }
                 state.open = true;
@@ -1067,5 +1067,15 @@ mod tests {
             let horde = w.enemies.iter().filter(|e| !e.elite && !e.boss).count();
             assert!(horde <= 80, "{horde}");
         }
+    }
+
+    #[test]
+    fn an_exit_opens_at_the_time_its_state_carries() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        assert_eq!(state(&w).exits[0].opens_at, 60.0);
+        state_mut(&mut w).exits[0].opens_at = 1.0;
+        secs(&mut w, 1.5);
+        assert!(state(&w).exits[0].open);
     }
 }

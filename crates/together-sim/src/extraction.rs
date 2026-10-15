@@ -308,6 +308,8 @@ pub struct Extraction {
 /// How one exit stands.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExitState {
+    /// Seconds into the run it opens: the map's time, as the host tuned it.
+    pub opens_at: f32,
     pub open: bool,
     /// How far a hero standing in it has called a flight, 0 to 1.
     pub calling: f32,
@@ -330,7 +332,14 @@ impl Extraction {
             told: Vec::new(),
             quiet: 0.0,
             hunt: 0.0,
-            exits: vec![ExitState::default(); def.exits.len()],
+            exits: def
+                .exits
+                .iter()
+                .map(|e| ExitState {
+                    opens_at: e.opens_at,
+                    ..ExitState::default()
+                })
+                .collect(),
         }
     }
 }
@@ -487,5 +496,30 @@ pub(crate) mod tests {
         assert_eq!(ring.clamp(V2::new(105.0, 0.0)), V2::new(105.0, 0.0));
         assert!(ring.inside(V2::new(104.0, 0.0), 3.0));
         assert!(!ring.inside(V2::new(108.0, 0.0), 3.0));
+    }
+
+    #[test]
+    fn tuning_scales_exits_flights_heat_horde_and_regen() {
+        let base = test_content("").with_rules("(hero_regen: 1.0)").unwrap();
+        let tuned = base.tuned(&crate::content::Tuning {
+            exits: 0.5,
+            flight: 2.0,
+            heat: 3.0,
+            horde: 0.5,
+            regen: 4.0,
+        });
+        let (a, b) = (&base.extractions[0], &tuned.extractions[0]);
+        assert_eq!(b.exits[0].opens_at, a.exits[0].opens_at * 0.5);
+        assert_eq!(b.exits[1].flight, a.exits[1].flight * 2.0);
+        assert_eq!(b.heat.outside, a.heat.outside * 3.0);
+        assert_eq!(b.heat.kill, a.heat.kill * 3.0);
+        assert_eq!(b.heat.flight, a.heat.flight * 3.0);
+        assert_eq!(b.heat.floor_per_min, a.heat.floor_per_min * 3.0);
+        assert_eq!(b.heat.skulls[5].spawns, a.heat.skulls[5].spawns * 0.5);
+        assert_eq!(b.max_enemies_per_hero, a.max_enemies_per_hero / 2);
+        assert_eq!(tuned.rules.hero_regen, 4.0);
+        let same = base.tuned(&crate::content::Tuning::default());
+        assert_eq!(same.extractions[0].exits[0].opens_at, a.exits[0].opens_at);
+        assert_eq!(same.rules.hero_regen, 1.0);
     }
 }

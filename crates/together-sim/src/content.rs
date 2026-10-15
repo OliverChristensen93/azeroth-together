@@ -243,6 +243,34 @@ impl Default for Rules {
     }
 }
 
+/// Multipliers a tester sets on the menu's dev panel, applied to a hosted run's content
+/// ([`Content::tuned`]); every one 1 leaves the content as it is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tuning {
+    /// Seconds until each extraction exit opens, times.
+    pub exits: f32,
+    /// Seconds a flight takes to come, times.
+    pub flight: f32,
+    /// Every heat gain and the nightfall floor's climb, times.
+    pub heat: f32,
+    /// The extraction horde's size at every skull, and its cap, times.
+    pub horde: f32,
+    /// The rules' base hero regen, times.
+    pub regen: f32,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            exits: 1.0,
+            flight: 1.0,
+            heat: 1.0,
+            horde: 1.0,
+            regen: 1.0,
+        }
+    }
+}
+
 /// All the game's data, its cross-references checked.
 #[derive(Clone, Debug)]
 pub struct Content {
@@ -443,6 +471,28 @@ impl Content {
         }
         self.extractions = maps;
         Ok(self)
+    }
+
+    /// A copy of these contents with `t`'s multipliers applied.
+    pub fn tuned(&self, t: &Tuning) -> Self {
+        let mut c = self.clone();
+        c.rules.hero_regen *= t.regen;
+        for map in &mut c.extractions {
+            for exit in &mut map.exits {
+                exit.opens_at *= t.exits;
+                exit.flight *= t.flight;
+            }
+            let heat = &mut map.heat;
+            heat.outside *= t.heat;
+            heat.kill *= t.heat;
+            heat.flight *= t.heat;
+            heat.floor_per_min *= t.heat;
+            for skull in &mut heat.skulls {
+                skull.spawns *= t.horde;
+            }
+            map.max_enemies_per_hero = (map.max_enemies_per_hero as f32 * t.horde).round() as u32;
+        }
+        c
     }
 
     pub fn ability(&self, key: &str) -> Option<usize> {
