@@ -27,7 +27,7 @@ Chest, Challenge Idol, Moonwell); items and a stage boss are in progress.
 | 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 🟢 Greenlit · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). Being built on the Megabonk branch (its slot rules may differ). See [A](#a-items-and-tomes-in-a-run). |
 | 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Skipped for now | Fixed recipes turn a run into a hunt for the partner piece. We test augments (2c) first and revisit. |
 | 2b | Fusions: two spells merge into one | — | ⛔ Not doing | Fixed recipes force a hunt; any-with-any has no good meaning; and fusing *removes* half of each spell (a trap's summon, a damage spell's damage), stranding the modifiers built for it. |
-| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). How the pick is offered: 💬 see [C](#c-augments). |
+| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). Offered on a bonus Augment screen with Pick / Reroll / Hold (agreed); pauses co-op like a level-up. See [C](#c-augments). |
 | 2d | Grimoire: a codex of augments and Uniques you have found, the rest as hints | VS collection | 💡 New idea | Knowledge as progression between runs. |
 | 2e | **Unique items that augment or link spells** (e.g. "When Ice Barrier breaks, cast Frost Nova") | Azeroth Survivors | 🟢 Greenlit | Mostly necklaces. Triggered casts use your rank and augments and ignore cooldown. |
 | 2f | **Spell design rules**: about 12 spells per class, each reworked for the genre; single-target spells prioritize bosses and elites | Azeroth Survivors | 🟢 Greenlit | Kidney Shot just damages and stuns. Single-target and area spells both earn a place. We have 68 spells today (~7.5 per class). |
@@ -104,7 +104,7 @@ Spells grow by **augments** chosen at **rank 7** and **rank 14**; 14 is max rank
 all 6 spells would take 78 rank-ups, so most spells reach rank 7 (their first augment) and two or
 three committed spells reach 14. Rank 14 is a commitment, not a given. Tune when playable.
 
-**How the milestone works (proposed, 💬).** A spell that reaches rank 7 (or 14) is *ready to
+**How the milestone works (agreed).** A spell that reaches rank 7 (or 14) is *ready to
 augment*, and an **Augment screen** opens right away with 3 augments for it (rarity-rolled: rarer
 augments are stronger versions or rarer kinds). It is a bonus screen: it does not use a level-up.
 On it you can:
@@ -123,8 +123,8 @@ with at most two augments.
   level-up. Harsher, and hunting a conversion would mean giving up spell and tome picks.
 - **Synergy weighting:** the augment hand leans toward your build's tags (Frost spells owned →
   Frostfire more likely than Spellfire), never guaranteed; talents can lean it further.
-- **Co-op:** level-ups pause the run until everyone has picked, and augment screens add pauses. Try
-  the pause first; if it interrupts too much, let augment screens be picked with 1/2/3 while moving.
+- **Co-op (agreed for now):** augment screens pause the run until everyone has picked, like
+  level-ups. If that interrupts too much, picking with 1/2/3 while moving is the fallback.
 
 **The two tiers do different jobs:**
 
@@ -297,12 +297,10 @@ WoW maps have little verticality, so jumps should be about crossing the horde, n
 
 ## Open questions for us
 
-1. The augment flow: the bonus Augment screen with Pick / Reroll / Hold, as in [C](#c-augments)?
-2. Co-op: should augment screens pause the run like level-ups?
-3. The talent web: its size, how points are earned, its first notables and keystones.
-4. Dormant gear: what a piece costs to switch on, and whether order or rarity changes the price.
-5. Movement feel (10b): which of dash charges, double jump, glide, momentum and jump pads.
-6. What to take from the Megabonk branch once it is playable.
+1. The talent web: its size, how points are earned, its first notables and keystones.
+2. Dormant gear: what a piece costs to switch on, and whether order or rarity changes the price.
+3. Movement feel (10b): which of dash charges, double jump, glide, momentum and jump pads.
+4. What to take from the Megabonk branch once it is playable.
 
 Answered (2026-10-15):
 - **Talent points and gear:** a setting, per class or shared, to test both.
@@ -315,5 +313,7 @@ Answered (2026-10-15):
 - **Augments:** the growth system, at ranks 7 and 14, max rank 14; pools of ~4 spell-specific
   augments per spell plus a shared tag library.
 - **Evolutions:** skipped for now; test augments first.
+- **Augment flow:** a bonus Augment screen at ranks 7 and 14 with Pick / Reroll / Hold; holding
+  keeps the spell at its rank until augmented; it pauses co-op like a level-up.
 - **Talent web:** start with it.
 - **Gear:** jewelry in the run; armor and weapons brought in, dormant, switched on with gold.
