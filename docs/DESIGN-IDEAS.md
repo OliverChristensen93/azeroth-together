@@ -182,7 +182,12 @@ specific augments. Two guard rails:
   progression between runs we want.
 
 **Rule for triggered casts:** a spell cast by a trigger is the real spell, with your rank, augments
-and modifiers, and it ignores its own cooldown. If you do not own it, it casts at rank 1. This makes
+and modifiers, and it ignores its own cooldown. If you do not own it, it casts at rank 1. Triggers and
+cooldown resets have an internal cooldown, so no two of them can loop forever.
+
+**Rules for writing augments (agreed):** every spell's rank-14 pair has at least one augment that
+changes how you think about and play the spell; and every rank-7 augment leaves at least one rank-14
+augment on that spell that still works with it. This makes
 "+100% damage, +50% cooldown" Frost Nova behind a low-cooldown Ice Barrier a real build.
 
 Unique items (2e) can add augments or triggers too, which is where builds get wild.

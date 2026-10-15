@@ -12,13 +12,22 @@ Rules in short:
 - **At most one conversion per spell.**
 - A spell cast by a **trigger** is the real spell, with your rank, augments and modifiers, and
   ignores its cooldown; if you do not own it, it casts at rank 1.
+- **Triggers and resets have an internal cooldown** (say 8 s), so two of them can never loop. Without
+  it, Cold Snap + Shattering Barrier would cast Frost Nova forever in a dense horde.
+
+Design rules for writing augments (agreed 2026-10-15):
+
+- **Every spell's rank-14 pair has at least one augment that makes you think differently about the
+  spell** and may change how you play around it.
+- **Every rank-7 augment leaves at least one rank-14 augment on the same spell that still works
+  with it.** Both need not fit every path, but no rank-7 choice may dead-end the spell.
 
 ## Status effects the mage uses
 
 | Effect | What it does |
 |---|---|
 | **Chill** | Slowed 40% for 3 s. The Slow tag. |
-| **Freeze** | Rooted for 2 s; counts as Frozen (Shatter effects crit Frozen enemies). Elites are frozen for half as long; bosses are Chilled instead. |
+| **Freeze** | Rooted for 2 s; counts as Frozen (Shatter effects crit Frozen enemies). Elites are frozen for half as long, bosses for a quarter as long. |
 | **Burning** | Fire damage over time (Ignite and friends). Burns of the same source refresh, they do not stack. |
 | **Stun** | Cannot move or attack. Bosses resist it. |
 
@@ -79,7 +88,7 @@ Two per milestone per spell. Rank 7 shapes the spell; rank 14 is the capstone.
 | 7 | **Permafrost** | Freeze lasts 1 s longer, and enemies stay Chilled after it thaws. |
 | 7 | **Shattering Nova** | +150% damage, no longer Freezes. |
 | 14 | **Frostbite** | A Frozen enemy that dies shatters for 50% of its max health as Frost damage in 4 yd: chain reactions. |
-| 14 | **Cold Snap** | Freezing 10 or more enemies at once resets the cooldowns of all your Frost spells. |
+| 14 | **Cold Snap** | Frost Nova hitting 10 or more enemies resets the cooldowns of your other Frost spells (at most once every 8 s). Works with Shattering Nova too. |
 
 ### 5. Arcane Explosion
 | Rank | Augment | Effect |
@@ -187,7 +196,11 @@ Open to any spell with the tag, any class. The mage would see these mixed into i
 Barrier**, plus Frost Nova with **Shattering Nova** (+150% damage, no Freeze). The barrier breaks
 often in melee and fires a huge Frost Nova each time, ignoring its cooldown.
 
-**What to look at in review:**
-- Is any augment a "must take" that makes the others pointless?
-- Does every spell have one rank-7 option that keeps it simple and one that changes how it plays?
-- Are there two capstones that make each other absurd (Cold Snap with Frostbite, say)?
+**Review notes (2026-10-15):**
+- First look: balanced enough; no augment stands out as a must-take.
+- Freeze: elites half as long, bosses a quarter as long (was: bosses only Chilled).
+- Frost Nova's **Shattering Nova** (no Freeze) dead-ended both old capstones; **Cold Snap** now counts
+  enemies *hit*, so it works on either path. Every other rank-7 augment was checked against its
+  spell's capstones and keeps at least one working.
+- A spell has only one capstone (one augment per milestone), so capstones combine only across spells;
+  the internal cooldown on triggers and resets covers the loops that creates.
