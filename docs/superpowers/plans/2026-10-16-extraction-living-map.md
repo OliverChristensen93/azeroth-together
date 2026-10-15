@@ -1411,7 +1411,7 @@ Creatures exist only near living heroes: they wake at their spawn and sleep agai
 
 - [ ] **Step 1: Failing tests**
 
-In `crates/together-sim/src/world/extraction.rs`, change `#[cfg(test)]\nmod tests {` to `#[cfg(test)]\npub(super) mod tests {` so its helpers can be shared.
+In `crates/together-sim/src/world/extraction.rs`, make the test module `pub(super) mod tests` (it is `mod tests` now), and its helpers `run`, `hush`, `at`, `secs`, `state` and `state_mut` `pub(crate) fn` instead of `pub(super) fn`, so the tests of `world::wildlife` (a sibling module) can use them.
 
 Create `crates/together-sim/src/world/wildlife.rs` with only tests for now:
 
@@ -1430,7 +1430,7 @@ mod tests {
     use super::*;
     use crate::extraction::tests::test_content;
     use crate::extraction::HotZoneDef;
-    use crate::world::extraction::tests::{at, secs, state_mut};
+    use crate::world::extraction::tests::{at, secs};
 
     /// Wolves at (150, 0), (155, 5) and (180, 0); a neutral boar at (0, 200); kobolds that
     /// call for help at (0, -150) and (0, -175); a wolf patrolling from (-200, 0) to (-200, 50).
@@ -1574,7 +1574,6 @@ mod tests {
         secs(&mut w, 2.0);
         assert!(!w.enemies.is_empty());
         assert!(w.enemies.iter().all(|e| e.engaged && !e.is_wild()));
-        let _ = state_mut;
     }
 }
 ```
@@ -1866,7 +1865,7 @@ Idle creatures walk their patrols or wander, notice heroes who come within their
 
 - [ ] **Step 1: Failing tests**
 
-Append inside `mod tests` in `world/wildlife.rs` (and add `PlayerInput` to nothing: it comes in through `use super::*`):
+Change the tests' helper import to `use crate::world::extraction::tests::{at, secs, state_mut};`, then append inside `mod tests` in `world/wildlife.rs` (`PlayerInput` comes in through `use super::*`):
 
 ```rust
     #[test]
