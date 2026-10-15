@@ -184,6 +184,47 @@ fn white() -> u32 {
     0xFF_FF_FF
 }
 
+fn four() -> u32 {
+    4
+}
+fn five_u8() -> u8 {
+    5
+}
+fn ninety() -> f32 {
+    90.0
+}
+
+/// The run's limits, from `rules.ron`: numbers a game mode may set its own way. Every one has a
+/// default, so a mode's file names only what it changes.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Rules {
+    /// How many different tomes a hero holds; once full, only those are raised.
+    #[serde(default = "four")]
+    pub tome_slots: u32,
+    /// The rank a tome stops at.
+    #[serde(default = "five_u8")]
+    pub tome_max_rank: u8,
+    /// The most copies of one item a hero holds. An item whose chance tops out sooner stops there
+    /// ([`crate::Item::max_copies`]).
+    #[serde(default = "five_u8")]
+    pub item_max_copies: u8,
+    /// Seconds between chances of a new shrine, while fewer than a zone's
+    /// [`ZoneDef::shrines_at_once`] stand.
+    #[serde(default = "ninety")]
+    pub shrine_every: f32,
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            tome_slots: four(),
+            tome_max_rank: five_u8(),
+            item_max_copies: five_u8(),
+            shrine_every: ninety(),
+        }
+    }
+}
+
 /// All the game's data, its cross-references checked.
 #[derive(Clone, Debug)]
 pub struct Content {
@@ -191,6 +232,8 @@ pub struct Content {
     pub abilities: Vec<AbilityDef>,
     pub enemies: Vec<EnemyDef>,
     pub zones: Vec<ZoneDef>,
+    /// [`Rules::default`] until [`Content::with_rules`] reads a file.
+    pub rules: Rules,
 }
 
 #[derive(Debug)]
@@ -333,7 +376,17 @@ impl Content {
             abilities,
             enemies,
             zones,
+            rules: Rules::default(),
         })
+    }
+
+    /// These contents with the rules in `text` (`rules.ron`) in place of the defaults.
+    pub fn with_rules(mut self, text: &str) -> Result<Self, ContentError> {
+        self.rules = ron::from_str(text).map_err(|e| ContentError::Parse {
+            file: "rules.ron",
+            message: e.to_string(),
+        })?;
+        Ok(self)
     }
 
     pub fn ability(&self, key: &str) -> Option<usize> {
@@ -437,6 +490,15 @@ pub(crate) mod tests {
         })
         .unwrap_err();
         assert!(matches!(err, ContentError::DuplicateKey { .. }));
+    }
+
+    #[test]
+    fn rules_left_out_keep_their_defaults() {
+        let c = sample().with_rules("(tome_slots: 2)").unwrap();
+        assert_eq!(c.rules.tome_slots, 2);
+        assert_eq!(c.rules.tome_max_rank, Rules::default().tome_max_rank);
+        let err = sample().with_rules("(tome_slots: \"many\")").unwrap_err();
+        assert!(err.to_string().starts_with("rules.ron:"));
     }
 
     #[test]

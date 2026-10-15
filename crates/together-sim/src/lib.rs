@@ -19,10 +19,12 @@ mod rng;
 mod stats;
 mod world;
 
-pub use cards::{ability_stats, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
+pub use cards::{
+    ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK,
+};
 pub use content::{
-    AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, WeaponDef,
-    ZoneDef,
+    AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
+    WeaponDef, ZoneDef,
 };
 pub use interact::{
     chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement,

@@ -85,17 +85,39 @@ impl Item {
         }
     }
 
+    /// For an item whose effect comes by chance: the chance each copy adds, and the most it
+    /// reaches, five copies in.
+    fn odds(self) -> Option<(f32, f32)> {
+        match self {
+            Item::StaticShard => Some((0.1, 0.5)),
+            Item::EmberCore => Some((0.12, 0.6)),
+            Item::SkeletonKey => Some((0.2, 1.0)),
+            Item::GoblinPurse => Some((0.08, 0.4)),
+            _ => None,
+        }
+    }
+
     /// The chance its effect fires, with `stacks` copies: each copy adds the same again, up to a
-    /// cap.
+    /// cap; 1 for an item that does not act by chance.
     pub fn chance(self, stacks: u8) -> f32 {
-        let (each, cap) = match self {
-            Item::StaticShard => (0.08, 0.5),
-            Item::EmberCore => (0.12, 0.6),
-            Item::SkeletonKey => (0.25, 1.0),
-            Item::GoblinPurse => (0.04, 0.4),
-            _ => (1.0, 1.0),
-        };
-        (each * f32::from(stacks)).min(cap)
+        self.odds().map_or(1.0, |(each, cap)| {
+            let sum = each * f32::from(stacks);
+            // Exactly the cap at the copy that reaches it, whatever the rounding.
+            if sum >= cap - 1e-4 {
+                cap
+            } else {
+                sum
+            }
+        })
+    }
+
+    /// The most copies worth holding, with `limit` the rules' most of any item: a chance item
+    /// stops where its chance tops out, so no copy is wasted.
+    pub fn max_copies(self, limit: u8) -> u8 {
+        match self.odds() {
+            Some((each, cap)) => limit.min((cap / each).round() as u8),
+            None => limit,
+        }
     }
 
     /// What it does, with `stacks` copies, as its card says.
@@ -152,6 +174,19 @@ pub fn ward_cooldown(stacks: u8) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chance_item_tops_out_at_its_last_copy() {
+        for item in Item::ALL {
+            let max = item.max_copies(5);
+            assert_eq!(max, 5, "{item:?}");
+            if item.odds().is_some() {
+                assert!(item.chance(max - 1) < item.chance(max), "{item:?}: a wasted copy");
+                assert_eq!(item.chance(max), item.chance(max + 1), "{item:?}");
+            }
+        }
+        assert_eq!(Item::StaticShard.max_copies(3), 3, "the rules' limit holds");
+    }
 
     #[test]
     fn copies_stack_up_to_a_cap() {

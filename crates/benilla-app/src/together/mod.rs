@@ -11,7 +11,7 @@
 //! why nothing here decides anything about the game.
 //!
 //! Configuration, for now: `TOGETHER_CLASS` (default `mage`), `TOGETHER_ZONE` (default `elwynn`),
-//! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the four RON files; default
+//! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the RON files; default
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
 mod actions;
@@ -52,7 +52,8 @@ pub(crate) fn start_map() -> u32 {
     START_MAP.load(Ordering::Relaxed)
 }
 
-/// The four content files' text, for the content hash a co-op client and host compare.
+/// The content files' text, for the content hash a co-op client and host compare: classes,
+/// abilities, enemies, and the zones with the rules after them.
 static CONTENT_TEXTS: OnceLock<(String, String, String, String)> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static (String, String, String, String) {
@@ -106,12 +107,14 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         include_str!("../../../../content/enemies.ron"),
     )?;
     let zones = read("zones.ron", include_str!("../../../../content/zones.ron"))?;
+    let rules = read("rules.ron", include_str!("../../../../content/rules.ron"))?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         abilities: &abilities,
         enemies: &enemies,
         zones: &zones,
     })
+    .and_then(|c| c.with_rules(&rules))
     .map_err(|e| e.to_string())?;
     let zone = content
         .zone(&zone_key())
@@ -128,7 +131,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     }
     START_MAP.store(content.zones[zone].map, Ordering::Relaxed);
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, zones));
+    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, format!("{zones}\n{rules}")));
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
 }

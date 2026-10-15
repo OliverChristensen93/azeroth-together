@@ -14,6 +14,7 @@ fn shipped() -> Content {
         enemies: include_str!("../../../content/enemies.ron"),
         zones: include_str!("../../../content/zones.ron"),
     })
+    .and_then(|c| c.with_rules(include_str!("../../../content/rules.ron")))
     .unwrap_or_else(|e| panic!("content/ is invalid: {e}"))
 }
 

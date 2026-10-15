@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, AbilityKind, Card, CardKind, Hero, InteractableKind, Item, Rarity, Source,
-    Stat, MAX_ABILITIES,
+    ability_stats, fallback_gold, AbilityKind, Card, CardKind, Hero, InteractableKind, Item,
+    Rarity, Source, Stat, MAX_ABILITIES,
 };
 
 use super::menu::SpellIcon;
@@ -333,46 +333,94 @@ fn stat_now(hero: &Hero, stat: Stat) -> String {
     stat.describe(hero.stats.get(stat))
 }
 
-/// The face of any card.
-fn face(hero: &Hero, card: &Card) -> Face {
+/// The face of any card, at the party's `level`.
+fn face(hero: &Hero, level: u32, card: &Card) -> Face {
     match card.kind {
         CardKind::Learn(a) => spell_face(hero, a, true, card.rarity),
         CardKind::Upgrade(a) => spell_face(hero, a, false, card.rarity),
-        CardKind::Tome(stat) => Face {
-            icon: stat_icon(stat),
-            name: stat.tome().into(),
-            sub: stat.name().into(),
-            badge: "TOME".into(),
-            bright: true,
-            description: "Raises a stat for the rest of the run.".into(),
-            lines: vec![
-                (stat.describe(stat.tome_amount(card.rarity)), GREEN),
-                (format!("You have {}", stat_now(hero, stat)), GREY),
-            ],
-            footer: "Stacks with every other tome".into(),
-        },
+        CardKind::Tome(stat) => {
+            let rules = &content().rules;
+            let rank = hero.tome_rank(stat);
+            let (sub, footer) = if rank == 0 {
+                (
+                    format!("New tome  ·  rank 1 of {}", rules.tome_max_rank),
+                    format!(
+                        "Takes a tome slot {}/{}",
+                        hero.tomes.len() + 1,
+                        rules.tome_slots
+                    ),
+                )
+            } else {
+                (
+                    format!("Rank {rank} » {} of {}", rank + 1, rules.tome_max_rank),
+                    "Raises a tome you hold".to_string(),
+                )
+            };
+            Face {
+                icon: stat_icon(stat),
+                name: stat.tome().into(),
+                sub,
+                badge: format!("{}/{}", rank + 1, rules.tome_max_rank),
+                bright: true,
+                description: format!("Raises your {} for the run.", stat.name().to_lowercase()),
+                lines: vec![
+                    (stat.describe(stat.tome_amount(card.rarity)), GREEN),
+                    (format!("You have {}", stat_now(hero, stat)), GREY),
+                ],
+                footer,
+            }
+        }
         CardKind::Item(item) => {
             let held = hero.stacks(item);
+            let max = item.max_copies(content().rules.item_max_copies);
             let mut lines = vec![(item.describe(held.saturating_add(1)), GREEN)];
             if held > 0 {
                 lines.push((format!("You hold {held}: {}", item.describe(held)), GREY));
             }
-
             Face {
                 icon: item_icon(item),
                 name: item.name().into(),
-                sub: if held > 0 {
-                    format!("Item  ·  copy {}", held + 1)
-                } else {
-                    "Item".into()
-                },
-                badge: "ITEM".into(),
+                sub: format!("Item  ·  copy {} of {max}", held + 1),
+                badge: format!("{}/{max}", held + 1),
                 bright: true,
                 description: "Kept for the rest of the run.".into(),
                 lines,
                 footer: "Copies stack".into(),
             }
         }
+        CardKind::Gold => Face {
+            // Judgement.
+            icon: 20271,
+            name: "Purse of Gold".into(),
+            sub: "Nothing left to learn".into(),
+            badge: "GOLD".into(),
+            bright: false,
+            description: "Take gold instead.".into(),
+            lines: vec![(format!("+{} gold", fallback_gold(level)), GOLD)],
+            footer: "Before your gold gain".into(),
+        },
+        CardKind::Heal => Face {
+            // Holy Nova.
+            icon: 15237,
+            name: "Healing Draught".into(),
+            sub: "Nothing left to learn".into(),
+            badge: "HEAL".into(),
+            bright: false,
+            description: "Mend your wounds instead.".into(),
+            lines: vec![("Health back to full".into(), GREEN)],
+            footer: String::new(),
+        },
+        CardKind::Reroll => Face {
+            // Eviscerate.
+            icon: 2098,
+            name: "Gambler's Coin".into(),
+            sub: "Nothing left to learn".into(),
+            badge: "REROLL".into(),
+            bright: false,
+            description: "Try your luck later instead.".into(),
+            lines: vec![("+1 reroll".into(), GREEN)],
+            footer: String::new(),
+        },
         CardKind::Pact(pact) => Face {
             icon: stat_icon(pact.boon),
             name: format!("Pact of {}", pact.boon.name()),
@@ -397,6 +445,7 @@ fn build_card(
     row: &mut ChildSpawnerCommands,
     fonts: &Fonts,
     hero: &Hero,
+    level: u32,
     index: usize,
     card: &Card,
 ) {
@@ -406,7 +455,7 @@ fn build_card(
     } else {
         color
     };
-    let face = face(hero, card);
+    let face = face(hero, level, card);
 
     row.spawn((
         CardButton(index as u8),
@@ -649,7 +698,7 @@ pub(super) fn refresh(
         commands.entity(row).despawn_related::<Children>();
         commands.entity(row).with_children(|r| {
             for (i, card) in offer.cards.iter().enumerate() {
-                build_card(r, &fonts, hero, i, card);
+                build_card(r, &fonts, hero, now.level, i, card);
             }
         });
     }

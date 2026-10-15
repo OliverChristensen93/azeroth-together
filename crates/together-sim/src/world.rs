@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::cards::{ability_stats, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
+use crate::cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 use crate::content::{AbilityKind, Content};
 use crate::interact::{
     chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
@@ -302,6 +302,9 @@ pub struct Hero {
     pub speed: f32,
     /// Bonuses from tomes, pacts and items.
     pub stats: Stats,
+    /// The tomes taken, each with its rank: at most the rules' `tome_slots` of them, each up to
+    /// `tome_max_rank`.
+    pub tomes: Vec<(Stat, u8)>,
     /// Gold in this hero's own purse.
     pub gold: u32,
     /// Chests this hero has paid for, which sets the next one's price.
@@ -327,6 +330,14 @@ pub struct Hero {
 }
 
 impl Hero {
+    /// The rank of the tome of `stat`, 0 if not taken.
+    pub fn tome_rank(&self, stat: Stat) -> u8 {
+        self.tomes
+            .iter()
+            .find(|(s, _)| *s == stat)
+            .map_or(0, |&(_, n)| n)
+    }
+
     /// Copies of `item` held.
     pub fn stacks(&self, item: Item) -> u8 {
         self.items
@@ -497,6 +508,7 @@ impl World {
         let zone = content
             .zone(zone)
             .ok_or_else(|| WorldError::UnknownZone(zone.to_owned()))?;
+        let shrine_every = content.rules.shrine_every;
         let mut world = Self {
             content,
             zone,
@@ -509,7 +521,7 @@ impl World {
             interactables: Vec::new(),
             pickups: Vec::new(),
             buffs: Vec::new(),
-            shrine_timer: arena::SHRINE_EVERY,
+            shrine_timer: shrine_every,
             pot_timer: 0.0,
             powerup_timer: arena::POWERUP_EVERY,
             pending: Vec::new(),
@@ -596,6 +608,7 @@ impl World {
             max_hp: def.base_hp,
             speed: def.speed,
             stats: Stats::default(),
+            tomes: Vec::new(),
             gold: 0,
             chests: 0,
             items: Vec::new(),
@@ -860,7 +873,19 @@ impl World {
                     owned.bonus += card.rarity.upgrade_bonus();
                 }
             }
-            CardKind::Tome(stat) => hero.stats.add(stat, stat.tome_amount(card.rarity)),
+            CardKind::Tome(stat) => {
+                hero.stats.add(stat, stat.tome_amount(card.rarity));
+                match hero.tomes.iter_mut().find(|(s, _)| *s == stat) {
+                    Some((_, n)) => *n += 1,
+                    None => hero.tomes.push((stat, 1)),
+                }
+            }
+            CardKind::Gold => {
+                let gold = fallback_gold(self.level) as f32;
+                self.give_gold(h, gold);
+            }
+            CardKind::Heal => hero.hp = hero.max_hp,
+            CardKind::Reroll => hero.rerolls += 1,
             CardKind::Pact(pact) => {
                 hero.stats.add(pact.boon, pact.boon_amount(card.rarity));
                 pact.bane.apply(&mut hero.stats, &mut self.difficulty);
@@ -1590,6 +1615,16 @@ impl World {
             };
             cards.push(Card { kind, rarity });
         }
+        // Nothing left worth dealing: something useful rather than a short hand.
+        for kind in CardKind::FALLBACKS {
+            if cards.len() >= HAND {
+                break;
+            }
+            cards.push(Card {
+                kind,
+                rarity: Rarity::Common,
+            });
+        }
         Offer { cards, source }
     }
 
@@ -1615,23 +1650,18 @@ impl World {
     /// shrine's tomes, an altar's pacts, a chest's items (those whose proc ability the content
     /// has).
     fn options(&mut self, h: usize, source: Source) -> Vec<CardKind> {
-        let tomes = Stat::TOMES.map(CardKind::Tome);
         let Source::Interactable(kind) = source else {
             let mut options = self.spells(h);
-            let mut extra = tomes.to_vec();
-            for _ in 0..LEVEL_UP_TOMES {
+            let mut extra = self.tomes(h, false);
+            for _ in 0..LEVEL_UP_TOMES.min(extra.len()) {
                 let i = self.rng.index(extra.len());
                 options.push(extra.swap_remove(i));
             }
             return options;
         };
         match kind {
-            InteractableKind::TitanShrine => tomes.to_vec(),
-            InteractableKind::GoldenShrine => {
-                let mut all = tomes.to_vec();
-                all.push(CardKind::Tome(Stat::Projectiles));
-                all
-            }
+            InteractableKind::TitanShrine => self.tomes(h, false),
+            InteractableKind::GoldenShrine => self.tomes(h, true),
             InteractableKind::CursedAltar => {
                 let mut boons = Stat::TOMES.to_vec();
                 boons.push(Stat::Projectiles);
@@ -1648,15 +1678,37 @@ impl World {
                     })
                     .collect()
             }
-            InteractableKind::Chest | InteractableKind::Cache => Item::ALL
-                .into_iter()
-                .filter(|i| i.proc().is_none_or(|key| self.content.ability(key).is_some()))
-                .map(CardKind::Item)
-                .collect(),
+            InteractableKind::Chest | InteractableKind::Cache => {
+                let hero = &self.heroes[h];
+                let limit = self.content.rules.item_max_copies;
+                Item::ALL
+                    .into_iter()
+                    .filter(|i| i.proc().is_none_or(|key| self.content.ability(key).is_some()))
+                    .filter(|&i| hero.stacks(i) < i.max_copies(limit))
+                    .map(CardKind::Item)
+                    .collect()
+            }
             InteractableKind::ChallengeIdol | InteractableKind::WarBanner | InteractableKind::Pot => {
                 Vec::new()
             }
         }
+    }
+
+    /// The tomes hero `h` could take (with `projectiles`, the Tome of Multitudes among them): those
+    /// it has below their top rank, and while it has a free slot, those it has not.
+    fn tomes(&self, h: usize, projectiles: bool) -> Vec<CardKind> {
+        let hero = &self.heroes[h];
+        let rules = &self.content.rules;
+        let free = (hero.tomes.len() as u32) < rules.tome_slots;
+        Stat::ALL
+            .into_iter()
+            .filter(|&s| s != Stat::Projectiles || projectiles)
+            .filter(|&s| match hero.tome_rank(s) {
+                0 => free,
+                rank => rank < rules.tome_max_rank,
+            })
+            .map(CardKind::Tome)
+            .collect()
     }
 
     /// The spells hero `h` could still raise, and learn while it has a free slot.
@@ -2063,7 +2115,7 @@ mod tests {
                 assert!((hero.stats.get(stat) - stat.tome_amount(card.rarity)).abs() < 1e-6);
                 return;
             }
-            CardKind::Pact(_) | CardKind::Item(_) => panic!("a level-up deals no pacts or items"),
+            other => panic!("a fresh hero's level-up dealt {other:?}"),
         };
         let owned = hero
             .abilities
@@ -2735,11 +2787,11 @@ mod tests {
     #[test]
     fn a_skeleton_key_can_open_a_chest_for_free() {
         let mut w = world();
-        hold(&mut w, Item::SkeletonKey, 4);
+        hold(&mut w, Item::SkeletonKey, 5);
         only(&mut w, InteractableKind::Chest);
         w.heroes[0].gold = chest_price(0);
         fill(&mut w, InteractableKind::Chest);
-        assert_eq!(w.hero(0).unwrap().gold, chest_price(0), "four keys always open free");
+        assert_eq!(w.hero(0).unwrap().gold, chest_price(0), "five keys always open free");
         assert_eq!(w.hero(0).unwrap().chests, 1);
     }
 
@@ -2804,12 +2856,13 @@ mod tests {
         assert_eq!(shrines(&w).len(), cap, "a full arena to start");
         let first = shrines(&w)[0].id;
         w.interactables.retain(|i| i.id != first);
-        play(&mut w, (arena::SHRINE_EVERY * TICK_HZ as f32) as usize + 2);
+        let every = (w.content().rules.shrine_every * TICK_HZ as f32) as usize;
+        play(&mut w, every + 2);
         assert_eq!(shrines(&w).len(), cap, "a new one came");
         let hero = w.hero(0).unwrap().pos;
         let new = shrines(&w).into_iter().max_by_key(|i| i.id).unwrap();
         assert!(new.pos.distance(hero) >= 40.0, "it came in sight: {:?}", new.pos);
-        play(&mut w, (arena::SHRINE_EVERY * TICK_HZ as f32) as usize * 3);
+        play(&mut w, every * 3);
         assert_eq!(shrines(&w).len(), cap, "never more than the zone allows");
     }
 
@@ -2985,6 +3038,109 @@ mod tests {
         assert_eq!(mirror.pickups, host.pickups);
         assert_eq!(mirror.buffs, host.buffs);
         assert!(!mirror.buffs.is_empty());
+    }
+
+    /// Take a tome of `stat` `n` times, as picking its card would.
+    fn read(w: &mut World, stat: Stat, n: u8) {
+        for _ in 0..n {
+            w.take_card(
+                0,
+                Card {
+                    kind: CardKind::Tome(stat),
+                    rarity: Rarity::Common,
+                },
+            );
+        }
+    }
+
+    /// Every tome in hands dealt by `source` to hero 0, over many deals.
+    fn tomes_dealt(w: &mut World, source: Source) -> Vec<Stat> {
+        (0..200)
+            .flat_map(|_| w.deal(0, source).cards)
+            .filter_map(|c| match c.kind {
+                CardKind::Tome(s) => Some(s),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tomes_rank_up_and_full_slots_offer_no_new_tome() {
+        let mut w = world();
+        let slots = w.content().rules.tome_slots as usize;
+        let held = [Stat::Damage, Stat::Speed, Stat::Luck, Stat::Armor];
+        assert_eq!(held.len(), slots);
+        read(&mut w, Stat::Damage, 2);
+        assert_eq!(w.hero(0).unwrap().tome_rank(Stat::Damage), 2);
+        for &s in &held[1..] {
+            read(&mut w, s, 1);
+        }
+        for source in [Source::LevelUp, Source::Interactable(InteractableKind::TitanShrine)] {
+            let dealt = tomes_dealt(&mut w, source);
+            assert!(!dealt.is_empty(), "{source:?} dealt no tomes at all");
+            assert!(
+                dealt.iter().all(|s| held.contains(s)),
+                "{source:?} offered a new tome with the slots full: {dealt:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_maxed_tome_is_never_offered() {
+        let mut w = world();
+        let max = w.content().rules.tome_max_rank;
+        read(&mut w, Stat::Damage, max);
+        assert_eq!(w.hero(0).unwrap().tome_rank(Stat::Damage), max);
+        let dealt = tomes_dealt(&mut w, Source::Interactable(InteractableKind::TitanShrine));
+        assert!(!dealt.contains(&Stat::Damage));
+    }
+
+    #[test]
+    fn a_maxed_item_is_never_offered() {
+        let mut w = world();
+        let limit = w.content().rules.item_max_copies;
+        hold(&mut w, Item::StaticShard, Item::StaticShard.max_copies(limit));
+        let chest = Source::Interactable(InteractableKind::Chest);
+        for _ in 0..200 {
+            let hand = w.deal(0, chest);
+            assert!(!hand.cards.iter().any(|c| c.kind == CardKind::Item(Item::StaticShard)));
+        }
+    }
+
+    #[test]
+    fn when_everything_is_maxed_a_hand_is_gold_a_heal_and_a_reroll() {
+        let mut w = world();
+        let rules = w.content().rules.clone();
+        let limit = rules.item_max_copies;
+        for item in Item::ALL {
+            hold(&mut w, item, item.max_copies(limit));
+        }
+        let chest = w.deal(0, Source::Interactable(InteractableKind::Chest));
+        let kinds: Vec<CardKind> = chest.cards.iter().map(|c| c.kind).collect();
+        assert_eq!(kinds, CardKind::FALLBACKS.to_vec());
+        for s in [Stat::Damage, Stat::Speed, Stat::Luck, Stat::Armor] {
+            read(&mut w, s, rules.tome_max_rank);
+        }
+        let shrine = w.deal(0, Source::Interactable(InteractableKind::TitanShrine));
+        assert_eq!(shrine.cards.len(), HAND, "a full hand, never a short one");
+        assert!(shrine.cards.iter().all(|c| CardKind::FALLBACKS.contains(&c.kind)));
+        // Each does what it says.
+        w.heroes[0].hp = 1.0;
+        let gold = w.hero(0).unwrap().gold;
+        let rerolls = w.hero(0).unwrap().rerolls;
+        for kind in CardKind::FALLBACKS {
+            w.take_card(
+                0,
+                Card {
+                    kind,
+                    rarity: Rarity::Common,
+                },
+            );
+        }
+        let hero = w.hero(0).unwrap();
+        assert_eq!(hero.hp, hero.max_hp);
+        assert_eq!(hero.gold, gold + fallback_gold(w.level));
+        assert_eq!(hero.rerolls, rerolls + 1);
     }
 
     #[test]

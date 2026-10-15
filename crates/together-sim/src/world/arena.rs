@@ -6,8 +6,8 @@ use super::*;
 use crate::interact::pick_kind;
 use crate::powerups::{DETONATION_BOSS, DETONATION_RADIUS, HEALTH_SHARD};
 
-/// Seconds between chances of a new shrine, and how far from a hero it appears: out of sight.
-pub(super) const SHRINE_EVERY: f32 = 15.0;
+/// How far from a hero a new shrine appears: out of sight. How often is the rules'
+/// `shrine_every`.
 const SHRINE_RING: (f32, f32) = (45.0, 75.0);
 /// Seconds between new pots, how far from a hero they appear, and how far from every hero one
 /// is let go, to come back nearer.
@@ -67,7 +67,7 @@ impl World {
         }
         self.shrine_timer -= DT;
         if self.shrine_timer <= 0.0 {
-            self.shrine_timer = SHRINE_EVERY;
+            self.shrine_timer = self.content.rules.shrine_every;
             self.spawn_shrine(&living);
         }
         self.pot_timer -= DT;

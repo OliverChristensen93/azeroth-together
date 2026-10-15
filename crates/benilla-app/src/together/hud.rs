@@ -351,13 +351,30 @@ pub(super) fn refresh(
             s.push('\n');
             s.push_str(&buffs.join("   "));
         }
+        let rules = &content.rules;
+        if !hero.tomes.is_empty() {
+            let tomes: Vec<String> = hero
+                .tomes
+                .iter()
+                .map(|&(stat, rank)| {
+                    let short = stat.tome().trim_start_matches("Tome of ");
+                    let short = short.trim_start_matches("the ");
+                    format!("{short} {rank}/{}", rules.tome_max_rank)
+                })
+                .collect();
+            s.push_str(&format!(
+                "\nTomes {}/{}:  {}",
+                hero.tomes.len(),
+                rules.tome_slots,
+                tomes.join("   ")
+            ));
+        }
         if !hero.items.is_empty() {
             let held: Vec<String> = hero
                 .items
                 .iter()
-                .map(|&(item, n)| match n {
-                    1 => item.name().to_string(),
-                    _ => format!("{} x{n}", item.name()),
+                .map(|&(item, n)| {
+                    format!("{} {n}/{}", item.name(), item.max_copies(rules.item_max_copies))
                 })
                 .collect();
             s.push('\n');

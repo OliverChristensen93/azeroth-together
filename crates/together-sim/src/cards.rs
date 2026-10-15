@@ -128,6 +128,22 @@ pub enum CardKind {
     Pact(Pact),
     /// One more copy of an item; the card's rarity is the item's own.
     Item(Item),
+    /// When nothing else is left to deal: a purse of gold ([`fallback_gold`]).
+    Gold,
+    /// When nothing else is left to deal: health back to full.
+    Heal,
+    /// When nothing else is left to deal: one more reroll.
+    Reroll,
+}
+
+impl CardKind {
+    /// The cards that fill a hand when spells, tomes and items have run out.
+    pub const FALLBACKS: [CardKind; 3] = [CardKind::Gold, CardKind::Heal, CardKind::Reroll];
+}
+
+/// The gold a [`CardKind::Gold`] card gives at the party's `level`, before gold gain.
+pub fn fallback_gold(level: u32) -> u32 {
+    20 + 5 * level
 }
 
 /// A card in a hand.
@@ -142,7 +158,7 @@ impl Card {
     pub fn ability(&self) -> Option<usize> {
         match self.kind {
             CardKind::Learn(a) | CardKind::Upgrade(a) => Some(a),
-            CardKind::Tome(_) | CardKind::Pact(_) | CardKind::Item(_) => None,
+            _ => None,
         }
     }
 }
