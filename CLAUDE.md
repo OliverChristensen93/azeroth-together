@@ -50,6 +50,10 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   The host starts the run 20 s in once someone has joined. Co-op is host-authoritative: the host runs
   `together-sim`, `together-net` (TCP, port 7777) sends inputs up and snapshots + events down, and each
   client mirrors the world (`World::apply_snapshot`) but owns its own hero's position.
+  Internet co-op is by invite code (`together-net/src/invite.rs`, iroh 1.3 over number 0's lookup and
+  relays): the host logs `together: invite code <code>` and `TOGETHER_JOIN=<code>` joins with it; the
+  key behind the code is `benilla-config/together-host-key.txt`. `cargo test -p together-net -- --ignored`
+  runs the online invite test.
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   On Windows every test window (`WOW_LIVE_SHOT` etc.) opens behind the user's work, parked on the
   primary monitor's right edge with a 32 px sliver showing (`capture/probes/run.rs`); keep it so.

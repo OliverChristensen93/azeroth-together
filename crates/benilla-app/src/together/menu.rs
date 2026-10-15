@@ -762,7 +762,7 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>, co
 fn lobby_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
     use super::lobby::{LobbyAction, LobbyPanel, LobbyText};
     let px = Val::Px;
-    const W: f32 = 430.0;
+    const W: f32 = 480.0;
     ui.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -811,6 +811,8 @@ fn lobby_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                     })
                     .with_children(|row| {
                         for (action, caption) in [
+                            (LobbyAction::CopyCode, "Copy Invite Code"),
+                            (LobbyAction::Paste, "Paste"),
                             (LobbyAction::StartRun, "Start Run"),
                             (LobbyAction::Connect, "Connect"),
                             (LobbyAction::Stop, "Leave"),
@@ -822,7 +824,7 @@ fn lobby_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
                                 f,
                                 action,
                                 caption,
-                                130.0,
+                                140.0,
                                 32.0,
                                 GlueBtnKind::Small,
                                 1.0,

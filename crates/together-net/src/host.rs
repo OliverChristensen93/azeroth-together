@@ -1,14 +1,16 @@
-//! The host's side: a listener that takes players in, and per player a reader and a writer thread.
+//! The host's side: a TCP listener (and, opened on request, an invite-code endpoint) that takes
+//! players in, and per player a reader and a writer thread.
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, BufWriter};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crate::invite::{self, Link};
 use crate::wire;
 use crate::{ClientMsg, ServerMsg};
 
@@ -18,8 +20,9 @@ pub type ConnId = u32;
 /// What happened on the host's sockets since the last poll.
 #[derive(Debug)]
 pub enum HostEvent {
-    /// Someone connected; their [`ClientMsg::Hello`] comes next.
-    Joined(ConnId, SocketAddr),
+    /// Someone connected (from this address, or by invite code); their [`ClientMsg::Hello`]
+    /// comes next.
+    Joined(ConnId, String),
     Message(ConnId, ClientMsg),
     /// The connection closed, or failed.
     Left(ConnId),
@@ -42,12 +45,46 @@ impl Writer {
 
 type Writers = Arc<Mutex<HashMap<ConnId, Writer>>>;
 
+/// Where a host's invite code stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Invite {
+    /// Not asked for.
+    Off,
+    /// The endpoint is opening and finding a relay.
+    Opening,
+    /// Friends can join with this code.
+    Ready(String),
+    /// It could not open, and why: friends on the same network can still join by address.
+    Failed(String),
+}
+
+/// What the accept paths share: where events go, the writers, and the next connection's number.
+#[derive(Clone)]
+struct Intake {
+    events: Sender<HostEvent>,
+    writers: Writers,
+    next: Arc<AtomicU32>,
+}
+
+impl Intake {
+    /// Number a new connection, start its threads and announce it.
+    fn admit(&self, link: Link, from: String) {
+        let conn = self.next.fetch_add(1, Ordering::Relaxed);
+        if start_connection(conn, link, &self.events, &self.writers).is_ok() {
+            let _ = self.events.send(HostEvent::Joined(conn, from));
+        }
+    }
+}
+
 /// A listening host. Dropping it stops listening and closes every connection.
 pub struct Host {
     events: Receiver<HostEvent>,
-    writers: Writers,
+    intake: Intake,
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
+    invite: Arc<Mutex<Invite>>,
+    /// The invite endpoint, once open, to close with the host.
+    endpoint: Arc<Mutex<Option<iroh::Endpoint>>>,
 }
 
 impl Host {
@@ -57,20 +94,61 @@ impl Host {
         let addr = listener.local_addr()?;
         listener.set_nonblocking(true)?;
         let (tx, events) = mpsc::channel();
-        let writers: Writers = Arc::default();
+        let intake = Intake {
+            events: tx,
+            writers: Arc::default(),
+            next: Arc::new(AtomicU32::new(1)),
+        };
         let stop = Arc::new(AtomicBool::new(false));
         {
-            let (writers, stop) = (writers.clone(), stop.clone());
+            let (intake, stop) = (intake.clone(), stop.clone());
             thread::Builder::new()
                 .name("together-host-accept".into())
-                .spawn(move || accept_loop(listener, tx, writers, stop))?;
+                .spawn(move || accept_loop(listener, intake, stop))?;
         }
         Ok(Host {
             events,
-            writers,
+            intake,
             addr,
             stop,
+            invite: Arc::new(Mutex::new(Invite::Off)),
+            endpoint: Arc::default(),
         })
+    }
+
+    /// Open the invite-code endpoint for `key` ([`crate::new_host_key`]); the same key gives the
+    /// same code every time. [`Host::invite`] tells when the code is ready.
+    pub fn open_invites(&self, key: [u8; 32]) {
+        *self.invite.lock().unwrap() = Invite::Opening;
+        let (intake, state, slot, stop) = (
+            self.intake.clone(),
+            self.invite.clone(),
+            self.endpoint.clone(),
+            self.stop.clone(),
+        );
+        invite::runtime().spawn(async move {
+            let listener = match invite::Listener::open(key).await {
+                Ok(l) => l,
+                Err(why) => {
+                    *state.lock().unwrap() = Invite::Failed(why);
+                    return;
+                }
+            };
+            if stop.load(Ordering::Relaxed) {
+                listener.endpoint().close().await;
+                return;
+            }
+            *slot.lock().unwrap() = Some(listener.endpoint());
+            *state.lock().unwrap() = Invite::Ready(invite::code_for(&key));
+            while let Some((link, who)) = listener.next().await {
+                intake.admit(link, format!("invite {who}"));
+            }
+        });
+    }
+
+    /// Where the invite code stands.
+    pub fn invite(&self) -> Invite {
+        self.invite.lock().unwrap().clone()
     }
 
     /// The address the host listens on (its port is the one to share).
@@ -85,7 +163,7 @@ impl Host {
 
     pub fn send(&self, to: ConnId, msg: &ServerMsg) {
         if let Ok(frame) = wire::encode(msg) {
-            if let Some(w) = self.writers.lock().unwrap().get(&to) {
+            if let Some(w) = self.intake.writers.lock().unwrap().get(&to) {
                 w.send(Arc::new(frame));
             }
         }
@@ -95,7 +173,7 @@ impl Host {
     pub fn broadcast(&self, msg: &ServerMsg) {
         if let Ok(frame) = wire::encode(msg) {
             let frame = Arc::new(frame);
-            for w in self.writers.lock().unwrap().values() {
+            for w in self.intake.writers.lock().unwrap().values() {
                 w.send(frame.clone());
             }
         }
@@ -103,13 +181,14 @@ impl Host {
 
     /// Close one connection (its reader then reports [`HostEvent::Left`]).
     pub fn kick(&self, conn: ConnId) {
-        self.writers.lock().unwrap().remove(&conn);
+        self.intake.writers.lock().unwrap().remove(&conn);
     }
 
     /// Frames sent to `conn` that its connection has not yet written: more than a couple means the
     /// line is slower than the game, and what is queued is already stale.
     pub fn backlog(&self, conn: ConnId) -> usize {
-        self.writers
+        self.intake
+            .writers
             .lock()
             .unwrap()
             .get(&conn)
@@ -118,31 +197,41 @@ impl Host {
 
     /// How many are connected.
     pub fn connections(&self) -> usize {
-        self.writers.lock().unwrap().len()
+        self.intake.writers.lock().unwrap().len()
     }
 }
 
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        self.writers.lock().unwrap().clear();
+        self.intake.writers.lock().unwrap().clear();
+        if let Some(endpoint) = self.endpoint.lock().unwrap().take() {
+            invite::runtime().spawn(async move { endpoint.close().await });
+        }
     }
 }
 
-fn accept_loop(
-    listener: TcpListener,
-    events: Sender<HostEvent>,
-    writers: Writers,
-    stop: Arc<AtomicBool>,
-) {
-    let mut next: ConnId = 1;
+/// A TCP connection as the two halves the connection threads take.
+fn tcp_link(stream: TcpStream) -> io::Result<Link> {
+    stream.set_nonblocking(false)?;
+    stream.set_nodelay(true)?;
+    let reader = stream.try_clone()?;
+    let shutdown = stream.try_clone()?;
+    Ok(Link {
+        reader: Box::new(reader),
+        writer: Box::new(stream),
+        close: Box::new(move || {
+            let _ = shutdown.shutdown(std::net::Shutdown::Both);
+        }),
+    })
+}
+
+fn accept_loop(listener: TcpListener, intake: Intake, stop: Arc<AtomicBool>) {
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                let conn = next;
-                next += 1;
-                if start_connection(conn, stream, &events, &writers).is_ok() {
-                    let _ = events.send(HostEvent::Joined(conn, peer));
+                if let Ok(link) = tcp_link(stream) {
+                    intake.admit(link, peer.to_string());
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -155,13 +244,15 @@ fn accept_loop(
 
 fn start_connection(
     conn: ConnId,
-    stream: TcpStream,
+    link: Link,
     events: &Sender<HostEvent>,
     writers: &Writers,
 ) -> io::Result<()> {
-    stream.set_nonblocking(false)?;
-    stream.set_nodelay(true)?;
-    let reader = stream.try_clone()?;
+    let Link {
+        reader,
+        writer,
+        close,
+    } = link;
     let (tx, rx) = mpsc::channel::<Arc<Vec<u8>>>();
     let queued = Arc::new(AtomicUsize::new(0));
     writers.lock().unwrap().insert(
@@ -173,11 +264,10 @@ fn start_connection(
     );
 
     // Writer: frames out until the host drops its sender (kick, or the host goes).
-    let shutdown = stream.try_clone()?;
     thread::Builder::new()
         .name(format!("together-host-write-{conn}"))
         .spawn(move || {
-            let mut out = BufWriter::new(stream);
+            let mut out = BufWriter::new(writer);
             for frame in rx {
                 let sent = wire::write_frame(&mut out, &frame);
                 queued.fetch_sub(1, Ordering::Relaxed);
@@ -185,7 +275,7 @@ fn start_connection(
                     break;
                 }
             }
-            let _ = shutdown.shutdown(std::net::Shutdown::Both);
+            close();
         })?;
 
     // Reader: messages in until the stream ends.

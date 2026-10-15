@@ -26,22 +26,23 @@ The game keeps its settings in a benilla-config folder it makes here.
 
 PLAYING TOGETHER
 ----------------
-One player hosts, the others join.
+One player hosts, the others join. It works over the internet with no router
+or Windows settings: just an invite code.
 
 Host:
   - Pick a hero and a zone, then click Host Co-op.
-  - The first time, Windows Firewall asks about the game: click Allow.
-  - The panel shows an address like 192.168.0.103:7777. Send it to your friends.
+  - After a few seconds the panel shows your invite code. Click Copy Invite
+    Code and paste it to your friends (Discord, a message, anything).
+    Your code stays the same every time you host, so friends can keep it.
+  - If Windows asks about the game, click Allow.
   - When everyone is in, click Start Run.
 
 Join:
-  - Pick a hero, click Join Co-op, type the host's address, press Enter.
+  - Pick a hero, click Join Co-op, press Ctrl+V (or click Paste) to put in the
+    code, then click Connect.
 
-On the same home network, the address the panel shows works as it is.
-
-Over the internet, the host must forward TCP port 7777 on their router to their
-PC, and friends type the host's public IP address instead (search "what is my
-IP" on the host's PC). Everyone needs the same version of the game.
+On the same home network you can also join with the address the host's panel
+shows under the code. Everyone needs the same version of the game.
 
 
 IN A RUN
