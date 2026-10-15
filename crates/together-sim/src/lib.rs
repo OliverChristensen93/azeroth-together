@@ -11,6 +11,7 @@
 
 mod cards;
 mod content;
+mod extraction;
 mod interact;
 mod items;
 mod math;
@@ -25,6 +26,10 @@ pub use cards::{
 pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
     WeaponDef, ZoneDef,
+};
+pub use extraction::{
+    Bounds, ExitDef, ExitState, Extraction, ExtractionDef, ExtractionSettings, HeatDef, HunterDef,
+    Mode, SafeDef, SkullDef,
 };
 pub use interact::{
     chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement,

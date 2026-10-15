@@ -9,6 +9,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+use crate::extraction::ExtractionDef;
 use crate::interact::Placement;
 
 /// How an ability picks its targets.
@@ -126,6 +127,10 @@ pub struct ZoneDef {
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
+    /// The extraction map played in this zone (an index into [`Content::extractions`]), set by
+    /// [`Content::with_extractions`]; `None` for an arena.
+    #[serde(skip)]
+    pub extraction_ix: Option<usize>,
 }
 
 /// One weapon a hero holds, as the client's virtual item fields want it.
@@ -234,6 +239,8 @@ pub struct Content {
     pub zones: Vec<ZoneDef>,
     /// [`Rules::default`] until [`Content::with_rules`] reads a file.
     pub rules: Rules,
+    /// Extraction maps: none until [`Content::with_extractions`] reads a file.
+    pub extractions: Vec<ExtractionDef>,
 }
 
 #[derive(Debug)]
@@ -377,6 +384,7 @@ impl Content {
             enemies,
             zones,
             rules: Rules::default(),
+            extractions: Vec::new(),
         })
     }
 
@@ -386,6 +394,41 @@ impl Content {
             file: "rules.ron",
             message: e.to_string(),
         })?;
+        Ok(self)
+    }
+
+    /// These contents with the extraction maps in `text` (`extraction.ron`), each tied to its zone.
+    pub fn with_extractions(mut self, text: &str) -> Result<Self, ContentError> {
+        const FILE: &str = "extraction.ron";
+        let invalid = |owner: &str, why: &'static str| ContentError::Invalid {
+            file: FILE,
+            owner: owner.to_owned(),
+            why,
+        };
+        let mut maps: Vec<ExtractionDef> = parse(FILE, text)?;
+        index(FILE, maps.iter().map(|m| m.key.as_str()))?;
+        let zones = index("zones.ron", self.zones.iter().map(|z| z.key.as_str()))?;
+        for (i, map) in maps.iter_mut().enumerate() {
+            map.zone_ix = resolve(&zones, FILE, &map.key, &map.zone)?;
+            if map.boundary.len() < 3 {
+                return Err(invalid(&map.key, "has fewer than three boundary corners"));
+            }
+            let skulls = &map.heat.skulls;
+            if skulls.first().map(|s| s.at) != Some(0.0)
+                || skulls.windows(2).any(|w| w[1].at <= w[0].at)
+            {
+                return Err(invalid(&map.key, "needs skulls that start at 0 heat and rise"));
+            }
+            let bounds = map.bounds();
+            if !bounds.inside(map.safe_center(), 0.0) {
+                return Err(invalid(&map.key, "has its safe ring outside its boundary"));
+            }
+            if (0..map.exits.len()).any(|e| !bounds.inside(map.exit_pos(e), 0.0)) {
+                return Err(invalid(&map.key, "has an exit outside its boundary"));
+            }
+            self.zones[map.zone_ix].extraction_ix = Some(i);
+        }
+        self.extractions = maps;
         Ok(self)
     }
 
