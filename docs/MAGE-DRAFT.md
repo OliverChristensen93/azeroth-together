@@ -7,10 +7,10 @@ idea's size, not balance.
 ## How augments work (draft 2)
 
 - Spells rank up to **15**.
-- At **rank 5** and **rank 10** an Augment screen offers 3 **general** augments from the shared library
+- At **rank 5** and **rank 15** an Augment screen offers 3 **general** augments from the shared library
   (end of this doc) that fit the spell's tags. Pick, reroll or **hold** (the spell stays at its rank
   until augmented).
-- At **rank 15** the spell's **capstone** screen always offers the same **3 unique augments**; you
+- At **rank 10** the spell's **capstone** screen always offers the same **3 unique augments**; you
   take 1. Knowing them in advance lets you plan toward one.
 - **At most one conversion per spell.**
 - A spell cast by a **trigger** is the real spell, with your rank, augments and modifiers, and
@@ -60,7 +60,7 @@ The three fire spells now do different jobs: Pyroblast kills the boss, Fireball 
 guards, Fire Blast saves you when something reaches you. (The alternative, if four elites-first
 spells is too many: Fireball aims at the densest group instead.)
 
-## Capstones (rank 15: 1 of 3)
+## Capstones (rank 10: 1 of 3)
 
 ★ marks the capstone that most changes how you play the spell.
 
@@ -141,7 +141,7 @@ spells is too many: Fireball aims at the densest group instead.)
 - **Ice Floes:** while the shield holds, your Frost spells' cooldowns are 25% shorter.
 - **Frost Armor:** enemies that strike the shield are Chilled and take 20% of the hit as Frost damage.
 
-## Shared augments (the library for ranks 5 and 10, first 32)
+## Shared augments (the library for ranks 5 and 15, first 32)
 
 Open to any spell with the tag, any class.
 
@@ -187,9 +187,9 @@ Blast Wave lose nothing their capstones need.
 ## Checks
 
 **The frostfire benchmark** (DESIGN-IDEAS section D) works with this draft, without any talent web:
-1. Blast Wave Chills. At rank 5 it rolls **Frostfire**, so it counts as Frost too; at 10, **Deep
+1. Blast Wave Chills. At rank 5 it rolls **Frostfire**, so it counts as Frost too; at 15, **Deep
    Chill**: its Chills can Freeze.
-2. Pyroblast at 5: **Frostfire**; at 10: **Shatter**, so it crits Frozen enemies. Its capstone
+2. Pyroblast at 5: **Frostfire**; at 15: **Shatter**, so it crits Frozen enemies. Its capstone
    **Combustion** pays off every Burning effect the frostfire spells leave.
 3. Fireball at 5: **Frostfire**, so it Chills; capstone **Hot Streak** casts the augmented Pyroblast.
 
@@ -200,6 +200,8 @@ Snap**. The barrier breaks often in melee and fires a huge Frost Nova each time.
 **Review notes:**
 - Draft 1 (2026-10-15): balanced enough at first look; freeze durations set (elites half, bosses a
   quarter); Cold Snap made to work without Freeze.
+- Draft 3 (2026-10-15): the capstone moved to rank 10 (it came too late at 15); general augments at 5
+  and 15.
 - Draft 2 (2026-10-15): ranks 5 and 10 general, rank 15 a fixed choice of 3 capstones; spell
   augments that duplicated shared ones cut or moved to the library; targeting per spell; Frost Nova
   Direct, Blizzard Damage over time, Blast Wave Knockback.

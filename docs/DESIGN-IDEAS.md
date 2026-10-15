@@ -32,7 +32,7 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 💬 Parked · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). The Megabonk branch has 8 items that stack as copies, with no slots; ours differ. See [A](#a-items-and-tomes-in-a-run). |
 | 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Skipped for now | Fixed recipes turn a run into a hunt for the partner piece. We test augments (2c) first and revisit. |
 | 2b | Fusions: two spells merge into one | — | ⛔ Not doing | Fixed recipes force a hunt; any-with-any has no good meaning; and fusing *removes* half of each spell (a trap's summon, a damage spell's damage), stranding the modifiers built for it. |
-| 2c | **Augments**: general augments at ranks 5 and 10, a capstone (1 of the spell's 3) at rank 15 (max) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Mage drafted: [MAGE-DRAFT.md](MAGE-DRAFT.md). Bonus Augment screen with Pick / Reroll / Hold; pauses co-op like a level-up. See [C](#c-augments). |
+| 2c | **Augments**: general augments at ranks 5 and 15 (max), a capstone (1 of the spell's 3) at rank 10 | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Mage drafted: [MAGE-DRAFT.md](MAGE-DRAFT.md). Bonus Augment screen with Pick / Reroll / Hold; pauses co-op like a level-up. See [C](#c-augments). |
 | 2d | Grimoire: a codex of augments and Uniques you have found, the rest as hints | VS collection | 💡 New idea | Knowledge as progression between runs. |
 | 2e | **Unique items that augment or link spells** (e.g. "When Ice Barrier breaks, cast Frost Nova") | Azeroth Survivors | 🟢 Greenlit | Mostly necklaces. Triggered casts use your rank and augments and ignore cooldown. |
 | 2f | **Spell design rules**: about 12 spells per class, each reworked for the genre; single-target spells prioritize bosses and elites | Azeroth Survivors | 🟢 Greenlit | Kidney Shot just damages and stuns. Single-target and area spells both earn a place. We have 68 spells today (~7.5 per class). |
@@ -121,14 +121,14 @@ beforehand.
 
 ## C. Augments
 
-Spells grow by **augments**. Agreed structure (draft 2, 2026-10-15), with the full mage example in
+Spells grow by **augments**. Agreed structure (draft 3, 2026-10-15: the capstone moved to rank 10 so it comes sooner), with the full mage example in
 [MAGE-DRAFT.md](MAGE-DRAFT.md):
 
 | Rank | What you get |
 |---|---|
 | 5 | 1 **general** augment from 3 offered, drawn from the shared library by the spell's tags |
-| 10 | 1 more **general** augment, the same way |
-| 15 (max) | 1 **capstone** from the spell's own **3 unique augments**, always the same 3 |
+| 10 | 1 **capstone** from the spell's own **3 unique augments**, always the same 3 |
+| 15 (max) | 1 more **general** augment, the same way as at 5 |
 
 **Why this shape.** Two general picks let a spell take a conversion *and* a shape (Frostfire +
 Multishot), which cross-school builds need. Fixed capstones are plannable: you know what Fireball can
@@ -136,13 +136,13 @@ become and can steer toward it, which is theorycrafting. And there is less to wr
 spell (36 per class) plus one shared library.
 
 **Pacing.** A 15-minute run gives maybe 50–60 picks shared between 6 spells, tomes and items. Maxing
-6 spells would take 84 rank-ups, so most spells get their two general augments and the two or three
-you commit to reach their capstone. Tune when playable.
+6 spells would take 84 rank-ups, so most spells reach their capstone at rank 10, and the two or three you
+commit to reach the second general augment at 15. Tune when playable.
 
-**The Augment screen (agreed).** It opens when a spell reaches rank 5 or 10, as a bonus screen that
+**The Augment screen (agreed).** It opens when a spell reaches rank 5, 10 or 15, as a bonus screen that
 does not use a level-up. Pick, **reroll** (with the run's rerolls) or **hold**: holding keeps the
 spell at its rank until you augment it, and the screen comes back with 3 fresh options after your
-next level-up. The capstone screen at 15 just shows the spell's 3 capstones. In co-op, augment
+next level-up. The capstone screen at 10 just shows the spell's 3 capstones. In co-op, augment
 screens pause the run like level-ups (agreed for now; picking with 1/2/3 while moving is the
 fallback).
 
@@ -449,8 +449,8 @@ Answered (2026-10-15):
 - **Power budget:** 0% early, up to ~40% late.
 - **Defensive button:** Q/E/F, 30 s–2 min, augmentable, no cast times for now.
 - **Fusions:** not doing.
-- **Augments:** the growth system: general augments at ranks 5 and 10, a capstone (1 of 3 fixed) at
-  rank 15, max rank 15.
+- **Augments:** the growth system: general augments at ranks 5 and 15, a capstone (1 of 3 fixed) at
+  rank 10, max rank 15.
 - **Evolutions:** skipped for now; test augments first.
 - **Augment flow:** a bonus Augment screen with Pick / Reroll / Hold; holding
   keeps the spell at its rank until augmented; it pauses co-op like a level-up.
