@@ -32,7 +32,7 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 💬 Parked · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). The Megabonk branch has 8 items that stack as copies, with no slots; ours differ. See [A](#a-items-and-tomes-in-a-run). |
 | 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Skipped for now | Fixed recipes turn a run into a hunt for the partner piece. We test augments (2c) first and revisit. |
 | 2b | Fusions: two spells merge into one | — | ⛔ Not doing | Fixed recipes force a hunt; any-with-any has no good meaning; and fusing *removes* half of each spell (a trap's summon, a damage spell's damage), stranding the modifiers built for it. |
-| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | First class drafted for review: [MAGE-DRAFT.md](MAGE-DRAFT.md). The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). Offered on a bonus Augment screen with Pick / Reroll / Hold (agreed); pauses co-op like a level-up. See [C](#c-augments). |
+| 2c | **Augments**: general augments at ranks 5 and 10, a capstone (1 of the spell's 3) at rank 15 (max) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Mage drafted: [MAGE-DRAFT.md](MAGE-DRAFT.md). Bonus Augment screen with Pick / Reroll / Hold; pauses co-op like a level-up. See [C](#c-augments). |
 | 2d | Grimoire: a codex of augments and Uniques you have found, the rest as hints | VS collection | 💡 New idea | Knowledge as progression between runs. |
 | 2e | **Unique items that augment or link spells** (e.g. "When Ice Barrier breaks, cast Frost Nova") | Azeroth Survivors | 🟢 Greenlit | Mostly necklaces. Triggered casts use your rank and augments and ignore cooldown. |
 | 2f | **Spell design rules**: about 12 spells per class, each reworked for the genre; single-target spells prioritize bosses and elites | Azeroth Survivors | 🟢 Greenlit | Kidney Shot just damages and stuns. Single-target and area spells both earn a place. We have 68 spells today (~7.5 per class). |
@@ -56,6 +56,13 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 10a | **Defensive button** (movement, defensive or control): one per class, swappable from unlocked options | Your idea | 🟢 Greenlit | On Q, E or F (rebindable); cooldowns 30 s to 2 min; can be augmented. No cast times for now. See [F](#f-the-defensive-button-and-moving-well). |
 | 10b | Movement feel | Megabonk | 🟢 Agreed | **No universal dash.** Movement comes from the defensive button (for classes that pick a movement option), from items and tomes (move speed, Goblin Rocket Boots double jump, glide, momentum), and possibly goblin launch pads on the map. See [F](#f-the-defensive-button-and-moving-well). |
 | 10c | An **ultimate** beside the defensive button, possibly with a stand-still cast time | Megabonk campfire | 💬 Later | Parked until the defensive button exists. |
+| 11a | **Every build needs a survival answer**, not a tank or healer: distance, control, mitigation, sustain, escape, kill speed | Your idea | 🟢 Greenlit | Each archetype is softly countered by some elite or boss, so none is always right. See [I](#i-surviving-solo-without-a-tank-or-healer). |
+| 11b | **Charges**: heals and blocks cast on cooldown bank charges that spend themselves when needed | Your idea; WoW's Prayer of Mending, Earth Shield, Holy Shield | 🟢 Greenlit | Removes the "want to get hit" incentive; stacks show on the WoW buff frame. Open: every heal and block spell, or only some. |
+| 11c | **Baseline damage for heal and tank builds**: overflow and retaliation | — | 🟢 Agreed | A full heal bank turns further heals into Holy damage; blocked, dodged or absorbed hits deal damage back. No item needed. A per-enemy attack limit was considered and dropped. |
+| 11d | **Knockback and death grip**: player spells push enemies; some elites and bosses push or pull you, always telegraphed | Megabonk, WoW bosses | 🟢 Greenlit | Never from ordinary enemies. |
+| 11e | **Elite and boss mechanics**: charges, casters, slams, leaps, ground zones, marked areas, summoners and healers, things to run to | WoW raids, Mythic+ | 🟢 Greenlit | **Every mechanic can be dodged by moving** (agreed). Crowd control on elites has diminishing returns. See [I](#i-surviving-solo-without-a-tank-or-healer). |
+| 11f | **Boss bar** at the top of the screen: name, health, and one sentence explaining the mechanic | WoW boss mods, Megabonk | 🟢 Agreed | Elites get a sentence on their target frame too. |
+| 11g | **Affixes** from Mythic+ and Project Ascension's Manastorm: vortex, slowing field, sanguine, bolstering, volcanic, storming, spiteful, explosive | Mythic+, Ascension | 🟢 Greenlit | Open: chosen before the run, owned by certain bosses, or added in a run's later stages. See [I](#i-surviving-solo-without-a-tank-or-healer). |
 | 12 | Co-op synergies across players (one player's root enables another's Shatter) | — | 💡 New idea | Falls out of tags for free. See [H](#h-co-op-only-ideas). |
 | — | Talent trees that lock a run into one spec before it starts | Azeroth Survivors | ⛔ Not doing | Takes away in-run choice: frost talents make every non-frost spell a trap pick. |
 | — | A permanent stat shop as the main progression (+5% damage forever …) | VS | 💬 Discussing | Fine as a small extra; as the core it is a grind with no decisions. |
@@ -98,15 +105,15 @@ single spell's name. Tags appear as chips on the card, like Path of Exile's gem 
 |---|---|
 | School | Physical, Fire, Frost, Arcane, Nature, Shadow, Holy (and pairs from conversion: Frostfire, Shadowflame…) |
 | Delivery | Projectile, Melee, Chain, Area (nova), Ground (lasting zone), Beam, Summon, Aura, Totem, Shield |
-| Effect | Direct, Damage over time, Slow, Root, Freeze, Stun, Fear, Heal |
+| Effect | Direct, Damage over time, Slow, Root, Freeze, Stun, Fear, Knockback, Heal |
 
 Examples:
 - **Frostbolt**: Frost · Projectile · Direct · Slow
-- **Blast Wave**: Fire · Area · Direct · Slow
+- **Blast Wave**: Fire · Area · Direct · Slow · Knockback
 - **Chain Lightning**: Nature · Chain · Direct
 - **Immolate**: Fire · Direct · Damage over time
 - **Ice Barrier**: Frost · Shield
-- **Frost Nova**: Frost · Area · Freeze
+- **Frost Nova**: Frost · Area · Direct · Freeze
 
 A conversion augment *changes tags*: Fireball augmented to Frostfire is Fire and Frost, so both
 schools' bonuses apply. That is how an off-school spell joins a build without any talent deciding it
@@ -114,86 +121,56 @@ beforehand.
 
 ## C. Augments
 
-Spells grow by **augments** chosen at **rank 7** and **rank 14**; 14 is max rank.
+Spells grow by **augments**. Agreed structure (draft 2, 2026-10-15), with the full mage example in
+[MAGE-DRAFT.md](MAGE-DRAFT.md):
+
+| Rank | What you get |
+|---|---|
+| 5 | 1 **general** augment from 3 offered, drawn from the shared library by the spell's tags |
+| 10 | 1 more **general** augment, the same way |
+| 15 (max) | 1 **capstone** from the spell's own **3 unique augments**, always the same 3 |
+
+**Why this shape.** Two general picks let a spell take a conversion *and* a shape (Frostfire +
+Multishot), which cross-school builds need. Fixed capstones are plannable: you know what Fireball can
+become and can steer toward it, which is theorycrafting. And there is less to write: 3 capstones per
+spell (36 per class) plus one shared library.
 
 **Pacing.** A 15-minute run gives maybe 50–60 picks shared between 6 spells, tomes and items. Maxing
-all 6 spells would take 78 rank-ups, so most spells reach rank 7 (their first augment) and two or
-three committed spells reach 14. Rank 14 is a commitment, not a given. Tune when playable.
+6 spells would take 84 rank-ups, so most spells get their two general augments and the two or three
+you commit to reach their capstone. Tune when playable.
 
-**How the milestone works (agreed).** A spell that reaches rank 7 (or 14) is *ready to
-augment*, and an **Augment screen** opens right away with 3 augments for it (rarity-rolled: rarer
-augments are stronger versions or rarer kinds). It is a bonus screen: it does not use a level-up.
-On it you can:
+**The Augment screen (agreed).** It opens when a spell reaches rank 5 or 10, as a bonus screen that
+does not use a level-up. Pick, **reroll** (with the run's rerolls) or **hold**: holding keeps the
+spell at its rank until you augment it, and the screen comes back with 3 fresh options after your
+next level-up. The capstone screen at 15 just shows the spell's 3 capstones. In co-op, augment
+screens pause the run like level-ups (agreed for now; picking with 1/2/3 while moving is the
+fallback).
 
-- **Pick** one.
-- **Reroll** for 3 new options, using the run's rerolls.
-- **Hold**: take nothing now; the Augment screen comes back with 3 fresh options after your next
-  level-up, again as a bonus.
+- **Synergy weighting:** general offers lean toward your build's tags (Frost spells owned →
+  Frostfire more likely than Spellfire), never guaranteed; talents can lean them further (2g).
+- **One conversion per spell.**
 
-The price of holding: the spell **stays at rank 7** (no further rank cards for it) and has no
-augment while you wait. So you can hunt for Frostfire when Spellfire shows up, keep levelling
-everything else, and the cost falls only on the spell you are being picky about. A spell ends a run
-with at most two augments.
+**Rules for writing augments (agreed):**
+- A unique augment must do something **no shared augment can** (no "+2 projectiles" capstone when
+  Multishot exists).
+- Every spell's three capstones include **at least one that changes how you play** the spell.
+- **No general augment may dead-end a spell:** if one removes a property (Brute Force removes
+  control effects), at least one of that spell's capstones must still work without it.
 
-- *The alternative considered:* the augment hand replaces the next level-up, and skipping costs that
-  level-up. Harsher, and hunting a conversion would mean giving up spell and tome picks.
-- **Synergy weighting:** the augment hand leans toward your build's tags (Frost spells owned →
-  Frostfire more likely than Spellfire), never guaranteed; talents can lean it further.
-- **Co-op (agreed for now):** augment screens pause the run until everyone has picked, like
-  level-ups. If that interrupts too much, picking with 1/2/3 while moving is the fallback.
+**Triggered casts:** a spell cast by a trigger is the real spell, with your rank, augments and
+modifiers, and it ignores its own cooldown; if you do not own it, it casts at rank 1. Triggers and
+cooldown resets have an **internal cooldown**, so no two of them can loop forever (Cold Snap plus
+Shattering Barrier would otherwise cast Frost Nova endlessly in a dense horde).
 
-**The two tiers do different jobs:**
+**Targeting gives spells their jobs.** Single-target spells hit elites and bosses first; others aim
+at the densest group, around you, ahead of you, or at the enemy closest to you (Fire Blast, the "get
+off me" spell). Two spells of one school should differ in job, not only in numbers.
 
-| Milestone | Job | Kinds |
-|---|---|---|
-| Rank 7 | Shape the spell to the build you are forming | Conversion, shape, trade-off |
-| Rank 14 | The capstone that defines the build | Trigger, scaling, rule-breaking spell-specific effects |
+**Talents can add augments to the pool** (2g): "Frostfire conversions can appear on any Fire or
+Frost spell". That widens options instead of adding raw power.
 
-Kinds, with examples:
-
-| Kind | Examples |
-|---|---|
-| Conversion | Fireball deals Frostfire damage; Shadow Bolt deals Shadowflame |
-| Shape | +2 projectiles; Cone of Cold becomes a ring; single target chains to 3 |
-| Trade-off | +80% damage, no longer freezes; +100% damage, +50% cooldown |
-| Trigger | Ice Barrier breaking casts Frost Nova; two Fire crits in a row cast Pyroblast (Hot Streak) |
-| Scaling | gains crit chance from your move speed; damage grows with your max health |
-
-**How many augments each spell needs: not six of its own.** With about 12 spells per class and 9
-classes, six hand-made augments each would be ~650 augments to design and balance. Instead, each
-milestone's pool is built from two sources:
-
-1. **Spell-specific augments**: about 2 per milestone, so **4 per spell**. These are the ones that
-   make a spell special: Ice Barrier's break casting Frost Nova; Chain Lightning arcing back to its
-   first target; Pyroblast's Hot Streak.
-2. **Shared tag augments**: a library of perhaps 30–40, each open to any spell with the right tags.
-   - Every **Projectile** spell can roll "+2 projectiles, −25% damage each".
-   - Every **Damage over time** spell can roll "spreads to a nearby enemy when the target dies".
-   - Every elemental spell can roll the **conversions** to the other schools.
-   - Every **Area** spell can roll "+40% area, −20% damage".
-
-A rank-7 offer of 3 cards then draws from roughly 2 specific plus 6–10 shared options, and a rank-14
-offer likewise, so a spell plays differently from run to run while each class needs only ~48
-specific augments. Two guard rails:
-
-- A spell takes **one conversion at most**, so it cannot hop schools twice.
-- **Talents can add augments to the pool** (2g): "Frostfire conversions can appear on any Fire or
-  Frost spell". That widens options rather than adding raw power, which is exactly the kind of
-  progression between runs we want.
-
-**Rule for triggered casts:** a spell cast by a trigger is the real spell, with your rank, augments
-and modifiers, and it ignores its own cooldown. If you do not own it, it casts at rank 1. Triggers and
-cooldown resets have an internal cooldown, so no two of them can loop forever.
-
-**Rules for writing augments (agreed):** every spell's rank-14 pair has at least one augment that
-changes how you think about and play the spell; and every rank-7 augment leaves at least one rank-14
-augment on that spell that still works with it. This makes
-"+100% damage, +50% cooldown" Frost Nova behind a low-cooldown Ice Barrier a real build.
-
-Unique items (2e) can add augments or triggers too, which is where builds get wild.
-
-**Roll-out:** one class first (the mage: 12 spells, ~48 specific augments, the first ~20 shared ones)
-to prove the system before writing the rest.
+**Roll-out:** the mage first (12 spells, 36 capstones, the first ~32 shared augments) to prove the
+system before writing the rest.
 
 ## D. Progression between runs
 
@@ -223,7 +200,7 @@ talents make one school strictly best, every in-run choice is already made.
 
 1. Frost side of the web: Shatter (+crit against frozen), "slows can Freeze". Fire side: Ignite.
 2. In the run you find **Blast Wave**. It slows, so it can now freeze.
-3. At rank 7 you augment it to Frostfire.
+3. At rank 5 you augment it to Frostfire.
 4. **Pyroblast** gets the same conversion: it crits frozen targets and Ignites.
 5. **Fireball** becomes Frostfire Bolt: it slows (more freezes), and Hot Streak can trigger the
    augmented Pyroblast.
@@ -316,12 +293,153 @@ WoW maps have little verticality, so jumps should be about crossing the horde, n
 - **Healing and shield tags** become real build paths in co-op.
 - **Shared chests:** whoever opens one, everyone gets a pick (or the party votes).
 
+## I. Surviving solo without a tank or healer
+
+**The rule (agreed):** every run must answer "what happens when the swarm reaches me?", but the
+answer does not have to be a tank or a healer. The defensive button (10a) already gives each hero
+one answer; spells, augments, tomes and items deepen it.
+
+| Archetype | How it survives | Examples | Softly countered by |
+|---|---|---|---|
+| **Distance** | Never lets them arrive | Sprint, Blink, move-speed tomes, Blazing Speed | Chargers, leapers, casters |
+| **Control** | Stops them arriving | Frost Nova, Blizzard, Cone of Cold, Psychic Scream, Blast Wave knockback | Bosses; diminishing returns on elites |
+| **Mitigation** | Arrives, but hits soft | Armor, dodge (Evasion), Shield Block charges, Ice Barrier | Spells and ground effects (no dodge or block) |
+| **Sustain** | Heals through it | Lifesteal, regen, heal charges | Burst: a slam, a pack hitting at once |
+| **Escape** | Leaves when it goes wrong | Vanish, Ice Block, Feign Death | Being surrounded while it is on cooldown |
+| **Kill speed** | Clears before it arrives | A pure damage build | Elites and bosses with lots of health |
+
+Counters are *soft*: a build without the right answer has a harder time, never a wall. The threats in
+the right-hand column come from elites and bosses, so ordinary enemies stay fair to every build.
+
+### Charges (11b)
+
+A heal or block spell casts on its cooldown whether or not anyone is hurt, and each cast banks a
+**charge** (up to a cap, say 5). Charges spend themselves:
+
+- **Heal charges** (Prayer of Mending, Renew, Earth Shield): when you or a nearby ally drops below a
+  threshold, a charge heals them; several in a row if they keep dropping. A heal build never wants to
+  be hit: a full bank is insurance, and diving a swarm with 5 charges is a real tactic.
+- **Block charges** (Shield Block, Holy Shield): each charge fully blocks one melee hit.
+- **Thorn charges** (Lightning Shield): each charge zaps the next enemy that hits you.
+- Charges show as a stack count on the buff (the WoW buff frame already draws stacks).
+- Augments work on the bank: "+2 cap"; "a heal on a full-health ally banks a charge on them";
+  "spending your last charge casts Holy Nova".
+
+### Damage for heal and tank builds (11c, agreed)
+
+Two rules that need no item:
+
+1. **Overflow:** while your heal bank is full, each further heal strikes the nearest enemy as Holy
+   (or Nature) damage. Solo, a healer at full health is a slow damage build, and healing power is its
+   damage stat. In co-op the bank is spent on friends and overflows less: the healer's trade. Holy
+   Nova and Holy Shock already do both in WoW.
+2. **Retaliation:** a hit you block, dodge or absorb deals damage back to the attacker, scaled from
+   armor or block (Holy Shield, Thorns). Only defensive builds get it, and only for hits that did not
+   hurt, so standing in the swarm with charges up is how a tank kills.
+
+*Dropped:* every enemy having a fixed number of attacks. It helped every build equally (a glass
+cannon could dive too), capped how dangerous a dense swarm can be, and read oddly.
+
+### Knockback and death grip (11d)
+
+- **Player spells:** Blast Wave knocks back slightly; its Concussive Blast augment pushes 4 yd.
+  Knockback is a Control effect (a new **Knockback** tag): full on small enemies, half on elites,
+  none on bosses.
+- **On you:** only from elites and bosses, always with a tell (a cast bar, a circle on the ground),
+  and a second of immunity after a push. Being knocked into the swarm is the danger.
+- **Death grip** is the reverse: an area is marked, and after a few seconds every hero still inside
+  is pulled to the caster.
+- **In co-op** the client owns its hero's position, so a push or pull is an event the client applies
+  to its own controller, as WoW's server sends a knock-back move to the client.
+
+### Elite and boss mechanics (11e)
+
+**The rule (agreed): every mechanic can be avoided by moving.** No mechanic forces damage on
+someone, because a build of speed or control cannot heal or soak it and would die to it slowly.
+Taking a hit is only ever a choice you make for a reward.
+
+**Elite behaviours** break straight-line kiting, each a different way. Behaviour comes from the
+creature, so the zone tells you what to expect:
+
+| Behaviour | What it does | What it asks of you | Example |
+|---|---|---|---|
+| **Charge** | Winds up, dashes in a line | Step sideways, not away | Gnoll brute, Hogger |
+| **Caster** | Stays at range and casts | Go to it | Defias wizard |
+| **Slam** | Ground circle, then a knockback or stun | Leave the circle | Ogre, Thunder Clap |
+| **Leap** | Jumps to you from range | Keep a control spell ready | Duskwood worgen |
+| **Frenzy** | Faster below half health | Burst it, or control it at the end | Wolves |
+| **Healer** | Heals enemies in a visible ring around itself | Pull the pack out of the ring, or bunch it on the healer for your area spells | Murloc oracle |
+| **Summoner** | Adds appear around it | Fight close so area spells hit it and its fresh adds together | Defias conjurer |
+
+Targeting is automatic, so "kill it first" is not a choice you make. Healers and summoners are
+**single-target damage checks**: without enough single-target damage, healed and summoned enemies
+outlast your area spells. Where you stand is your answer.
+
+Crowd control on an elite has **diminishing returns**, as in WoW PvP: each stun, fear or freeze
+within a short window lasts half as long, then it is immune for a while.
+
+**Ground zones and marked areas** make elites and bosses feel like WoW fights:
+
+- **Hellfire patches:** five small circles near you glow for about a second, then burn. Move through
+  the gaps. Some zones could burn enemies too, so kiting trash through a boss's fire is a tactic.
+- **By zone:** Gurubashi trolls drop poison clouds, Westfall Defias throw fire, Anubisath leave sand
+  vortexes.
+- **Death knight and ghoul** (a boss pair, perhaps Duskwood; check the model is in our data): the
+  death knight marks an area and grips everyone inside to him; the ghoul's cleave punishes the
+  heroes who land in one spot.
+
+**Things to run to**, taken from WoW raids and Mythic+:
+
+| Mechanic | From | How it works here |
+|---|---|---|
+| **Spores** | Loatheb (Naxxramas) | A spore spawns; walking into its cloud gives a big crit buff. A choice, not a must. |
+| **Poisoned blood** | Hakkar (Zul'Gurub; fits Gurubashi) | Standing in the puddle poisons you lightly, but makes his Blood Siphon heal him less or hurt him. |
+| **The dance** | Heigan (Naxxramas) | The arena splits into strips that erupt in turn; the safe strip keeps moving. |
+| **Afflicted souls** | Mythic+ | Ghosts spawn and must be touched within a few seconds, or they hit the whole group. In co-op, players split up to reach them. |
+| **Explosive orbs** | Mythic+ | Orbs appear and blow up unless destroyed. Your spells hit what is nearest, so you destroy them by walking up to them. |
+| **Living Bomb, reworked** | Baron Geddon | An optional bomb on the ground. Walk over it to pick it up; a few seconds later it explodes around you, hitting enemies and the boss hard. You take a small share of your health, never a killing blow. Carry it into the pack or to the boss. |
+| **Hold the circle** | Soak circles, reworked | A circle that damages the boss (or weakens it) while a hero stands in it. Standing in it costs nothing but your position. |
+
+*Not doing:* Living Bomb as a mark you cannot refuse, and soak circles that hurt whoever stands in
+them. Both force damage on someone, against the rule above.
+
+**The boss bar (11f, agreed):** a bar across the top of the screen with the boss's name and health,
+and one sentence under it explaining its mechanic, such as "Marks the ground; anyone inside is pulled
+to him." A centre-screen warning (WoW's raid warning text, if the 1.12 interface has it) could come
+just before a mechanic fires. Elites get a sentence on their target frame.
+
+### Affixes (11g)
+
+From Mythic+ and Project Ascension's Manastorm:
+
+| Affix | What it does |
+|---|---|
+| **Vortex** | Pulls you and nearby enemies in when you get close. Drag a pack into it to bunch it up. |
+| **Slowing field** | Slows everything inside, you included. |
+| **Sanguine** | Dead enemies leave a pool that heals other enemies; pull the pack off it. |
+| **Bolstering** | Each death buffs nearby enemies; don't leave a pack half-killed. |
+| **Volcanic** | Fire erupts under you after a short warning. |
+| **Storming** | Tornadoes drift across the area. |
+| **Spiteful** | A ghost rises from a dead enemy and chases you for a few seconds. |
+| **Explosive** | Orbs to walk up to and destroy (above). |
+
+Where affixes come from is open:
+
+- **Chosen before the run** for more reward, like a Mythic+ keystone or Hades' Heat.
+- **Owned by certain bosses or elites**, as part of who they are.
+- **Added in a run's later stages**, so the last minutes get harder in new ways, not just in numbers.
+
+A likely mix: bosses keep their own fixed mechanics (learnable, explained on the boss bar); affixes
+join in a run's later stages, and the difficulty ladder (9g) adds more of them, or lets you choose.
+
 ## Open questions for us
 
 1. The talent web: its size, how points are earned, its first notables and keystones.
 2. Dormant gear: what a piece costs to switch on, and whether order or rarity changes the price.
 3. Items versus tomes: which carries the unique effects, and slots or not ([A](#a-items-and-tomes-in-a-run)).
 4. Review the mage draft ([MAGE-DRAFT.md](MAGE-DRAFT.md)).
+5. Charges: does every heal and block spell bank charges, or only some ([I](#i-surviving-solo-without-a-tank-or-healer))?
+6. Affixes: chosen before the run, owned by bosses, added in later stages, or a mix?
 
 Answered (2026-10-15):
 - **Talent points and gear:** a setting, per class or shared, to test both.
@@ -331,10 +449,10 @@ Answered (2026-10-15):
 - **Power budget:** 0% early, up to ~40% late.
 - **Defensive button:** Q/E/F, 30 s–2 min, augmentable, no cast times for now.
 - **Fusions:** not doing.
-- **Augments:** the growth system, at ranks 7 and 14, max rank 14; pools of ~4 spell-specific
-  augments per spell plus a shared tag library.
+- **Augments:** the growth system: general augments at ranks 5 and 10, a capstone (1 of 3 fixed) at
+  rank 15, max rank 15.
 - **Evolutions:** skipped for now; test augments first.
-- **Augment flow:** a bonus Augment screen at ranks 7 and 14 with Pick / Reroll / Hold; holding
+- **Augment flow:** a bonus Augment screen with Pick / Reroll / Hold; holding
   keeps the spell at its rank until augmented; it pauses co-op like a level-up.
 - **Talent web:** start with it.
 - **Gear:** jewelry in the run; armor and weapons brought in, dormant, switched on with gold.
@@ -342,3 +460,8 @@ Answered (2026-10-15):
 - **Upgrades:** duplicates and upgrade cards raise a tome or item by an amount scaled by rarity.
 - **The Megabonk branch:** liked; merges into the main game once its remaining work is done.
 - **Parked for later:** the talent web and dormant gear (all ideas kept here).
+- **Survival:** every build needs an answer to the swarm, not a tank or healer; heal and block
+  spells bank charges; heal and tank builds deal damage through overflow and retaliation.
+- **Boss and elite mechanics:** every mechanic can be avoided by moving; Living Bomb becomes an
+  optional pickup; soak circles become circles you hold to hurt the boss; a boss bar with a
+  one-sentence explanation.
