@@ -33,10 +33,14 @@ pub enum InteractableKind {
     ChallengeIdol,
     /// Draws in all the experience on the ground.
     Moonwell,
+    /// A goblin selling a pick of items for gold, once.
+    Merchant,
+    /// Brings one more copy of the next boss, and with it one more cache.
+    BloodShrine,
 }
 
 impl InteractableKind {
-    pub const ALL: [InteractableKind; 8] = [
+    pub const ALL: [InteractableKind; 10] = [
         InteractableKind::TitanShrine,
         InteractableKind::GoldenShrine,
         InteractableKind::CursedAltar,
@@ -45,6 +49,8 @@ impl InteractableKind {
         InteractableKind::Cache,
         InteractableKind::ChallengeIdol,
         InteractableKind::Moonwell,
+        InteractableKind::Merchant,
+        InteractableKind::BloodShrine,
     ];
 
     pub fn name(self) -> &'static str {
@@ -57,6 +63,8 @@ impl InteractableKind {
             InteractableKind::Cache => "Champion's Cache",
             InteractableKind::ChallengeIdol => "Challenge Idol",
             InteractableKind::Moonwell => "Moonwell",
+            InteractableKind::Merchant => "Goblin Merchant",
+            InteractableKind::BloodShrine => "Blood Shrine",
         }
     }
 
@@ -71,6 +79,8 @@ impl InteractableKind {
             InteractableKind::Cache => "A free choice of treasure",
             InteractableKind::ChallengeIdol => "Summons elites; slay them all for a cache",
             InteractableKind::Moonwell => "Draws in all experience on the ground",
+            InteractableKind::Merchant => "Buy one of three treasures, once",
+            InteractableKind::BloodShrine => "The next boss comes twice over, and pays twice",
         }
     }
 
@@ -88,8 +98,12 @@ impl InteractableKind {
             InteractableKind::TitanShrine | InteractableKind::GoldenShrine => 3.0,
             InteractableKind::CursedAltar
             | InteractableKind::GreedShrine
-            | InteractableKind::ChallengeIdol => 1.5,
-            InteractableKind::Chest | InteractableKind::Cache | InteractableKind::Moonwell => 1.0,
+            | InteractableKind::ChallengeIdol
+            | InteractableKind::BloodShrine => 1.5,
+            InteractableKind::Chest
+            | InteractableKind::Cache
+            | InteractableKind::Moonwell
+            | InteractableKind::Merchant => 1.0,
         }
     }
 

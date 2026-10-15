@@ -114,15 +114,28 @@ const SHRINE_SERIAL_BASE: u64 = 0x4000_0000;
 /// apart, ranked elite, which gives their target frame its gold dragon.
 const ELITE_ENTRY_BASE: u32 = 0x8000;
 
-/// `CreatureTemplate.rank` of an elite.
+/// Creature entries of bosses, the same way: ranked boss, which gives theirs a skull.
+const BOSS_ENTRY_BASE: u32 = 0xC000;
+
+/// `CreatureTemplate.rank` of an elite and of a boss.
 const RANK_ELITE: u32 = 1;
+const RANK_BOSS: u32 = 3;
 
 /// The colour of gold in combat text, 0xAARRGGBB.
 const COLOR_GOLD: u32 = 0xFFFF_D100;
 
-/// The `GameObjectDisplayInfo` row and scale an interactable's model wears.
+/// The goblin merchant: a creature, not an object. Its `CreatureDisplayInfo` row
+/// (`GoblinMale.mdx`), and the creature entry that names it.
+const MERCHANT_DISPLAY: u32 = 6882;
+const MERCHANT_ENTRY: u32 = 0x7F00;
+
+/// The display row and scale an interactable's model wears: a `GameObjectDisplayInfo` row, but
+/// for the merchant's `CreatureDisplayInfo` one.
 fn shrine_look(kind: InteractableKind) -> (u32, f32) {
     match kind {
+        InteractableKind::Merchant => (MERCHANT_DISPLAY, 1.0),
+        // `LavaAltar.mdx`.
+        InteractableKind::BloodShrine => (206, 1.0),
         // `GlyphedCrystal.mdx`, Silithus's titan glyph crystal.
         InteractableKind::TitanShrine => (6431, 2.0),
         // `G_EpicBrazierYellow.mdx`.
@@ -148,7 +161,9 @@ fn shrine_look(kind: InteractableKind) -> (u32, f32) {
 fn ring_look(kind: InteractableKind) -> (u32, f32) {
     match kind {
         // `G_RuneGroundPurple01.mdx`.
-        InteractableKind::CursedAltar | InteractableKind::GreedShrine => (465, 2.8),
+        InteractableKind::CursedAltar
+        | InteractableKind::GreedShrine
+        | InteractableKind::BloodShrine => (465, 2.8),
         // `G_RuneGroundGreen01.mdx`.
         InteractableKind::ChallengeIdol | InteractableKind::Moonwell => (674, 2.8),
         // `G_RuneGroundBlue01.mdx`.
@@ -175,7 +190,9 @@ fn shrine_visual(kind: InteractableKind) -> Option<u32> {
         InteractableKind::GreedShrine => Some(20271),
         // Demoralizing Shout.
         InteractableKind::ChallengeIdol => Some(1160),
-        InteractableKind::Chest | InteractableKind::Cache => None,
+        // Hellfire.
+        InteractableKind::BloodShrine => Some(5857),
+        InteractableKind::Chest | InteractableKind::Cache | InteractableKind::Merchant => None,
     }
 }
 
@@ -257,7 +274,11 @@ pub(super) fn apply_events(
                     commands.entity(e).despawn();
                 }
             }
-            Event::LevelUp { .. } | Event::ChallengeWon { .. } => {}
+            // The HUD tells of these.
+            Event::LevelUp { .. }
+            | Event::ChallengeWon { .. }
+            | Event::BossCame { .. }
+            | Event::BossDied { .. } => {}
             Event::GoldGained { player, amount } => {
                 // Everyone's purse fills with every coin; only our own is shown.
                 if player == sim.me {
@@ -384,11 +405,13 @@ pub(super) fn sync(
         }
         let def = &content.enemies[enemy.def];
         // One creature template per enemy kind, and one more for its elites: the entry names it.
-        let (entry, rank, scale) = if enemy.elite {
-            let entry = ELITE_ENTRY_BASE + enemy.def as u32 + 1;
-            (entry, RANK_ELITE, def.scale * ELITE_SCALE)
+        let base = enemy.def as u32 + 1;
+        let (entry, rank, scale) = if enemy.boss {
+            (BOSS_ENTRY_BASE + base, RANK_BOSS, def.scale)
+        } else if enemy.elite {
+            (ELITE_ENTRY_BASE + base, RANK_ELITE, def.scale * ELITE_SCALE)
         } else {
-            (enemy.def as u32 + 1, 0, def.scale)
+            (base, 0, def.scale)
         };
         if views.named.insert(entry) {
             names.insert_creature(
@@ -452,7 +475,7 @@ pub(super) fn sync(
         views.gems.insert(gem.id, e);
     }
 
-    sync_shrines(&mut commands, world, &mut views, &ground, fallback_y);
+    sync_shrines(&mut commands, world, &mut views, &mut names, &ground, fallback_y);
 
     if sim.stepped {
         for hero in &world.heroes {
@@ -505,6 +528,7 @@ fn sync_shrines(
     commands: &mut Commands,
     world: &together_sim::World,
     views: &mut Views,
+    names: &mut NameCache,
     ground: &impl Fn(V2, f32) -> Vec3,
     fallback_y: f32,
 ) {
@@ -521,14 +545,56 @@ fn sync_shrines(
                 }
             }
         }
-        let view = views.interactables.entry(it.id).or_insert_with(|| {
+        if !views.interactables.contains_key(&it.id) {
             let (display, scale) = shrine_look(it.kind);
-            ShrineView {
-                pos: it.pos,
-                model: units::spawn_object(commands, serial, display, scale, at),
-                marks: None,
-            }
-        });
+            let model = if it.kind == InteractableKind::Merchant {
+                if views.named.insert(MERCHANT_ENTRY) {
+                    names.insert_creature(
+                        MERCHANT_ENTRY,
+                        Some(CreatureRecord {
+                            name: it.kind.name().into(),
+                            subname: Some("Treasures".into()),
+                            creature_type: 0,
+                            pet_family: 0,
+                            rank: 0,
+                            type_flags: 0,
+                            civilian: true,
+                            racial_leader: false,
+                            display_id: display,
+                        }),
+                    );
+                }
+                let spec = UnitSpec {
+                    kind: UnitKind::Creature {
+                        entry: MERCHANT_ENTRY,
+                    },
+                    serial,
+                    display,
+                    scale,
+                    level: 60,
+                    faction: units::FACTION_FRIENDLY,
+                    bytes0: 0,
+                    weapons: &[],
+                    sheath: 0,
+                    extra: &[],
+                };
+                units::spawn_unit(commands, &spec, at, 0.0)
+            } else {
+                units::spawn_object(commands, serial, display, scale, at)
+            };
+            views.interactables.insert(
+                it.id,
+                ShrineView {
+                    pos: it.pos,
+                    model,
+                    marks: None,
+                },
+            );
+        }
+        let view = views
+            .interactables
+            .get_mut(&it.id)
+            .expect("inserted above");
         // A challenge under way keeps its ring: the fight is there.
         let marked = it.ready() || matches!(it.state, InteractState::Challenge(_));
         match (marked, view.marks) {

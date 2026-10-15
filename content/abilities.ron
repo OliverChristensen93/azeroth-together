@@ -222,4 +222,15 @@
     (key: "entangling_roots", name: "Entangling Roots", visual: 339, kind: Strike,
      damage: 6.0, cooldown: 6.0, range: 16.0, count: 4,
      description: "Grasping roots wound the four nearest enemies."),
+    // --- Items' strikes: in no class's pool. Their damage comes from the hit or kill that set
+    // them off, not from `damage`; they are here for their visual and their damage-meter row. ---
+    (key: "static_shard", name: "Static Shard", visual: 421, kind: Strike,
+     damage: 0.0, range: 8.0,
+     description: "Lightning arcs from a hit to the enemies around it."),
+    (key: "ember_core", name: "Ember Core", visual: 2120, kind: Nova,
+     damage: 0.0, radius: 5.0,
+     description: "A slain enemy bursts into flame."),
+    (key: "frost_ward", name: "Frost Ward", visual: 122, kind: Nova,
+     damage: 0.0, radius: 3.0,
+     description: "A ward of ice turns a blow aside."),
 ]

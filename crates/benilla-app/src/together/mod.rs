@@ -448,12 +448,13 @@ fn start_run(
     begin(&mut commands, sim);
 }
 
-/// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, so a
-/// test run sees them all at once.
+/// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, and
+/// the boss comes 8 seconds in, so a short test run sees them all.
 fn showcase_for_tests(world: &mut World) {
     if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
         return;
     }
+    world.next_boss = 8.0;
     let center = world.center();
     let mut kinds = Vec::new();
     let firsts: Vec<u32> = world
@@ -513,19 +514,25 @@ fn read_keys(
     mut input: ResMut<LocalInput>,
     mut up_since: Local<Option<f32>>,
 ) {
-    let choosing = sim
+    let Some(hero) = sim
         .world
         .hero(sim.me)
-        .is_some_and(|h| h.alive && !h.offers.is_empty());
-    if !choosing {
+        .filter(|h| h.alive && !h.offers.is_empty())
+    else {
         *up_since = None;
         return;
-    }
+    };
     if autoplay() {
         // Long enough for a test shot to see the cards.
         let since = *up_since.get_or_insert(real.elapsed_secs());
         if real.elapsed_secs() - since > 3.0 {
-            input.pick = Some(0);
+            // The first card, or a pass on what it cannot pay for.
+            let first = hero.offers[0].cards.first();
+            if first.is_some_and(|c| c.price <= hero.gold) {
+                input.pick = Some(0);
+            } else {
+                input.skip = true;
+            }
             *up_since = None;
         }
         return;

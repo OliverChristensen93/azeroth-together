@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use together_sim::{
-    Content, ContentSources, Event, InteractableKind, PlayerInput, World, TICK_HZ, V2,
+    Content, ContentSources, Event, InteractableKind, Item, PlayerInput, World, TICK_HZ, V2,
 };
 
 fn shipped() -> Content {
@@ -21,6 +21,16 @@ fn shipped() -> Content {
 fn shipped_content_is_valid() {
     let c = shipped();
     assert!(!c.classes.is_empty() && !c.zones.is_empty());
+}
+
+#[test]
+fn every_item_that_strikes_has_its_ability() {
+    let c = shipped();
+    for item in Item::ALL {
+        if let Some(key) = item.proc() {
+            assert!(c.ability(key).is_some(), "{key} is missing from abilities.ron");
+        }
+    }
 }
 
 #[test]

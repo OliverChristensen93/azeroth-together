@@ -104,6 +104,12 @@ pub struct ZoneDef {
     /// The shrines, altars and chests scattered about the arena each run; none when left out.
     #[serde(default)]
     pub interactables: Vec<Placement>,
+    /// The enemy key of the zone's boss, who comes every few minutes; none when left out.
+    #[serde(default)]
+    pub boss: String,
+    /// [`ZoneDef::boss`] resolved to an index into [`Content::enemies`].
+    #[serde(skip)]
+    pub boss_ix: Option<usize>,
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
@@ -297,6 +303,10 @@ impl Content {
                 .iter()
                 .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
                 .collect::<Result<_, _>>()?;
+            zone.boss_ix = Some(zone.boss.as_str())
+                .filter(|k| !k.is_empty())
+                .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
+                .transpose()?;
             if zone.enemy_ix.is_empty() {
                 return Err(ContentError::Invalid {
                     file: "zones.ron",
@@ -311,6 +321,10 @@ impl Content {
             enemies,
             zones,
         })
+    }
+
+    pub fn ability(&self, key: &str) -> Option<usize> {
+        self.abilities.iter().position(|a| a.key == key)
     }
 
     pub fn class(&self, key: &str) -> Option<usize> {
@@ -335,14 +349,19 @@ pub(crate) mod tests {
          cooldown: 1.0, range: 24.0, missile_speed: 28.0),
         (key: "nova", name: "Frost Nova", visual: 122, kind: Nova, damage: 8.0,
          cooldown: 5.0, radius: 9.0),
+        (key: "static_shard", name: "Static Shard", visual: 421, kind: Strike, damage: 0.0),
+        (key: "ember_core", name: "Ember Core", visual: 2120, kind: Nova, damage: 0.0),
+        (key: "frost_ward", name: "Frost Ward", visual: 122, kind: Nova, damage: 0.0),
     ]"#;
     pub(crate) const ENEMIES: &str = r#"[
         (key: "wolf", name: "Young Wolf", display: 447, level: 1, hp: 10.0, speed: 5.0,
          damage: 2.0, xp: 1),
+        (key: "hogger", name: "Hogger", display: 384, level: 11, scale: 1.9, hp: 3000.0,
+         speed: 4.2, damage: 40.0, xp: 150),
     ]"#;
     pub(crate) const ZONES: &str = r#"[
         (key: "elwynn", name: "Elwynn Forest", map: 0, center: (-9548.5, 115.0, 60.0),
-         leash: 150.0, enemies: ["wolf"],
+         leash: 150.0, enemies: ["wolf"], boss: "hogger",
          interactables: [(kind: TitanShrine, count: 2), (kind: Chest, count: 3),
                          (kind: CursedAltar, count: 1)]),
     ]"#;
@@ -364,6 +383,7 @@ pub(crate) mod tests {
         assert_eq!(c.abilities[mage.start_ix].key, "frostbolt");
         assert_eq!(mage.pool_ix.len(), 2);
         assert_eq!(c.enemies[c.zones[0].enemy_ix[0]].name, "Young Wolf");
+        assert_eq!(c.zones[0].boss_ix.map(|b| c.enemies[b].name.as_str()), Some("Hogger"));
     }
 
     #[test]

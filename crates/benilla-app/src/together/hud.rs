@@ -296,6 +296,40 @@ pub(super) fn refresh(
             hero.gold,
             owned.join("   "),
         );
+        let bosses: Vec<String> = world
+            .enemies
+            .iter()
+            .filter(|e| e.boss)
+            .map(|e| {
+                let name = &content.enemies[e.def].name;
+                format!("{name} {:.0}%", e.hp / e.max_hp.max(1.0) * 100.0)
+            })
+            .collect();
+        if !bosses.is_empty() {
+            s.push_str(&format!("\nBOSS  {}", bosses.join("   ")));
+        } else if let Some(boss) = world.zone().boss_ix {
+            let curses = match world.boss_curses {
+                0 => String::new(),
+                n => format!(" x{}", n + 1),
+            };
+            s.push_str(&format!(
+                "\n{}{curses} comes in {}",
+                content.enemies[boss].name,
+                clock((world.next_boss - world.elapsed).max(0.0))
+            ));
+        }
+        if !hero.items.is_empty() {
+            let held: Vec<String> = hero
+                .items
+                .iter()
+                .map(|&(item, n)| match n {
+                    1 => item.name().to_string(),
+                    _ => format!("{} x{n}", item.name()),
+                })
+                .collect();
+            s.push('\n');
+            s.push_str(&held.join("   "));
+        }
         // Friends who have fallen, while the run goes on.
         if hero.alive && !world.game_over() {
             for h in world.heroes.iter().filter(|h| !h.alive) {

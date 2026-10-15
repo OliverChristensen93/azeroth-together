@@ -12,6 +12,7 @@
 mod cards;
 mod content;
 mod interact;
+mod items;
 mod math;
 mod rng;
 mod stats;
@@ -23,6 +24,7 @@ pub use content::{
     ZoneDef,
 };
 pub use interact::{chest_price, InteractState, Interactable, InteractableKind, Placement};
+pub use items::{merchant_price, ward_cooldown, Item};
 pub use math::V2;
 pub use rng::Rng;
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};

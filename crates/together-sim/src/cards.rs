@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::content::AbilityDef;
+use crate::items::Item;
 use crate::rng::Rng;
 use crate::stats::{Pact, Stat, Stats};
 
@@ -125,6 +126,8 @@ pub enum CardKind {
     Tome(Stat),
     /// A Cursed Altar's bargain: a boon of the card's rarity, and its bane.
     Pact(Pact),
+    /// One more copy of an item; the card's rarity is the item's own.
+    Item(Item),
 }
 
 /// A card in a hand.
@@ -132,6 +135,8 @@ pub enum CardKind {
 pub struct Card {
     pub kind: CardKind,
     pub rarity: Rarity,
+    /// Gold it costs to take: 0 but at the goblin merchant.
+    pub price: u32,
 }
 
 impl Card {
@@ -139,7 +144,7 @@ impl Card {
     pub fn ability(&self) -> Option<usize> {
         match self.kind {
             CardKind::Learn(a) | CardKind::Upgrade(a) => Some(a),
-            CardKind::Tome(_) | CardKind::Pact(_) => None,
+            CardKind::Tome(_) | CardKind::Pact(_) | CardKind::Item(_) => None,
         }
     }
 }

@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, AbilityKind, Card, CardKind, Hero, InteractableKind, Rarity, Source, Stat,
-    MAX_ABILITIES,
+    ability_stats, AbilityKind, Card, CardKind, Hero, InteractableKind, Item, Rarity, Source,
+    Stat, MAX_ABILITIES,
 };
 
 use super::menu::SpellIcon;
@@ -228,6 +228,22 @@ fn stat_icon(stat: Stat) -> u32 {
     }
 }
 
+/// The spell whose icon an item's card wears, from the shipped abilities as [`stat_icon`]'s are.
+fn item_icon(item: Item) -> u32 {
+    match item {
+        // Chain Lightning, Flamestrike, Death Coil, Gouge.
+        Item::StaticShard => 421,
+        Item::EmberCore => 2120,
+        Item::VampiricFang => 6789,
+        Item::SkeletonKey => 1776,
+        // Entangling Roots, Whirlwind, Frost Nova, Eviscerate.
+        Item::RabbitsFoot => 339,
+        Item::BerserkersRing => 1680,
+        Item::FrostWard => 122,
+        Item::GoblinPurse => 2098,
+    }
+}
+
 /// What a card shows.
 struct Face {
     /// The spell whose icon it wears.
@@ -335,6 +351,38 @@ fn face(hero: &Hero, card: &Card) -> Face {
             ],
             footer: "Stacks with every other tome".into(),
         },
+        CardKind::Item(item) => {
+            let held = hero.stacks(item);
+            let mut lines = vec![(item.describe(held.saturating_add(1)), GREEN)];
+            if held > 0 {
+                lines.push((format!("You hold {held}: {}", item.describe(held)), GREY));
+            }
+            if card.price > 0 {
+                let tint = if hero.gold >= card.price { GOLD } else { RED };
+                lines.push((
+                    format!("Costs {} gold  ·  you have {}", card.price, hero.gold),
+                    tint,
+                ));
+            }
+            Face {
+                icon: item_icon(item),
+                name: item.name().into(),
+                sub: if held > 0 {
+                    format!("Item  ·  copy {}", held + 1)
+                } else {
+                    "Item".into()
+                },
+                badge: if card.price > 0 {
+                    format!("{}g", card.price)
+                } else {
+                    "ITEM".into()
+                },
+                bright: true,
+                description: "Kept for the rest of the run.".into(),
+                lines,
+                footer: "Copies stack".into(),
+            }
+        }
         CardKind::Pact(pact) => Face {
             icon: stat_icon(pact.boon),
             name: format!("Pact of {}", pact.boon.name()),
@@ -508,6 +556,8 @@ pub(super) struct Shown {
     source: Option<Source>,
     cards: Vec<Card>,
     spells: Vec<(u32, u8)>,
+    /// The hero's gold, which colours a merchant's prices.
+    gold: u32,
     rerolls: u32,
     more: usize,
 }
@@ -525,6 +575,7 @@ fn titles(source: Source) -> (&'static str, &'static str) {
             "The titans offer their knowledge. Choose a tome."
         }
         InteractableKind::CursedAltar => "Every boon has its bane. Choose wisely, or skip.",
+        InteractableKind::Merchant => "\"Best prices in Azeroth!\" Buy one, or walk away.",
         _ => "Choose your treasure.",
     };
     (kind.name(), hint)
@@ -578,6 +629,7 @@ pub(super) fn refresh(
             .iter()
             .map(|o| (content.abilities[o.ability].visual, o.level))
             .collect(),
+        gold: hero.gold,
         rerolls: hero.rerolls,
         more: hero.offers.len() - 1,
     };
