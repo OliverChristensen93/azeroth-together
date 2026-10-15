@@ -16,6 +16,7 @@
 //! `TOGETHER_TRACE_POS` (logs the hero's position, for reading off coordinates).
 
 mod actions;
+mod dev;
 mod dress;
 mod hud;
 mod levelup;
@@ -36,7 +37,8 @@ use std::sync::{Arc, OnceLock};
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
 use together_sim::{
-    Content, ContentSources, Event, HeroPose, PlayerId, PlayerInput, Snapshot, World, DT, V2,
+    Content, ContentSources, Event, HeroPose, PlayerId, PlayerInput, Snapshot, Tuning, World, DT,
+    V2,
 };
 
 /// Set by [`crate::run_together`] before the app builds.
@@ -188,13 +190,15 @@ const PLAYBACK_DEPTH: usize = 2;
 const PLAYBACK_MAX: usize = 8;
 
 impl Sim {
-    /// A run for everyone in `roster` (just us, alone), stepped here.
-    fn hosted(zone: &str, roster: &[together_net::LobbyPlayer]) -> Self {
+    /// A run for everyone in `roster` (just us, alone), stepped here, its content tuned by the
+    /// dev panel's multipliers.
+    fn hosted(zone: &str, roster: &[together_net::LobbyPlayer], tuning: &Tuning) -> Self {
         let seed = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0x9E37_79B9_7F4A_7C15);
-        let mut world = World::new(content(), zone, seed).expect("zone from the content");
+        let content = Arc::new(content().tuned(tuning));
+        let mut world = World::new(content, zone, seed).expect("zone from the content");
         for p in roster {
             // A class the content lacks (a mismatched client) is left out rather than crash.
             let _ = world.add_hero_as(
@@ -298,6 +302,7 @@ impl Plugin for TogetherPlugin {
             .init_resource::<EndRun>()
             .init_resource::<session::Net>()
             .init_resource::<lobby::JoinDialog>()
+            .init_resource::<dev::DevSettings>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
@@ -331,6 +336,8 @@ impl Plugin for TogetherPlugin {
                     lobby::type_address,
                     lobby::clicks,
                     lobby::refresh.before(crate::glue::GlueVisuals),
+                    dev::clicks,
+                    dev::refresh.before(crate::glue::GlueVisuals),
                     session::lobby,
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     menu::preview_hero,
@@ -408,6 +415,7 @@ fn start_run(
     mut player: ResMut<crate::player::Player>,
     mut next: ResMut<NextState<Phase>>,
     mut net: ResMut<session::Net>,
+    dev: Res<dev::DevSettings>,
 ) {
     let content = content();
     let mut begin = |commands: &mut Commands, sim: Sim| {
@@ -457,7 +465,7 @@ fn start_run(
     let zone = content.zones[selection.zone].key.clone();
     let roster = net.roster(&own);
     net.broadcast_start(&zone);
-    let mut sim = Sim::hosted(&zone, &roster);
+    let mut sim = Sim::hosted(&zone, &roster, &dev.tuning);
     showcase_for_tests(&mut sim.world);
     begin(&mut commands, sim);
 }
