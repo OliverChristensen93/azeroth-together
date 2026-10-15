@@ -29,8 +29,8 @@ pub(super) struct Views {
     pub gems: HashMap<u32, Entity>,
     pub interactables: HashMap<u32, ShrineView>,
     pub pickups: HashMap<u32, Entity>,
-    /// Interactables whose spot has been checked for water and walls.
-    settled: HashSet<u32>,
+    /// Interactables and elite camps whose spot has been checked for water and walls.
+    settled: HashSet<Spot>,
     /// Creature entries whose names are in the [`NameCache`].
     named: HashSet<u32>,
     /// The run speed last given the local hero's controller.
@@ -670,9 +670,18 @@ fn usable(world_point: &WorldPoint, at: V2) -> Option<bool> {
     Some(!wet && !indoors)
 }
 
-/// Alone or hosting: each interactable's spot is checked once the terrain under it has loaded,
-/// and one under water or inside a building moves to the nearest dry, open spot in the arena,
-/// searched in widening rings. Joined, the host has done it, and its snapshots say where.
+/// Something with a spot in the arena the host checks: an interactable by id, or an elite camp
+/// by index.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Spot {
+    Interactable(u32),
+    Camp(usize),
+}
+
+/// Alone or hosting: each interactable's and elite camp's spot is checked once the terrain under
+/// it has loaded, and one under water or inside a building moves to the nearest dry, open spot
+/// in the arena, searched in widening rings. Joined, the host has done it, and its snapshots say
+/// where.
 pub(super) fn settle_shrines(
     mut sim: ResMut<Sim>,
     net: Res<super::session::Net>,
@@ -688,18 +697,25 @@ pub(super) fn settle_shrines(
     }
     let center = sim.world.center();
     let leash = sim.world.zone().leash;
-    let unsettled: Vec<(u32, V2)> = sim
-        .world
+    let world = &sim.world;
+    let unsettled: Vec<(Spot, V2)> = world
         .interactables
         .iter()
-        .filter(|i| !views.settled.contains(&i.id))
-        .map(|i| (i.id, i.pos))
+        .map(|i| (Spot::Interactable(i.id), i.pos))
+        .chain(
+            world
+                .camps
+                .iter()
+                .enumerate()
+                .map(|(c, camp)| (Spot::Camp(c), camp.pos)),
+        )
+        .filter(|(key, _)| !views.settled.contains(key))
         .collect();
-    for (id, pos) in unsettled {
+    for (key, pos) in unsettled {
         let Some(fine) = usable(&world_point, pos) else {
             continue;
         };
-        views.settled.insert(id);
+        views.settled.insert(key);
         if fine {
             continue;
         }
@@ -712,8 +728,10 @@ pub(super) fn settle_shrines(
             })
             .filter(|p| p.distance(center) <= leash - 3.0)
             .find(|&p| usable(&world_point, p) == Some(true));
-        if let Some(to) = spot {
-            sim.world.move_interactable(id, to);
+        match (key, spot) {
+            (Spot::Interactable(id), Some(to)) => sim.world.move_interactable(id, to),
+            (Spot::Camp(c), Some(to)) => sim.world.move_camp(c, to),
+            (_, None) => {}
         }
     }
 }

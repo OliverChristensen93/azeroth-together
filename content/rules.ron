@@ -9,4 +9,6 @@
     item_max_copies: 5,
     // Seconds between chances of a new shrine, while fewer than the zone's `shrines_at_once` stand.
     shrine_every: 90.0,
+    // Seconds after a camp's elite dies before a new one guards the camp again.
+    elite_respawn: 180.0,
 )

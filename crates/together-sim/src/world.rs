@@ -75,6 +75,8 @@ const CHALLENGE_PER_HERO: usize = 2;
 const CHALLENGE_RING: (f32, f32) = (9.0, 14.0);
 /// The zone's boss comes this many seconds in, and again every as many after.
 pub const BOSS_EVERY: f32 = 240.0;
+/// A camp's elite chases a hero who comes this near, and otherwise keeps to its camp.
+pub const ELITE_AGGRO: f32 = 20.0;
 /// From this many seconds in, an ordinary spawn is now and then an elite.
 const ELITES_FROM: f32 = 90.0;
 const ELITE_CHANCE: f32 = 0.015;
@@ -369,6 +371,18 @@ pub struct Enemy {
     /// The hero who hit it last: the one its death counts for.
     #[serde(skip)]
     last_hit: Option<PlayerId>,
+    /// A camp's elite: the camp it guards ([`ELITE_AGGRO`]).
+    #[serde(skip)]
+    home: Option<V2>,
+}
+
+/// A spot an elite guards. While its elite lives, `elite` is its id; once it dies, a new one
+/// comes after `respawn` seconds (the rules' `elite_respawn`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Camp {
+    pub pos: V2,
+    pub elite: Option<u32>,
+    pub respawn: f32,
 }
 
 /// Experience on the ground, waiting for a hero to come close; some carry gold too.
@@ -479,6 +493,8 @@ pub struct World {
     pub gems: Vec<Gem>,
     /// The arena's shrines, altars, chests, banners and pots.
     pub interactables: Vec<Interactable>,
+    /// Where elites keep camp: each holds one, and a new one some minutes after it dies.
+    pub camps: Vec<Camp>,
     /// Health shards and power-ups on the ground.
     pub pickups: Vec<Pickup>,
     /// The party's power-ups at work, with the seconds each has left.
@@ -519,6 +535,7 @@ impl World {
             enemies: Vec::new(),
             gems: Vec::new(),
             interactables: Vec::new(),
+            camps: Vec::new(),
             pickups: Vec::new(),
             buffs: Vec::new(),
             shrine_timer: shrine_every,
@@ -539,6 +556,7 @@ impl World {
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
             world.place(kind, pos);
         }
+        world.place_camps();
         Ok(world)
     }
 
@@ -642,17 +660,37 @@ impl World {
         self.interactables.iter().find(|i| i.id == id)
     }
 
+    /// Move elite camp `c` to `pos`, kept inside the arena, for the same reason as
+    /// [`World::move_interactable`]: its elite makes for the new spot.
+    pub fn move_camp(&mut self, c: usize, pos: V2) {
+        let pos = self.inside(pos);
+        let Some(camp) = self.camps.get_mut(c) else {
+            return;
+        };
+        camp.pos = pos;
+        if let Some(e) = camp
+            .elite
+            .and_then(|id| self.enemies.iter_mut().find(|e| e.id == id))
+        {
+            e.home = Some(pos);
+        }
+    }
+
+    /// `pos`, pulled back onto the leash's edge if it lies past it.
+    fn inside(&self, pos: V2) -> V2 {
+        let center = self.center();
+        let off = pos - center;
+        if off.length() > self.zone().leash {
+            center + off.normalize_or_zero() * self.zone().leash
+        } else {
+            pos
+        }
+    }
+
     /// Move an interactable to `pos`, kept inside the arena: the host's client moves one off a
     /// spot that only the drawn world knows is no good (under water, inside a building).
     pub fn move_interactable(&mut self, id: u32, pos: V2) {
-        let center = self.center();
-        let leash = self.zone().leash;
-        let off = pos - center;
-        let pos = if off.length() > leash {
-            center + off.normalize_or_zero() * leash
-        } else {
-            pos
-        };
+        let pos = self.inside(pos);
         if let Some(it) = self.interactables.iter_mut().find(|i| i.id == id) {
             it.pos = pos;
         }
@@ -758,6 +796,7 @@ impl World {
                     boss: s.boss,
                     attack_cd: 0.0,
                     last_hit: None,
+                    home: None,
                 })
             })
             .collect();
@@ -1127,6 +1166,7 @@ impl World {
             boss: false,
             attack_cd: 0.5,
             last_hit: None,
+            home: None,
         });
         id
     }
@@ -1169,6 +1209,17 @@ impl World {
                 .expect("living is not empty");
             let to = target - e.pos;
             let dist = to.length();
+            // A camp's elite guards it: with no hero near, it goes back and waits there.
+            if let Some(home) = e.home.filter(|_| dist > ELITE_AGGRO) {
+                let back = home - e.pos;
+                e.moving = back.length() > 1.0;
+                if e.moving {
+                    e.facing = back.normalize_or_zero();
+                    e.pos += e.facing * (e.speed * DT).min(back.length());
+                }
+                e.pos += shove[i] * (DT * 8.0).min(0.5);
+                continue;
+            }
             let contact = dist <= HERO_RADIUS + e.radius + 0.35;
             e.facing = to.normalize_or_zero();
             e.moving = !contact;
@@ -1916,6 +1967,7 @@ mod tests {
             boss: false,
             attack_cd: 100.0,
             last_hit: None,
+            home: None,
         });
     }
 
@@ -3141,6 +3193,63 @@ mod tests {
         assert_eq!(hero.hp, hero.max_hp);
         assert_eq!(hero.gold, gold + fallback_gold(w.level));
         assert_eq!(hero.rerolls, rerolls + 1);
+    }
+
+    #[test]
+    fn each_camp_gets_an_elite_who_guards_it() {
+        let mut w = world();
+        assert_eq!(w.camps.len() as u32, w.zone().elite_camps);
+        w.step();
+        for camp in &w.camps {
+            let id = camp.elite.expect("an elite at every camp");
+            let elite = w.enemy(id).unwrap();
+            assert!(elite.elite && elite.home == Some(camp.pos));
+        }
+        // With no hero near, it stays home; a hero close by draws it out.
+        let camp = w.camps[0].pos;
+        let id = w.camps[0].elite.unwrap();
+        w.heroes[0].pos = camp + V2::new(ELITE_AGGRO * 2.0, 0.0);
+        play(&mut w, TICK_HZ as usize * 2);
+        assert!(w.enemy(id).unwrap().pos.distance(camp) < 2.0, "it wandered off");
+        w.heroes[0].pos = camp + V2::new(ELITE_AGGRO * 0.5, 0.0);
+        sturdy(&mut w);
+        play(&mut w, TICK_HZ as usize);
+        assert!(w.enemy(id).unwrap().pos.distance(camp) > 2.0, "it did not give chase");
+    }
+
+    #[test]
+    fn a_moved_camp_takes_its_elite_with_it() {
+        let mut w = world();
+        w.step();
+        let id = w.camps[0].elite.unwrap();
+        let to = w.center() + V2::new(-30.0, 30.0);
+        w.move_camp(0, to);
+        assert_eq!(w.camps[0].pos, to);
+        assert_eq!(w.enemy(id).unwrap().home, Some(to));
+    }
+
+    #[test]
+    fn a_slain_camp_elite_comes_back_after_the_respawn_time() {
+        let mut w = world();
+        w.interactables.clear();
+        sturdy(&mut w);
+        w.step();
+        let id = w.camps[0].elite.unwrap();
+        w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 0.0;
+        w.step();
+        assert!(w.enemy(id).is_none() && w.camps[0].elite.is_none());
+        let wait = w.content().rules.elite_respawn;
+        let start = w.elapsed;
+        for _ in 0..TICK_HZ as usize * (wait as usize + 30) {
+            if w.camps[0].elite.is_some() {
+                break;
+            }
+            play(&mut w, 1);
+        }
+        let back = w.camps[0].elite.expect("no new elite came");
+        assert_ne!(back, id);
+        let waited = w.elapsed - start;
+        assert!((waited - wait).abs() < 0.5, "came back after {waited} s, not {wait}");
     }
 
     #[test]

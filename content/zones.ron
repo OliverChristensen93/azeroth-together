@@ -2,7 +2,8 @@
 // 1 Kalimdor); `center` is in WoW coordinates (x, y, z); `leash` is how far heroes may roam;
 // `enemies` are weakest first; `boss` is the enemy key of the boss who comes every four minutes.
 // `shrines_at_once` is how many shrines, chests and banners stand at once (new ones come as old
-// ones are used), `pots` how many pots stand near the heroes; `interactables` are the kinds that
+// ones are used), `pots` how many pots stand near the heroes, `elite_camps` how many camps an elite
+// guards (a new one comes some minutes after it dies); `interactables` are the kinds that
 // can come, each with how many may stand at once and how often it comes up (`weight`).
 // Only zones whose terrain is in the game data can be played. The "boss candidates" comments
 // are the original game's bosses (display, level, speed, scale), not all in the data.
@@ -27,6 +28,7 @@
         boss: "hogger",
         shrines_at_once: 2,
         pots: 6,
+        elite_camps: 3,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -57,6 +59,7 @@
         boss: "sergeant_brashclaw",
         shrines_at_once: 2,
         pots: 6,
+        elite_camps: 3,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -86,6 +89,7 @@
         boss: "fenros",
         shrines_at_once: 2,
         pots: 6,
+        elite_camps: 3,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -115,6 +119,7 @@
         boss: "gurubashi_warlord",
         shrines_at_once: 2,
         pots: 4,
+        elite_camps: 1,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -145,6 +150,7 @@
         boss: "anubisath_guardian",
         shrines_at_once: 2,
         pots: 5,
+        elite_camps: 2,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),

@@ -65,6 +65,7 @@ impl World {
         if living.is_empty() {
             return;
         }
+        self.tend_camps();
         self.shrine_timer -= DT;
         if self.shrine_timer <= 0.0 {
             self.shrine_timer = self.content.rules.shrine_every;
@@ -82,6 +83,51 @@ impl World {
             let at = self.free_spot(near, POWERUP_RING);
             let p = PowerUp::ALL[self.rng.index(PowerUp::ALL.len())];
             self.drop_pickup(at, PickupKind::PowerUp(p));
+        }
+    }
+
+    /// The zone's [`crate::ZoneDef::elite_camps`], spread over the arena clear of the start and of
+    /// the shrines, each to get its elite on the first step.
+    pub(super) fn place_camps(&mut self) {
+        let content = self.content.clone();
+        let zone = &content.zones[self.zone];
+        let center = self.center();
+        let ring = ((zone.leash * 0.3).clamp(8.0, 30.0), zone.leash - 5.0);
+        for _ in 0..zone.elite_camps {
+            let mut taken: Vec<V2> = self.interactables.iter().map(|i| i.pos).collect();
+            taken.extend(self.camps.iter().map(|c| c.pos));
+            let pos = spot(zone, center, ring, &taken, &mut self.rng);
+            self.camps.push(Camp {
+                pos,
+                elite: None,
+                respawn: 0.0,
+            });
+        }
+    }
+
+    /// Each camp's elite: a camp whose elite died counts down the rules' `elite_respawn`, then
+    /// raises a new one of the run's strongest kind, which guards it.
+    fn tend_camps(&mut self) {
+        for c in 0..self.camps.len() {
+            if let Some(id) = self.camps[c].elite {
+                if self.enemy(id).is_some() {
+                    continue;
+                }
+                self.camps[c].elite = None;
+                self.camps[c].respawn = self.content.rules.elite_respawn;
+            }
+            self.camps[c].respawn -= DT;
+            if self.camps[c].respawn > 0.0 {
+                continue;
+            }
+            let (_, top) = self.tiers();
+            let def = self.zone().enemy_ix[top];
+            let pos = self.camps[c].pos;
+            let id = self.spawn_enemy(def, pos, pos + V2::new(1.0, 0.0), true);
+            if let Some(e) = self.enemies.last_mut() {
+                e.home = Some(pos);
+            }
+            self.camps[c].elite = Some(id);
         }
     }
 

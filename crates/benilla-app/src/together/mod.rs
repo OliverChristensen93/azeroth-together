@@ -452,13 +452,14 @@ fn start_run(
 }
 
 /// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, one
-/// of each power-up lies on a ring inside it, and the boss comes 8 seconds in, so a short test
-/// run sees them all.
+/// of each power-up lies on a ring inside it, an elite camp stands 25 yards off, and the boss
+/// comes 8 seconds in, so a short test run sees them all.
 fn showcase_for_tests(world: &mut World) {
     if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
         return;
     }
     world.next_boss = 8.0;
+    world.move_camp(0, world.center() + V2::new(25.0, 0.0));
     let ups = together_sim::PowerUp::ALL;
     for (k, p) in ups.into_iter().enumerate() {
         let angle = (k as f32 + 0.5) / ups.len() as f32 * std::f32::consts::TAU;

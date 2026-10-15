@@ -38,6 +38,9 @@ fn default_range() -> f32 {
 fn default_enemy_radius() -> f32 {
     0.6
 }
+fn three() -> u32 {
+    3
+}
 fn five() -> u32 {
     5
 }
@@ -117,6 +120,10 @@ pub struct ZoneDef {
     /// How many pots stand near the heroes at once (6 when left out).
     #[serde(default = "six")]
     pub pots: u32,
+    /// How many camps an elite guards (3 when left out); each gets a new elite the rules'
+    /// `elite_respawn` seconds after its last one dies.
+    #[serde(default = "three")]
+    pub elite_camps: u32,
     /// The enemy key of the zone's boss, who comes every few minutes; none when left out.
     #[serde(default)]
     pub boss: String,
@@ -193,6 +200,9 @@ fn five_u8() -> u8 {
 fn ninety() -> f32 {
     90.0
 }
+fn one_eighty() -> f32 {
+    180.0
+}
 
 /// The run's limits, from `rules.ron`: numbers a game mode may set its own way. Every one has a
 /// default, so a mode's file names only what it changes.
@@ -212,6 +222,9 @@ pub struct Rules {
     /// [`ZoneDef::shrines_at_once`] stand.
     #[serde(default = "ninety")]
     pub shrine_every: f32,
+    /// Seconds after a camp's elite dies before a new one takes its place.
+    #[serde(default = "one_eighty")]
+    pub elite_respawn: f32,
 }
 
 impl Default for Rules {
@@ -221,6 +234,7 @@ impl Default for Rules {
             tome_max_rank: five_u8(),
             item_max_copies: five_u8(),
             shrine_every: ninety(),
+            elite_respawn: one_eighty(),
         }
     }
 }
