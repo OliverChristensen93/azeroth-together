@@ -29,10 +29,10 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 0c | Rarity-rolled spell cards, reroll, skip | Azeroth Survivors | ✅ Done | |
 | 0d | Damage meter, WoW party frames | Details!/Recount | ✅ Done | |
 | 1a | **Tomes**: stat upgrades that take no slot | Megabonk | 🟢 Greenlit · 🧪 | Damage, cooldown, area, speed, health, regen, armor, pickup range, luck, XP and gold gain, as cards beside spell cards. Built on the Megabonk branch. |
-| 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 🟢 Greenlit · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). The Megabonk branch has 8 items that stack as copies, with no slots; ours differ. See [A](#a-items-and-tomes-in-a-run). |
+| 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 💬 Parked · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). The Megabonk branch has 8 items that stack as copies, with no slots; ours differ. See [A](#a-items-and-tomes-in-a-run). |
 | 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Skipped for now | Fixed recipes turn a run into a hunt for the partner piece. We test augments (2c) first and revisit. |
 | 2b | Fusions: two spells merge into one | — | ⛔ Not doing | Fixed recipes force a hunt; any-with-any has no good meaning; and fusing *removes* half of each spell (a trap's summon, a damage spell's damage), stranding the modifiers built for it. |
-| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). Offered on a bonus Augment screen with Pick / Reroll / Hold (agreed); pauses co-op like a level-up. See [C](#c-augments). |
+| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | First class drafted for review: [MAGE-DRAFT.md](MAGE-DRAFT.md). The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). Offered on a bonus Augment screen with Pick / Reroll / Hold (agreed); pauses co-op like a level-up. See [C](#c-augments). |
 | 2d | Grimoire: a codex of augments and Uniques you have found, the rest as hints | VS collection | 💡 New idea | Knowledge as progression between runs. |
 | 2e | **Unique items that augment or link spells** (e.g. "When Ice Barrier breaks, cast Frost Nova") | Azeroth Survivors | 🟢 Greenlit | Mostly necklaces. Triggered casts use your rank and augments and ignore cooldown. |
 | 2f | **Spell design rules**: about 12 spells per class, each reworked for the genre; single-target spells prioritize bosses and elites | Azeroth Survivors | 🟢 Greenlit | Kidney Shot just damages and stuns. Single-target and area spells both earn a place. We have 68 spells today (~7.5 per class). |
@@ -54,13 +54,24 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 9h | A setting: talent points and equipment per class, or shared by all classes | — | 🟢 Greenlit | Test both and keep the one that plays best. |
 | 9i | Power budget for progression between runs | — | 🟢 Agreed | 0% at the start, up to about 40% late (talents and gear together), when meta synergies meet in-run picks that fit them. |
 | 10a | **Defensive button** (movement, defensive or control): one per class, swappable from unlocked options | Your idea | 🟢 Greenlit | On Q, E or F (rebindable); cooldowns 30 s to 2 min; can be augmented. No cast times for now. See [F](#f-the-defensive-button-and-moving-well). |
-| 10b | Movement feel: dash charges, double jump, slow fall, momentum, jump pads | Megabonk | 💬 Discussing | See [F](#f-the-defensive-button-and-moving-well). |
+| 10b | Movement feel | Megabonk | 🟢 Agreed | **No universal dash.** Movement comes from the defensive button (for classes that pick a movement option), from items and tomes (move speed, Goblin Rocket Boots double jump, glide, momentum), and possibly goblin launch pads on the map. See [F](#f-the-defensive-button-and-moving-well). |
 | 10c | An **ultimate** beside the defensive button, possibly with a stand-still cast time | Megabonk campfire | 💬 Later | Parked until the defensive button exists. |
 | 12 | Co-op synergies across players (one player's root enables another's Shatter) | — | 💡 New idea | Falls out of tags for free. See [H](#h-co-op-only-ideas). |
 | — | Talent trees that lock a run into one spec before it starts | Azeroth Survivors | ⛔ Not doing | Takes away in-run choice: frost talents make every non-frost spell a trap pick. |
 | — | A permanent stat shop as the main progression (+5% damage forever …) | VS | 💬 Discussing | Fine as a small extra; as the core it is a grind with no decisions. |
 
 ## A. Items and tomes in a run
+
+> **Parked (2026-10-15): which of items and tomes carries the special effects.** On the Megabonk
+> branch (and in Megabonk itself) items are unlimited and carry the unique effects, while tomes are
+> general stat upgrades. The 5-slot jewelry idea below puts the effects in limited slots instead. A
+> third option, closer to Megabonk: **items take limited slots and carry the unique effects; tomes
+> are unlimited and general.** Either way, both items and tomes can be upgraded a set number of
+> times. To decide after playing the Megabonk branch more.
+>
+> **Agreed: upgrades scale with rarity, as in Megabonk.** A duplicate or upgrade raises the existing
+> tome or item, by how much depending on the card's rarity: "+5% damage" upgraded by a Common card
+> goes to 10%, by a Legendary card to 21%.
 
 **Tomes** are numbers and stack freely; **items** are effects and compete for slots.
 
@@ -304,8 +315,8 @@ WoW maps have little verticality, so jumps should be about crossing the horde, n
 
 1. The talent web: its size, how points are earned, its first notables and keystones.
 2. Dormant gear: what a piece costs to switch on, and whether order or rarity changes the price.
-3. Movement feel (10b): which of dash charges, double jump, glide, momentum and jump pads.
-4. What to take from the Megabonk branch once it is playable.
+3. Items versus tomes: which carries the unique effects, and slots or not ([A](#a-items-and-tomes-in-a-run)).
+4. Review the mage draft ([MAGE-DRAFT.md](MAGE-DRAFT.md)).
 
 Answered (2026-10-15):
 - **Talent points and gear:** a setting, per class or shared, to test both.
@@ -322,3 +333,7 @@ Answered (2026-10-15):
   keeps the spell at its rank until augmented; it pauses co-op like a level-up.
 - **Talent web:** start with it.
 - **Gear:** jewelry in the run; armor and weapons brought in, dormant, switched on with gold.
+- **Movement:** no universal dash; the defensive button, items, tomes and maybe launch pads.
+- **Upgrades:** duplicates and upgrade cards raise a tome or item by an amount scaled by rarity.
+- **The Megabonk branch:** liked; merges into the main game once its remaining work is done.
+- **Parked for later:** the talent web and dormant gear (all ideas kept here).
