@@ -256,6 +256,10 @@ pub enum Event {
     FlightDeparted {
         exit: u8,
     },
+    /// Extraction: a pack is converging on the flight due at exit `exit`.
+    AmbushWarned {
+        exit: u8,
+    },
     /// Extraction: `player` left on the flight from exit `exit`.
     HeroExtracted {
         player: PlayerId,

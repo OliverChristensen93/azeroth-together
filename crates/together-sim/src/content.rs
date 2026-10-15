@@ -474,6 +474,10 @@ impl Content {
             {
                 return Err(invalid(&map.key, "has an exit whose timetable cannot run"));
             }
+            let packs = [map.ambush.pack, map.heat.hunters.pack];
+            if packs.iter().any(|&(lo, hi)| lo > hi) {
+                return Err(invalid(&map.key, "has a pack whose fewest is more than its most"));
+            }
             self.zones[map.zone_ix].extraction_ix = Some(i);
         }
         self.extractions = maps;

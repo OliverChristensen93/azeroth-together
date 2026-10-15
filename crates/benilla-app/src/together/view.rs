@@ -387,6 +387,12 @@ pub(super) fn apply_events(
             }
             // The flight is drawn from the world's state.
             Event::FlightDeparted { .. } => {}
+            Event::AmbushWarned { exit } => {
+                if let Some(&e) = views.heroes.get(&sim.me) {
+                    let text = format!("Ambush converging on {}!", exit_name(&sim.world, exit));
+                    fx.text(e, text, COLOR_HEAT);
+                }
+            }
             Event::HeroExtracted { player, .. } => {
                 if let Some(&e) = views.heroes.get(&player) {
                     fx.cast(e, TELEPORT, &[e], None);

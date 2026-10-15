@@ -47,6 +47,8 @@
             (name: "Westbrook Garrison", pos: (-9615.0, 667.0), radius: 15.0,
              first: 450.0, every: 480.0, window: 30.0),
         ],
+        // Half the departures draw a pack, announced 20 seconds before the flight lands.
+        ambush: (chance: 0.5, warn: 20.0, pack: (6, 10), per_skull: 0.25, ring: (40.0, 60.0)),
         // `BatTaxi.m2`, the Undercity flight bat: the gryphon (display 6852) is not in the
         // trimmed data. Swap it when the full client data is in.
         flight_display: 1566,

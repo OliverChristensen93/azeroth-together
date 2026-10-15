@@ -444,12 +444,34 @@ impl World {
         let mut events = Vec::new();
         let mut heat: Vec<(Option<PlayerId>, f32)> = Vec::new();
         let mut taken: Vec<(PlayerId, u8)> = Vec::new();
+        // Each departure's ambush is rolled once.
+        let unrolled: Vec<usize> = match &self.mode {
+            Mode::Extraction(x) => (0..x.exits.len()).filter(|&i| !x.exits[i].rolled).collect(),
+            Mode::Arena => return,
+        };
+        for i in unrolled {
+            let ambush = self.rng.f32() < def.ambush.chance;
+            if let Some(x) = self.run_mut() {
+                x.exits[i].rolled = true;
+                x.exits[i].ambush = ambush;
+            }
+        }
+        let mut packs = Vec::new();
         let Some(x) = self.run_mut() else {
             return;
         };
         for (i, (exit, state)) in def.exits.iter().zip(x.exits.iter_mut()).enumerate() {
             let tag = i as u8;
-            if state.lands_in(exit, now) > 0.0 {
+            let lands = state.lands_in(exit, now);
+            if state.ambush && !state.warned && lands <= def.ambush.warn {
+                state.warned = true;
+                events.push(Event::AmbushWarned { exit: tag });
+            }
+            if state.ambush && !state.came && lands <= 0.0 {
+                state.came = true;
+                packs.push(i);
+            }
+            if lands > 0.0 {
                 continue;
             }
             let at = V2::new(exit.pos[0], exit.pos[1]);
@@ -478,6 +500,9 @@ impl World {
                 ..ExitState::default()
             };
         }
+        for exit in packs {
+            self.send_ambush(def, exit);
+        }
         for (who, amount) in heat {
             self.add_heat(who, amount);
         }
@@ -490,6 +515,32 @@ impl World {
             events.push(Event::HeroExtracted { player, exit });
         }
         self.events.extend(events);
+    }
+
+    /// A pack converging on exit `exit`'s flight from one side: the strongest enemies in play,
+    /// more of them the hotter the party.
+    fn send_ambush(&mut self, def: &ExtractionDef, exit: usize) {
+        let at = def.exit_pos(exit);
+        let skulls = def.skull_index(self.party_heat());
+        let skull = def.heat.skulls[skulls];
+        let (lo, hi) = def.ambush.pack;
+        let base = lo + self.rng.index((hi - lo + 1) as usize) as u32;
+        let count = (base as f32 * (1.0 + def.ambush.per_skull * skulls as f32)).round() as u32;
+        let roster = self.zone().enemy_ix.clone();
+        let (_, top) = self.tiers();
+        let kind = roster[(top + skull.tier).min(roster.len() - 1)];
+        let side = self.rng.range(0.0, std::f32::consts::TAU);
+        let bounds = def.bounds();
+        for _ in 0..count {
+            let angle = side + self.rng.range(-0.5, 0.5);
+            let r = self.rng.range(def.ambush.ring.0, def.ambush.ring.1);
+            let pos = at + V2::from_angle(angle, r);
+            if !bounds.inside(pos, 0.0) || def.in_margin(pos) {
+                continue;
+            }
+            let id = self.spawn_enemy(kind, pos, at, false);
+            self.toughen(id, skull.toughness, 1.0);
+        }
     }
 }
 
@@ -1024,5 +1075,43 @@ mod tests {
         state_mut(&mut w).exits[0].departs = 31.0;
         secs(&mut w, 32.0);
         assert!(w.hero(0).unwrap().extracted);
+    }
+
+    #[test]
+    fn an_ambush_is_warned_of_then_comes_from_one_side_when_the_flight_lands() {
+        let mut content = test_content("");
+        content.extractions[0].ambush.chance = 1.0;
+        let mut w = World::new(Arc::new(content), "goldshire", 5).unwrap();
+        w.add_hero(0, "mage").unwrap();
+        hush(&mut w);
+        // The hero waits near the gate (an ambush far from every hero is let go like any
+        // straggler), casting nothing.
+        at(&mut w, 0, 150.0, 0.0);
+        w.heroes[0].abilities.clear();
+        // East Gate lands at 30; the warning comes 20 before.
+        w.elapsed = 9.0;
+        secs(&mut w, 2.0);
+        assert!(w.drain_events().contains(&Event::AmbushWarned { exit: 0 }));
+        assert!(w.enemies.is_empty(), "warned, not come");
+        secs(&mut w, 19.5);
+        let gate = V2::new(200.0, 0.0);
+        assert!(w.enemies.len() >= 6, "{}", w.enemies.len());
+        for e in &w.enemies {
+            let d = e.pos.distance(gate);
+            assert!((35.0..=61.0).contains(&d), "{d}");
+        }
+    }
+
+    #[test]
+    fn without_a_chance_no_ambush_comes() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        w.elapsed = 9.0;
+        secs(&mut w, 22.0);
+        assert!(w.enemies.is_empty());
+        assert!(!w
+            .drain_events()
+            .iter()
+            .any(|e| matches!(e, Event::AmbushWarned { .. })));
     }
 }

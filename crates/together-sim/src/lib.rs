@@ -28,7 +28,7 @@ pub use content::{
     Tuning, WeaponDef, ZoneDef,
 };
 pub use extraction::{
-    Bounds, ExitDef, ExitState, Extraction, ExtractionDef, ExtractionSettings, HeatDef, HunterDef,
+    AmbushDef, Bounds, ExitDef, ExitState, Extraction, ExtractionDef, ExtractionSettings, HeatDef, HunterDef,
     Mode, SafeDef, SkullDef,
 };
 pub use interact::{

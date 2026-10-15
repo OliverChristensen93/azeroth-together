@@ -31,6 +31,8 @@ pub struct ExtractionDef {
     pub shrine_reach: f32,
     pub heat: HeatDef,
     pub exits: Vec<ExitDef>,
+    #[serde(default)]
+    pub ambush: AmbushDef,
     /// The creature display a flight comes down as.
     pub flight_display: u32,
     #[serde(default)]
@@ -103,6 +105,34 @@ pub struct HunterDef {
     pub cone: f32,
     /// Their speed, times.
     pub speed: f32,
+}
+
+/// A pack sent to a waiting flight.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default)]
+pub struct AmbushDef {
+    /// The chance a departure draws one.
+    pub chance: f32,
+    /// Seconds before its flight lands that the party is warned.
+    pub warn: f32,
+    /// Enemies in the pack at no heat, fewest and most...
+    pub pack: (u32, u32),
+    /// ...and this share more for each skull of the party's heat.
+    pub per_skull: f32,
+    /// How far from the exit they come, nearest and furthest.
+    pub ring: (f32, f32),
+}
+
+impl Default for AmbushDef {
+    fn default() -> Self {
+        Self {
+            chance: 0.0,
+            warn: 20.0,
+            pack: (6, 10),
+            per_skull: 0.25,
+            ring: (40.0, 60.0),
+        }
+    }
 }
 
 /// A place to leave from, and its timetable.
@@ -537,5 +567,11 @@ pub(crate) mod tests {
             ),
             "{err}"
         );
+    }
+
+    #[test]
+    fn a_pack_whose_fewest_is_more_than_its_most_is_refused() {
+        let err = maps_with("pack: (6, 10)", "pack: (10, 6)").unwrap_err();
+        assert!(matches!(err, ContentError::Invalid { .. }), "{err}");
     }
 }

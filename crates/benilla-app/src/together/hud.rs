@@ -323,7 +323,7 @@ fn extraction_status(world: &together_sim::World, hero: &together_sim::Hero) -> 
         let to = def.exit_pos(i) - hero.pos;
         let way = format!("{:.0} yd {}", to.length(), compass(to));
         let lands = state.lands_in(exit, world.elapsed);
-        let line = if lands <= 0.0 {
+        let mut line = if lands <= 0.0 {
             let left = (state.departs - world.elapsed).max(0.0);
             format!("{}: flight boarding, leaves in {}   {way}", exit.name, clock(left))
         } else {
@@ -334,6 +334,9 @@ fn extraction_status(world: &together_sim::World, hero: &together_sim::Hero) -> 
                 clock(state.departs)
             )
         };
+        if state.warned && !state.came {
+            line.push_str("   AMBUSH COMING");
+        }
         s.push('\n');
         s.push_str(&line);
     }
