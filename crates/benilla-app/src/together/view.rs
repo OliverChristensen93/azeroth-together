@@ -330,6 +330,13 @@ pub(super) fn apply_events(
                     }
                 }
             }
+            // Extraction: drawn from the world's state; Task 9 adds their text.
+            Event::HeatChanged { .. }
+            | Event::HuntersCame { .. }
+            | Event::ExitOpened { .. }
+            | Event::FlightCalled { .. }
+            | Event::FlightLanded { .. }
+            | Event::HeroExtracted { .. } => {}
         }
     }
 }

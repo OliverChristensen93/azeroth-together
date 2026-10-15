@@ -12,6 +12,7 @@
 //! friend's gold.
 
 mod arena;
+mod extraction;
 
 use std::collections::HashMap;
 
@@ -21,6 +22,7 @@ use std::sync::Arc;
 
 use crate::cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 use crate::content::{AbilityKind, Content};
+use crate::extraction::{Bounds, Extraction, Mode};
 use crate::interact::{
     chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
     ESCORT_DISTANCE, ESCORT_GOAL,
@@ -237,6 +239,33 @@ pub enum Event {
         kind: PickupKind,
         by: PlayerId,
     },
+    /// Extraction: the party's heat (`player: None`) or one hero's reached `skulls`.
+    HeatChanged {
+        player: Option<PlayerId>,
+        skulls: u8,
+    },
+    /// Extraction: a hunter pack was sent to cut `near` off from home.
+    HuntersCame {
+        near: PlayerId,
+    },
+    /// Extraction: exit `exit` (an index into the map's exits) opened.
+    ExitOpened {
+        exit: u8,
+    },
+    /// Extraction: `by` called a flight to exit `exit`.
+    FlightCalled {
+        exit: u8,
+        by: PlayerId,
+    },
+    /// Extraction: the flight to exit `exit` landed.
+    FlightLanded {
+        exit: u8,
+    },
+    /// Extraction: `player` left on the flight from exit `exit`.
+    HeroExtracted {
+        player: PlayerId,
+        exit: u8,
+    },
 }
 
 /// What dealt a hand: a level-up, or an interactable of some kind.
@@ -319,6 +348,8 @@ pub struct Hero {
     /// Re-deals of a hand left this run.
     pub rerolls: u32,
     pub alive: bool,
+    /// Left on a flight (extraction): out of the world for good, so not alive, and never raised.
+    pub extracted: bool,
     /// Fallen: how far a friend standing by has raised it, 0 to 1.
     pub revive: f32,
     /// Seconds left of a raised hero's grace, when nothing can hurt it.
@@ -397,6 +428,7 @@ pub struct Snapshot {
     pub enemies: Vec<EnemyState>,
     pub interactables: Vec<Interactable>,
     pub pickups: Vec<Pickup>,
+    pub mode: Mode,
 }
 
 /// An enemy as a snapshot carries it: only what a client draws, packed small, since a late run
@@ -500,6 +532,8 @@ pub struct World {
     pub difficulty: Difficulty,
     /// Seconds into the run the boss comes next.
     pub next_boss: f32,
+    /// The rules this run plays by, chosen by its zone.
+    pub mode: Mode,
 }
 
 impl World {
@@ -509,6 +543,10 @@ impl World {
             .zone(zone)
             .ok_or_else(|| WorldError::UnknownZone(zone.to_owned()))?;
         let shrine_every = content.rules.shrine_every;
+        let mode = match content.zones[zone].extraction_ix {
+            Some(map) => Mode::Extraction(Extraction::new(map, &content.extractions[map])),
+            None => Mode::Arena,
+        };
         let mut world = Self {
             content,
             zone,
@@ -534,6 +572,7 @@ impl World {
             kills: 0,
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
+            mode,
         };
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
@@ -544,6 +583,7 @@ impl World {
 
     /// A new, ready interactable of `kind` at `pos`.
     pub fn place(&mut self, kind: InteractableKind, pos: V2) -> u32 {
+        let pos = self.placeable(pos);
         let id = self.id();
         self.interactables.push(Interactable {
             id,
@@ -622,6 +662,7 @@ impl World {
             offers: Vec::new(),
             rerolls: REROLLS,
             alive: true,
+            extracted: false,
             revive: 0.0,
             ward: 0.0,
             damage_done: 0.0,
@@ -645,14 +686,7 @@ impl World {
     /// Move an interactable to `pos`, kept inside the arena: the host's client moves one off a
     /// spot that only the drawn world knows is no good (under water, inside a building).
     pub fn move_interactable(&mut self, id: u32, pos: V2) {
-        let center = self.center();
-        let leash = self.zone().leash;
-        let off = pos - center;
-        let pos = if off.length() > leash {
-            center + off.normalize_or_zero() * leash
-        } else {
-            pos
-        };
+        let pos = self.bounds().clamp(pos);
         if let Some(it) = self.interactables.iter_mut().find(|i| i.id == id) {
             it.pos = pos;
         }
@@ -718,6 +752,7 @@ impl World {
                 .collect(),
             interactables: self.interactables.clone(),
             pickups: self.pickups.clone(),
+            mode: self.mode.clone(),
         }
     }
 
@@ -735,6 +770,7 @@ impl World {
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;
         self.pickups = snapshot.pickups;
+        self.mode = snapshot.mode;
         let center = self.center();
         let defs = &self.content.enemies;
         self.enemies = snapshot
@@ -923,17 +959,11 @@ impl World {
     }
 
     fn move_heroes(&mut self) {
-        let center = self.center();
-        let leash = self.zone().leash;
+        let bounds = self.bounds();
         for hero in self.heroes.iter_mut().filter(|h| h.alive) {
             let input = self.inputs.get_mut(&hero.player);
             if let Some(pose) = input.as_ref().and_then(|i| i.pose) {
-                let off = pose.pos - center;
-                let pos = if off.length() > leash {
-                    center + off.normalize_or_zero() * leash
-                } else {
-                    pose.pos
-                };
+                let pos = bounds.clamp(pose.pos);
                 hero.moving = pos.distance(hero.pos) > 1e-3;
                 hero.pos = pos;
                 if pose.facing != V2::ZERO {
@@ -963,11 +993,7 @@ impl World {
                 continue;
             }
             hero.facing = dir;
-            hero.pos += dir * (hero.speed * DT);
-            let off = hero.pos - center;
-            if off.length() > leash {
-                hero.pos = center + off.normalize_or_zero() * leash;
-            }
+            hero.pos = bounds.clamp(hero.pos + dir * (hero.speed * DT));
         }
     }
 
