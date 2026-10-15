@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use together_sim::{ability_stats, AbilityKind, Card, CardKind, Hero, Rarity, MAX_ABILITIES};
 
 use super::menu::SpellIcon;
-use super::{content, LocalInput, Sim, LOCAL_PLAYER};
+use super::{content, LocalInput, Sim};
 
 const CARD_W: f32 = 176.0;
 const CARD_H: f32 = 262.0;
@@ -442,7 +442,7 @@ pub(super) fn refresh(
     )>,
     mut shown: Local<Option<Shown>>,
 ) {
-    let hero = sim.as_ref().and_then(|s| s.world.hero(LOCAL_PLAYER));
+    let hero = sim.as_ref().and_then(|s| s.world.hero(s.me));
     let offer = hero.and_then(|h| h.offers.first().map(|o| (h, o)));
     let want = if offer.is_some() {
         Visibility::Inherited

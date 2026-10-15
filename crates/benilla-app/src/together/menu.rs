@@ -295,6 +295,7 @@ pub(super) fn build_menu(
         }
         zone_frame(ui, &art, f, &content);
         class_panel(ui, &art, f);
+        lobby_panel(ui, &art, f);
 
         // The hero's name line, GlueFontNormalHuge at BOTTOM (0,100).
         ui.spawn(Node {
@@ -380,7 +381,7 @@ pub(super) fn build_menu(
                 (),
                 (),
                 GlueText {
-                    text: "Co-op arrives in the next update",
+                    text: "Host Co-op shares a run with up to three friends; Join Co-op joins one",
                     size: 11.0,
                     color: DIM,
                     wrap: false,
@@ -756,6 +757,83 @@ fn zone_frame(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>, co
     );
 }
 
+/// The co-op panel, top centre between the tower and the zone list: what [`super::lobby`] writes,
+/// and its buttons (only those that apply show).
+fn lobby_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
+    use super::lobby::{LobbyAction, LobbyPanel, LobbyText};
+    let px = Val::Px;
+    const W: f32 = 430.0;
+    ui.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(16.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        LobbyPanel,
+        Visibility::Hidden,
+    ))
+    .with_children(|centre| {
+        framed(
+            centre,
+            art,
+            Node {
+                width: px(W),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::new(px(18.0), px(18.0), px(14.0), px(12.0)),
+                row_gap: px(8.0),
+                ..default()
+            },
+            |panel| {
+                outlined_text(
+                    panel,
+                    Node {
+                        width: px(W - 36.0),
+                        ..default()
+                    },
+                    (),
+                    LobbyText,
+                    GlueText {
+                        text: "",
+                        size: 13.0,
+                        color: Color::WHITE,
+                        wrap: true,
+                    },
+                    f,
+                    1.0,
+                );
+                panel
+                    .spawn(Node {
+                        column_gap: px(10.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for (action, caption) in [
+                            (LobbyAction::StartRun, "Start Run"),
+                            (LobbyAction::Connect, "Connect"),
+                            (LobbyAction::Stop, "Leave"),
+                            (LobbyAction::Cancel, "Cancel"),
+                        ] {
+                            glue_button(
+                                row,
+                                art,
+                                f,
+                                action,
+                                caption,
+                                130.0,
+                                32.0,
+                                GlueBtnKind::Small,
+                                1.0,
+                            );
+                        }
+                    });
+            },
+        );
+    });
+}
+
 /// The class panel at the bottom centre: the class in its colour, what it is, and its spells.
 fn class_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
     let px = Val::Px;
@@ -842,6 +920,8 @@ pub(super) fn menu_clicks(
     char_create: Option<Res<crate::entities::CharCreate>>,
     mut selection: ResMut<Selection>,
     mut start: ResMut<super::StartRequest>,
+    mut net: ResMut<super::session::Net>,
+    mut dialog: ResMut<super::lobby::JoinDialog>,
     mut exit: MessageWriter<AppExit>,
     mut seed: Local<u64>,
 ) {
@@ -871,8 +951,18 @@ pub(super) fn menu_clicks(
                 start.0 = true;
             }
         }
-        // Co-op arrives with Phase 2; the buttons are disabled until then.
-        MenuAction::HostCoop | MenuAction::JoinCoop => {}
+        MenuAction::HostCoop => {
+            if net.is_solo() {
+                dialog.open = false;
+                net.host();
+            }
+        }
+        MenuAction::JoinCoop => {
+            if net.is_solo() {
+                net.status.clear();
+                dialog.open = true;
+            }
+        }
         MenuAction::Exit => {
             exit.write(AppExit::Success);
         }
@@ -954,8 +1044,12 @@ pub(super) fn refresh_menu_ui(
     slots: Query<(&SpellSlot, &Interaction)>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
     mut shown_class: Local<Option<usize>>,
+    net: Res<super::session::Net>,
+    dialog: Res<super::lobby::JoinDialog>,
 ) {
     let content = content();
+    // Hosting, joined or typing an address: the solo and co-op buttons wait.
+    let co_op_busy = !net.is_solo() || dialog.open;
     let have = char_create.is_some();
     if cache.0 != Some(selection.version) || cache.1 != have {
         *cache = (
@@ -985,8 +1079,8 @@ pub(super) fn refresh_menu_ui(
         }
         if let Some(mut disabled) = disabled {
             let off = match *action {
-                MenuAction::PlaySolo => cur.is_none(),
-                MenuAction::HostCoop | MenuAction::JoinCoop => true,
+                MenuAction::PlaySolo => cur.is_none() || co_op_busy,
+                MenuAction::HostCoop | MenuAction::JoinCoop => co_op_busy,
                 _ => false,
             };
             if disabled.0 != off {

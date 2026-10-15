@@ -9,7 +9,7 @@ use benilla_protocol::messages::{ActionButton, ACTION_KIND_SPELL};
 use bevy::platform::time::Instant;
 use bevy::prelude::*;
 
-use super::{Sim, LOCAL_PLAYER};
+use super::Sim;
 use crate::spell::{Cooldowns, PendingCast};
 use crate::ui_action::PlayerActions;
 
@@ -20,7 +20,7 @@ pub(super) fn fill_action_bar(
     mut shown: Local<Vec<u32>>,
     mut actions: ResMut<PlayerActions>,
 ) {
-    let Some(hero) = sim.world.hero(LOCAL_PLAYER) else {
+    let Some(hero) = sim.world.hero(sim.me) else {
         return;
     };
     let content = sim.world.content();

@@ -99,8 +99,10 @@ crate-internal. It is one new module plus a few lines in `lib.rs`; the rest of t
 **Done when:** a playable single-player run in our own code, drawn by benilla.
 
 ### Phase 2: Co-op prototype (≈2 weeks)
-- [ ] Netcode library spike: replicon vs lightyear; pick one.
-- [ ] Host / join by IP. 2 players. Inputs sent up, snapshots and events sent down.
+- [x] Netcode: our own `together-net` crate (TCP, length-prefixed postcard frames) instead of
+      replicon/lightyear. The sim already snapshots itself, so a library bought little.
+- [x] Host / join by IP from the menu (up to 4 players), a lobby panel, and a content-hash check.
+      Inputs sent up, snapshots and events sent down; each client owns its own hero's position.
 - [ ] Interpolation for remote heroes and enemies; local movement prediction.
 - [ ] A debug overlay for ping, bandwidth and entity counts.
 

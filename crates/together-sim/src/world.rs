@@ -457,6 +457,11 @@ impl World {
         !self.heroes.is_empty() && self.heroes.iter().all(|h| !h.alive)
     }
 
+    /// The events not yet drained, oldest first: a host sends each step's slice of them.
+    pub fn events(&self) -> &[Event] {
+        &self.events
+    }
+
     /// The events since the last drain, oldest first.
     pub fn drain_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)

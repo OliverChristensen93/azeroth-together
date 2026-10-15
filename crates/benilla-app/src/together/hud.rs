@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use super::{Sim, LOCAL_PLAYER};
+use super::Sim;
 
 #[derive(Component)]
 pub(super) struct StatusText;
@@ -131,10 +131,11 @@ pub(super) fn refresh(
     mut status: Query<&mut Text, (With<StatusText>, Without<CardsText>)>,
     mut cards: Query<&mut Text, (With<CardsText>, Without<StatusText>)>,
     mut panel: Query<&mut Visibility, With<CenterPanel>>,
+    net: Res<super::session::Net>,
 ) {
     let world = &sim.world;
     let content = world.content();
-    let Some(hero) = world.hero(LOCAL_PLAYER) else {
+    let Some(hero) = world.hero(sim.me) else {
         return;
     };
     if let Ok(mut t) = status.single_mut() {
@@ -156,8 +157,18 @@ pub(super) fn refresh(
     }
 
     let center = if world.game_over() {
+        let fallen = if world.heroes.len() > 1 {
+            "The party has fallen."
+        } else {
+            "You have fallen."
+        };
+        let next = if net.is_client() {
+            "The host takes everyone back to the menu"
+        } else {
+            "Press Enter to return to the menu"
+        };
         Some(format!(
-            "You have fallen.\n\nSurvived {}  ·  Level {}  ·  {} kills  ·  {:.0} damage\n\nPress Enter to return to the menu",
+            "{fallen}\n\nSurvived {}  ·  Level {}  ·  {} kills  ·  {:.0} damage\n\n{next}",
             clock(world.elapsed),
             world.level,
             world.kills,

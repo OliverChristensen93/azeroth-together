@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use together_sim::{Event, PlayerId, Target, V2};
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
-use super::{actions, dress, Sim, LOCAL_PLAYER};
+use super::{actions, dress, Sim};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::names::{CreatureRecord, NameCache};
 use crate::net::{Guid, GuidIndex, ObjectStore, SelfGuid};
@@ -86,11 +86,6 @@ pub(super) struct Dying(f32);
 /// Hero guids (player guids, high word 0) are this plus the player id.
 pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
 
-/// The name the local hero's frame shows.
-fn hero_name() -> String {
-    std::env::var("TOGETHER_NAME").unwrap_or_else(|_| "Hero".into())
-}
-
 /// The step's events as visuals. Runs before [`sync`], so a dying enemy is still mapped.
 pub(super) fn apply_events(
     mut commands: Commands,
@@ -109,7 +104,7 @@ pub(super) fn apply_events(
                 cooldown,
                 ..
             } => {
-                if caster == LOCAL_PLAYER {
+                if caster == sim.me {
                     actions::start_cooldown(&mut cooldowns, visual, cooldown);
                 }
                 let Some(me) = views.heroes.get(&caster).copied() else {
@@ -216,17 +211,8 @@ pub(super) fn sync(
             continue;
         };
         let class = &content.classes[hero.class];
-        // Ours wears the race and sex picked at the menu; another's, the first its class allows.
-        let look = if hero.player == LOCAL_PLAYER {
-            Some((sim.look.1, sim.look.2))
-        } else {
-            (1..=8)
-                .find(|&r| char_create.0.allows(r, class.class_id))
-                .map(|r| (r, 0))
-        };
-        let Some(look) = look else {
-            continue;
-        };
+        // Each hero wears the race and sex its player picked at their menu.
+        let look = (hero.race, hero.sex);
         let serial = HERO_SERIAL_BASE + u64::from(hero.player);
         let guid = units::unit_guid(UnitKind::Player, serial);
         let Some(e) = dress::spawn_player_body(
@@ -243,18 +229,27 @@ pub(super) fn sync(
             continue;
         };
         index.0.insert(guid, e);
-        if hero.player == LOCAL_PLAYER {
+        names.insert_player(guid, hero.name.clone(), None);
+        if hero.player == sim.me {
             // Ours: WoW's controller drives it, from the pose it is spawned in.
             self_guid.0 = Some(guid);
-            names.insert_player(guid, hero_name(), None);
         } else {
-            names.insert_player(guid, format!("Player {}", hero.player + 1), None);
+            // Another player's: it goes where the world says, as an enemy does.
             commands
                 .entity(e)
                 .insert(SimPos::new(hero.pos, hero.facing));
         }
         views.heroes.insert(hero.player, e);
     }
+    // A player who left: their hero goes with them.
+    views.heroes.retain(|player, e| {
+        let keep = world.hero(*player).is_some();
+        if !keep {
+            index.0.retain(|_, v| v != e);
+            commands.entity(*e).despawn();
+        }
+        keep
+    });
 
     for enemy in &world.enemies {
         if views.enemies.contains_key(&enemy.id) {

@@ -33,7 +33,7 @@ be on `PATH` for builds:
 
 ```bash
 export PATH="/c/Users/Olivs/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.MSVCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin:$PATH"
-cargo test -p together-sim                      # fast: the game rules, no engine
+cargo test -p together-sim -p together-net     # fast: the game rules and netcode, no engine
 cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min cold
 ./target/release/azeroth-together.exe           # data from WoW/Data, content from content/
 ```
@@ -45,6 +45,11 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   never focused), `TOGETHER_AUTOPLAY=1` (walks and picks cards by itself), and
   `WOW_LIVE_SHOT=<png> WOW_LIVE_SHOT_AT=<s> WOW_LIVE_SHOT_COUNT=<n> WOW_LIVE_SHOT_EVERY=<s>` for screenshots,
   `TOGETHER_CAM_DIST=<yards>` for a close-up starting zoom, `TOGETHER_TRACE_JUMP=1` to log jump heights.
+- Co-op test on one PC: run one instance with `TOGETHER_HOST=1 TOGETHER_AUTOPLAY=1` and a second,
+  a few seconds later, with `TOGETHER_JOIN=127.0.0.1 TOGETHER_AUTOPLAY=1` (`TOGETHER_NAME` names the hero).
+  The host starts the run 20 s in once someone has joined. Co-op is host-authoritative: the host runs
+  `together-sim`, `together-net` (TCP, port 7777) sends inputs up and snapshots + events down, and each
+  client mirrors the world (`World::apply_snapshot`) but owns its own hero's position.
 - Engine change made for the trimmed data: `benilla-formats/src/creatures.rs` drops a
   CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
   humanoid NPCs are composited live instead of rendering bodiless.

@@ -646,6 +646,7 @@ dependencies = [
  "sha1 0.10.6",
  "smithay-clipboard",
  "symphonia",
+ "together-net",
  "together-sim",
  "toml",
  "wasm-bindgen",

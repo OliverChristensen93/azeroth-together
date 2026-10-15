@@ -18,8 +18,10 @@ mod actions;
 mod dress;
 mod hud;
 mod levelup;
+mod lobby;
 mod menu;
 mod meter;
+mod session;
 mod ui;
 mod units;
 mod view;
@@ -46,8 +48,12 @@ pub(crate) fn start_map() -> u32 {
     START_MAP.load(Ordering::Relaxed)
 }
 
-/// The player at this keyboard. Until co-op joins, always the host.
-const LOCAL_PLAYER: PlayerId = 0;
+/// The four content files' text, for the content hash a co-op client and host compare.
+static CONTENT_TEXTS: OnceLock<(String, String, String, String)> = OnceLock::new();
+
+pub(super) fn content_texts() -> &'static (String, String, String, String) {
+    CONTENT_TEXTS.get().expect("together::prepare ran")
+}
 
 fn class_key() -> String {
     std::env::var("TOGETHER_CLASS").unwrap_or_else(|_| "mage".into())
@@ -118,6 +124,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     }
     START_MAP.store(content.zones[zone].map, Ordering::Relaxed);
     let _ = CONTENT.set(Arc::new(content));
+    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, zones));
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -140,31 +147,51 @@ pub(super) enum Phase {
 /// The run being played, and the clock that steps it. Present only during a run.
 #[derive(Resource)]
 pub(super) struct Sim {
+    /// The world: stepped here when playing alone or hosting, a mirror of the host's when joined.
     pub world: World,
-    /// The local hero's body: `(display, race, sex)`.
-    pub look: (u32, u8, u8),
-    /// Real seconds not yet simulated; always under one [`DT`] after a frame's steps.
+    /// Our player: 0 alone or hosting, the host's pick when joined.
+    pub me: PlayerId,
+    /// Solo or host: real seconds not yet simulated, always under one [`DT`] after a frame's
+    /// steps. Joined: seconds since the host's last step arrived.
     acc: f32,
-    /// Steps taken this frame, so the views know to roll their interpolation forward.
+    /// Steps taken (or arrived) this frame, so the views roll their interpolation forward.
     pub stepped: bool,
 }
 
 impl Sim {
-    fn new(class: &str, zone: &str, look: (u32, u8, u8)) -> Self {
+    /// A run for everyone in `roster` (just us, alone), stepped here.
+    fn hosted(zone: &str, roster: &[together_net::LobbyPlayer]) -> Self {
         let seed = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0x9E37_79B9_7F4A_7C15);
         let mut world = World::new(content(), zone, seed).expect("zone from the content");
-        world
-            .add_hero(LOCAL_PLAYER, class)
-            .expect("class from the content");
+        for p in roster {
+            // A class the content lacks (a mismatched client) is left out rather than crash.
+            let _ = world.add_hero_as(
+                p.player,
+                &p.hero.class,
+                &p.hero.name,
+                p.hero.race,
+                p.hero.sex,
+            );
+        }
         Self {
             world,
-            look,
+            me: 0,
             acc: 0.0,
             stepped: false,
         }
+    }
+
+    /// A joined run: an empty world in the host's zone, filled by the host's steps.
+    fn mirror(zone: &str, me: PlayerId) -> Option<Self> {
+        Some(Self {
+            world: World::new(content(), zone, 0).ok()?,
+            me,
+            acc: 0.0,
+            stepped: false,
+        })
     }
 
     /// How far between the last two steps the present lies, 0..1, for smooth movement.
@@ -199,6 +226,9 @@ impl Plugin for TogetherPlugin {
         app.init_state::<Phase>()
             .insert_resource(menu::Selection::new(&content()))
             .init_resource::<StartRequest>()
+            .init_resource::<EndRun>()
+            .init_resource::<session::Net>()
+            .init_resource::<lobby::JoinDialog>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
@@ -218,6 +248,7 @@ impl Plugin for TogetherPlugin {
                     levelup::clicks,
                     meter::refresh,
                     ui::tune_ui,
+                    session::close_on_exit,
                 ),
             )
             // The menu.
@@ -227,6 +258,10 @@ impl Plugin for TogetherPlugin {
                     menu::restore_pick,
                     menu::build_menu,
                     menu::menu_clicks,
+                    lobby::type_address,
+                    lobby::clicks,
+                    lobby::refresh.before(crate::glue::GlueVisuals),
+                    session::lobby,
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     menu::preview_hero,
                     start_run,
@@ -290,8 +325,9 @@ fn follow_map(
     }
 }
 
-/// Play Solo: a fresh run of the picked class and look in the picked zone, the controller taking
-/// the new hero.
+/// Play Solo, or the host's Start Run: a fresh run in the picked zone for us and everyone who
+/// joined, the controller taking our new hero. Joined: our mirror of the run the host started.
+#[allow(clippy::too_many_arguments)]
 fn start_run(
     time: Res<Time<Real>>,
     mut commands: Commands,
@@ -299,24 +335,57 @@ fn start_run(
     mut selection: ResMut<menu::Selection>,
     mut player: ResMut<crate::player::Player>,
     mut next: ResMut<NextState<Phase>>,
+    mut net: ResMut<session::Net>,
 ) {
-    // `TOGETHER_AUTOPLAY` plays on its own once the menu has stood a few seconds.
-    let auto = autoplay() && time.elapsed_secs() > 12.0;
+    let content = content();
+    let mut begin = |commands: &mut Commands, sim: Sim| {
+        commands.insert_resource(sim);
+        player.active = false;
+        next.set(Phase::Playing);
+    };
+    // Test hooks: `TOGETHER_HOST` hosts and `TOGETHER_JOIN=<address>` joins once the menu is up.
+    if net.is_solo() && net.status.is_empty() && time.elapsed_secs() > 8.0 {
+        if std::env::var_os("TOGETHER_HOST").is_some() {
+            net.host();
+        } else if let Ok(addr) = std::env::var("TOGETHER_JOIN") {
+            net.join(&addr);
+        }
+    }
+    if let session::Role::Client(c) = &mut net.role {
+        let (Some(zone), Some(me)) = (c.start.take(), c.me) else {
+            return;
+        };
+        let Some(zone_ix) = content.zone(&zone) else {
+            return;
+        };
+        // The world goes to the host's zone.
+        selection.stage = zone_ix;
+        if let Some(sim) = Sim::mirror(&zone, me) {
+            begin(&mut commands, sim);
+        }
+        return;
+    }
+    // `TOGETHER_AUTOPLAY` plays on its own once the menu has stood a few seconds; hosting, once
+    // someone has joined.
+    let auto = autoplay()
+        && match &net.role {
+            session::Role::Solo => {
+                time.elapsed_secs() > 12.0 && std::env::var_os("TOGETHER_HOST").is_none()
+            }
+            session::Role::Host(h) => !h.peers.is_empty() && time.elapsed_secs() > 20.0,
+            session::Role::Client(_) => false,
+        };
     if !std::mem::take(&mut start.0) && !auto {
         return;
     }
-    let Some(look) = selection.hero_look() else {
+    let Some(own) = session::own_pick(&selection) else {
         return;
     };
-    let content = content();
     selection.stage = selection.zone;
-    commands.insert_resource(Sim::new(
-        &content.classes[selection.class].key,
-        &content.zones[selection.zone].key,
-        look,
-    ));
-    player.active = false;
-    next.set(Phase::Playing);
+    let zone = content.zones[selection.zone].key.clone();
+    let roster = net.roster(&own);
+    net.broadcast_start(&zone);
+    begin(&mut commands, Sim::hosted(&zone, &roster));
 }
 
 /// Midday, whatever the clock says.
@@ -345,10 +414,7 @@ fn read_keys(
     mut input: ResMut<LocalInput>,
     mut up_since: Local<Option<f32>>,
 ) {
-    let choosing = sim
-        .world
-        .hero(LOCAL_PLAYER)
-        .is_some_and(|h| !h.offers.is_empty());
+    let choosing = sim.world.hero(sim.me).is_some_and(|h| !h.offers.is_empty());
     if !choosing {
         *up_since = None;
         return;
@@ -393,7 +459,7 @@ fn feed_pose(
     let center = sim.world.center();
     let Some(mut tf) = views
         .heroes
-        .get(&LOCAL_PLAYER)
+        .get(&sim.me)
         .and_then(|&e| bodies.get_mut(e).ok())
         .filter(|_| player.active)
     else {
@@ -421,37 +487,67 @@ fn feed_pose(
     });
 }
 
-/// Run the simulation's fixed steps for the real time that passed. It waits while the loading
-/// screen is up and until the controller has the hero, so a run never starts unseen.
+/// The run's clock. Alone or hosting: the simulation's fixed steps for the real time that passed,
+/// each sent to the clients when hosting; it waits while the loading screen is up and until the
+/// controller has the hero, so a run never starts unseen. Joined: our input to the host, and the
+/// host's steps into our mirror of its world.
+#[allow(clippy::too_many_arguments)]
 fn step_sim(
     time: Res<Time<Real>>,
     loading: Res<crate::loading_screen::LoadingScreen>,
     mut sim: ResMut<Sim>,
     mut input: ResMut<LocalInput>,
     mut virtual_time: ResMut<Time<Virtual>>,
+    mut net: ResMut<session::Net>,
+    mut end: ResMut<EndRun>,
 ) {
     sim.stepped = false;
-    let Some(pose) = input.pose else {
-        return;
-    };
-    if loading.covering() {
-        return;
-    }
-    // A long hitch would otherwise replay seconds of play in one frame.
-    sim.acc = (sim.acc + time.delta_secs()).min(0.25);
-    while sim.acc >= DT {
-        sim.acc -= DT;
-        // A key press picks once: the first step takes it.
+    let sim = &mut *sim;
+    if net.is_client() {
+        // A key press is sent once.
         let held = PlayerInput {
             pick: input.pick.take(),
             reroll: std::mem::take(&mut input.reroll),
             skip: std::mem::take(&mut input.skip),
-            pose: Some(pose),
+            pose: input.pose,
             ..Default::default()
         };
-        sim.world.set_input(LOCAL_PLAYER, held);
-        sim.world.step();
-        sim.stepped = true;
+        let heard = session::client_exchange(&mut net, &mut sim.world, held);
+        if heard.iter().any(|h| matches!(h, session::Heard::Stepped)) {
+            sim.stepped = true;
+            sim.acc = 0.0;
+        } else {
+            sim.acc = (sim.acc + time.delta_secs()).min(1.0);
+        }
+        if session::client_left_run(&mut net, &heard) {
+            end.0 = true;
+        }
+    } else {
+        session::host_receive(&mut net, &mut sim.world);
+        let Some(pose) = input.pose else {
+            return;
+        };
+        if loading.covering() {
+            return;
+        }
+        // A long hitch would otherwise replay seconds of play in one frame.
+        sim.acc = (sim.acc + time.delta_secs()).min(0.25);
+        while sim.acc >= DT {
+            sim.acc -= DT;
+            // A key press picks once: the first step takes it.
+            let held = PlayerInput {
+                pick: input.pick.take(),
+                reroll: std::mem::take(&mut input.reroll),
+                skip: std::mem::take(&mut input.skip),
+                pose: Some(pose),
+                ..Default::default()
+            };
+            sim.world.set_input(sim.me, held);
+            let from = sim.world.events().len();
+            sim.world.step();
+            session::host_send(&net, &sim.world, from);
+            sim.stepped = true;
+        }
     }
     // Cards up (or the run over): the world holds still, animations and the hero included.
     let hold = sim.world.paused() || sim.world.game_over();
@@ -462,8 +558,14 @@ fn step_sim(
     }
 }
 
-/// Enter after the run ends: back to the menu. Everything the run spawned goes, and the hero's
-/// controller lets go.
+/// A joined client's run ended from outside (the host ended it, or the connection went): the
+/// next [`back_to_menu`] leaves it.
+#[derive(Resource, Default)]
+pub(super) struct EndRun(pub bool);
+
+/// Back to the menu: alone or hosting, Enter after the run ends (a host takes its party back to
+/// the lobby with it); joined, when the host ends the run or the connection goes. Everything the
+/// run spawned goes, and the hero's controller lets go.
 #[allow(clippy::too_many_arguments)]
 fn back_to_menu(
     keys: Res<ButtonInput<KeyCode>>,
@@ -477,16 +579,22 @@ fn back_to_menu(
     spawned: Query<Entity, With<TogetherEntity>>,
     real: Res<Time<Real>>,
     mut over_since: Local<Option<f32>>,
+    mut net: ResMut<session::Net>,
+    mut end: ResMut<EndRun>,
 ) {
-    if !sim.world.game_over() {
-        *over_since = None;
-        return;
-    }
-    let since = *over_since.get_or_insert(real.elapsed_secs());
-    // `TOGETHER_AUTOPLAY` goes back by itself after a few seconds of the results.
-    let auto = autoplay() && real.elapsed_secs() - since > 4.0;
-    if !keys.just_pressed(KeyCode::Enter) && !auto {
-        return;
+    let ended_outside = std::mem::take(&mut end.0);
+    if !ended_outside {
+        if !sim.world.game_over() || net.is_client() {
+            *over_since = None;
+            return;
+        }
+        let since = *over_since.get_or_insert(real.elapsed_secs());
+        // `TOGETHER_AUTOPLAY` goes back by itself after a few seconds of the results.
+        let auto = autoplay() && real.elapsed_secs() - since > 4.0;
+        if !keys.just_pressed(KeyCode::Enter) && !auto {
+            return;
+        }
+        net.broadcast_ended();
     }
     *over_since = None;
     for e in &spawned {

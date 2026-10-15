@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 
 use super::menu::SpellIcon;
-use super::{content, Phase, Sim, LOCAL_PLAYER};
+use super::{content, Phase, Sim};
 
 const WIDTH: f32 = 214.0;
 const ROW_H: f32 = 15.0;
@@ -134,7 +134,7 @@ pub(super) fn refresh(
         return;
     }
     *next = time.elapsed_secs() + EVERY;
-    let Some(hero) = sim.world.hero(LOCAL_PLAYER) else {
+    let Some(hero) = sim.world.hero(sim.me) else {
         return;
     };
     let content = content();
