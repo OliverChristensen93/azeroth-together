@@ -1,5 +1,10 @@
 # The mage: spells and augments (draft for review)
 
+> **Built (2026-10-15)** as a playable prototype: every spell, status effect, the 32 general augments
+> and all 36 capstones below, with Blink on F as the mage's movement ability. Not yet: status
+> effects drawn on enemies (a frozen enemy just stands still), Blink respecting walls, capstones for
+> other classes (their spells get a general augment at rank 10 instead), and any balance pass.
+
 A first pass at the augment system on one class, to review before any code. See
 [DESIGN-IDEAS.md](DESIGN-IDEAS.md) section C for the rules. **Numbers are placeholders** for the
 idea's size, not balance.

@@ -195,6 +195,7 @@ impl Sim {
                 p.hero.sex,
             );
         }
+        give_loadout(&mut world);
         Self {
             world,
             me: 0,
@@ -568,6 +569,27 @@ fn xp_rate() -> f32 {
         .and_then(|v| v.parse().ok())
         .filter(|&r: &f32| r > 0.0)
         .unwrap_or(1.0)
+}
+
+/// `TOGETHER_LOADOUT=frostbolt@4,fireball@9+frostfire,ice_barrier@10+fortified+shatteringbarrier`:
+/// the host's own hero starts with these spells at these ranks and augments, in place of its
+/// first spell, so a test run sees augment screens and capstones in minutes.
+fn give_loadout(world: &mut World) {
+    let Ok(list) = std::env::var("TOGETHER_LOADOUT") else {
+        return;
+    };
+    world.heroes.iter_mut().filter(|h| h.player == 0).for_each(|h| h.abilities.clear());
+    for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let mut parts = entry.split('+');
+        let head = parts.next().unwrap_or_default();
+        let (key, rank) = head.split_once('@').unwrap_or((head, "1"));
+        let augments: Vec<together_sim::Augment> = parts
+            .filter_map(together_sim::Augment::from_name)
+            .collect();
+        if !world.give_spell(0, key, rank.parse().unwrap_or(1), &augments) {
+            println!("together: TOGETHER_LOADOUT: could not give \"{entry}\"");
+        }
+    }
 }
 
 /// Blink: yards forward, seconds of cooldown, and its `Spell.dbc` id for the visual.

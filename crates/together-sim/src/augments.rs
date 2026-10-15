@@ -293,12 +293,12 @@ impl Augment {
         match self {
             Augment::Frostfire => "Counts as Fire and Frost. A Fire spell also Chills; a Frost spell also leaves Burning.",
             Augment::Spellfire => "Counts as Fire and Arcane. +15% area.",
-            Augment::Spellfrost => "Counts as Frost and Arcane. −15% cooldown.",
-            Augment::Multishot => "+2 projectiles, −25% damage each.",
+            Augment::Spellfrost => "Counts as Frost and Arcane. -15% cooldown.",
+            Augment::Multishot => "+2 projectiles, -25% damage each.",
             Augment::Piercing => "Passes through 2 more enemies.",
             Augment::Returning => "Flies back, hitting its target again.",
-            Augment::Wide => "+40% area, −20% damage.",
-            Augment::Concentrated => "−30% area, +40% damage.",
+            Augment::Wide => "+40% area, -20% damage.",
+            Augment::Concentrated => "-30% area, +40% damage.",
             Augment::Echo => "Repeats at half strength 1 second later.",
             Augment::Ring => "Hits a ring from 5 to 12 yards instead of a circle. +50% damage.",
             Augment::Lingering => "Lasts 50% longer.",
@@ -306,7 +306,7 @@ impl Augment {
             Augment::Targeted => "Lands on the thickest crowd within 25 yards instead of around you.",
             Augment::Contagion => "When a Burning enemy dies, its burn jumps to a nearby enemy.",
             Augment::Quickened => "Its damage over time runs 30% faster.",
-            Augment::Molten => "Its damage over time deals double and lasts twice as long; its direct hit −30%.",
+            Augment::Molten => "Its damage over time deals double and lasts twice as long; its direct hit -30%.",
             Augment::Precise => "+20% critical strike chance.",
             Augment::Executioner => "+100% damage to enemies below 30% health.",
             Augment::Ignite => "Leaves the target Burning for 40% of the hit over 4 seconds.",
@@ -321,8 +321,8 @@ impl Augment {
             Augment::Reflective => "20% of what the shield absorbs is dealt back to the attacker.",
             Augment::TwinCharges => "2 charges.",
             Augment::Heavy => "+60% damage, +40% cooldown.",
-            Augment::Twin => "Casts twice, −40% damage each.",
-            Augment::Hasted => "−25% cooldown, −15% damage.",
+            Augment::Twin => "Casts twice, -40% damage each.",
+            Augment::Hasted => "-25% cooldown, -15% damage.",
             Augment::GlacialSpike => "Every 4th Frostbolt is a Glacial Spike: +200% damage, and it Freezes its target.",
             Augment::Shatterbolt => "Always crits Frozen enemies, and those crits splash 50% within 5 yards.",
             Augment::WintersChill => "Each hit makes the target take +2% crit chance from every source, up to 10%. The whole party benefits.",
@@ -341,7 +341,7 @@ impl Augment {
             Augment::FinalGale => "Lasts 50% longer; when it ends, it casts Frost Nova at its centre.",
             Augment::Whiteout => "Enemies inside take +20% damage from every source.",
             Augment::FrozenOrb => "Becomes an orb rolling away from you the way you face, chilling and damaging all it passes.",
-            Augment::Firestorm => "2 more Flamestrikes on other crowds, −40% damage each.",
+            Augment::Firestorm => "2 more Flamestrikes on other crowds, -40% damage each.",
             Augment::Meteor => "+200% damage, +100% cooldown, and it Stuns for 1.5 seconds.",
             Augment::PhoenixGround => "Standing in your own burning ground heals 2% of your health a second and gives +20% Fire damage.",
             Augment::Impact => "Stuns its target for 1 second and spreads the target's Burning to 3 nearby enemies.",
@@ -383,6 +383,22 @@ impl Augment {
             Augment::ShatteringBarrier | Augment::IceFloes | Augment::FrostArmor => "ice_barrier",
             _ => return None,
         })
+    }
+
+    /// The augment written `name`, ignoring case, spaces and punctuation ("Hot Streak",
+    /// "hotstreak", "HotStreak"); for test loadouts.
+    pub fn from_name(name: &str) -> Option<Augment> {
+        let squash = |s: &str| {
+            s.chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase()
+        };
+        let want = squash(name);
+        Augment::GENERAL
+            .into_iter()
+            .chain(Augment::CAPSTONES)
+            .find(|a| squash(a.name()) == want)
     }
 
     /// The three capstones of the spell `key`, in order; empty for a spell without any.

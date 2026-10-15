@@ -37,7 +37,7 @@ pub use rng::Rng;
 pub use spell::{CastSpec, Tag, Tags, Targeting};
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
 pub use world::{
-    status_bits, xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose, HeroSpells, Offer,
-    Owned, PlayerId, PlayerInput, Snapshot, Source, Status, Target, World, WorldError, DT,
-    ELITE_SCALE, MAX_ABILITIES, REVIVE_RANGE, REVIVE_SECS, TICK_HZ,
+    shield_size, status_bits, xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose,
+    HeroSpells, Offer, Owned, PlayerId, PlayerInput, Snapshot, Source, Status, Target, World,
+    WorldError, DT, ELITE_SCALE, MAX_ABILITIES, REVIVE_RANGE, REVIVE_SECS, TICK_HZ,
 };

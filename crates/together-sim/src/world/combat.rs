@@ -242,6 +242,11 @@ impl HeroSpells {
     }
 }
 
+/// A shield's size at `rank` with a card `bonus`, as a share of max health: 10% more per rank.
+pub fn shield_size(base: f32, rank: u8, bonus: f32) -> f32 {
+    base * (1.0 + 0.1 * f32::from(rank.max(1) - 1)) * (1.0 + bonus)
+}
+
 /// Whether `pos` lies in an area of `spec` around `center`, pointing `facing` for a cone.
 fn in_area(spec: &CastSpec, center: V2, facing: V2, pos: V2) -> bool {
     let off = pos - center;
@@ -344,7 +349,7 @@ impl World {
             vs_frozen: 0.0,
             execute: 0.0,
             shatter: 0.0,
-            shield: def.shield,
+            shield: shield_size(def.shield, owned.level, owned.bonus),
             charges: 1,
         };
         for &a in &owned.augments {

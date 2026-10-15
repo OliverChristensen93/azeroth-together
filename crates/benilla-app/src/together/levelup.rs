@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, fallback_gold, AbilityKind, Augment, Card, CardKind, Hero, InteractableKind,
-    Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
+    ability_stats, fallback_gold, shield_size, AbilityKind, Augment, Card, CardKind, Hero,
+    InteractableKind, Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
 };
 
 use super::menu::SpellIcon;
@@ -353,15 +353,33 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
         _ => format!("{:.0} yd range", def.range),
     };
     let text = |s: String| (s, Color::srgb(1.0, 0.9, 0.6));
+    let shield = def.kind == AbilityKind::Shield;
     let mut lines = Vec::new();
     let (badge, sub, bonus, footer) = if learn {
         let s = ability_stats(def, 1, rarity.learn_bonus()).with(&hero.stats);
-        lines.push(text(format!(
-            "{:.0} damage every {:.1} sec",
-            s.damage.round(),
-            s.cooldown
-        )));
-        lines.push(text(reach(s.count)));
+        if shield {
+            let size = shield_size(def.shield, 1, rarity.learn_bonus());
+            lines.push(text(format!(
+                "A shield of {:.0}% of your health every {:.1} sec",
+                size * 100.0,
+                s.cooldown
+            )));
+        } else if def.kind == AbilityKind::Ground {
+            lines.push(text(format!(
+                "{:.0} damage a second for {:.0} sec, every {:.1} sec",
+                s.damage.round(),
+                def.duration,
+                s.cooldown
+            )));
+            lines.push(text(reach(s.count)));
+        } else {
+            lines.push(text(format!(
+                "{:.0} damage every {:.1} sec",
+                s.damage.round(),
+                s.cooldown
+            )));
+            lines.push(text(reach(s.count)));
+        }
         (
             "NEW".to_string(),
             "New spell".to_string(),
@@ -376,17 +394,34 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
         let (rank, bonus) = owned.map_or((1, 0.0), |o| (o.level, o.bonus));
         let now = ability_stats(def, rank, bonus).with(&hero.stats);
         let next = ability_stats(def, rank + 1, bonus + rarity.upgrade_bonus()).with(&hero.stats);
-        lines.push(text(format!(
-            "Damage {:.0} » {:.0}",
-            now.damage.round(),
-            next.damage.round()
-        )));
+        if shield {
+            lines.push(text(format!(
+                "Shield {:.0}% » {:.0}% of health",
+                shield_size(def.shield, rank, bonus) * 100.0,
+                shield_size(def.shield, rank + 1, bonus + rarity.upgrade_bonus()) * 100.0
+            )));
+        } else {
+            lines.push(text(format!(
+                "Damage {:.0} » {:.0}",
+                now.damage.round(),
+                next.damage.round()
+            )));
+        }
         lines.push(text(format!(
             "Cooldown {:.1} » {:.1} sec",
             now.cooldown, next.cooldown
         )));
         if next.count != now.count {
             lines.push(text(format!("Targets {} » {}", now.count, next.count)));
+        }
+        let milestone = match rank + 1 {
+            5 | 15 => Some("an augment"),
+            10 if !Augment::capstones_of(&def.key).is_empty() => Some("its capstone"),
+            10 => Some("an augment"),
+            _ => None,
+        };
+        if let Some(what) = milestone {
+            lines.push((format!("Rank {} brings {what}", rank + 1), GREEN));
         }
         (
             format!("RANK {}", rank + 1),

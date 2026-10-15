@@ -14,7 +14,7 @@
 mod arena;
 mod combat;
 
-pub use combat::{status_bits, HeroSpells, Status};
+pub use combat::{shield_size, status_bits, HeroSpells, Status};
 
 use std::collections::HashMap;
 
@@ -725,6 +725,37 @@ impl World {
             spell: HeroSpells::default(),
         });
         Ok(())
+    }
+
+    /// Give `player`'s hero the spell `key` at `rank` with `augments`, in place of the same spell
+    /// or, if it has a free slot, as a new one: for test loadouts and showcases. False if the
+    /// spell does not exist or there is no room.
+    pub fn give_spell(
+        &mut self,
+        player: PlayerId,
+        key: &str,
+        rank: u8,
+        augments: &[Augment],
+    ) -> bool {
+        let Some(ability) = self.content.ability(key) else {
+            return false;
+        };
+        let Some(hero) = self.heroes.iter_mut().find(|h| h.player == player) else {
+            return false;
+        };
+        let owned = Owned {
+            level: rank.clamp(1, MAX_RANK),
+            augments: augments.to_vec(),
+            ..Owned::new(ability, 0.0)
+        };
+        if let Some(o) = hero.abilities.iter_mut().find(|o| o.ability == ability) {
+            *o = owned;
+        } else if hero.abilities.len() < MAX_ABILITIES {
+            hero.abilities.push(owned);
+        } else {
+            return false;
+        }
+        true
     }
 
     pub fn hero(&self, player: PlayerId) -> Option<&Hero> {

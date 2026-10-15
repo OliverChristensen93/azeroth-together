@@ -226,7 +226,9 @@ pub(super) fn restore_pick(
     *done = true;
     let content = content();
     let all = all_looks(&content, char_create);
+    // A test run's TOGETHER_CLASS beats the saved pick.
     let saved = pick_path()
+        .filter(|_| std::env::var_os("TOGETHER_CLASS").is_none())
         .and_then(|p| crate::local_state::read_to_string(&p).ok())
         .and_then(|text| {
             let v: Vec<&str> = text.split_whitespace().collect();

@@ -63,6 +63,11 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   relays): the host logs `together: invite code <code>` and `TOGETHER_JOIN=<code>` joins with it; the
   key behind the code is `benilla-config/together-host-key.txt`. `cargo test -p together-net -- --ignored`
   runs the online invite test.
+  Spells and augments (`together-sim`: `spell.rs` tags/targeting/statuses, `augments.rs` the 32
+  general augments and the mage's 36 capstones, `world/combat.rs` casting and every mechanic):
+  `TOGETHER_XP_RATE=<n>` multiplies experience; `TOGETHER_LOADOUT=frostbolt@4,fireball@9+frostfire`
+  starts the host's hero with those spells, ranks and augments (names as on the cards, any case);
+  `TOGETHER_CLASS` beats the menu's saved pick. The mage's movement ability is Blink on F (30 s).
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries
