@@ -472,7 +472,7 @@ fn start_run(
 
 /// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, one
 /// of each power-up lies on a ring inside it, the boss comes 8 seconds in, and an extraction
-/// run's exits are open, so a short test run sees them all.
+/// run's flights come early, so a short test run sees them all.
 fn showcase_for_tests(world: &mut World) {
     if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
         return;
@@ -500,10 +500,10 @@ fn showcase_for_tests(world: &mut World) {
         let angle = k as f32 / firsts.len() as f32 * std::f32::consts::TAU;
         world.move_interactable(id, center + V2::from_angle(angle, 10.0));
     }
-    // An extraction run's exits open at once, so a short test run reaches a flight.
+    // An extraction run's flights leave within the first minutes, so a short test run reaches one.
     if let together_sim::Mode::Extraction(x) = &mut world.mode {
-        for exit in &mut x.exits {
-            exit.open = true;
+        for (i, exit) in x.exits.iter_mut().enumerate() {
+            exit.departs = 90.0 + 30.0 * i as f32;
         }
     }
 }
@@ -634,17 +634,21 @@ fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
     Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist))
 }
 
-/// `TOGETHER_AUTOPLAY` in an extraction run: to the nearest open exit once one is open; home to
-/// the safe ring at three skulls; else `None`, to roam to shrines as in the arena.
+/// `TOGETHER_AUTOPLAY` in an extraction run: to the exit of the soonest flight it can still
+/// reach; home to the safe ring at three skulls; else `None`, to roam to shrines as in the arena.
 fn extraction_goal(world: &World, me: PlayerId, from: V2) -> Option<V2> {
     let together_sim::Mode::Extraction(x) = &world.mode else {
         return None;
     };
     let def = &world.content().extractions[x.def];
+    let speed = world.hero(me).map_or(7.0, |h| h.speed).max(1.0);
+    // The soonest flight this hero can still reach before it leaves.
     let exit = (0..def.exits.len())
-        .filter(|&i| x.exits[i].open)
-        .map(|i| def.exit_pos(i))
-        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)));
+        .filter(|&i| {
+            from.distance(def.exit_pos(i)) / speed + 5.0 < x.exits[i].departs - world.elapsed
+        })
+        .min_by(|&a, &b| x.exits[a].departs.total_cmp(&x.exits[b].departs))
+        .map(|i| def.exit_pos(i));
     exit.or_else(|| (world.skulls_of(me) >= 3).then(|| def.safe_center()))
 }
 

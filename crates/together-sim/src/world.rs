@@ -248,17 +248,12 @@ pub enum Event {
     HuntersCame {
         near: PlayerId,
     },
-    /// Extraction: exit `exit` (an index into the map's exits) opened.
-    ExitOpened {
-        exit: u8,
-    },
-    /// Extraction: `by` called a flight to exit `exit`.
-    FlightCalled {
-        exit: u8,
-        by: PlayerId,
-    },
-    /// Extraction: the flight to exit `exit` landed.
+    /// Extraction: the flight to exit `exit` landed and is boarding.
     FlightLanded {
+        exit: u8,
+    },
+    /// Extraction: the flight from exit `exit` departed, with whoever was aboard.
+    FlightDeparted {
         exit: u8,
     },
     /// Extraction: `player` left on the flight from exit `exit`.

@@ -105,20 +105,18 @@ pub struct HunterDef {
     pub speed: f32,
 }
 
-/// A place to leave from.
+/// A place to leave from, and its timetable.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExitDef {
     pub name: String,
     pub pos: [f32; 2],
     pub radius: f32,
-    /// Seconds into the run it opens.
-    pub opens_at: f32,
-    /// Seconds a hero stands in it to call a flight.
-    pub call: f32,
-    /// Seconds the flight takes to come.
-    pub flight: f32,
-    /// Seconds after a flight leaves before another can be called.
-    pub recall: f32,
+    /// Seconds into the run its first flight departs...
+    pub first: f32,
+    /// ...and between departures after that.
+    pub every: f32,
+    /// Seconds a flight waits on the ground before it departs.
+    pub window: f32,
 }
 
 /// Rules to playtest both ways.
@@ -130,9 +128,6 @@ pub struct ExtractionSettings {
     /// A quiet spell with no enemy near drops a skull.
     #[serde(default)]
     pub lose_them: bool,
-    /// A flight takes whoever is in its ring, or waits for every living hero.
-    #[serde(default = "yes")]
-    pub solo_extract: bool,
     /// The zone's boss comes on its arena timer.
     #[serde(default)]
     pub timed_boss: bool,
@@ -147,7 +142,6 @@ impl Default for ExtractionSettings {
         Self {
             heat_shared: true,
             lose_them: false,
-            solo_extract: true,
             timed_boss: false,
         }
     }
@@ -308,17 +302,23 @@ pub struct Extraction {
 /// How one exit stands.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExitState {
-    /// Seconds into the run it opens: the map's time, as the host tuned it.
-    pub opens_at: f32,
-    pub open: bool,
-    /// How far a hero standing in it has called a flight, 0 to 1.
-    pub calling: f32,
-    /// Seconds until the flight on its way lands.
-    pub flight: Option<f32>,
-    /// A flight has landed and waits for everyone (`solo_extract` off).
-    pub landed: bool,
-    /// Seconds until another flight can be called.
-    pub cooldown: f32,
+    /// Seconds into the run its next flight departs: the map's timetable, as the host tuned it.
+    pub departs: f32,
+    /// The next flight is on the ground, boarding.
+    pub boarding: bool,
+    /// Whether the next departure draws an ambush has been rolled; it does; the party has been
+    /// warned; the pack has come.
+    pub rolled: bool,
+    pub ambush: bool,
+    pub warned: bool,
+    pub came: bool,
+}
+
+impl ExitState {
+    /// Seconds until the next flight lands at `def`'s exit; zero or less once it is down.
+    pub fn lands_in(&self, def: &ExitDef, now: f32) -> f32 {
+        self.departs - def.window - now
+    }
 }
 
 impl Extraction {
@@ -336,7 +336,7 @@ impl Extraction {
                 .exits
                 .iter()
                 .map(|e| ExitState {
-                    opens_at: e.opens_at,
+                    departs: e.first,
                     ..ExitState::default()
                 })
                 .collect(),
@@ -378,10 +378,10 @@ pub(crate) mod tests {
                 ],
                 hunters: (pack: (6, 10), ring: (50.0, 70.0), cone: 60.0, speed: 1.2)),
          exits: [
-            (name: "East Gate", pos: (200.0, 0.0), radius: 15.0, opens_at: 60.0, call: 3.0,
-             flight: 45.0, recall: 30.0),
-            (name: "South Camp", pos: (0.0, -250.0), radius: 15.0, opens_at: 120.0, call: 3.0,
-             flight: 45.0, recall: 30.0),
+            (name: "East Gate", pos: (200.0, 0.0), radius: 15.0, first: 60.0, every: 60.0,
+             window: 30.0),
+            (name: "South Camp", pos: (0.0, -250.0), radius: 15.0, first: 120.0, every: 120.0,
+             window: 30.0),
          ],
          flight_display: 1566,
          settings: (SETTINGS)),
@@ -426,7 +426,7 @@ pub(crate) mod tests {
         let map = &c.extractions[0];
         assert_eq!(map.zone_ix, 0);
         assert_eq!(c.zones[0].extraction_ix, Some(0));
-        assert!(map.settings.heat_shared && map.settings.lose_them && map.settings.solo_extract);
+        assert!(map.settings.heat_shared && map.settings.lose_them);
         assert_eq!(map.exits[1].name, "South Camp");
     }
 
@@ -509,8 +509,9 @@ pub(crate) mod tests {
             regen: 4.0,
         });
         let (a, b) = (&base.extractions[0], &tuned.extractions[0]);
-        assert_eq!(b.exits[0].opens_at, a.exits[0].opens_at * 0.5);
-        assert_eq!(b.exits[1].flight, a.exits[1].flight * 2.0);
+        assert_eq!(b.exits[0].first, a.exits[0].first * 0.5);
+        assert_eq!(b.exits[0].every, a.exits[0].every * 0.5);
+        assert_eq!(b.exits[1].window, a.exits[1].window * 2.0);
         assert_eq!(b.heat.outside, a.heat.outside * 3.0);
         assert_eq!(b.heat.kill, a.heat.kill * 3.0);
         assert_eq!(b.heat.flight, a.heat.flight * 3.0);
@@ -519,7 +520,22 @@ pub(crate) mod tests {
         assert_eq!(b.max_enemies_per_hero, a.max_enemies_per_hero / 2);
         assert_eq!(tuned.rules.hero_regen, 4.0);
         let same = base.tuned(&crate::content::Tuning::default());
-        assert_eq!(same.extractions[0].exits[0].opens_at, a.exits[0].opens_at);
+        assert_eq!(same.extractions[0].exits[0].first, a.exits[0].first);
         assert_eq!(same.rules.hero_regen, 1.0);
+    }
+
+    #[test]
+    fn a_timetable_that_cannot_run_is_refused() {
+        let err = maps_with("every: 60.0,", "every: 20.0,").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ContentError::Invalid {
+                    why: "has an exit whose timetable cannot run",
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 }

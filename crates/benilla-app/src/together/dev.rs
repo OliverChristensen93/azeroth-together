@@ -17,8 +17,8 @@ const STEPS: [f32; 10] = [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0];
 
 /// The settings in the panel's order.
 const ROWS: [&str; 5] = [
-    "Exits open (time)",
-    "Flight time",
+    "Flight timetable",
+    "Boarding time",
     "Heat gain",
     "Horde size",
     "Hero regen",
@@ -227,7 +227,7 @@ pub(super) fn dev_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle
                     (),
                     (),
                     GlueText {
-                        text: "Exits and flights: times, so below 1 is sooner.",
+                        text: "Timetable and boarding: below 1 is sooner and shorter.",
                         size: 11.0,
                         color: DIM,
                         wrap: false,

@@ -247,9 +247,9 @@ impl Default for Rules {
 /// ([`Content::tuned`]); every one 1 leaves the content as it is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tuning {
-    /// Seconds until each extraction exit opens, times.
+    /// Seconds until each exit's first flight, and between its flights, times.
     pub exits: f32,
-    /// Seconds a flight takes to come, times.
+    /// Seconds a flight waits on the ground, times.
     pub flight: f32,
     /// Every heat gain and the nightfall floor's climb, times.
     pub heat: f32,
@@ -467,6 +467,13 @@ impl Content {
             if (0..map.exits.len()).any(|e| !bounds.inside(map.exit_pos(e), 0.0)) {
                 return Err(invalid(&map.key, "has an exit outside its boundary"));
             }
+            if map
+                .exits
+                .iter()
+                .any(|e| e.every <= 0.0 || e.window <= 0.0 || e.window >= e.every || e.window > e.first)
+            {
+                return Err(invalid(&map.key, "has an exit whose timetable cannot run"));
+            }
             self.zones[map.zone_ix].extraction_ix = Some(i);
         }
         self.extractions = maps;
@@ -479,8 +486,9 @@ impl Content {
         c.rules.hero_regen *= t.regen;
         for map in &mut c.extractions {
             for exit in &mut map.exits {
-                exit.opens_at *= t.exits;
-                exit.flight *= t.flight;
+                exit.first *= t.exits;
+                exit.every *= t.exits;
+                exit.window *= t.flight;
             }
             let heat = &mut map.heat;
             heat.outside *= t.heat;

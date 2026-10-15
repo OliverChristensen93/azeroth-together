@@ -3,7 +3,7 @@
 //! only in an extraction run; an arena never reaches them.
 
 use super::*;
-use crate::extraction::{ExtractionDef, ExtractionSettings, SkullDef};
+use crate::extraction::{ExitState, ExtractionDef, ExtractionSettings, SkullDef};
 
 /// Draws [`World::fitting`] makes before it settles for a spot that does not fit.
 const FIT_TRIES: usize = 8;
@@ -413,7 +413,6 @@ impl World {
             !(far && i.ready() && i.kind != InteractableKind::Cache)
         });
     }
-
     /// Ordinary enemies further than the map's reach from every living hero are let go: a party
     /// spread over the forest drags no tail of stragglers. Elites and bosses stay.
     fn recycle(&mut self, def: &ExtractionDef) {
@@ -430,9 +429,10 @@ impl World {
         self.enemies
             .retain(|e| e.elite || e.boss || living.iter().any(|p| p.distance(e.pos) <= reach));
     }
-    /// Exits open on their timers. A hero standing in an open one calls a flight; while it comes
-    /// it heats the party (shared) or whoever waits in its ring. A landed flight takes every
-    /// living hero in its ring, or with `solo_extract` off waits until every living hero is in it.
+
+    /// Flights keep their exits' timetables: each lands `window` seconds before it departs and
+    /// waits, heating the party (shared) or whoever waits in its ring; at departure it takes
+    /// every living hero in its ring, and the next flight is due `every` seconds later.
     fn tend_exits(&mut self, def: &ExtractionDef) {
         let living: Vec<(PlayerId, V2)> = self
             .heroes
@@ -440,7 +440,7 @@ impl World {
             .filter(|h| h.alive)
             .map(|h| (h.player, h.pos))
             .collect();
-        let elapsed = self.elapsed;
+        let now = self.elapsed;
         let mut events = Vec::new();
         let mut heat: Vec<(Option<PlayerId>, f32)> = Vec::new();
         let mut taken: Vec<(PlayerId, u8)> = Vec::new();
@@ -449,59 +449,34 @@ impl World {
         };
         for (i, (exit, state)) in def.exits.iter().zip(x.exits.iter_mut()).enumerate() {
             let tag = i as u8;
+            if state.lands_in(exit, now) > 0.0 {
+                continue;
+            }
             let at = V2::new(exit.pos[0], exit.pos[1]);
             let inside: Vec<PlayerId> = living
                 .iter()
                 .filter(|(_, p)| p.distance(at) <= exit.radius)
                 .map(|&(p, _)| p)
                 .collect();
-            if !state.open {
-                if elapsed < state.opens_at {
-                    continue;
-                }
-                state.open = true;
-                events.push(Event::ExitOpened { exit: tag });
+            if !state.boarding {
+                state.boarding = true;
+                events.push(Event::FlightLanded { exit: tag });
             }
-            state.cooldown = (state.cooldown - DT).max(0.0);
-            if let Some(left) = state.flight {
-                let gain = def.heat.flight * DT;
-                if def.settings.heat_shared {
-                    heat.push((None, gain));
-                } else {
-                    heat.extend(inside.iter().map(|&p| (Some(p), gain)));
-                }
-                let left = left - DT;
-                if left <= 0.0 {
-                    state.flight = None;
-                    state.landed = true;
-                    events.push(Event::FlightLanded { exit: tag });
-                } else {
-                    state.flight = Some(left);
-                }
-            } else if !state.landed && state.cooldown <= 0.0 {
-                let step = DT / exit.call;
-                state.calling = if inside.is_empty() {
-                    (state.calling - step).max(0.0)
-                } else {
-                    state.calling + step
-                };
-                if state.calling >= 1.0 {
-                    state.calling = 0.0;
-                    state.flight = Some(exit.flight);
-                    events.push(Event::FlightCalled {
-                        exit: tag,
-                        by: inside[0],
-                    });
-                }
+            let gain = def.heat.flight * DT;
+            if def.settings.heat_shared {
+                heat.push((None, gain));
+            } else {
+                heat.extend(inside.iter().map(|&p| (Some(p), gain)));
             }
-            if state.landed {
-                let everyone = !living.is_empty() && inside.len() == living.len();
-                if def.settings.solo_extract || everyone {
-                    state.landed = false;
-                    state.cooldown = exit.recall;
-                    taken.extend(inside.iter().map(|&p| (p, tag)));
-                }
+            if now < state.departs {
+                continue;
             }
+            taken.extend(inside.iter().map(|&p| (p, tag)));
+            events.push(Event::FlightDeparted { exit: tag });
+            *state = ExitState {
+                departs: state.departs + exit.every,
+                ..ExitState::default()
+            };
         }
         for (who, amount) in heat {
             self.add_heat(who, amount);
@@ -580,7 +555,7 @@ mod tests {
         let w = run("", 1);
         let x = state(&w);
         assert_eq!(x.exits.len(), 2);
-        assert!(x.exits.iter().all(|e| !e.open));
+        assert!(x.exits.iter().all(|e| !e.boarding));
         assert_eq!(w.bounds(), w.content().extractions[0].bounds());
     }
 
@@ -831,104 +806,6 @@ mod tests {
     }
 
     #[test]
-    fn exits_open_on_their_own_time() {
-        let mut w = run("", 1);
-        hush(&mut w);
-        w.elapsed = 59.0;
-        secs(&mut w, 2.0);
-        let x = state(&w);
-        assert!(x.exits[0].open && !x.exits[1].open);
-        let opened: Vec<Event> = w
-            .drain_events()
-            .into_iter()
-            .filter(|e| matches!(e, Event::ExitOpened { .. }))
-            .collect();
-        assert_eq!(opened, vec![Event::ExitOpened { exit: 0 }]);
-    }
-
-    #[test]
-    fn a_shut_exit_calls_nothing() {
-        let mut w = run("", 1);
-        hush(&mut w);
-        at(&mut w, 0, 0.0, -250.0);
-        w.elapsed = 61.0;
-        secs(&mut w, 5.0);
-        let x = state(&w);
-        assert!(!x.exits[1].open && x.exits[1].flight.is_none());
-    }
-
-    #[test]
-    fn standing_in_an_open_exit_calls_a_flight_that_takes_whoever_is_in_it() {
-        let mut w = run("", 2);
-        hush(&mut w);
-        w.elapsed = 61.0;
-        at(&mut w, 0, 200.0, 0.0);
-        secs(&mut w, 3.2);
-        assert!(state(&w).exits[0].flight.is_some(), "called");
-        let before = w.heat_of(0);
-        secs(&mut w, 45.5);
-        let gained = w.heat_of(0) - before;
-        assert!(
-            gained > 45.0 * 4.0,
-            "a flight on its way heats the party: {gained}"
-        );
-        let (out, home) = (w.hero(0).unwrap(), w.hero(1).unwrap());
-        assert!(out.extracted && !out.alive);
-        assert!(home.alive && !home.extracted);
-        assert!(!w.game_over());
-        assert!(w
-            .drain_events()
-            .contains(&Event::HeroExtracted { player: 0, exit: 0 }));
-    }
-
-    #[test]
-    fn without_solo_extract_the_flight_waits_for_everyone() {
-        let mut w = run("solo_extract: false", 2);
-        hush(&mut w);
-        w.elapsed = 61.0;
-        at(&mut w, 0, 200.0, 0.0);
-        secs(&mut w, 48.5);
-        assert!(state(&w).exits[0].landed);
-        assert!(w.hero(0).unwrap().alive, "still waiting");
-        at(&mut w, 1, 201.0, 2.0);
-        w.step();
-        assert!(w.heroes.iter().all(|h| h.extracted));
-        assert!(w.game_over());
-    }
-
-    #[test]
-    fn a_waiting_flight_leaves_when_the_rest_are_aboard_or_down() {
-        let mut w = run("solo_extract: false", 2);
-        hush(&mut w);
-        w.elapsed = 61.0;
-        at(&mut w, 0, 200.0, 0.0);
-        secs(&mut w, 48.5);
-        assert!(state(&w).exits[0].landed);
-        let other = w.heroes.iter_mut().find(|h| h.player == 1).unwrap();
-        other.alive = false;
-        other.hp = 0.0;
-        w.step();
-        assert!(w.hero(0).unwrap().extracted);
-        assert!(!w.hero(1).unwrap().extracted);
-        assert!(w.game_over());
-    }
-
-    #[test]
-    fn the_last_one_out_ends_the_run_and_leaves_the_fallen() {
-        let mut w = run("", 2);
-        hush(&mut w);
-        w.elapsed = 61.0;
-        at(&mut w, 0, 200.0, 0.0);
-        let fallen = w.heroes.iter_mut().find(|h| h.player == 1).unwrap();
-        fallen.alive = false;
-        fallen.hp = 0.0;
-        secs(&mut w, 48.5);
-        assert!(w.hero(0).unwrap().extracted);
-        assert!(!w.hero(1).unwrap().extracted, "the fallen are left behind");
-        assert!(w.game_over());
-    }
-
-    #[test]
     fn an_extracted_hero_is_never_raised() {
         let mut w = run("", 2);
         hush(&mut w);
@@ -1070,12 +947,82 @@ mod tests {
     }
 
     #[test]
-    fn an_exit_opens_at_the_time_its_state_carries() {
+    fn a_flight_lands_on_its_timetable_and_departs_with_whoever_is_in_its_ring() {
+        let mut w = run("", 2);
+        hush(&mut w);
+        at(&mut w, 0, 200.0, 0.0);
+        // East Gate: first departure at 60, on the ground for 30 before it.
+        w.elapsed = 29.0;
+        secs(&mut w, 0.5);
+        assert!(!state(&w).exits[0].boarding);
+        secs(&mut w, 1.0);
+        assert!(state(&w).exits[0].boarding);
+        assert!(w.drain_events().contains(&Event::FlightLanded { exit: 0 }));
+        secs(&mut w, 29.0);
+        assert!(w.hero(0).unwrap().alive, "not yet");
+        secs(&mut w, 1.0);
+        let (out, home) = (w.hero(0).unwrap(), w.hero(1).unwrap());
+        assert!(out.extracted && !out.alive);
+        assert!(home.alive && !home.extracted);
+        assert!(!w.game_over());
+        let x = state(&w);
+        assert!(!x.exits[0].boarding);
+        assert!((x.exits[0].departs - 120.0).abs() < 1e-3, "the next flight");
+        let events = w.drain_events();
+        assert!(events.contains(&Event::FlightDeparted { exit: 0 }));
+        assert!(events.contains(&Event::HeroExtracted { player: 0, exit: 0 }));
+    }
+
+    #[test]
+    fn only_heroes_in_the_ring_at_departure_are_taken() {
+        let mut w = run("", 2);
+        hush(&mut w);
+        w.elapsed = 45.0;
+        at(&mut w, 0, 200.0, 0.0);
+        at(&mut w, 1, 100.0, 0.0);
+        secs(&mut w, 10.0);
+        // The first walks off; the second arrives just in time.
+        at(&mut w, 0, 100.0, 0.0);
+        at(&mut w, 1, 201.0, 2.0);
+        secs(&mut w, 6.0);
+        assert!(!w.hero(0).unwrap().extracted);
+        assert!(w.hero(1).unwrap().extracted);
+    }
+
+    #[test]
+    fn a_boarding_flight_heats_the_party() {
         let mut w = run("", 1);
         hush(&mut w);
-        assert_eq!(state(&w).exits[0].opens_at, 60.0);
-        state_mut(&mut w).exits[0].opens_at = 1.0;
-        secs(&mut w, 1.5);
-        assert!(state(&w).exits[0].open);
+        at(&mut w, 0, 100.0, 0.0);
+        w.elapsed = 30.0;
+        secs(&mut w, 10.0);
+        // 1 a second for being outside and 4 for the flight on the ground.
+        assert!((w.heat_of(0) - 50.0).abs() < 0.5, "{}", w.heat_of(0));
+    }
+
+    #[test]
+    fn the_last_one_out_ends_the_run_and_leaves_the_fallen() {
+        let mut w = run("", 2);
+        hush(&mut w);
+        w.elapsed = 55.0;
+        at(&mut w, 0, 200.0, 0.0);
+        let fallen = w.heroes.iter_mut().find(|h| h.player == 1).unwrap();
+        fallen.alive = false;
+        fallen.hp = 0.0;
+        secs(&mut w, 6.0);
+        assert!(w.hero(0).unwrap().extracted);
+        assert!(!w.hero(1).unwrap().extracted, "the fallen are left behind");
+        assert!(w.game_over());
+    }
+
+    #[test]
+    fn an_exit_departs_at_the_time_its_state_carries() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        assert_eq!(state(&w).exits[0].departs, 60.0);
+        at(&mut w, 0, 200.0, 0.0);
+        state_mut(&mut w).exits[0].departs = 31.0;
+        secs(&mut w, 32.0);
+        assert!(w.hero(0).unwrap().extracted);
     }
 }

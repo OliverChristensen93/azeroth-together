@@ -322,17 +322,17 @@ fn extraction_status(world: &together_sim::World, hero: &together_sim::Hero) -> 
     for (i, (exit, state)) in def.exits.iter().zip(&x.exits).enumerate() {
         let to = def.exit_pos(i) - hero.pos;
         let way = format!("{:.0} yd {}", to.length(), compass(to));
-        let line = if !state.open {
-            let left = (state.opens_at - world.elapsed).max(0.0);
-            format!("{} opens in {}", exit.name, clock(left))
-        } else if let Some(left) = state.flight {
-            format!("{}: flight lands in {}   {way}", exit.name, clock(left.max(0.0)))
-        } else if state.landed {
-            format!("{}: the flight waits for everyone   {way}", exit.name)
-        } else if state.calling > 0.0 {
-            format!("{}: calling a flight {:.0}%   {way}", exit.name, state.calling * 100.0)
+        let lands = state.lands_in(exit, world.elapsed);
+        let line = if lands <= 0.0 {
+            let left = (state.departs - world.elapsed).max(0.0);
+            format!("{}: flight boarding, leaves in {}   {way}", exit.name, clock(left))
         } else {
-            format!("{}: open, stand in it to call a flight   {way}", exit.name)
+            format!(
+                "{}: flight lands in {}, leaves at {}   {way}",
+                exit.name,
+                clock(lands),
+                clock(state.departs)
+            )
         };
         s.push('\n');
         s.push_str(&line);

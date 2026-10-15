@@ -38,15 +38,18 @@
         ),
         exits: [
             // By Stormwind's gate (AreaPOI "Stormwind").
-            (name: "Stormwind Gate", pos: (-9150.0, 360.0), radius: 15.0, opens_at: 480.0,
-             call: 3.0, flight: 45.0, recall: 30.0),
-            // Eastvale Logging Camp, read off the world map: check it in game.
+            (name: "Stormwind Gate", pos: (-9150.0, 360.0), radius: 15.0,
+             first: 360.0, every: 360.0, window: 30.0),
+            // Eastvale Logging Camp, checked in game.
             (name: "Eastvale Logging Camp", pos: (-9467.0, -1276.0), radius: 15.0,
-             opens_at: 840.0, call: 3.0, flight: 45.0, recall: 30.0),
+             first: 540.0, every: 420.0, window: 30.0),
+            // Westbrook Garrison, on the west road toward Westfall (AreaPOI).
+            (name: "Westbrook Garrison", pos: (-9615.0, 667.0), radius: 15.0,
+             first: 450.0, every: 480.0, window: 30.0),
         ],
         // `BatTaxi.m2`, the Undercity flight bat: the gryphon (display 6852) is not in the
         // trimmed data. Swap it when the full client data is in.
         flight_display: 1566,
-        settings: (heat_shared: true, lose_them: false, solo_extract: true, timed_boss: false),
+        settings: (heat_shared: true, lose_them: false, timed_boss: false),
     ),
 ]

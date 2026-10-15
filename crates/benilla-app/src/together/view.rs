@@ -239,6 +239,8 @@ const EXIT_RUNE: (u32, f32) = (343, 1.0);
 /// How high a flight starts down, and over its last how many seconds it comes.
 const FLIGHT_HEIGHT: f32 = 40.0;
 const FLIGHT_DESCENT: f32 = 8.0;
+/// A beam marks an exit from this many seconds before its flight lands until it departs.
+const BEAM_LEAD: f32 = 60.0;
 /// Teleport: Stormwind, whose visual plays as a hero leaves.
 const TELEPORT: u32 = 3561;
 /// The colours heat and exit news float up in, 0xAARRGGBB.
@@ -377,19 +379,14 @@ pub(super) fn apply_events(
                     }
                 }
             }
-            Event::ExitOpened { exit } => {
+            Event::FlightLanded { exit } => {
                 if let Some(&e) = views.heroes.get(&sim.me) {
-                    fx.text(e, format!("{} is open", exit_name(&sim.world, exit)), COLOR_EXIT);
-                }
-            }
-            Event::FlightCalled { exit, .. } => {
-                if let Some(&e) = views.heroes.get(&sim.me) {
-                    let text = format!("A flight is coming to {}", exit_name(&sim.world, exit));
+                    let text = format!("A flight is boarding at {}", exit_name(&sim.world, exit));
                     fx.text(e, text, COLOR_EXIT);
                 }
             }
             // The flight is drawn from the world's state.
-            Event::FlightLanded { .. } => {}
+            Event::FlightDeparted { .. } => {}
             Event::HeroExtracted { player, .. } => {
                 if let Some(&e) = views.heroes.get(&player) {
                     fx.cast(e, TELEPORT, &[e], None);
@@ -799,7 +796,8 @@ fn sync_extraction(
     }
     for (i, state) in x.exits.iter().enumerate() {
         let at = def.exit_pos(i);
-        match (state.open, view.beams[i]) {
+        let lands = state.lands_in(&def.exits[i], world.elapsed);
+        match (lands <= BEAM_LEAD, view.beams[i]) {
             (true, None) => {
                 let serial = EXTRACTION_SERIAL_BASE + 2 + 2 * i as u64;
                 let e = units::spawn_object(commands, serial, BEAM, BEAM_SCALE * 2.0, ground(at, fallback_y));
@@ -811,10 +809,12 @@ fn sync_extraction(
             }
             _ => {}
         }
-        let height = match (state.flight, state.landed) {
-            (Some(left), _) if left <= FLIGHT_DESCENT => Some(left / FLIGHT_DESCENT * FLIGHT_HEIGHT),
-            (_, true) => Some(0.0),
-            _ => None,
+        let height = if lands > FLIGHT_DESCENT {
+            None
+        } else if lands > 0.0 {
+            Some(lands / FLIGHT_DESCENT * FLIGHT_HEIGHT)
+        } else {
+            Some(0.0)
         };
         match (height, view.flights[i]) {
             (Some(h), None) => {
