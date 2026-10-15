@@ -12,7 +12,8 @@
 //!
 //! Configuration, for now: `TOGETHER_CLASS` (default `mage`), `TOGETHER_ZONE` (default `elwynn`),
 //! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the RON files; default
-//! the repository's `content/`, and the copies compiled in when that is missing).
+//! the repository's `content/`, and the copies compiled in when that is missing),
+//! `TOGETHER_TRACE_POS` (logs the hero's position, for reading off coordinates).
 
 mod actions;
 mod dress;
@@ -53,7 +54,7 @@ pub(crate) fn start_map() -> u32 {
 }
 
 /// The content files' text, for the content hash a co-op client and host compare: classes,
-/// abilities, enemies, and the zones with the rules after them.
+/// abilities, enemies, and the zones with the rules and extraction maps after them.
 static CONTENT_TEXTS: OnceLock<(String, String, String, String)> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static (String, String, String, String) {
@@ -108,6 +109,10 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     )?;
     let zones = read("zones.ron", include_str!("../../../../content/zones.ron"))?;
     let rules = read("rules.ron", include_str!("../../../../content/rules.ron"))?;
+    let extraction = read(
+        "extraction.ron",
+        include_str!("../../../../content/extraction.ron"),
+    )?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         abilities: &abilities,
@@ -115,6 +120,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         zones: &zones,
     })
     .and_then(|c| c.with_rules(&rules))
+    .and_then(|c| c.with_extractions(&extraction))
     .map_err(|e| e.to_string())?;
     let zone = content
         .zone(&zone_key())
@@ -131,7 +137,12 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     }
     START_MAP.store(content.zones[zone].map, Ordering::Relaxed);
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, format!("{zones}\n{rules}")));
+    let _ = CONTENT_TEXTS.set((
+        classes,
+        abilities,
+        enemies,
+        format!("{zones}\n{rules}\n{extraction}"),
+    ));
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -500,6 +511,13 @@ fn autoplay() -> bool {
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
 }
 
+/// `TOGETHER_TRACE_POS=1`: the local hero's position every two seconds, for reading off
+/// coordinates for the content files.
+fn trace_pos() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("TOGETHER_TRACE_POS").is_some())
+}
+
 /// `TOGETHER_FRAIL=<player>`: that hero drops to 1 health 15 seconds in, once, so a co-op test
 /// sees a fall and a revive.
 fn frail_for_tests(world: &mut World) {
@@ -593,8 +611,8 @@ fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
     Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist))
 }
 
-/// Where WoW's controller left the local hero, as the pose the next step takes. The arena's edge
-/// is a wall: a hero past the leash is put back on it, so nobody runs off the end of the loaded
+/// Where WoW's controller left the local hero, as the pose the next step takes. The run's edge
+/// (the arena's leash, or an extraction map's outline) is a wall: a hero past it is put back on it, so nobody runs off the end of the loaded
 /// world. Until the controller has the hero, the terrain streams around the arena's centre.
 #[allow(clippy::too_many_arguments)]
 fn feed_pose(
@@ -605,8 +623,8 @@ fn feed_pose(
     mut player: ResMut<crate::player::Player>,
     mut input: ResMut<LocalInput>,
     mut bodies: Query<&mut Transform>,
+    mut traced: Local<f32>,
 ) {
-    let center = sim.world.center();
     let Some(mut tf) = views
         .heroes
         .get(&sim.me)
@@ -626,10 +644,13 @@ fn feed_pose(
             pos = to;
         }
     }
-    let leash = sim.world.zone().leash;
-    let off = pos - center;
-    if off.length() > leash {
-        pos = center + off.normalize_or_zero() * leash;
+    pos = sim.world.bounds().clamp(pos);
+    if trace_pos() {
+        *traced += time.delta_secs();
+        if *traced >= 2.0 {
+            *traced = 0.0;
+            println!("together: at ({:.1}, {:.1})", pos.x, pos.y);
+        }
     }
     if pos != at {
         let mut back = units::ground_to_bevy(pos, tf.translation.y);

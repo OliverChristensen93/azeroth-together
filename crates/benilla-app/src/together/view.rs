@@ -693,8 +693,7 @@ pub(super) fn settle_shrines(
     if net.is_client() {
         return;
     }
-    let center = sim.world.center();
-    let leash = sim.world.zone().leash;
+    let bounds = sim.world.bounds();
     let unsettled: Vec<(u32, V2)> = sim
         .world
         .interactables
@@ -717,7 +716,7 @@ pub(super) fn settle_shrines(
                     pos + V2::from_angle(angle, ring as f32 * RING_STEP)
                 })
             })
-            .filter(|p| p.distance(center) <= leash - 3.0)
+            .filter(|&p| bounds.inside(p, 3.0))
             .find(|&p| usable(&world_point, p) == Some(true));
         if let Some(to) = spot {
             sim.world.move_interactable(id, to);
