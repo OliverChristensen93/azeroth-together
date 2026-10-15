@@ -163,6 +163,7 @@
         pool: [
             "frostbolt", "fireball", "arcane_missiles", "frost_nova", "arcane_explosion",
             "blizzard", "flamestrike", "fire_blast", "cone_of_cold", "blast_wave", "pyroblast",
+            "ice_barrier",
         ],
     ),
     (

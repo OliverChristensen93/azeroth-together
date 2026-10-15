@@ -228,13 +228,16 @@ pub(super) fn apply_events(
     mut stores: Query<&mut ObjectStore>,
     mut fx: Fx,
     mut cooldowns: ResMut<crate::spell::Cooldowns>,
+    world_point: WorldPoint,
 ) {
+    let fallback_y = sim.world.zone().center[2];
     for event in sim.world.drain_events() {
         match event {
             Event::Cast {
                 caster,
                 visual,
                 targets,
+                dest,
                 cooldown,
                 ..
             } => {
@@ -245,7 +248,16 @@ pub(super) fn apply_events(
                     continue;
                 };
                 let hits: Vec<Entity> = targets.iter().filter_map(|&t| views.of(t)).collect();
-                fx.cast(me, visual, &hits, None);
+                // A spell landing on a spot (a Blizzard's tick, a nova cast elsewhere, a Living
+                // Bomb) plays there, on the ground.
+                let dest = dest.map(|p| {
+                    let mut at = units::ground_to_bevy(p, fallback_y);
+                    if let Some(h) = world_point.terrain_height_under(at) {
+                        at.y = h;
+                    }
+                    at
+                });
+                fx.cast(me, visual, &hits, dest);
             }
             Event::Damage {
                 target,
@@ -531,7 +543,15 @@ pub(super) fn sync(
     }
 
     let me = world.hero(sim.me).map_or(world.center(), |h| h.pos);
-    sync_shrines(&mut commands, world, &mut views, &ground, fallback_y, me, &mut transforms);
+    sync_shrines(
+        &mut commands,
+        world,
+        &mut views,
+        &ground,
+        fallback_y,
+        me,
+        &mut transforms,
+    );
 
     if sim.stepped {
         for hero in &world.heroes {
@@ -605,13 +625,21 @@ fn sync_shrines(
             let (display, scale) = shrine_look(it.kind);
             ShrineView {
                 pos: it.pos,
-                model: units::spawn_object(commands, serial, display, scale, ground(it.pos, fallback_y)),
+                model: units::spawn_object(
+                    commands,
+                    serial,
+                    display,
+                    scale,
+                    ground(it.pos, fallback_y),
+                ),
                 ring: None,
                 beam: None,
             }
         });
         let mark = match it.state {
-            InteractState::Ready | InteractState::Challenge(_) if it.kind != InteractableKind::Pot => {
+            InteractState::Ready | InteractState::Challenge(_)
+                if it.kind != InteractableKind::Pot =>
+            {
                 Some(it.pos)
             }
             InteractState::Escort { to, .. } => Some(to),
@@ -640,7 +668,13 @@ fn sync_shrines(
         let beam_at = mark.filter(|at| at.distance(me) <= BEAM_RANGE);
         match (beam_at, view.beam) {
             (Some(at), None) => {
-                let e = units::spawn_object(commands, serial + 2, BEAM, BEAM_SCALE, ground(at, fallback_y));
+                let e = units::spawn_object(
+                    commands,
+                    serial + 2,
+                    BEAM,
+                    BEAM_SCALE,
+                    ground(at, fallback_y),
+                );
                 view.beam = Some(e);
             }
             (None, Some(e)) => {
@@ -650,7 +684,8 @@ fn sync_shrines(
             _ => {}
         }
         if let InteractState::Escort { carrier, .. } = it.state {
-            if let (Some(hero), Ok(mut tf)) = (world.hero(carrier), transforms.get_mut(view.model)) {
+            if let (Some(hero), Ok(mut tf)) = (world.hero(carrier), transforms.get_mut(view.model))
+            {
                 let at = ground(hero.pos, fallback_y);
                 if tf.translation != at {
                     tf.translation = at;
@@ -669,7 +704,13 @@ fn sync_shrines(
         views.pickups.entry(p.id).or_insert_with(|| {
             let (display, scale) = pickup_look(p.kind);
             let serial = SHRINE_SERIAL_BASE + u64::from(p.id) * 4;
-            units::spawn_object(commands, serial, display, scale, ground(p.pos, fallback_y) + Vec3::Y * 0.3)
+            units::spawn_object(
+                commands,
+                serial,
+                display,
+                scale,
+                ground(p.pos, fallback_y) + Vec3::Y * 0.3,
+            )
         });
     }
     views.pickups.retain(|id, e| {
@@ -769,7 +810,9 @@ pub(super) fn write_vitals(
     if let (Some(hero), Some(&e)) = (world.hero(sim.me), views.heroes.get(&sim.me)) {
         if hero.speed != views.speed {
             views.speed = hero.speed;
-            commands.entity(e).insert(crate::net::UnitSpeeds(run_speeds(hero.speed)));
+            commands
+                .entity(e)
+                .insert(crate::net::UnitSpeeds(run_speeds(hero.speed)));
         }
     }
     for hero in &world.heroes {

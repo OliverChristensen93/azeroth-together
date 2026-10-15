@@ -10,6 +10,7 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::interact::Placement;
+use crate::spell::{Tag, Tags, Targeting};
 
 /// How an ability picks its targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -19,8 +20,15 @@ pub enum AbilityKind {
     Bolt,
     /// An instant hit on the nearest `count` enemies in `range`.
     Strike,
-    /// Everything within `radius` of the caster, at once.
+    /// Everything within `radius` of where it lands (the caster, unless its targeting says
+    /// otherwise), at once.
     Nova,
+    /// A lasting area of `radius` where it lands, hitting what stands in it every second for
+    /// `duration` seconds.
+    Ground,
+    /// A shield on the caster worth `shield` of its maximum health, until broken or `duration`
+    /// seconds pass.
+    Shield,
 }
 
 fn one() -> u32 {
@@ -70,6 +78,57 @@ pub struct AbilityDef {
     /// One line for the menu and tooltips; empty for none.
     #[serde(default)]
     pub description: String,
+    /// What it is: school, delivery, effects. Augments, talents and tomes go by these.
+    #[serde(default)]
+    pub tags: Vec<Tag>,
+    /// How it picks where it lands; by its kind when left out (missiles and strikes the nearest
+    /// enemy, novas around the caster, ground areas the thickest crowd).
+    #[serde(default)]
+    pub target: Option<Targeting>,
+    /// Hits on each target (Arcane Missiles' missiles); 1 when left out.
+    #[serde(default = "one")]
+    pub volley: u32,
+    /// Seconds a ground area or a shield lasts.
+    #[serde(default)]
+    pub duration: f32,
+    /// Seconds of burning ground a nova leaves where it lands (Flamestrike); 0 for none.
+    #[serde(default)]
+    pub leaves_ground: f32,
+    /// Share of each hit dealt again as Burning over four seconds (Pyroblast).
+    #[serde(default)]
+    pub burn: f32,
+    /// Seconds a Freeze lasts, for a spell tagged Freeze.
+    #[serde(default = "two_f")]
+    pub freeze: f32,
+    /// Yards a Knockback pushes, for a spell tagged Knockback.
+    #[serde(default = "knockback_f")]
+    pub knockback: f32,
+    /// Max health a [`AbilityKind::Shield`] is worth (0.25 is a quarter).
+    #[serde(default)]
+    pub shield: f32,
+    /// [`AbilityDef::tags`] as a set.
+    #[serde(skip)]
+    pub tag_set: Tags,
+}
+
+fn two_f() -> f32 {
+    2.0
+}
+
+fn knockback_f() -> f32 {
+    crate::spell::KNOCKBACK
+}
+
+impl AbilityDef {
+    /// How it picks where it lands: its own `target`, or its kind's way.
+    pub fn targeting(&self) -> Targeting {
+        self.target.unwrap_or(match self.kind {
+            AbilityKind::Bolt | AbilityKind::Strike => Targeting::Nearest,
+            AbilityKind::Nova => Targeting::Around,
+            AbilityKind::Ground => Targeting::Densest,
+            AbilityKind::Shield => Targeting::Caster,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -344,7 +403,10 @@ impl Content {
     /// Parse the four files and resolve every key.
     pub fn from_ron(src: ContentSources<'_>) -> Result<Self, ContentError> {
         let mut classes: Vec<ClassDef> = parse("classes.ron", src.classes)?;
-        let abilities: Vec<AbilityDef> = parse("abilities.ron", src.abilities)?;
+        let mut abilities: Vec<AbilityDef> = parse("abilities.ron", src.abilities)?;
+        for a in &mut abilities {
+            a.tag_set = Tags::of(&a.tags);
+        }
         let enemies: Vec<EnemyDef> = parse("enemies.ron", src.enemies)?;
         let mut zones: Vec<ZoneDef> = parse("zones.ron", src.zones)?;
 
@@ -465,7 +527,10 @@ pub(crate) mod tests {
         assert_eq!(c.abilities[mage.start_ix].key, "frostbolt");
         assert_eq!(mage.pool_ix.len(), 2);
         assert_eq!(c.enemies[c.zones[0].enemy_ix[0]].name, "Young Wolf");
-        assert_eq!(c.zones[0].boss_ix.map(|b| c.enemies[b].name.as_str()), Some("Hogger"));
+        assert_eq!(
+            c.zones[0].boss_ix.map(|b| c.enemies[b].name.as_str()),
+            Some("Hogger")
+        );
     }
 
     #[test]

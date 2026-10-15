@@ -9,6 +9,7 @@
 //! Every hero belongs to a [`PlayerId`] from the start, so a second player is one more
 //! [`World::add_hero`], not a rewrite.
 
+mod augments;
 mod cards;
 mod content;
 mod interact;
@@ -16,27 +17,27 @@ mod items;
 mod math;
 mod powerups;
 mod rng;
+mod spell;
 mod stats;
 mod world;
 
-pub use cards::{
-    ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK,
-};
+pub use augments::{milestone_rank, Augment, Milestone, Requires};
+pub use cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
     WeaponDef, ZoneDef,
 };
 pub use interact::{
-    chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement,
-    ESCORT_GOAL,
+    chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement, ESCORT_GOAL,
 };
 pub use items::{ward_cooldown, Item};
 pub use math::V2;
 pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
+pub use spell::{CastSpec, Tag, Tags, Targeting};
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
 pub use world::{
-    xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput,
-    Snapshot, Source, Target, World, WorldError, DT, ELITE_SCALE, MAX_ABILITIES, REVIVE_RANGE,
-    REVIVE_SECS, TICK_HZ,
+    status_bits, xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose, HeroSpells, Offer,
+    Owned, PlayerId, PlayerInput, Snapshot, Source, Status, Target, World, WorldError, DT,
+    ELITE_SCALE, MAX_ABILITIES, REVIVE_RANGE, REVIVE_SECS, TICK_HZ,
 };

@@ -7,13 +7,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::augments::Augment;
 use crate::content::AbilityDef;
 use crate::items::Item;
 use crate::rng::Rng;
 use crate::stats::{Pact, Stat, Stats};
 
-/// The highest rank an ability reaches.
-pub const MAX_RANK: u8 = 8;
+/// The highest rank an ability reaches. Ranks 5, 10 and 15 each bring an augment.
+pub const MAX_RANK: u8 = 15;
 
 /// How rare a card is, in WoW's item-quality order and colours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -102,7 +103,8 @@ impl Rarity {
     /// A rarity at random. `luck` (a hero's [`Stat::Luck`]) makes every tier above Common likelier,
     /// the rarer ones the more: 0.5 luck makes Uncommon 1.5 times as likely, Legendary 5 times.
     pub(crate) fn roll(rng: &mut Rng, luck: f32) -> Rarity {
-        let weight = |r: Rarity| f64::from(r.weight()) * f64::from(1.0 + luck.max(0.0)).powi(r as i32);
+        let weight =
+            |r: Rarity| f64::from(r.weight()) * f64::from(1.0 + luck.max(0.0)).powi(r as i32);
         let total: f64 = Rarity::ALL.iter().map(|&r| weight(r)).sum();
         let mut pick = f64::from(rng.f32()) * total;
         for r in Rarity::ALL {
@@ -134,6 +136,8 @@ pub enum CardKind {
     Heal,
     /// When nothing else is left to deal: one more reroll.
     Reroll,
+    /// An augment for a known spell (an index into the content's abilities) at its milestone.
+    Augment(usize, Augment),
 }
 
 impl CardKind {
@@ -157,7 +161,7 @@ impl Card {
     /// The ability it teaches or raises, if it is a spell card.
     pub fn ability(&self) -> Option<usize> {
         match self.kind {
-            CardKind::Learn(a) | CardKind::Upgrade(a) => Some(a),
+            CardKind::Learn(a) | CardKind::Upgrade(a) | CardKind::Augment(a, _) => Some(a),
             _ => None,
         }
     }
@@ -179,15 +183,14 @@ pub struct AbilityStats {
 /// The shortest a cooldown gets.
 const MIN_COOLDOWN: f32 = 0.2;
 
-/// An ability's numbers at `rank` (1 up to [`MAX_RANK`]): each rank adds 30% damage and takes 7%
-/// off the cooldown, and ranks 3, 5 and 7 each add a target.
+/// An ability's numbers at `rank` (1 up to [`MAX_RANK`]): each rank adds 20% damage and takes 3%
+/// off the cooldown. More targets come from augments (Multishot) and stats, not ranks.
 pub fn ability_stats(def: &AbilityDef, rank: u8, bonus: f32) -> AbilityStats {
     let rank = rank.clamp(1, MAX_RANK);
-    let extra = [3u8, 5, 7].iter().filter(|&&r| rank >= r).count() as u32;
     AbilityStats {
-        damage: def.damage * (1.0 + 0.3 * f32::from(rank - 1)) * (1.0 + bonus),
-        cooldown: (def.cooldown * 0.93f32.powi(i32::from(rank) - 1)).max(MIN_COOLDOWN),
-        count: def.count + extra,
+        damage: def.damage * (1.0 + 0.2 * f32::from(rank - 1)) * (1.0 + bonus),
+        cooldown: (def.cooldown * 0.97f32.powi(i32::from(rank) - 1)).max(MIN_COOLDOWN),
+        count: def.count,
         range: def.range,
         radius: def.radius,
     }
@@ -241,7 +244,7 @@ mod tests {
         let r1 = ability_stats(&def, 1, 0.0);
         let r3 = ability_stats(&def, 3, 0.0);
         assert!(r3.damage > r1.damage && r3.cooldown < r1.cooldown);
-        assert_eq!(r3.count, r1.count + 1);
+        assert_eq!(r3.count, r1.count, "ranks add no targets");
         let boosted = ability_stats(&def, 1, 0.5);
         assert!((boosted.damage - r1.damage * 1.5).abs() < 1e-4);
     }

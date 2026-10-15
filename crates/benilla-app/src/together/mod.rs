@@ -184,6 +184,7 @@ impl Sim {
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0x9E37_79B9_7F4A_7C15);
         let mut world = World::new(content(), zone, seed).expect("zone from the content");
+        world.xp_rate = xp_rate();
         for p in roster {
             // A class the content lacks (a mismatched client) is left out rather than crash.
             let _ = world.add_hero_as(
@@ -270,6 +271,8 @@ pub(super) struct LocalInput {
     pub(super) pick: Option<u8>,
     pub(super) reroll: bool,
     pub(super) skip: bool,
+    /// The movement ability was used this frame ([`blink`]).
+    pub(super) dash: bool,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -342,6 +345,7 @@ impl Plugin for TogetherPlugin {
                 Update,
                 (
                     read_keys,
+                    blink,
                     feed_pose,
                     step_sim,
                     view::settle_shrines,
@@ -556,6 +560,70 @@ fn read_keys(
     }
 }
 
+/// `TOGETHER_XP_RATE=<n>`: experience counts `n` times, so a test run reaches the augment ranks
+/// in minutes. 1 when unset.
+fn xp_rate() -> f32 {
+    std::env::var("TOGETHER_XP_RATE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&r: &f32| r > 0.0)
+        .unwrap_or(1.0)
+}
+
+/// Blink: yards forward, seconds of cooldown, and its `Spell.dbc` id for the visual.
+const BLINK_YARDS: f32 = 10.0;
+const BLINK_COOLDOWN: f32 = 30.0;
+const BLINK_SPELL: u32 = 1953;
+
+/// The mage's movement ability: Blink, on F, ten yards the way the hero faces. WoW's controller
+/// owns the hero's position, so the jump happens here, before [`feed_pose`] reads it; the next
+/// input tells the simulation (`PlayerInput::dash`), where augments act on where it left and
+/// landed. `TOGETHER_AUTOPLAY` blinks whenever it can.
+#[allow(clippy::too_many_arguments)]
+fn blink(
+    keys: Res<ButtonInput<KeyCode>>,
+    real: Res<Time<Real>>,
+    sim: Res<Sim>,
+    views: Res<view::Views>,
+    mut player: ResMut<crate::player::Player>,
+    mut input: ResMut<LocalInput>,
+    mut bodies: Query<&mut Transform>,
+    world_point: benilla_world::world_point::WorldPoint,
+    mut fx: units::Fx,
+    mut ready_at: Local<f32>,
+) {
+    let Some(hero) = sim.world.hero(sim.me) else {
+        return;
+    };
+    if !hero.alive || !hero.offers.is_empty() || !player.active {
+        return;
+    }
+    if content().classes[hero.class].key != "mage" {
+        return;
+    }
+    let now = real.elapsed_secs();
+    if now < *ready_at || !(keys.just_pressed(KeyCode::KeyF) || autoplay()) {
+        return;
+    }
+    let Some(&body) = views.heroes.get(&sim.me) else {
+        return;
+    };
+    let Ok(mut tf) = bodies.get_mut(body) else {
+        return;
+    };
+    let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
+    let to = bevy_to_ground(tf.translation) + V2::new(yaw.cos(), yaw.sin()) * BLINK_YARDS;
+    let mut at = units::ground_to_bevy(to, tf.translation.y);
+    if let Some(h) = world_point.terrain_height_under(at) {
+        at.y = h;
+    }
+    tf.translation = at;
+    player.pos = at;
+    input.dash = true;
+    *ready_at = now + BLINK_COOLDOWN;
+    fx.cast(body, BLINK_SPELL, &[], None);
+}
+
 /// Bevy's position to WoW's ground plane.
 fn bevy_to_ground(p: Vec3) -> V2 {
     V2::new(-p.z, -p.x)
@@ -671,6 +739,7 @@ fn step_sim(
             pick: input.pick.take(),
             reroll: std::mem::take(&mut input.reroll),
             skip: std::mem::take(&mut input.skip),
+            dash: std::mem::take(&mut input.dash),
             pose: input.pose,
             ..Default::default()
         };
@@ -702,6 +771,7 @@ fn step_sim(
                 pick: input.pick.take(),
                 reroll: std::mem::take(&mut input.reroll),
                 skip: std::mem::take(&mut input.skip),
+                dash: std::mem::take(&mut input.dash),
                 pose: Some(pose),
                 ..Default::default()
             };

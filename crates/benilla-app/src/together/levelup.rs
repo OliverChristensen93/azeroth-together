@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, fallback_gold, AbilityKind, Card, CardKind, Hero, InteractableKind, Item,
-    Rarity, Source, Stat, MAX_ABILITIES,
+    ability_stats, fallback_gold, AbilityKind, Augment, Card, CardKind, Hero, InteractableKind,
+    Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
 };
 
 use super::menu::SpellIcon;
@@ -56,6 +56,10 @@ pub(super) enum HandButton {
 
 #[derive(Component)]
 pub(super) struct RerollText;
+
+/// The Skip button's caption: Hold on an augment screen.
+#[derive(Component)]
+pub(super) struct SkipText;
 
 #[derive(Resource)]
 pub(super) struct Fonts {
@@ -189,6 +193,8 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                             let mut t = b.spawn(label(&fonts.text, text, 12.0, GOLD));
                             if button == HandButton::Reroll {
                                 t.insert(RerollText);
+                            } else {
+                                t.insert(SkipText);
                             }
                         });
                     }
@@ -257,6 +263,10 @@ enum Kind {
     Tome,
     Item,
     Pact,
+    /// A general augment for a spell.
+    Augment,
+    /// One of a spell's capstones.
+    Capstone,
     /// Gold, a heal or a reroll, when nothing else is left.
     Fallback,
 }
@@ -268,6 +278,8 @@ impl Kind {
             Kind::Tome => "TOME",
             Kind::Item => "ITEM",
             Kind::Pact => "PACT",
+            Kind::Augment => "AUGMENT",
+            Kind::Capstone => "CAPSTONE",
             Kind::Fallback => "BOON",
         }
     }
@@ -280,6 +292,8 @@ impl Kind {
             Kind::Tome => Color::srgba(0.04, 0.07, 0.15, 0.95),
             Kind::Item => Color::srgba(0.04, 0.11, 0.06, 0.95),
             Kind::Pact => Color::srgba(0.11, 0.04, 0.12, 0.95),
+            Kind::Augment => Color::srgba(0.03, 0.10, 0.12, 0.95),
+            Kind::Capstone => Color::srgba(0.13, 0.08, 0.02, 0.95),
             Kind::Fallback => Color::srgba(0.09, 0.09, 0.09, 0.95),
         }
     }
@@ -510,6 +524,39 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 "The bane is yours alone".into()
             },
         },
+        CardKind::Augment(ability, augment) => augment_face(hero, ability, augment),
+    }
+}
+
+/// The face of an augment card: what it does to the spell it is for.
+fn augment_face(hero: &Hero, ability: usize, augment: Augment) -> Face {
+    let content = content();
+    let def = &content.abilities[ability];
+    let rank = hero
+        .abilities
+        .iter()
+        .find(|o| o.ability == ability)
+        .map_or(1, |o| o.level);
+    let capstone = augment.capstone_of().is_some();
+    let tags: Vec<&str> = def.tags.iter().map(|t| t.name()).collect();
+    Face {
+        icon: Icon::Spell(def.visual),
+        kind: if capstone {
+            Kind::Capstone
+        } else {
+            Kind::Augment
+        },
+        name: augment.name().to_string(),
+        sub: format!("{}  ·  rank {rank}", def.name),
+        badge: if capstone { "CAPSTONE" } else { "AUGMENT" }.to_string(),
+        bright: capstone,
+        description: augment.description().to_string(),
+        lines: vec![(tags.join("  ·  "), GREY)],
+        footer: if capstone {
+            "One of this spell's three capstones".to_string()
+        } else {
+            "Hold to wait for three others".to_string()
+        },
     }
 }
 
@@ -676,13 +723,36 @@ pub(super) struct Shown {
     more: usize,
 }
 
-/// The screen's title and the line under it, for a hand from `source`.
-fn titles(source: Source) -> (&'static str, &'static str) {
-    let Source::Interactable(kind) = source else {
-        return (
-            "Level Up!",
-            "Choose a spell or a tome. Its rarity decides how strong it is.",
-        );
+/// The screen's title and the line under it, for `offer`.
+fn titles(offer: &Offer) -> (String, String) {
+    let kind = match offer.source {
+        Source::LevelUp => {
+            return (
+                "Level Up!".into(),
+                "Choose a spell or a tome. Its rarity decides how strong it is.".into(),
+            )
+        }
+        Source::Augment(ability) => {
+            let name = &content().abilities[ability].name;
+            let capstone = matches!(
+                offer.cards.first().map(|c| c.kind),
+                Some(CardKind::Augment(_, a)) if a.capstone_of().is_some()
+            );
+            return if capstone {
+                (
+                    format!("{name}: Capstone"),
+                    format!("Choose {name}'s capstone. Its three capstones are always these."),
+                )
+            } else {
+                (
+                    format!("{name}: Augment"),
+                    format!(
+                        "Choose an augment, or Hold: {name} waits at its rank and offers three new ones after your next level-up."
+                    ),
+                )
+            };
+        }
+        Source::Interactable(kind) => kind,
     };
     let hint = match kind {
         InteractableKind::TitanShrine | InteractableKind::GoldenShrine => {
@@ -692,7 +762,7 @@ fn titles(source: Source) -> (&'static str, &'static str) {
 
         _ => "Choose your treasure.",
     };
-    (kind.name(), hint)
+    (kind.name().to_string(), hint.to_string())
 }
 
 /// Show the screen while the hero has cards to choose, rebuilt when the hand changes.
@@ -710,6 +780,7 @@ pub(super) fn refresh(
         Query<&mut Text, With<MoreText>>,
         Query<&mut Text, With<TitleText>>,
         Query<&mut Text, With<HintText>>,
+        Query<&mut Text, With<SkipText>>,
     )>,
     mut shown: Local<Option<Shown>>,
 ) {
@@ -750,7 +821,12 @@ pub(super) fn refresh(
     if shown.as_ref() == Some(&now) {
         return;
     }
-    let (title, hint) = titles(offer.source);
+    let (title, hint) = titles(offer);
+    let augmenting = matches!(offer.source, Source::Augment(_));
+    let capstone = matches!(
+        offer.cards.first().map(|c| c.kind),
+        Some(CardKind::Augment(_, a)) if a.capstone_of().is_some()
+    );
     if let Ok(mut t) = texts.p0().single_mut() {
         t.0 = format!("LEVEL {}", now.level);
     }
@@ -761,7 +837,14 @@ pub(super) fn refresh(
         t.0 = hint.into();
     }
     if let Ok(mut t) = texts.p1().single_mut() {
-        t.0 = format!("Reroll {}   (R)", now.rerolls);
+        t.0 = if capstone {
+            "No reroll".to_string()
+        } else {
+            format!("Reroll {}   (R)", now.rerolls)
+        };
+    }
+    if let Ok(mut t) = texts.p5().single_mut() {
+        t.0 = if augmenting { "Hold" } else { "Skip" }.to_string();
     }
     if let Ok(mut t) = texts.p2().single_mut() {
         t.0 = if now.more > 0 {
