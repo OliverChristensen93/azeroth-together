@@ -6,6 +6,8 @@
 //! authority: a client only ever draws it, which is how a co-op host will run it for everyone.
 
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 
@@ -61,7 +63,7 @@ fn target_alive(elapsed: f32, heroes: usize) -> usize {
 
 /// What one player is doing this step. Movement is held until the next input; a pick and a jump
 /// are each used once.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayerInput {
     /// The direction to run, any length; zero stands still.
     pub move_dir: V2,
@@ -80,7 +82,7 @@ pub struct PlayerInput {
 }
 
 /// A hero's position and facing as its player's client reports them.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct HeroPose {
     pub pos: V2,
     pub facing: V2,
@@ -92,14 +94,14 @@ const JUMP_SPEED: f32 = 7.955_547;
 const GRAVITY: f32 = 19.291_105;
 
 /// Something an ability, a swing or an event can point at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Target {
     Hero(PlayerId),
     Enemy(u32),
 }
 
 /// What happened during a step, for the client to show.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
     /// A hero cast `ability` (its `visual` spell) at `targets`, or at the ground at `dest`; it is
     /// ready again in `cooldown` seconds.
@@ -139,13 +141,13 @@ pub enum Event {
 }
 
 /// The cards a hero is choosing between.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offer {
     pub cards: Vec<Card>,
 }
 
 /// An ability a hero has.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Owned {
     /// Index into [`Content::abilities`].
     pub ability: usize,
@@ -164,9 +166,14 @@ impl Owned {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Hero {
     pub player: PlayerId,
+    /// What the player called the hero, for the frames over and around it.
+    pub name: String,
+    /// The body: `ChrRaces` id and sex (0 male, 1 female). Only for show.
+    pub race: u8,
+    pub sex: u8,
     /// Index into [`Content::classes`].
     pub class: usize,
     pub pos: V2,
@@ -194,7 +201,7 @@ pub struct Hero {
     pub damage_by: Vec<(usize, f64)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Enemy {
     pub id: u32,
     /// Index into [`Content::enemies`].
@@ -210,11 +217,25 @@ pub struct Enemy {
 }
 
 /// Experience on the ground, waiting for a hero to come close.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Gem {
     pub id: u32,
     pub pos: V2,
     pub xp: u32,
+}
+
+/// What a co-op client needs to draw the world, sent by the host after each step
+/// ([`World::snapshot`], [`World::apply_snapshot`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub tick: u64,
+    pub elapsed: f32,
+    pub level: u32,
+    pub xp: f32,
+    pub kills: u32,
+    pub heroes: Vec<Hero>,
+    pub enemies: Vec<Enemy>,
+    pub gems: Vec<Gem>,
 }
 
 /// Damage on its way: a missile still flying.
@@ -309,8 +330,21 @@ impl World {
         V2::new(c[0], c[1])
     }
 
-    /// Give `player` a hero of `class`, standing near the arena's centre.
+    /// Give `player` a hero of `class`, standing near the arena's centre: a male human named
+    /// "Hero" (see [`World::add_hero_as`]).
     pub fn add_hero(&mut self, player: PlayerId, class: &str) -> Result<(), WorldError> {
+        self.add_hero_as(player, class, "Hero", 1, 0)
+    }
+
+    /// Give `player` a hero of `class` with a name and body, standing near the arena's centre.
+    pub fn add_hero_as(
+        &mut self,
+        player: PlayerId,
+        class: &str,
+        name: &str,
+        race: u8,
+        sex: u8,
+    ) -> Result<(), WorldError> {
         if self.heroes.iter().any(|h| h.player == player) {
             return Err(WorldError::PlayerTaken(player));
         }
@@ -323,6 +357,9 @@ impl World {
         let pos = self.center() + V2::new(0.0, 2.5 * f32::from(player));
         self.heroes.push(Hero {
             player,
+            name: name.to_owned(),
+            race,
+            sex,
             class: class_ix,
             pos,
             facing: V2::new(1.0, 0.0),
@@ -358,6 +395,56 @@ impl World {
     /// The input `player` holds from now on.
     pub fn set_input(&mut self, player: PlayerId, input: PlayerInput) {
         self.inputs.insert(player, input);
+    }
+
+    /// Fold an input into what the next step takes, for inputs that arrive faster than steps (a
+    /// co-op client's, over the network): movement and pose are the newest; a pick, reroll, skip
+    /// or jump waits until a step uses it.
+    pub fn queue_input(&mut self, player: PlayerId, input: PlayerInput) {
+        let held = self.inputs.entry(player).or_default();
+        held.move_dir = input.move_dir;
+        if input.pose.is_some() {
+            held.pose = input.pose;
+        }
+        held.pick = input.pick.or(held.pick);
+        held.reroll |= input.reroll;
+        held.skip |= input.skip;
+        held.jump |= input.jump;
+    }
+
+    /// `player` left: their hero goes, and the run no longer waits on them.
+    pub fn remove_hero(&mut self, player: PlayerId) {
+        self.heroes.retain(|h| h.player != player);
+        self.inputs.remove(&player);
+    }
+
+    /// The part of the world a co-op client draws: everything it shows, nothing it would need to
+    /// step the world itself.
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            tick: self.tick,
+            elapsed: self.elapsed,
+            level: self.level,
+            xp: self.xp,
+            kills: self.kills,
+            heroes: self.heroes.clone(),
+            enemies: self.enemies.clone(),
+            gems: self.gems.clone(),
+        }
+    }
+
+    /// Take a host's [`Snapshot`] as this world's state, and its step's events as this world's,
+    /// for [`World::drain_events`]. A client's world is never stepped: it mirrors the host's.
+    pub fn apply_snapshot(&mut self, snapshot: Snapshot, events: Vec<Event>) {
+        self.tick = snapshot.tick;
+        self.elapsed = snapshot.elapsed;
+        self.level = snapshot.level;
+        self.xp = snapshot.xp;
+        self.kills = snapshot.kills;
+        self.heroes = snapshot.heroes;
+        self.enemies = snapshot.enemies;
+        self.gems = snapshot.gems;
+        self.events.extend(events);
     }
 
     /// While any living hero has cards to choose, the run waits.
@@ -1114,6 +1201,72 @@ mod tests {
         };
         assert_eq!(owned.level, want_level);
         assert!((owned.bonus - card.rarity.bonus(card.kind)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_mirror_fed_snapshots_shows_what_the_host_sees() {
+        let mut host = world();
+        host.add_hero_as(1, "mage", "Friend", 4, 1).unwrap();
+        let mut mirror = World::new(Arc::new(sample()), "elwynn", 99).unwrap();
+        for _ in 0..TICK_HZ * 5 {
+            host.step();
+            let events = host.drain_events();
+            mirror.apply_snapshot(host.snapshot(), events.clone());
+            assert_eq!(mirror.drain_events(), events);
+        }
+        assert_eq!(mirror.tick, host.tick);
+        assert_eq!(mirror.enemies.len(), host.enemies.len());
+        assert_eq!(mirror.hero(1).unwrap().name, "Friend");
+        assert_eq!(mirror.hero(1).unwrap().race, 4);
+        assert_eq!(mirror.paused(), host.paused());
+    }
+
+    #[test]
+    fn queued_one_shots_survive_a_newer_movement_input() {
+        let mut w = world();
+        w.xp = xp_to_next(1);
+        w.step();
+        assert!(w.paused());
+        // A pick, then a newer pose-only input before the step: the pick must still land.
+        w.queue_input(
+            0,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
+        w.queue_input(
+            0,
+            PlayerInput {
+                pose: Some(HeroPose {
+                    pos: w.center(),
+                    facing: V2::new(1.0, 0.0),
+                }),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(!w.paused());
+    }
+
+    #[test]
+    fn a_player_who_leaves_is_not_waited_on() {
+        let mut w = world();
+        w.add_hero(1, "mage").unwrap();
+        w.xp = xp_to_next(1);
+        w.step();
+        w.set_input(
+            0,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(w.paused(), "player 1 still has cards");
+        w.remove_hero(1);
+        assert!(!w.paused());
+        assert!(w.hero(1).is_none());
     }
 
     #[test]

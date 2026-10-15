@@ -4,6 +4,8 @@
 //! one on top of its rank. The client shows these numbers on the cards, so they come from here,
 //! where the simulation uses them too.
 
+use serde::{Deserialize, Serialize};
+
 use crate::content::AbilityDef;
 use crate::rng::Rng;
 
@@ -11,7 +13,7 @@ use crate::rng::Rng;
 pub const MAX_RANK: u8 = 8;
 
 /// How rare a card is, in WoW's item-quality order and colours.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Rarity {
     Common,
     Uncommon,
@@ -105,14 +107,14 @@ impl Rarity {
 }
 
 /// Whether a card teaches a new spell or raises a known one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CardKind {
     Learn,
     Upgrade,
 }
 
 /// A level-up card.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
     /// Index into the content's abilities.
     pub ability: usize,
