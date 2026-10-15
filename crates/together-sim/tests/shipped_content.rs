@@ -38,6 +38,7 @@ fn every_class_survives_a_minute_in_every_zone_and_kills_something() {
                         pick: Some(0),
                         jump: false,
                         pose: None,
+                        ..Default::default()
                     },
                 );
                 w.step();

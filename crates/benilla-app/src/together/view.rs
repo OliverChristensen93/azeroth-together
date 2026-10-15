@@ -12,7 +12,7 @@ use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use together_sim::{Event, PlayerId, Target, V2};
 
-use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, Weapon, COLOR_HURT, COLOR_SPELL};
+use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
 use super::{actions, dress, Sim, LOCAL_PLAYER};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::names::{CreatureRecord, NameCache};
@@ -187,7 +187,7 @@ pub(super) fn sync(
     time: Res<Time>,
     sim: Res<Sim>,
     mut views: ResMut<Views>,
-    creatures: Option<Res<crate::entities::Creatures>>,
+    char_create: Option<Res<crate::entities::CharCreate>>,
     world_point: WorldPoint,
     mut self_guid: ResMut<SelfGuid>,
     mut names: ResMut<NameCache>,
@@ -211,66 +211,37 @@ pub(super) fn sync(
         if views.heroes.contains_key(&hero.player) {
             continue;
         }
-        // The body's race and sex come from the creature catalog, which loads after boot.
-        let Some(creatures) = creatures.as_deref() else {
+        // The body and outfit tables load after boot.
+        let Some(char_create) = char_create.as_deref() else {
             continue;
         };
         let class = &content.classes[hero.class];
-        // Ours wears the look picked at the menu; another's, its class's first.
+        // Ours wears the race and sex picked at the menu; another's, the first its class allows.
         let look = if hero.player == LOCAL_PLAYER {
-            Some((sim.look.0, (sim.look.1, sim.look.2)))
+            Some((sim.look.1, sim.look.2))
         } else {
-            class
-                .looks
-                .iter()
-                .find_map(|&d| creatures.display_race_sex(d).map(|rs| (d, rs)))
+            (1..=8)
+                .find(|&r| char_create.0.allows(r, class.class_id))
+                .map(|r| (r, 0))
         };
-        let Some((display, (race, sex))) = look else {
+        let Some(look) = look else {
             continue;
         };
-        let weapons: Vec<Weapon> = class
-            .weapons
-            .iter()
-            .map(|w| {
-                (
-                    w.slot,
-                    w.display,
-                    w.class,
-                    w.subclass,
-                    w.material,
-                    w.inventory_type,
-                    w.sheath,
-                )
-            })
-            .collect();
-        // A player wears items, not display ids: the trainer's outfit and the class's weapons,
-        // as stand-in item templates.
-        let worn = dress::wear(
-            &mut items,
-            &dress::pieces(creatures.display_outfit(display), &class.weapons),
-        );
         let serial = HERO_SERIAL_BASE + u64::from(hero.player);
         let guid = units::unit_guid(UnitKind::Player, serial);
-        let e = units::spawn_unit(
+        let Some(e) = dress::spawn_player_body(
             &mut commands,
-            &UnitSpec {
-                kind: UnitKind::Player,
-                serial,
-                display,
-                scale: 1.0,
-                level: world.level,
-                faction: units::FACTION_FRIENDLY,
-                bytes0: u32::from(race)
-                    | u32::from(class.class_id) << 8
-                    | u32::from(sex) << 16
-                    | u32::from(class.power) << 24,
-                weapons: &weapons,
-                sheath: class.sheath,
-                extra: &worn,
-            },
+            &mut items,
+            char_create,
+            class,
+            look,
+            serial,
+            world.level,
             ground(hero.pos, fallback_y),
             units::yaw_of(hero.facing),
-        );
+        ) else {
+            continue;
+        };
         index.0.insert(guid, e);
         if hero.player == LOCAL_PLAYER {
             // Ours: WoW's controller drives it, from the pose it is spawned in.

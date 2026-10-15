@@ -17,7 +17,9 @@
 mod actions;
 mod dress;
 mod hud;
+mod levelup;
 mod menu;
+mod meter;
 mod ui;
 mod units;
 mod view;
@@ -176,11 +178,13 @@ impl Sim {
 pub(super) struct TogetherEntity;
 
 /// What the local player sends the next step: the hero's pose as the controller left it, and a
-/// card pick, used once.
+/// card pick, reroll or skip, each used once.
 #[derive(Resource, Default)]
-struct LocalInput {
+pub(super) struct LocalInput {
     pose: Option<HeroPose>,
-    pick: Option<u8>,
+    pub(super) pick: Option<u8>,
+    pub(super) reroll: bool,
+    pub(super) skip: bool,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -197,7 +201,10 @@ impl Plugin for TogetherPlugin {
             .init_resource::<StartRequest>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
-            .add_systems(Startup, (hud::setup, menu::spawn_root))
+            .add_systems(
+                Startup,
+                (hud::setup, levelup::setup, meter::setup, menu::spawn_root),
+            )
             .add_systems(
                 Update,
                 (
@@ -205,7 +212,11 @@ impl Plugin for TogetherPlugin {
                     follow_map,
                     menu::apply_ui_scale,
                     menu::show_menu,
+                    menu::fill_icons,
                     hud::show_hud,
+                    levelup::refresh,
+                    levelup::clicks,
+                    meter::refresh,
                     ui::tune_ui,
                 ),
             )
@@ -217,7 +228,6 @@ impl Plugin for TogetherPlugin {
                     menu::build_menu,
                     menu::menu_clicks,
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
-                    menu::fill_icons,
                     menu::preview_hero,
                     start_run,
                 )
@@ -326,18 +336,30 @@ fn autoplay() -> bool {
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
 }
 
-/// 1, 2 or 3 picks a card while the cards are up. Everything else (movement, jumping, the camera,
-/// the panels) is WoW's own key bindings.
-fn read_keys(keys: Res<ButtonInput<KeyCode>>, sim: Res<Sim>, mut input: ResMut<LocalInput>) {
+/// While the cards are up: 1, 2 or 3 picks one, R rerolls. Everything else (movement, jumping,
+/// the camera, the panels) is WoW's own key bindings.
+fn read_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    real: Res<Time<Real>>,
+    sim: Res<Sim>,
+    mut input: ResMut<LocalInput>,
+    mut up_since: Local<Option<f32>>,
+) {
     let choosing = sim
         .world
         .hero(LOCAL_PLAYER)
         .is_some_and(|h| !h.offers.is_empty());
     if !choosing {
+        *up_since = None;
         return;
     }
     if autoplay() {
-        input.pick = Some(0);
+        // Long enough for a test shot to see the cards.
+        let since = *up_since.get_or_insert(real.elapsed_secs());
+        if real.elapsed_secs() - since > 3.0 {
+            input.pick = Some(0);
+            *up_since = None;
+        }
         return;
     }
     for (i, key) in [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3]
@@ -347,6 +369,9 @@ fn read_keys(keys: Res<ButtonInput<KeyCode>>, sim: Res<Sim>, mut input: ResMut<L
         if keys.just_pressed(key) {
             input.pick = Some(i as u8);
         }
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        input.reroll = true;
     }
 }
 
@@ -419,6 +444,8 @@ fn step_sim(
         // A key press picks once: the first step takes it.
         let held = PlayerInput {
             pick: input.pick.take(),
+            reroll: std::mem::take(&mut input.reroll),
+            skip: std::mem::take(&mut input.skip),
             pose: Some(pose),
             ..Default::default()
         };

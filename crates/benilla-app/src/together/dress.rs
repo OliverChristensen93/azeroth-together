@@ -4,7 +4,9 @@
 //! just its look, filed in [`Items`] as a server answer would be.
 
 use benilla_protocol::messages::ItemInfo;
+use bevy::prelude::*;
 
+use super::units::{UnitKind, UnitSpec, Weapon};
 use crate::items::Items;
 
 /// `PLAYER_VISIBLE_ITEM_1_CREATOR`: each equipment slot has 12 fields, the entry third.
@@ -14,20 +16,24 @@ const VISIBLE_ITEM_STRIDE: u16 = 12;
 /// Stand-in entries live far above any real item's: base + slot × 100 000 + display id.
 const STAND_IN_ENTRY_BASE: u32 = 0x7000_0000;
 
-/// The equipment slot and inventory type of each `CreatureDisplayInfoExtra` outfit column: head,
-/// shoulder, shirt, chest, belt, pants, boots, wrist, gloves, tabard.
-const OUTFIT_SLOTS: [(u8, u32); 10] = [
-    (0, 1),
-    (2, 3),
-    (3, 4),
-    (4, 5),
-    (5, 6),
-    (6, 7),
-    (7, 8),
-    (8, 9),
-    (9, 10),
-    (18, 19),
-];
+/// The equipment slot a worn armour piece of `inventory_type` goes in; `None` for weapons (the
+/// class's own come from the content) and for what never shows (rings, trinkets, bags).
+fn armour_slot(inventory_type: u8) -> Option<u8> {
+    Some(match inventory_type {
+        1 => 0,      // head
+        3 => 2,      // shoulders
+        4 => 3,      // shirt
+        5 | 20 => 4, // chest, robe
+        6 => 5,      // waist
+        7 => 6,      // legs
+        8 => 7,      // feet
+        9 => 8,      // wrists
+        10 => 9,     // hands
+        16 => 14,    // back
+        19 => 18,    // tabard
+        _ => return None,
+    })
+}
 
 /// Weapon slot (0 main hand, 1 off hand, 2 ranged) to equipment slot.
 const WEAPON_SLOTS: [u8; 3] = [15, 16, 17];
@@ -58,14 +64,18 @@ impl Piece {
     }
 }
 
-/// The pieces for an outfit (from a trainer's display) and a class's weapons.
-pub(super) fn pieces(outfit: Option<[u32; 10]>, weapons: &[together_sim::WeaponDef]) -> Vec<Piece> {
+/// The pieces for a starting outfit (`CharStartOutfit.dbc`, the clothes a new character of the
+/// race, class and sex wears) and the class's weapons.
+pub(super) fn pieces(
+    outfit: &[benilla_formats::StartOutfitItem],
+    weapons: &[together_sim::WeaponDef],
+) -> Vec<Piece> {
     let mut out: Vec<Piece> = outfit
-        .unwrap_or_default()
         .iter()
-        .zip(OUTFIT_SLOTS)
-        .filter(|(&display, _)| display != 0)
-        .map(|(&display, (slot, inv))| Piece::armour(slot, inv, display))
+        .filter_map(|item| {
+            armour_slot(item.inv_type)
+                .map(|slot| Piece::armour(slot, u32::from(item.inv_type), item.display_id))
+        })
         .collect();
     for w in weapons {
         let Some(&slot) = WEAPON_SLOTS.get(usize::from(w.slot)) else {
@@ -82,6 +92,60 @@ pub(super) fn pieces(outfit: Option<[u32; 10]>, weapons: &[together_sim::WeaponD
         });
     }
     out
+}
+
+/// A player body of `race` and `sex` (its `ChrRaces` display), in the class's starting outfit and
+/// holding the class's weapons. The hero and the menu's preview are both this.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn spawn_player_body(
+    commands: &mut Commands,
+    items: &mut Items,
+    char_create: &crate::entities::CharCreate,
+    class: &together_sim::ClassDef,
+    (race, sex): (u8, u8),
+    serial: u64,
+    level: u32,
+    pos: Vec3,
+    yaw: f32,
+) -> Option<Entity> {
+    let display = char_create.0.body_display(race, sex)?;
+    let outfit = char_create.0.start_outfit(race, class.class_id, sex);
+    let worn = wear(items, &pieces(outfit, &class.weapons));
+    let weapons: Vec<Weapon> = class
+        .weapons
+        .iter()
+        .map(|w| {
+            (
+                w.slot,
+                w.display,
+                w.class,
+                w.subclass,
+                w.material,
+                w.inventory_type,
+                w.sheath,
+            )
+        })
+        .collect();
+    Some(super::units::spawn_unit(
+        commands,
+        &UnitSpec {
+            kind: UnitKind::Player,
+            serial,
+            display,
+            scale: 1.0,
+            level,
+            faction: super::units::FACTION_FRIENDLY,
+            bytes0: u32::from(race)
+                | u32::from(class.class_id) << 8
+                | u32::from(sex) << 16
+                | u32::from(class.power) << 24,
+            weapons: &weapons,
+            sheath: class.sheath,
+            extra: &worn,
+        },
+        pos,
+        yaw,
+    ))
 }
 
 /// File each piece's stand-in template and return the `PLAYER_VISIBLE_ITEM_*` field pairs that

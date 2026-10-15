@@ -9,11 +9,13 @@
 //! Every hero belongs to a [`PlayerId`] from the start, so a second player is one more
 //! [`World::add_hero`], not a rewrite.
 
+mod cards;
 mod content;
 mod math;
 mod rng;
 mod world;
 
+pub use cards::{ability_stats, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, WeaponDef,
     ZoneDef,
@@ -21,6 +23,6 @@ pub use content::{
 pub use math::V2;
 pub use rng::Rng;
 pub use world::{
-    xp_to_next, Card, Enemy, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput,
-    Target, World, WorldError, DT, TICK_HZ,
+    xp_to_next, Enemy, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput, Target,
+    World, WorldError, DT, MAX_ABILITIES, TICK_HZ,
 };

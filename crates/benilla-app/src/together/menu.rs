@@ -16,8 +16,8 @@ use bevy::ui_render::ui_material::MaterialNode;
 use bevy::window::PrimaryWindow;
 use together_sim::Content;
 
-use super::units::{self, UnitKind, UnitSpec};
 use super::{content, Phase};
+use super::{dress, units};
 use crate::char_select::race_name;
 use crate::glue::art::{class_tc, race_tc, tc_rect, GlueArt, DIM, GOLD, NAME_EDGE};
 use crate::glue::backdrop::{backdrop_border, tiled_bg_node};
@@ -132,7 +132,7 @@ pub(super) struct SpellSlot(usize);
 
 /// An icon slot filled from the spell's `SpellIcon.dbc` icon once the client data is up.
 #[derive(Component)]
-pub(super) struct SpellIcon(u32);
+pub(super) struct SpellIcon(pub(super) u32);
 
 #[derive(Component)]
 pub(super) struct IconDone;
@@ -172,21 +172,27 @@ fn save_pick(content: &Content, sel: &Selection) {
     }
 }
 
-/// Every class's looks, `(display, race, sex)`: one per race and sex its trainers come in.
-fn all_looks(content: &Content, creatures: &crate::entities::Creatures) -> Vec<Vec<(u32, u8, u8)>> {
+/// Every class's looks, `(display, race, sex)`: each race the class allows (`CharBaseInfo`, as the
+/// create screen asks it), in both sexes, as that race's player body.
+fn all_looks(
+    content: &Content,
+    char_create: &crate::entities::CharCreate,
+) -> Vec<Vec<(u32, u8, u8)>> {
     content
         .classes
         .iter()
         .map(|c| {
             let mut out: Vec<(u32, u8, u8)> = Vec::new();
-            for &d in &c.looks {
-                if let Some((race, sex)) = creatures.display_race_sex(d) {
-                    if !out.iter().any(|&(_, r, s)| r == race && s == sex) {
-                        out.push((d, race, sex));
+            for race in 1..=8u8 {
+                if !char_create.0.allows(race, c.class_id) {
+                    continue;
+                }
+                for sex in 0..=1u8 {
+                    if let Some(display) = char_create.0.body_display(race, sex) {
+                        out.push((display, race, sex));
                     }
                 }
             }
-            out.sort_by_key(|&(_, r, s)| (r, s));
             out
         })
         .collect()
@@ -207,19 +213,19 @@ fn set(sel: &mut Selection, all: &[Vec<(u32, u8, u8)>], class: usize, look: usiz
 
 /// Once the creature data can resolve looks: the saved pick, else the first look of the class.
 pub(super) fn restore_pick(
-    creatures: Option<Res<crate::entities::Creatures>>,
+    char_create: Option<Res<crate::entities::CharCreate>>,
     mut selection: ResMut<Selection>,
     mut done: Local<bool>,
 ) {
     if *done {
         return;
     }
-    let Some(creatures) = creatures.as_deref() else {
+    let Some(char_create) = char_create.as_deref() else {
         return;
     };
     *done = true;
     let content = content();
-    let all = all_looks(&content, creatures);
+    let all = all_looks(&content, char_create);
     let saved = pick_path()
         .and_then(|p| crate::local_state::read_to_string(&p).ok())
         .and_then(|text| {
@@ -833,13 +839,13 @@ fn class_panel(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
 pub(super) fn menu_clicks(
     clicks: Res<GlueClicks>,
     actions: Query<(Entity, &MenuAction)>,
-    creatures: Option<Res<crate::entities::Creatures>>,
+    char_create: Option<Res<crate::entities::CharCreate>>,
     mut selection: ResMut<Selection>,
     mut start: ResMut<super::StartRequest>,
     mut exit: MessageWriter<AppExit>,
     mut seed: Local<u64>,
 ) {
-    let Some(creatures) = creatures.as_deref() else {
+    let Some(char_create) = char_create.as_deref() else {
         return;
     };
     let Some(action) = actions
@@ -850,7 +856,7 @@ pub(super) fn menu_clicks(
         return;
     };
     let content = content();
-    let all = all_looks(&content, creatures);
+    let all = all_looks(&content, char_create);
     let cur = selection.hero_look().map(|(_, r, s)| (r, s));
     let (race, sex) = (cur.map(|c| c.0), cur.map_or(0, |c| c.1));
     match action {
@@ -924,7 +930,7 @@ pub(super) fn menu_clicks(
 pub(super) fn refresh_menu_ui(
     mut commands: Commands,
     selection: Res<Selection>,
-    creatures: Option<Res<crate::entities::Creatures>>,
+    char_create: Option<Res<crate::entities::CharCreate>>,
     art: Res<GlueArt>,
     mut buttons: Query<(
         &MenuAction,
@@ -950,12 +956,12 @@ pub(super) fn refresh_menu_ui(
     mut shown_class: Local<Option<usize>>,
 ) {
     let content = content();
-    let have = creatures.is_some();
+    let have = char_create.is_some();
     if cache.0 != Some(selection.version) || cache.1 != have {
         *cache = (
             Some(selection.version),
             have,
-            creatures
+            char_create
                 .as_deref()
                 .map(|c| all_looks(&content, c))
                 .unwrap_or_default(),
@@ -1163,8 +1169,13 @@ pub(super) fn preview_hero(
     selection: Res<Selection>,
     heroes: Query<Entity, With<PreviewHero>>,
     world: WorldPoint,
+    char_create: Option<Res<crate::entities::CharCreate>>,
+    mut items: ResMut<crate::items::Items>,
     mut shown: Local<Option<(usize, u32, usize)>>,
 ) {
+    let Some(char_create) = char_create.as_deref() else {
+        return;
+    };
     let content = content();
     let want = selection.hero_look();
     let key = want.map(|l| (selection.class, l.0, selection.stage));
@@ -1175,7 +1186,7 @@ pub(super) fn preview_hero(
         commands.entity(e).despawn();
     }
     *shown = key;
-    let Some((display, race, sex)) = want else {
+    let Some((_, race, sex)) = want else {
         return;
     };
     let class = &content.classes[selection.class];
@@ -1183,44 +1194,21 @@ pub(super) fn preview_hero(
     if let Some(h) = world.terrain_height_under(pos) {
         pos.y = h;
     }
-    let weapons: Vec<units::Weapon> = class
-        .weapons
-        .iter()
-        .map(|w| {
-            (
-                w.slot,
-                w.display,
-                w.class,
-                w.subclass,
-                w.material,
-                w.inventory_type,
-                w.sheath,
-            )
-        })
-        .collect();
-    // A creature body: its trainer row dresses it, with no item templates needed. Its serial is
+    // The run's own body: the race's player model in the class's starting outfit. Its serial is
     // clear of the run's (heroes 0x10 + player, enemies the simulation's ids).
-    let e = units::spawn_unit(
+    if let Some(e) = dress::spawn_player_body(
         &mut commands,
-        &UnitSpec {
-            kind: UnitKind::Creature { entry: 0 },
-            serial: 0x00E0_0000,
-            display,
-            scale: 1.0,
-            level: 1,
-            faction: units::FACTION_FRIENDLY,
-            bytes0: u32::from(race)
-                | u32::from(class.class_id) << 8
-                | u32::from(sex) << 16
-                | u32::from(class.power) << 24,
-            weapons: &weapons,
-            sheath: class.sheath,
-            extra: &[],
-        },
+        &mut items,
+        char_create,
+        class,
+        (race, sex),
+        0x00E0_0000,
+        1,
         pos,
         0.0,
-    );
-    commands.entity(e).insert(PreviewHero);
+    ) {
+        commands.entity(e).insert(PreviewHero);
+    }
 }
 
 /// A slow orbit around the menu's hero; until it has a body, around the stage zone's centre. The
@@ -1254,17 +1242,14 @@ pub(super) fn menu_camera(
     }
 }
 
-/// The reference lays its glue screens out on a screen 768 units tall at any resolution: while the
-/// menu is up, so does ours. In play the scale is 1 again, for the run's own text.
+/// The reference lays its glue screens out on a screen 768 units tall at any resolution, and so
+/// does all of ours: the menu, the HUD and the level-up screen. (WoW's own frames are drawn by
+/// the UI engine, not Bevy's UI, and keep their own scale.)
 pub(super) fn apply_ui_scale(
     windows: Query<&Window, With<PrimaryWindow>>,
-    phase: Res<State<Phase>>,
     mut scale: ResMut<UiScale>,
 ) {
-    let want = match phase.get() {
-        Phase::Menu => windows.single().map(|w| w.height() / 768.0).unwrap_or(1.0),
-        Phase::Playing => 1.0,
-    };
+    let want = windows.single().map(|w| w.height() / 768.0).unwrap_or(1.0);
     if want > 0.0 && (scale.0 - want).abs() > 1e-4 {
         scale.0 = want;
     }

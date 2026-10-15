@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::cards::{ability_stats, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 use crate::content::{AbilityKind, Content};
 use crate::math::V2;
 use crate::rng::Rng;
@@ -21,11 +22,12 @@ pub const DT: f32 = 1.0 / TICK_HZ as f32;
 /// Which player a hero belongs to: 0 for the host, then one per player who joins.
 pub type PlayerId = u8;
 
-/// The most abilities a hero carries, and the highest level each reaches.
-const MAX_ABILITIES: usize = 6;
-const MAX_ABILITY_LEVEL: u8 = 8;
+/// The most abilities a hero carries.
+pub const MAX_ABILITIES: usize = 6;
 /// Cards dealt per level-up.
 const HAND: usize = 3;
+/// Free re-deals of a hand, per run.
+const REROLLS: u32 = 3;
 /// A hero's body radius, which enemies stop at.
 const HERO_RADIUS: f32 = 0.7;
 /// Within this many yards of a hero an experience gem is collected.
@@ -65,6 +67,10 @@ pub struct PlayerInput {
     pub move_dir: V2,
     /// A card from the hero's current [`Offer`], by index.
     pub pick: Option<u8>,
+    /// Deal the current hand again, if the hero has rerolls left.
+    pub reroll: bool,
+    /// Pass on the current hand.
+    pub skip: bool,
     /// Hop, if on the ground.
     pub jump: bool,
     /// Where the player's own client put the hero, overriding `move_dir` and `jump`. A client
@@ -132,15 +138,6 @@ pub enum Event {
     },
 }
 
-/// A level-up card.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Card {
-    /// Learn this ability (an index into [`Content::abilities`]).
-    Learn(usize),
-    /// Raise this ability, already owned, by one level.
-    Upgrade(usize),
-}
-
 /// The cards a hero is choosing between.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offer {
@@ -152,23 +149,18 @@ pub struct Offer {
 pub struct Owned {
     /// Index into [`Content::abilities`].
     pub ability: usize,
+    /// Its rank, 1 up to [`MAX_RANK`].
     pub level: u8,
+    /// Extra damage from the rarity of the cards that taught and raised it (0.25 is +25%).
+    pub bonus: f32,
     /// Seconds until it fires again.
     pub cd: f32,
 }
 
 impl Owned {
-    fn damage_mult(&self) -> f32 {
-        1.0 + 0.3 * f32::from(self.level - 1)
-    }
-
-    fn cooldown(&self, base: f32) -> f32 {
-        (base * 0.93f32.powi(i32::from(self.level) - 1)).max(0.2)
-    }
-
-    /// One more target at levels 3, 5 and 7.
-    fn count(&self, base: u32) -> u32 {
-        base + [3u8, 5, 7].iter().filter(|&&l| self.level >= l).count() as u32
+    /// Its numbers now.
+    pub fn stats(&self, def: &crate::content::AbilityDef) -> AbilityStats {
+        ability_stats(def, self.level, self.bonus)
     }
 }
 
@@ -193,9 +185,13 @@ pub struct Hero {
     pub abilities: Vec<Owned>,
     /// Level-up hands still to choose from, oldest first.
     pub offers: Vec<Offer>,
+    /// Re-deals of a hand left this run.
+    pub rerolls: u32,
     pub alive: bool,
     /// Damage this hero has dealt over the run.
     pub damage_done: f64,
+    /// The same, by ability (an index into the content's abilities): the damage meter.
+    pub damage_by: Vec<(usize, f64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +222,8 @@ pub struct Gem {
 struct PendingHit {
     lands_at: f32,
     caster: PlayerId,
+    /// Index into the content's abilities: the damage meter's row.
+    ability: usize,
     target: u32,
     damage: f32,
     crit: bool,
@@ -337,11 +335,14 @@ impl World {
             abilities: vec![Owned {
                 ability: def.start_ix,
                 level: 1,
+                bonus: 0.0,
                 cd: 0.5,
             }],
             offers: Vec::new(),
+            rerolls: REROLLS,
             alive: true,
             damage_done: 0.0,
+            damage_by: Vec::new(),
         });
         Ok(())
     }
@@ -397,29 +398,51 @@ impl World {
         self.next_id
     }
 
+    /// Each hero's card choice: a pick, a skip or a reroll of the hand in front of them.
     fn apply_picks(&mut self) {
-        for hero in &mut self.heroes {
-            let Some(input) = self.inputs.get_mut(&hero.player) else {
+        for h in 0..self.heroes.len() {
+            let player = self.heroes[h].player;
+            let Some(input) = self.inputs.get_mut(&player) else {
                 continue;
             };
-            let Some(pick) = input.pick.take() else {
+            let (pick, reroll, skip) = (
+                input.pick.take(),
+                std::mem::take(&mut input.reroll),
+                std::mem::take(&mut input.skip),
+            );
+            if self.heroes[h].offers.is_empty() {
+                continue;
+            }
+            if reroll && self.heroes[h].rerolls > 0 {
+                self.heroes[h].rerolls -= 1;
+                let hand = self.deal(h);
+                self.heroes[h].offers[0] = hand;
+                continue;
+            }
+            if skip {
+                self.heroes[h].offers.remove(0);
+                continue;
+            }
+            let hero = &mut self.heroes[h];
+            let Some(&card) = pick.and_then(|p| hero.offers[0].cards.get(usize::from(p))) else {
                 continue;
             };
-            let Some(offer) = hero.offers.first() else {
-                continue;
-            };
-            let Some(&card) = offer.cards.get(usize::from(pick)) else {
-                continue;
-            };
-            match card {
-                Card::Learn(ability) => hero.abilities.push(Owned {
-                    ability,
+            let bonus = card.rarity.bonus(card.kind);
+            match card.kind {
+                CardKind::Learn => hero.abilities.push(Owned {
+                    ability: card.ability,
                     level: 1,
+                    bonus,
                     cd: 0.3,
                 }),
-                Card::Upgrade(ability) => {
-                    if let Some(owned) = hero.abilities.iter_mut().find(|o| o.ability == ability) {
-                        owned.level = (owned.level + 1).min(MAX_ABILITY_LEVEL);
+                CardKind::Upgrade => {
+                    if let Some(owned) = hero
+                        .abilities
+                        .iter_mut()
+                        .find(|o| o.ability == card.ability)
+                    {
+                        owned.level = (owned.level + 1).min(MAX_RANK);
+                        owned.bonus += bonus;
                     }
                 }
             }
@@ -651,7 +674,7 @@ impl World {
                 let cast = self.cast(h, &owned, &def);
                 // No target in reach: try again next step rather than wasting the cooldown.
                 self.heroes[h].abilities[a].cd = if cast {
-                    owned.cooldown(def.cooldown)
+                    owned.stats(&def).cooldown
                 } else {
                     0.0
                 };
@@ -662,11 +685,11 @@ impl World {
     /// Fire one ability; false when it had nothing to hit.
     fn cast(&mut self, h: usize, owned: &Owned, def: &crate::content::AbilityDef) -> bool {
         let (player, from) = (self.heroes[h].player, self.heroes[h].pos);
-        let base = def.damage * owned.damage_mult();
-        let cooldown = owned.cooldown(def.cooldown);
+        let stats = owned.stats(def);
+        let (base, cooldown) = (stats.damage, stats.cooldown);
         match def.kind {
             AbilityKind::Bolt | AbilityKind::Strike => {
-                let targets = self.nearest(from, def.range, owned.count(def.count) as usize);
+                let targets = self.nearest(from, def.range, stats.count as usize);
                 if targets.is_empty() {
                     return false;
                 }
@@ -680,6 +703,7 @@ impl World {
                     self.pending.push(PendingHit {
                         lands_at: self.elapsed + flight,
                         caster: player,
+                        ability: owned.ability,
                         target,
                         damage,
                         crit,
@@ -716,7 +740,7 @@ impl World {
                 });
                 for id in hit {
                     let (damage, crit) = self.roll_damage(base);
-                    self.damage_enemy(player, id, damage, crit);
+                    self.damage_enemy(player, owned.ability, id, damage, crit);
                 }
                 true
             }
@@ -734,7 +758,7 @@ impl World {
                 // Its target died while the missile flew.
                 continue;
             };
-            self.damage_enemy(hit.caster, hit.target, hit.damage, hit.crit);
+            self.damage_enemy(hit.caster, hit.ability, hit.target, hit.damage, hit.crit);
             if hit.splash > 0.0 {
                 let around: Vec<u32> = self
                     .enemies
@@ -743,13 +767,13 @@ impl World {
                     .map(|e| e.id)
                     .collect();
                 for id in around {
-                    self.damage_enemy(hit.caster, id, hit.damage * 0.5, false);
+                    self.damage_enemy(hit.caster, hit.ability, id, hit.damage * 0.5, false);
                 }
             }
         }
     }
 
-    fn damage_enemy(&mut self, by: PlayerId, id: u32, amount: f32, crit: bool) {
+    fn damage_enemy(&mut self, by: PlayerId, ability: usize, id: u32, amount: f32, crit: bool) {
         let Some(e) = self.enemies.iter_mut().find(|e| e.id == id) else {
             return;
         };
@@ -760,6 +784,10 @@ impl World {
         e.hp -= amount;
         if let Some(hero) = self.heroes.iter_mut().find(|h| h.player == by) {
             hero.damage_done += f64::from(dealt);
+            match hero.damage_by.iter_mut().find(|(a, _)| *a == ability) {
+                Some((_, total)) => *total += f64::from(dealt),
+                None => hero.damage_by.push((ability, f64::from(dealt))),
+            }
         }
         self.events.push(Event::Damage {
             target: Target::Enemy(id),
@@ -826,27 +854,33 @@ impl World {
         }
     }
 
-    /// Up to [`HAND`] distinct cards from what this hero could still learn or raise.
+    /// Up to [`HAND`] distinct cards from what this hero could still learn or raise, each of a
+    /// rolled [`Rarity`].
     fn deal(&mut self, h: usize) -> Offer {
         let hero = &self.heroes[h];
         let class = &self.content.classes[hero.class];
-        let mut options: Vec<Card> = Vec::new();
+        let mut options: Vec<(usize, CardKind)> = Vec::new();
         for owned in &hero.abilities {
-            if owned.level < MAX_ABILITY_LEVEL {
-                options.push(Card::Upgrade(owned.ability));
+            if owned.level < MAX_RANK {
+                options.push((owned.ability, CardKind::Upgrade));
             }
         }
         if hero.abilities.len() < MAX_ABILITIES {
             for &ability in &class.pool_ix {
                 if !hero.abilities.iter().any(|o| o.ability == ability) {
-                    options.push(Card::Learn(ability));
+                    options.push((ability, CardKind::Learn));
                 }
             }
         }
         let mut cards = Vec::new();
         while cards.len() < HAND && !options.is_empty() {
             let i = self.rng.index(options.len());
-            cards.push(options.swap_remove(i));
+            let (ability, kind) = options.swap_remove(i);
+            cards.push(Card {
+                ability,
+                kind,
+                rarity: Rarity::roll(&mut self.rng),
+            });
         }
         Offer { cards }
     }
@@ -907,6 +941,7 @@ mod tests {
                 pick: None,
                 jump: false,
                 pose: None,
+                ..Default::default()
             },
         );
         steps(&mut w, TICK_HZ as usize);
@@ -975,6 +1010,7 @@ mod tests {
                 pick: None,
                 jump: false,
                 pose: None,
+                ..Default::default()
             },
         );
         steps(&mut w, TICK_HZ as usize * 60);
@@ -1060,24 +1096,85 @@ mod tests {
                 pick: Some(0),
                 jump: false,
                 pose: None,
+                ..Default::default()
             },
         );
         w.step();
         assert!(!w.paused());
         let hero = w.hero(0).unwrap();
-        match offer.cards[0] {
-            Card::Learn(a) => assert!(hero.abilities.iter().any(|o| o.ability == a)),
-            Card::Upgrade(a) => {
-                assert_eq!(
-                    hero.abilities
-                        .iter()
-                        .find(|o| o.ability == a)
-                        .unwrap()
-                        .level,
-                    2
-                )
-            }
-        }
+        let card = offer.cards[0];
+        let owned = hero
+            .abilities
+            .iter()
+            .find(|o| o.ability == card.ability)
+            .expect("the picked ability is owned");
+        let want_level = match card.kind {
+            CardKind::Learn => 1,
+            CardKind::Upgrade => 2,
+        };
+        assert_eq!(owned.level, want_level);
+        assert!((owned.bonus - card.rarity.bonus(card.kind)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn damage_by_ability_adds_up_to_the_total() {
+        let mut w = world();
+        steps(&mut w, TICK_HZ as usize * 20);
+        let hero = w.hero(0).unwrap();
+        assert!(hero.damage_done > 0.0);
+        let sum: f64 = hero.damage_by.iter().map(|(_, d)| d).sum();
+        assert!(
+            (sum - hero.damage_done).abs() < 1e-6,
+            "{sum} vs {}",
+            hero.damage_done
+        );
+        let frostbolt = hero.abilities[0].ability;
+        assert!(hero
+            .damage_by
+            .iter()
+            .any(|&(a, d)| a == frostbolt && d > 0.0));
+    }
+
+    #[test]
+    fn a_reroll_deals_again_and_is_spent() {
+        let mut w = world();
+        w.xp = xp_to_next(1);
+        w.step();
+        let before = w.hero(0).unwrap().rerolls;
+        w.set_input(
+            0,
+            PlayerInput {
+                reroll: true,
+                ..Default::default()
+            },
+        );
+        w.step();
+        let hero = w.hero(0).unwrap();
+        assert_eq!(hero.rerolls, before - 1);
+        assert_eq!(
+            hero.offers.len(),
+            1,
+            "a reroll replaces the hand, it does not add one"
+        );
+    }
+
+    #[test]
+    fn a_skip_passes_on_the_hand() {
+        let mut w = world();
+        w.xp = xp_to_next(1);
+        w.step();
+        let abilities = w.hero(0).unwrap().abilities.len();
+        w.set_input(
+            0,
+            PlayerInput {
+                skip: true,
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(!w.paused());
+        assert_eq!(w.hero(0).unwrap().abilities.len(), abilities);
+        assert_eq!(w.hero(0).unwrap().abilities[0].level, 1);
     }
 
     #[test]
@@ -1093,6 +1190,7 @@ mod tests {
                 pick: Some(0),
                 jump: false,
                 pose: None,
+                ..Default::default()
             },
         );
         w.step();
@@ -1127,6 +1225,7 @@ mod tests {
                 pick: Some(0),
                 jump: false,
                 pose: None,
+                ..Default::default()
             },
         );
         w.step();
@@ -1138,6 +1237,7 @@ mod tests {
                 pick: Some(0),
                 jump: false,
                 pose: None,
+                ..Default::default()
             },
         );
         w.step();
@@ -1160,6 +1260,7 @@ mod tests {
                     pick: None,
                     jump: false,
                     pose: None,
+                    ..Default::default()
                 },
             );
             steps(&mut w, TICK_HZ as usize * 10);

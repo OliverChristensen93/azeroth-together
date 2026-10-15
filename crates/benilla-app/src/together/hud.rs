@@ -2,7 +2,6 @@
 //! kills; the level-up cards while they are up; and the end of the run.
 
 use bevy::prelude::*;
-use together_sim::Card;
 
 use super::{Sim, LOCAL_PLAYER};
 
@@ -66,7 +65,7 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
-                top: Val::Px(6.0),
+                top: Val::Px(3.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 ..default()
@@ -76,15 +75,15 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         ))
         .with_children(|p| {
             p.spawn((
-                text(&font, 20.0),
+                text(&font, 12.0),
                 TextLayout::new_with_justify(Justify::Center),
                 StatusText,
             ));
             p.spawn((
-                Text::new("WoW controls   ·   1 2 3 pick a level-up card"),
+                Text::new("WoW controls   ·   level-up: 1 2 3 or click a card, R rerolls"),
                 TextFont {
                     font: font.clone(),
-                    font_size: 14.0,
+                    font_size: 9.0,
                     ..default()
                 },
                 TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
@@ -107,14 +106,14 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         .with_children(|p| {
             p.spawn((
                 Node {
-                    padding: UiRect::all(Val::Px(18.0)),
+                    padding: UiRect::all(Val::Px(10.0)),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
             ))
             .with_children(|b| {
                 b.spawn((
-                    text(&font, 28.0),
+                    text(&font, 16.0),
                     TextLayout::new_with_justify(Justify::Center),
                     CardsText,
                 ));
@@ -164,32 +163,9 @@ pub(super) fn refresh(
             world.kills,
             hero.damage_done,
         ))
-    } else if let Some(offer) = hero.offers.first() {
-        let mut s = format!("Level {}! Choose one:\n\n", world.level);
-        for (i, card) in offer.cards.iter().enumerate() {
-            let line = match *card {
-                Card::Learn(a) => format!("{}  {}  (new)", i + 1, content.abilities[a].name),
-                Card::Upgrade(a) => {
-                    let level = hero
-                        .abilities
-                        .iter()
-                        .find(|o| o.ability == a)
-                        .map_or(1, |o| o.level);
-                    format!(
-                        "{}  {}  (rank {})",
-                        i + 1,
-                        content.abilities[a].name,
-                        level + 1
-                    )
-                }
-            };
-            s.push_str(&line);
-            s.push('\n');
-        }
-        if hero.offers.len() > 1 {
-            s.push_str(&format!("\n({} more after this)", hero.offers.len() - 1));
-        }
-        Some(s)
+    } else if !hero.offers.is_empty() {
+        // The level-up screen ([`super::levelup`]) is up.
+        None
     } else if world.paused() {
         Some("Waiting for the others to choose…".into())
     } else {
