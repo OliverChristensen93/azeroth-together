@@ -1015,6 +1015,10 @@ impl World {
             .map(|h| (h.player, h.pos))
             .collect();
         for hero in &mut self.heroes {
+            // Gone on a flight: nothing to raise.
+            if hero.extracted {
+                continue;
+            }
             if hero.alive {
                 hero.ward = (hero.ward - DT).max(0.0);
                 continue;
@@ -1608,9 +1612,11 @@ impl World {
         while self.xp >= xp_to_next(self.level) {
             self.xp -= xp_to_next(self.level);
             self.level += 1;
-            // The fallen too: their hands wait until they are raised.
+            // The fallen too (their hands wait until they are raised); not those who left.
             for h in 0..self.heroes.len() {
-                self.offer(h, Source::LevelUp);
+                if !self.heroes[h].extracted {
+                    self.offer(h, Source::LevelUp);
+                }
             }
             self.events.push(Event::LevelUp { level: self.level });
         }
