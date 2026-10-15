@@ -38,6 +38,12 @@ fn default_range() -> f32 {
 fn default_enemy_radius() -> f32 {
     0.6
 }
+fn five() -> u32 {
+    5
+}
+fn six() -> u32 {
+    6
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct AbilityDef {
@@ -101,9 +107,16 @@ pub struct ZoneDef {
     pub leash: f32,
     /// Enemy keys, weakest first: the run brings in stronger ones as it goes on.
     pub enemies: Vec<String>,
-    /// The shrines, altars and chests scattered about the arena each run; none when left out.
+    /// The kinds of shrine, altar, chest and banner that stand about the arena, each with how
+    /// many may stand at once; none when left out.
     #[serde(default)]
     pub interactables: Vec<Placement>,
+    /// How many of them stand at once (5 when left out): new ones come as old ones are used.
+    #[serde(default = "five")]
+    pub shrines_at_once: u32,
+    /// How many pots stand near the heroes at once (6 when left out).
+    #[serde(default = "six")]
+    pub pots: u32,
     /// The enemy key of the zone's boss, who comes every few minutes; none when left out.
     #[serde(default)]
     pub boss: String,
@@ -352,6 +365,7 @@ pub(crate) mod tests {
         (key: "static_shard", name: "Static Shard", visual: 421, kind: Strike, damage: 0.0),
         (key: "ember_core", name: "Ember Core", visual: 2120, kind: Nova, damage: 0.0),
         (key: "frost_ward", name: "Frost Ward", visual: 122, kind: Nova, damage: 0.0),
+        (key: "detonation", name: "Arcane Detonation", visual: 1449, kind: Nova, damage: 0.0),
     ]"#;
     pub(crate) const ENEMIES: &str = r#"[
         (key: "wolf", name: "Young Wolf", display: 447, level: 1, hp: 10.0, speed: 5.0,
@@ -363,7 +377,7 @@ pub(crate) mod tests {
         (key: "elwynn", name: "Elwynn Forest", map: 0, center: (-9548.5, 115.0, 60.0),
          leash: 150.0, enemies: ["wolf"], boss: "hogger",
          interactables: [(kind: TitanShrine, count: 2), (kind: Chest, count: 3),
-                         (kind: CursedAltar, count: 1)]),
+                         (kind: CursedAltar, count: 1)], shrines_at_once: 4),
     ]"#;
 
     pub(crate) fn sample() -> Content {

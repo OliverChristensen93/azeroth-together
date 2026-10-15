@@ -357,13 +357,7 @@ fn face(hero: &Hero, card: &Card) -> Face {
             if held > 0 {
                 lines.push((format!("You hold {held}: {}", item.describe(held)), GREY));
             }
-            if card.price > 0 {
-                let tint = if hero.gold >= card.price { GOLD } else { RED };
-                lines.push((
-                    format!("Costs {} gold  ·  you have {}", card.price, hero.gold),
-                    tint,
-                ));
-            }
+
             Face {
                 icon: item_icon(item),
                 name: item.name().into(),
@@ -372,11 +366,7 @@ fn face(hero: &Hero, card: &Card) -> Face {
                 } else {
                     "Item".into()
                 },
-                badge: if card.price > 0 {
-                    format!("{}g", card.price)
-                } else {
-                    "ITEM".into()
-                },
+                badge: "ITEM".into(),
                 bright: true,
                 description: "Kept for the rest of the run.".into(),
                 lines,
@@ -556,8 +546,7 @@ pub(super) struct Shown {
     source: Option<Source>,
     cards: Vec<Card>,
     spells: Vec<(u32, u8)>,
-    /// The hero's gold, which colours a merchant's prices.
-    gold: u32,
+
     rerolls: u32,
     more: usize,
 }
@@ -575,7 +564,7 @@ fn titles(source: Source) -> (&'static str, &'static str) {
             "The titans offer their knowledge. Choose a tome."
         }
         InteractableKind::CursedAltar => "Every boon has its bane. Choose wisely, or skip.",
-        InteractableKind::Merchant => "\"Best prices in Azeroth!\" Buy one, or walk away.",
+
         _ => "Choose your treasure.",
     };
     (kind.name(), hint)
@@ -629,7 +618,7 @@ pub(super) fn refresh(
             .iter()
             .map(|o| (content.abilities[o.ability].visual, o.level))
             .collect(),
-        gold: hero.gold,
+
         rerolls: hero.rerolls,
         more: hero.offers.len() - 1,
     };

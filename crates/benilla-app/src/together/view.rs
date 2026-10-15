@@ -11,7 +11,9 @@ use std::collections::{HashMap, HashSet};
 
 use benilla_world::world_point::{Subject, WorldPoint};
 use bevy::prelude::*;
-use together_sim::{Event, InteractState, InteractableKind, PlayerId, Target, ELITE_SCALE, V2};
+use together_sim::{
+    Event, InteractState, InteractableKind, PickupKind, PlayerId, PowerUp, Target, ELITE_SCALE, V2,
+};
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
 use super::{actions, dress, Sim};
@@ -26,6 +28,7 @@ pub(super) struct Views {
     pub enemies: HashMap<u32, Entity>,
     pub gems: HashMap<u32, Entity>,
     pub interactables: HashMap<u32, ShrineView>,
+    pub pickups: HashMap<u32, Entity>,
     /// Interactables whose spot has been checked for water and walls.
     settled: HashSet<u32>,
     /// Creature entries whose names are in the [`NameCache`].
@@ -34,15 +37,24 @@ pub(super) struct Views {
     speed: f32,
 }
 
-/// The bodies that draw one interactable: its model, the ring on the ground marking its circle,
-/// and a beam of light that marks it from afar while it can be used. How full the circle is shows
-/// in the HUD's prompt ([`super::hud::prompt`]).
+/// The bodies that draw one interactable: its model, the ring on the ground marking its circle
+/// (or a carried banner's destination) and where it is, and a beam of light over that while the
+/// local hero is near. How full the circle is shows in the HUD's prompt ([`super::hud::prompt`]).
 pub(super) struct ShrineView {
     /// Where it was drawn: it is drawn anew if the host moves it.
     pos: V2,
     model: Entity,
-    /// The ring and the beam, while it can be used.
-    marks: Option<[Entity; 2]>,
+    ring: Option<(V2, Entity)>,
+    beam: Option<Entity>,
+}
+
+impl ShrineView {
+    fn despawn(&self, commands: &mut Commands) {
+        commands.entity(self.model).despawn();
+        for e in self.ring.map(|(_, e)| e).into_iter().chain(self.beam) {
+            commands.entity(e).despawn();
+        }
+    }
 }
 
 impl Views {
@@ -124,77 +136,85 @@ const RANK_BOSS: u32 = 3;
 /// The colour of gold in combat text, 0xAARRGGBB.
 const COLOR_GOLD: u32 = 0xFFFF_D100;
 
-/// The goblin merchant: a creature, not an object. Its `CreatureDisplayInfo` row
-/// (`GoblinMale.mdx`), and the creature entry that names it.
-const MERCHANT_DISPLAY: u32 = 6882;
-const MERCHANT_ENTRY: u32 = 0x7F00;
-
-/// The display row and scale an interactable's model wears: a `GameObjectDisplayInfo` row, but
-/// for the merchant's `CreatureDisplayInfo` one.
+/// The `GameObjectDisplayInfo` row and scale an interactable's model wears.
 fn shrine_look(kind: InteractableKind) -> (u32, f32) {
     match kind {
-        InteractableKind::Merchant => (MERCHANT_DISPLAY, 1.0),
-        // `LavaAltar.mdx`.
-        InteractableKind::BloodShrine => (206, 1.0),
         // `GlyphedCrystal.mdx`, Silithus's titan glyph crystal.
         InteractableKind::TitanShrine => (6431, 2.0),
         // `G_EpicBrazierYellow.mdx`.
         InteractableKind::GoldenShrine => (6660, 1.2),
         // `WarlockShrine.mdx`.
         InteractableKind::CursedAltar => (328, 1.0),
-        // `GoldPileSmall01.mdx`, heaped up.
-        InteractableKind::GreedShrine => (2614, 3.0),
         // `TreasureChest01.mdx`.
         InteractableKind::Chest => (259, 1.2),
         // `G_ChestTitan.mdx`.
         InteractableKind::Cache => (1387, 1.2),
         // `TrollShrine.mdx`, Stranglethorn's troll idol.
         InteractableKind::ChallengeIdol => (652, 1.0),
-        // `ElvenFountain.mdx`.
-        InteractableKind::Moonwell => (439, 0.8),
+        // `BattlefieldBannerAlliance.mdx`, the battlegrounds' flag.
+        InteractableKind::WarBanner => (5651, 1.0),
+        // `TitanVase01.mdx`.
+        InteractableKind::Pot => (52, 1.0),
     }
 }
 
 /// The glowing ground rune that marks an interactable's circle (blue for the titans' gifts,
-/// purple for the altar and greed, green for the rest), and the rune's own radius at scale 1 in
-/// yards, to size it to the circle.
+/// purple for the altar, green for the rest), and the rune's own radius at scale 1 in yards, to
+/// size it to the circle.
 fn ring_look(kind: InteractableKind) -> (u32, f32) {
     match kind {
         // `G_RuneGroundPurple01.mdx`.
-        InteractableKind::CursedAltar
-        | InteractableKind::GreedShrine
-        | InteractableKind::BloodShrine => (465, 2.8),
+        InteractableKind::CursedAltar => (465, 2.8),
         // `G_RuneGroundGreen01.mdx`.
-        InteractableKind::ChallengeIdol | InteractableKind::Moonwell => (674, 2.8),
+        InteractableKind::ChallengeIdol | InteractableKind::WarBanner => (674, 2.8),
         // `G_RuneGroundBlue01.mdx`.
         _ => (343, 1.0),
     }
 }
 
-/// `UtherShrineLightBeam.mdx`: a shaft of light over a ready interactable, seen across the arena,
-/// and its scale: narrow enough not to swallow a hero standing in it.
+/// `UtherShrineLightBeam.mdx`: a shaft of light over a ready interactable, and its scale: narrow
+/// enough not to swallow a hero standing in it.
 const BEAM: u32 = 3272;
 const BEAM_SCALE: f32 = 0.2;
-
+/// A beam shows only within this many yards of the local hero, so the arena is not a forest of
+/// them: what lies further off is found by going looking.
+const BEAM_RANGE: f32 = 70.0;
 
 /// The spell whose visual plays on a hero an interactable served.
 fn shrine_visual(kind: InteractableKind) -> Option<u32> {
     match kind {
         // Holy Nova.
-        InteractableKind::TitanShrine
-        | InteractableKind::GoldenShrine
-        | InteractableKind::Moonwell => Some(15237),
+        InteractableKind::TitanShrine | InteractableKind::GoldenShrine => Some(15237),
         // Corruption.
         InteractableKind::CursedAltar => Some(172),
-        // Judgement.
-        InteractableKind::GreedShrine => Some(20271),
         // Demoralizing Shout.
-        InteractableKind::ChallengeIdol => Some(1160),
-        // Hellfire.
-        InteractableKind::BloodShrine => Some(5857),
-        InteractableKind::Chest | InteractableKind::Cache | InteractableKind::Merchant => None,
+        InteractableKind::ChallengeIdol | InteractableKind::WarBanner => Some(1160),
+        InteractableKind::Chest | InteractableKind::Cache | InteractableKind::Pot => None,
     }
 }
+
+/// The `GameObjectDisplayInfo` row and scale a health shard or power-up wears.
+fn pickup_look(kind: PickupKind) -> (u32, f32) {
+    match kind {
+        // `TurkeyLeg.mdx`.
+        PickupKind::Health => (114, 2.5),
+        PickupKind::PowerUp(p) => match p {
+            // The battlegrounds' speed, berserker and invisibility runes.
+            PowerUp::Swiftness => (5931, 1.0),
+            PowerUp::Berserk => (5995, 1.0),
+            PowerUp::DivineShield => (5932, 1.0),
+            // `FloatingRedCrystal01.mdx`, `FloatingPurpleCrystal01.mdx`.
+            PowerUp::Bloodlust => (1807, 0.6),
+            PowerUp::Detonation => (1667, 0.6),
+            // `Goldgobletfilled01.mdx`, `BFD_WispSmallPurple.mdx`.
+            PowerUp::Fortune => (565, 3.0),
+            PowerUp::Magnet => (1307, 2.5),
+        },
+    }
+}
+
+/// The colour a power-up's name floats up in when it is taken, 0xAARRGGBB.
+const COLOR_POWER_UP: u32 = 0xFF66_CCFF;
 
 /// The step's events as visuals. Runs before [`sync`], so a dying enemy is still mapped.
 pub(super) fn apply_events(
@@ -278,7 +298,20 @@ pub(super) fn apply_events(
             Event::LevelUp { .. }
             | Event::ChallengeWon { .. }
             | Event::BossCame { .. }
-            | Event::BossDied { .. } => {}
+            | Event::BossDied { .. }
+            | Event::EscortDone { .. } => {}
+            Event::PickupTaken { kind, by, .. } => {
+                let Some(&e) = views.heroes.get(&by) else {
+                    continue;
+                };
+                match kind {
+                    PickupKind::Health => {
+                        // Holy Nova's glow.
+                        fx.cast(e, 15237, &[e], None);
+                    }
+                    PickupKind::PowerUp(p) => fx.text(e, p.name().to_string(), COLOR_POWER_UP),
+                }
+            }
             Event::GoldGained { player, amount } => {
                 // Everyone's purse fills with every coin; only our own is shown.
                 if player == sim.me {
@@ -338,6 +371,7 @@ pub(super) fn sync(
     mut items: ResMut<crate::items::Items>,
     mut positions: Query<&mut SimPos>,
     mut dying: Query<(Entity, &Guid, &mut Dying)>,
+    mut transforms: Query<&mut Transform, Without<SimPos>>,
 ) {
     let world = &sim.world;
     let content = world.content().clone();
@@ -475,7 +509,8 @@ pub(super) fn sync(
         views.gems.insert(gem.id, e);
     }
 
-    sync_shrines(&mut commands, world, &mut views, &mut names, &ground, fallback_y);
+    let me = world.hero(sim.me).map_or(world.center(), |h| h.pos);
+    sync_shrines(&mut commands, world, &mut views, &ground, fallback_y, me, &mut transforms);
 
     if sim.stepped {
         for hero in &world.heroes {
@@ -521,112 +556,109 @@ pub(super) fn sync(
     }
 }
 
-/// A model for every interactable, kept for the run, and while it can be used, a ring on the
-/// ground around it and a beam of light over it. One the host moved is drawn anew where it went;
-/// bodies of an interactable that left the world (a mirror's first snapshot) go with it.
+/// A model for every interactable while it stands; a banner being carried goes with its carrier.
+/// While one can be used (or a challenge is fought at it) a ring on the ground marks its circle
+/// and, near the local hero at `me`, a beam of light stands over it; a banner being carried
+/// marks its destination instead. Pots have neither. One the host moved is drawn anew where it
+/// went, and the bodies of one that left the world go with it.
+#[allow(clippy::too_many_arguments)]
 fn sync_shrines(
     commands: &mut Commands,
     world: &together_sim::World,
     views: &mut Views,
-    names: &mut NameCache,
     ground: &impl Fn(V2, f32) -> Vec3,
     fallback_y: f32,
+    me: V2,
+    transforms: &mut Query<&mut Transform, Without<SimPos>>,
 ) {
     for it in &world.interactables {
         let serial = SHRINE_SERIAL_BASE + u64::from(it.id) * 4;
-        let at = ground(it.pos, fallback_y);
         if let Some(moved) = views.interactables.remove(&it.id) {
             if moved.pos == it.pos {
                 views.interactables.insert(it.id, moved);
             } else {
-                commands.entity(moved.model).despawn();
-                for e in moved.marks.into_iter().flatten() {
-                    commands.entity(e).despawn();
-                }
+                moved.despawn(commands);
             }
         }
-        if !views.interactables.contains_key(&it.id) {
+        let view = views.interactables.entry(it.id).or_insert_with(|| {
             let (display, scale) = shrine_look(it.kind);
-            let model = if it.kind == InteractableKind::Merchant {
-                if views.named.insert(MERCHANT_ENTRY) {
-                    names.insert_creature(
-                        MERCHANT_ENTRY,
-                        Some(CreatureRecord {
-                            name: it.kind.name().into(),
-                            subname: Some("Treasures".into()),
-                            creature_type: 0,
-                            pet_family: 0,
-                            rank: 0,
-                            type_flags: 0,
-                            civilian: true,
-                            racial_leader: false,
-                            display_id: display,
-                        }),
-                    );
-                }
-                let spec = UnitSpec {
-                    kind: UnitKind::Creature {
-                        entry: MERCHANT_ENTRY,
-                    },
-                    serial,
-                    display,
-                    scale,
-                    level: 60,
-                    faction: units::FACTION_FRIENDLY,
-                    bytes0: 0,
-                    weapons: &[],
-                    sheath: 0,
-                    extra: &[],
-                };
-                units::spawn_unit(commands, &spec, at, 0.0)
-            } else {
-                units::spawn_object(commands, serial, display, scale, at)
-            };
-            views.interactables.insert(
-                it.id,
-                ShrineView {
-                    pos: it.pos,
-                    model,
-                    marks: None,
-                },
-            );
-        }
-        let view = views
-            .interactables
-            .get_mut(&it.id)
-            .expect("inserted above");
-        // A challenge under way keeps its ring: the fight is there.
-        let marked = it.ready() || matches!(it.state, InteractState::Challenge(_));
-        match (marked, view.marks) {
-            (true, None) => {
+            ShrineView {
+                pos: it.pos,
+                model: units::spawn_object(commands, serial, display, scale, ground(it.pos, fallback_y)),
+                ring: None,
+                beam: None,
+            }
+        });
+        let mark = match it.state {
+            InteractState::Ready | InteractState::Challenge(_) if it.kind != InteractableKind::Pot => {
+                Some(it.pos)
+            }
+            InteractState::Escort { to, .. } => Some(to),
+            _ => None,
+        };
+        if view.ring.map(|(at, _)| at) != mark {
+            if let Some((_, e)) = view.ring.take() {
+                commands.entity(e).despawn();
+            }
+            if let Some(e) = view.beam.take() {
+                commands.entity(e).despawn();
+            }
+            if let Some(at) = mark {
                 let (rune, rune_radius) = ring_look(it.kind);
                 let size = it.kind.radius() / rune_radius;
-                view.marks = Some([
-                    units::spawn_object(commands, serial + 1, rune, size, at + Vec3::Y * 0.05),
-                    units::spawn_object(commands, serial + 2, BEAM, BEAM_SCALE, at),
-                ]);
+                let e = units::spawn_object(
+                    commands,
+                    serial + 1,
+                    rune,
+                    size,
+                    ground(at, fallback_y) + Vec3::Y * 0.05,
+                );
+                view.ring = Some((at, e));
             }
-            (false, Some(marks)) => {
-                for e in marks {
-                    commands.entity(e).despawn();
-                }
-                view.marks = None;
+        }
+        let beam_at = mark.filter(|at| at.distance(me) <= BEAM_RANGE);
+        match (beam_at, view.beam) {
+            (Some(at), None) => {
+                let e = units::spawn_object(commands, serial + 2, BEAM, BEAM_SCALE, ground(at, fallback_y));
+                view.beam = Some(e);
+            }
+            (None, Some(e)) => {
+                commands.entity(e).despawn();
+                view.beam = None;
             }
             _ => {}
+        }
+        if let InteractState::Escort { carrier, .. } = it.state {
+            if let (Some(hero), Ok(mut tf)) = (world.hero(carrier), transforms.get_mut(view.model)) {
+                let at = ground(hero.pos, fallback_y);
+                if tf.translation != at {
+                    tf.translation = at;
+                }
+            }
         }
     }
     views.interactables.retain(|id, view| {
         let keep = world.interactable(*id).is_some();
         if !keep {
-            commands.entity(view.model).despawn();
-            for e in view.marks.into_iter().flatten() {
-                commands.entity(e).despawn();
-            }
+            view.despawn(commands);
+        }
+        keep
+    });
+    for p in &world.pickups {
+        views.pickups.entry(p.id).or_insert_with(|| {
+            let (display, scale) = pickup_look(p.kind);
+            let serial = SHRINE_SERIAL_BASE + u64::from(p.id) * 4;
+            units::spawn_object(commands, serial, display, scale, ground(p.pos, fallback_y) + Vec3::Y * 0.3)
+        });
+    }
+    views.pickups.retain(|id, e| {
+        let keep = world.pickups.iter().any(|p| p.id == *id);
+        if !keep {
+            commands.entity(*e).despawn();
         }
         keep
     });
 }
-
 /// Whether a spot is dry ground in the open: `None` until the terrain under it has loaded.
 fn usable(world_point: &WorldPoint, at: V2) -> Option<bool> {
     let probe = units::ground_to_bevy(at, 0.0);

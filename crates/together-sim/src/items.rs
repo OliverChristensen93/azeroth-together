@@ -1,5 +1,4 @@
-//! Items: passive treasures from chests and the goblin merchant, each stacking with copies of
-//! itself.
+//! Items: passive treasures from chests and caches, each stacking with copies of itself.
 //!
 //! Some raise a stat when taken; the rest act on their own: on a hit, on a kill, on a blow taken
 //! or on a chest opened. An item that strikes enemies casts a content ability ([`Item::proc`],
@@ -57,7 +56,7 @@ impl Item {
         }
     }
 
-    /// How rare it is: the rarer, the less often a chest or merchant has it.
+    /// How rare it is: the rarer, the less often a chest has it.
     pub fn rarity(self) -> Rarity {
         match self {
             Item::RabbitsFoot | Item::GoblinPurse => Rarity::Common,
@@ -149,16 +148,6 @@ pub fn ward_cooldown(stacks: u8) -> f32 {
     (15.0 - 2.0 * f32::from(stacks.saturating_sub(1))).max(5.0)
 }
 
-/// What the goblin merchant asks for an item of `rarity`.
-pub fn merchant_price(rarity: Rarity) -> u32 {
-    match rarity {
-        Rarity::Common => 25,
-        Rarity::Uncommon => 40,
-        Rarity::Rare => 60,
-        Rarity::Epic => 90,
-        Rarity::Legendary => 140,
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -178,10 +167,5 @@ mod tests {
             assert!(!item.describe(1).is_empty(), "{item:?}");
         }
         assert_eq!(Item::RabbitsFoot.describe(2), "+40% luck");
-    }
-
-    #[test]
-    fn rarer_goods_cost_more() {
-        assert!(merchant_price(Rarity::Epic) > merchant_price(Rarity::Common));
     }
 }

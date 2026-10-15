@@ -1,5 +1,6 @@
 //! A plain text HUD: the clock, the kills, the gold and the hero's spells (and, joined, the ping
-//! to the host); fallen friends and how to raise them; what a shrine or chest nearby does and how
+//! to the host), the party's power-ups and the boss; fallen friends and how to raise them; a
+//! carried banner's way to go, and what a shrine or chest nearby does and how
 //! full its circle is; and the end of the run.
 
 use bevy::prelude::*;
@@ -197,42 +198,46 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 /// The interactable nearest the hero at `at` that is worth a prompt: one ready to use, or a
-/// challenge still being fought, within [`PROMPT_REACH`] of its circle.
+/// challenge still being fought, within [`PROMPT_REACH`] of its circle. Pots speak for themselves.
 fn nearby(world: &together_sim::World, at: together_sim::V2) -> Option<&Interactable> {
     world
         .interactables
         .iter()
+        .filter(|i| i.kind != InteractableKind::Pot)
         .filter(|i| i.ready() || matches!(i.state, InteractState::Challenge(_)))
         .filter(|i| i.pos.distance(at) <= i.kind.radius() + PROMPT_REACH)
         .min_by(|a, b| a.pos.distance(at).total_cmp(&b.pos.distance(at)))
 }
 
-/// The prompt by a shrine or chest the hero stands near: its name, what it does, its price, and
-/// the bar its circle fills; by a challenge, the elites still standing.
-pub(super) fn prompt(
-    sim: Res<Sim>,
-    mut panel: Query<&mut Visibility, With<PromptPanel>>,
-    mut text: Query<&mut Text, With<PromptText>>,
-    mut fill: Query<&mut Node, With<PromptFill>>,
-) {
-    let world = &sim.world;
+/// What the prompt says, and how full its bar is: a banner being carried, wherever the hero is;
+/// else the shrine or chest the hero stands near (its name, what it does, its price, and the bar
+/// its circle fills), or a challenge's elites still standing.
+fn prompt_text(world: &together_sim::World, me: together_sim::PlayerId) -> Option<(String, f32)> {
     let hero = world
-        .hero(sim.me)
-        .filter(|h| h.alive && h.offers.is_empty() && !world.game_over());
-    let near = hero.and_then(|h| nearby(world, h.pos).map(|i| (h, i)));
-    if let Ok(mut vis) = panel.single_mut() {
-        let want = if near.is_some() {
-            Visibility::Inherited
+        .hero(me)
+        .filter(|h| h.alive && h.offers.is_empty() && !world.game_over())?;
+    let carry = world.interactables.iter().find_map(|i| match i.state {
+        InteractState::Escort { carrier, to, left } => Some((carrier, to, left)),
+        _ => None,
+    });
+    if let Some((carrier, to, left)) = carry {
+        let who = world.hero(carrier)?;
+        let far = who.pos.distance(to).max(0.0);
+        let s = if carrier == me {
+            format!(
+                "War Banner\nCarry it to the green circle  ·  {far:.0} yd  ·  {} left",
+                clock(left)
+            )
         } else {
-            Visibility::Hidden
+            format!(
+                "War Banner\n{} carries it  ·  {far:.0} yd  ·  {} left",
+                who.name,
+                clock(left)
+            )
         };
-        if *vis != want {
-            *vis = want;
-        }
+        return Some((s, 0.0));
     }
-    let Some((hero, it)) = near else {
-        return;
-    };
+    let it = nearby(world, hero.pos)?;
     let mut s = format!("{}\n{}", it.kind.name(), it.kind.description());
     if let InteractState::Challenge(left) = &it.state {
         s = format!("{}\n{} elites still stand", it.kind.name(), left.len());
@@ -243,19 +248,42 @@ pub(super) fn prompt(
     if it.ready() && it.charge == 0.0 {
         s.push_str("\nStand in the circle");
     }
+    Some((s, it.charge))
+}
+
+/// The prompt: [`prompt_text`], shown while it has something to say.
+pub(super) fn prompt(
+    sim: Res<Sim>,
+    mut panel: Query<&mut Visibility, With<PromptPanel>>,
+    mut text: Query<&mut Text, With<PromptText>>,
+    mut fill: Query<&mut Node, With<PromptFill>>,
+) {
+    let shown = prompt_text(&sim.world, sim.me);
+    if let Ok(mut vis) = panel.single_mut() {
+        let want = if shown.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    let Some((s, charge)) = shown else {
+        return;
+    };
     if let Ok(mut t) = text.single_mut() {
         if t.0 != s {
             t.0 = s;
         }
     }
     if let Ok(mut node) = fill.single_mut() {
-        let width = Val::Percent(it.charge * 100.0);
+        let width = Val::Percent(charge * 100.0);
         if node.width != width {
             node.width = width;
         }
     }
 }
-
 fn clock(secs: f32) -> String {
     let s = secs as u32;
     format!("{}:{:02}", s / 60, s % 60)
@@ -308,15 +336,20 @@ pub(super) fn refresh(
         if !bosses.is_empty() {
             s.push_str(&format!("\nBOSS  {}", bosses.join("   ")));
         } else if let Some(boss) = world.zone().boss_ix {
-            let curses = match world.boss_curses {
-                0 => String::new(),
-                n => format!(" x{}", n + 1),
-            };
             s.push_str(&format!(
-                "\n{}{curses} comes in {}",
+                "\n{} comes in {}",
                 content.enemies[boss].name,
                 clock((world.next_boss - world.elapsed).max(0.0))
             ));
+        }
+        if !world.buffs.is_empty() {
+            let buffs: Vec<String> = world
+                .buffs
+                .iter()
+                .map(|(p, left)| format!("{} {:.0}s", p.name(), left.ceil()))
+                .collect();
+            s.push('\n');
+            s.push_str(&buffs.join("   "));
         }
         if !hero.items.is_empty() {
             let held: Vec<String> = hero

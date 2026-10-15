@@ -34,18 +34,19 @@ fn every_item_that_strikes_has_its_ability() {
 }
 
 #[test]
-fn every_zone_scatters_shrines_and_chests_inside_its_arena() {
+fn every_zone_starts_with_its_few_shrines_inside_its_arena() {
     let c = Arc::new(shipped());
     for zone in &c.zones {
-        let w = World::new(c.clone(), &zone.key, 11).unwrap();
-        let center = w.center();
         assert!(
-            w.interactables
+            zone.interactables
                 .iter()
-                .any(|i| i.kind == InteractableKind::Chest),
-            "{} has no chest",
+                .any(|p| p.kind == InteractableKind::Chest),
+            "{} has no chests",
             zone.key
         );
+        let w = World::new(c.clone(), &zone.key, 11).unwrap();
+        let center = w.center();
+        assert_eq!(w.interactables.len() as u32, zone.shrines_at_once, "{}", zone.key);
         for i in &w.interactables {
             assert!(i.pos.distance(center) <= zone.leash, "{} {:?}", zone.key, i);
         }

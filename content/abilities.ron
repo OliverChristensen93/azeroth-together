@@ -233,4 +233,8 @@
     (key: "frost_ward", name: "Frost Ward", visual: 122, kind: Nova,
      damage: 0.0, radius: 3.0,
      description: "A ward of ice turns a blow aside."),
+    // The Arcane Detonation power-up's blast, for its visual and its damage-meter row.
+    (key: "detonation", name: "Arcane Detonation", visual: 1449, kind: Nova,
+     damage: 0.0, radius: 25.0,
+     description: "A blast that slays every enemy near."),
 ]

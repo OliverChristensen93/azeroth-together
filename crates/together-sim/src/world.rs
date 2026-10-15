@@ -2,14 +2,16 @@
 //! second by [`World::step`].
 //!
 //! A step reads each player's latest [`PlayerInput`], moves everything, fires abilities, lands
-//! hits, runs the arena's shrines and chests, and records what happened as [`Event`]s for the
-//! client to show. The world itself is the authority: a client only ever draws it, which is how a
-//! co-op host runs it for everyone.
+//! hits, runs the arena's shrines, chests, pots and power-ups, and records what happened as
+//! [`Event`]s for the client to show. The world itself is the authority: a client only ever draws
+//! it, which is how a co-op host runs it for everyone.
 //!
 //! Gold is earned together and spent alone: every coin a hero picks up is credited to every
 //! hero's own purse (each with their own [`Stat::GoldGain`]), as experience is shared, so nobody
 //! races a friend for coins; but each hero pays for their own chests, so nobody spends a
 //! friend's gold.
+
+mod arena;
 
 use std::collections::HashMap;
 
@@ -20,13 +22,15 @@ use std::sync::Arc;
 use crate::cards::{ability_stats, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 use crate::content::{AbilityKind, Content};
 use crate::interact::{
-    chest_price, scatter, InteractState, Interactable, InteractableKind,
+    chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
+    ESCORT_DISTANCE, ESCORT_GOAL,
 };
 use crate::items::{
-    merchant_price, ward_cooldown, Item, EMBER_RADIUS, EMBER_SHARE, FANG_HEAL, PURSE_GOLD,
-    SHARD_CHAIN, SHARD_REACH, SHARD_SHARE,
+    ward_cooldown, Item, EMBER_RADIUS, EMBER_SHARE, FANG_HEAL, PURSE_GOLD, SHARD_CHAIN,
+    SHARD_REACH, SHARD_SHARE,
 };
 use crate::math::V2;
+use crate::powerups::{Pickup, PickupKind, PowerUp, BERSERK, BLOODLUST, SWIFTNESS};
 use crate::rng::Rng;
 use crate::stats::{Bane, Difficulty, Pact, Stat, Stats};
 #[cfg(test)]
@@ -74,11 +78,8 @@ pub const BOSS_EVERY: f32 = 240.0;
 /// From this many seconds in, an ordinary spawn is now and then an elite.
 const ELITES_FROM: f32 = 90.0;
 const ELITE_CHANCE: f32 = 0.015;
-/// A Shrine of Greed's gold, and what it adds per minute of the run.
-const GREED_GOLD: f32 = 40.0;
-const GREED_GOLD_PER_MINUTE: f32 = 12.0;
-/// What each use of a Shrine of Greed adds to the horde's health, damage and numbers.
-const GREED_DIFFICULTY: f32 = 0.05;
+/// Seconds a used interactable stands before it leaves the world.
+const SPENT_LINGER: f32 = 6.0;
 /// Enemies spawn on a ring this far from a hero: outside the view, inside the leash.
 const SPAWN_RING: (f32, f32) = (34.0, 42.0);
 /// Seconds between spawn batches.
@@ -217,14 +218,24 @@ pub enum Event {
     ChallengeWon {
         id: u32,
     },
-    /// The zone's boss came, `count` of it (one, and one more per Blood Shrine used).
+    /// The zone's boss came.
     BossCame {
         def: usize,
-        count: u32,
     },
     /// A boss died; a cache stands where it fell.
     BossDied {
         id: u32,
+    },
+    /// A banner's carry ended: `won`, it reached its spot in time and a cache stands there.
+    EscortDone {
+        id: u32,
+        won: bool,
+    },
+    /// `by` took something from the ground; a power-up works for the whole party.
+    PickupTaken {
+        id: u32,
+        kind: PickupKind,
+        by: PlayerId,
     },
 }
 
@@ -370,10 +381,11 @@ pub struct Snapshot {
     pub kills: u32,
     pub difficulty: Difficulty,
     pub next_boss: f32,
-    pub boss_curses: u32,
+    pub buffs: Vec<(PowerUp, f32)>,
     pub heroes: Vec<Hero>,
     pub enemies: Vec<EnemyState>,
     pub interactables: Vec<Interactable>,
+    pub pickups: Vec<Pickup>,
 }
 
 /// An enemy as a snapshot carries it: only what a client draws, packed small, since a late run
@@ -454,8 +466,16 @@ pub struct World {
     pub heroes: Vec<Hero>,
     pub enemies: Vec<Enemy>,
     pub gems: Vec<Gem>,
-    /// The arena's shrines, altars and chests.
+    /// The arena's shrines, altars, chests, banners and pots.
     pub interactables: Vec<Interactable>,
+    /// Health shards and power-ups on the ground.
+    pub pickups: Vec<Pickup>,
+    /// The party's power-ups at work, with the seconds each has left.
+    pub buffs: Vec<(PowerUp, f32)>,
+    /// Seconds until the arena next gets a new shrine, pot or stray power-up.
+    shrine_timer: f32,
+    pot_timer: f32,
+    powerup_timer: f32,
     pending: Vec<PendingHit>,
     inputs: HashMap<PlayerId, PlayerInput>,
     events: Vec<Event>,
@@ -465,12 +485,10 @@ pub struct World {
     pub level: u32,
     pub xp: f32,
     pub kills: u32,
-    /// How much harder Greed and pacts have made the horde.
+    /// How much harder pacts have made the horde.
     pub difficulty: Difficulty,
     /// Seconds into the run the boss comes next.
     pub next_boss: f32,
-    /// Blood Shrines used since the last boss: each brings one more copy of the next.
-    pub boss_curses: u32,
 }
 
 impl World {
@@ -489,6 +507,11 @@ impl World {
             enemies: Vec::new(),
             gems: Vec::new(),
             interactables: Vec::new(),
+            pickups: Vec::new(),
+            buffs: Vec::new(),
+            shrine_timer: arena::SHRINE_EVERY,
+            pot_timer: 0.0,
+            powerup_timer: arena::POWERUP_EVERY,
             pending: Vec::new(),
             inputs: HashMap::new(),
             events: Vec::new(),
@@ -499,7 +522,6 @@ impl World {
             kills: 0,
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
-            boss_curses: 0,
         };
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
@@ -661,7 +683,7 @@ impl World {
             kills: self.kills,
             difficulty: self.difficulty,
             next_boss: self.next_boss,
-            boss_curses: self.boss_curses,
+            buffs: self.buffs.clone(),
             heroes: self.heroes.clone(),
             enemies: self
                 .enemies
@@ -682,6 +704,7 @@ impl World {
                 })
                 .collect(),
             interactables: self.interactables.clone(),
+            pickups: self.pickups.clone(),
         }
     }
 
@@ -695,9 +718,10 @@ impl World {
         self.kills = snapshot.kills;
         self.difficulty = snapshot.difficulty;
         self.next_boss = snapshot.next_boss;
-        self.boss_curses = snapshot.boss_curses;
+        self.buffs = snapshot.buffs;
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;
+        self.pickups = snapshot.pickups;
         let center = self.center();
         let defs = &self.content.enemies;
         self.enemies = snapshot
@@ -774,7 +798,9 @@ impl World {
         self.land_hits();
         self.reap_enemies();
         self.collect_gems();
+        self.collect_pickups();
         self.use_interactables();
+        self.tend_arena();
         self.level_up();
     }
 
@@ -813,11 +839,6 @@ impl World {
             let Some(&card) = pick.and_then(|p| hand.cards.get(usize::from(p))) else {
                 continue;
             };
-            // What a hero cannot pay for stays on the counter.
-            if self.heroes[h].gold < card.price {
-                continue;
-            }
-            self.heroes[h].gold -= card.price;
             self.heroes[h].offers.remove(0);
             self.take_card(h, card);
         }
@@ -868,7 +889,12 @@ impl World {
         }
         hero.max_hp = max;
         hero.hp = hero.hp.min(max);
-        hero.speed = class.speed * (1.0 + hero.stats.get(Stat::Speed));
+        let swift = if self.buffs.iter().any(|&(p, _)| p == PowerUp::Swiftness) {
+            SWIFTNESS
+        } else {
+            0.0
+        };
+        hero.speed = class.speed * (1.0 + hero.stats.get(Stat::Speed)) * (1.0 + swift);
     }
 
     fn move_heroes(&mut self) {
@@ -1007,8 +1033,8 @@ impl World {
         }
     }
 
-    /// The zone's boss, when its time comes: one, and one more for each Blood Shrine used since
-    /// the last, each near a living hero and as much tougher as there are heroes to fight it.
+    /// The zone's boss, when its time comes: near a living hero, and as much tougher as there are
+    /// heroes to fight it.
     fn spawn_bosses(&mut self) {
         let Some(def) = self.zone().boss_ix else {
             return;
@@ -1026,19 +1052,16 @@ impl World {
             return;
         }
         self.next_boss += BOSS_EVERY;
-        let count = 1 + std::mem::take(&mut self.boss_curses);
         let party = 1.0 + 0.6 * (living.len() - 1) as f32;
-        for _ in 0..count {
-            let near = living[self.rng.index(living.len())];
-            let angle = self.rng.range(0.0, std::f32::consts::TAU);
-            let pos = near + V2::from_angle(angle, SPAWN_RING.0);
-            self.spawn_enemy(def, pos, near, false);
-            let boss = self.enemies.last_mut().expect("just spawned");
-            boss.boss = true;
-            boss.hp *= party;
-            boss.max_hp *= party;
-        }
-        self.events.push(Event::BossCame { def, count });
+        let near = living[self.rng.index(living.len())];
+        let angle = self.rng.range(0.0, std::f32::consts::TAU);
+        let pos = near + V2::from_angle(angle, SPAWN_RING.0);
+        self.spawn_enemy(def, pos, near, false);
+        let boss = self.enemies.last_mut().expect("just spawned");
+        boss.boss = true;
+        boss.hp *= party;
+        boss.max_hp *= party;
+        self.events.push(Event::BossCame { def });
     }
 
     /// The zone's roster tiers in play now, weakest and strongest: a new tier every 45 seconds,
@@ -1155,7 +1178,7 @@ impl World {
         else {
             return 0.0;
         };
-        if hero.ward > 0.0 {
+        if hero.ward > 0.0 || self.buffs.iter().any(|&(p, _)| p == PowerUp::DivineShield) {
             return 0.0;
         }
         let wards = hero.stacks(Item::FrostWard);
@@ -1190,6 +1213,19 @@ impl World {
         near
     }
 
+    /// An ability's numbers with the party's power-ups on top: Berserk's damage, Bloodlust's
+    /// cooldowns.
+    fn sharpen(&self, mut stats: AbilityStats) -> AbilityStats {
+        for &(p, _) in &self.buffs {
+            match p {
+                PowerUp::Berserk => stats.damage *= 1.0 + BERSERK,
+                PowerUp::Bloodlust => stats.cooldown *= BLOODLUST,
+                _ => {}
+            }
+        }
+        stats
+    }
+
     /// A hit of `base`, doubled on a critical strike, which comes at `chance`.
     fn roll_damage(&mut self, base: f32, chance: f32) -> (f32, bool) {
         let crit = self.rng.f32() < chance;
@@ -1212,7 +1248,7 @@ impl World {
                 let cast = self.cast(h, &owned, &def);
                 // No target in reach: try again next step rather than wasting the cooldown.
                 self.heroes[h].abilities[a].cd = if cast {
-                    owned.stats(&def).with(&self.heroes[h].stats).cooldown
+                    self.sharpen(owned.stats(&def).with(&self.heroes[h].stats)).cooldown
                 } else {
                     0.0
                 };
@@ -1226,7 +1262,7 @@ impl World {
         let hero = &self.heroes[h];
         let (player, from) = (hero.player, hero.pos);
         let chance = CRIT_CHANCE + hero.stats.get(Stat::Crit);
-        let stats = owned.stats(def).with(&hero.stats);
+        let stats = self.sharpen(owned.stats(def).with(&hero.stats));
         let (base, cooldown) = (stats.damage, stats.cooldown);
         match def.kind {
             AbilityKind::Bolt | AbilityKind::Strike => {
@@ -1444,20 +1480,7 @@ impl World {
             } else {
                 0
             };
-            let xp = worth * reward;
-            let gem = self.id();
-            self.gems.push(Gem {
-                id: gem,
-                pos,
-                xp,
-                gold,
-            });
-            self.events.push(Event::GemDropped {
-                id: gem,
-                pos,
-                xp,
-                gold,
-            });
+            self.drop_gem(pos, worth * reward, gold);
             if let Some(by) = killer {
                 self.on_kill(by, pos, max_hp, worth);
             }
@@ -1503,7 +1526,12 @@ impl World {
     /// `base` gold into hero `h`'s purse, grown by its [`Stat::GoldGain`].
     fn give_gold(&mut self, h: usize, base: f32) {
         let hero = &mut self.heroes[h];
-        let amount = (base * (1.0 + hero.stats.get(Stat::GoldGain))).round() as u32;
+        let fortune = if self.buffs.iter().any(|&(p, _)| p == PowerUp::Fortune) {
+            2.0
+        } else {
+            1.0
+        };
+        let amount = (base * (1.0 + hero.stats.get(Stat::GoldGain)) * fortune).round() as u32;
         if amount == 0 {
             return;
         }
@@ -1536,17 +1564,14 @@ impl World {
 
     /// Up to [`HAND`] distinct cards for hero `h` from what `source` deals, each of a
     /// [`Rarity`] rolled with the hero's [`Stat::Luck`]: always legendary from a golden shrine,
-    /// never below rare from an altar. Treasure (from a chest, a cache or the merchant) is an item,
-    /// of the item's own rarity, the rarer ones the less often ([`World::lucky_item`]); the
-    /// merchant's has a price.
+    /// never below rare from an altar. Treasure (from a chest or a cache) is an item, of the
+    /// item's own rarity, the rarer ones the less often ([`World::lucky_item`]).
     fn deal(&mut self, h: usize, source: Source) -> Offer {
         let luck = self.heroes[h].stats.get(Stat::Luck);
         let mut options = self.options(h, source);
         let treasure = matches!(
             source,
-            Source::Interactable(
-                InteractableKind::Chest | InteractableKind::Cache | InteractableKind::Merchant
-            )
+            Source::Interactable(InteractableKind::Chest | InteractableKind::Cache)
         );
         let mut cards = Vec::new();
         while cards.len() < HAND && !options.is_empty() {
@@ -1563,15 +1588,7 @@ impl World {
                 (_, Source::Interactable(InteractableKind::CursedAltar)) => rolled.max(Rarity::Rare),
                 _ => rolled,
             };
-            let price = match source {
-                Source::Interactable(InteractableKind::Merchant) => merchant_price(rarity),
-                _ => 0,
-            };
-            cards.push(Card {
-                kind,
-                rarity,
-                price,
-            });
+            cards.push(Card { kind, rarity });
         }
         Offer { cards, source }
     }
@@ -1595,8 +1612,8 @@ impl World {
     }
 
     /// Every card `source` could deal hero `h`: a level-up's spells and a couple of tomes, a
-    /// shrine's tomes, an altar's pacts, a chest's or merchant's items (those whose proc ability
-    /// the content has).
+    /// shrine's tomes, an altar's pacts, a chest's items (those whose proc ability the content
+    /// has).
     fn options(&mut self, h: usize, source: Source) -> Vec<CardKind> {
         let tomes = Stat::TOMES.map(CardKind::Tome);
         let Source::Interactable(kind) = source else {
@@ -1631,17 +1648,14 @@ impl World {
                     })
                     .collect()
             }
-            InteractableKind::Chest | InteractableKind::Cache | InteractableKind::Merchant => {
-                Item::ALL
-                    .into_iter()
-                    .filter(|i| i.proc().is_none_or(|key| self.content.ability(key).is_some()))
-                    .map(CardKind::Item)
-                    .collect()
+            InteractableKind::Chest | InteractableKind::Cache => Item::ALL
+                .into_iter()
+                .filter(|i| i.proc().is_none_or(|key| self.content.ability(key).is_some()))
+                .map(CardKind::Item)
+                .collect(),
+            InteractableKind::ChallengeIdol | InteractableKind::WarBanner | InteractableKind::Pot => {
+                Vec::new()
             }
-            InteractableKind::GreedShrine
-            | InteractableKind::ChallengeIdol
-            | InteractableKind::Moonwell
-            | InteractableKind::BloodShrine => Vec::new(),
         }
     }
 
@@ -1666,37 +1680,47 @@ impl World {
     }
 
     /// Every interactable's circle: it fills while a hero who can use it stands in it, drains
-    /// while nobody does, and does its work when full. A used Titan Shrine counts down to ready
-    /// again; a challenge under way watches for its last elite to fall.
+    /// while nobody does, and does its work when full (a pot's at a touch). A challenge under way
+    /// watches for its last elite to fall; a banner on its way, for its carrier to arrive.
     fn use_interactables(&mut self) {
         for i in 0..self.interactables.len() {
             let it = &mut self.interactables[i];
+            let (id, kind, pos) = (it.id, it.kind, it.pos);
             match &mut it.state {
-                InteractState::Spent => continue,
-                InteractState::Recharging(secs) => {
-                    *secs -= DT;
-                    if *secs <= 0.0 {
-                        it.state = InteractState::Ready;
-                    }
-                    continue;
-                }
+                InteractState::Spent(_) => continue,
                 InteractState::Challenge(left) => {
                     let enemies = &self.enemies;
                     left.retain(|id| enemies.iter().any(|e| e.id == *id));
                     if left.is_empty() {
-                        it.state = InteractState::Spent;
-                        let (id, pos) = (it.id, it.pos);
+                        it.state = InteractState::Spent(SPENT_LINGER);
                         self.place(InteractableKind::Cache, pos);
                         self.events.push(Event::ChallengeWon { id });
                     }
                     continue;
                 }
+                InteractState::Escort { carrier, to, left } => {
+                    *left -= DT;
+                    let (carrier, to, left) = (*carrier, *to, *left);
+                    let at = self
+                        .heroes
+                        .iter()
+                        .find(|h| h.player == carrier && h.alive)
+                        .map(|h| h.pos);
+                    let won = at.is_some_and(|p| p.distance(to) <= ESCORT_GOAL);
+                    if won || left <= 0.0 || at.is_none() {
+                        self.interactables[i].state = InteractState::Spent(SPENT_LINGER);
+                        if won {
+                            self.place(InteractableKind::Cache, to);
+                        }
+                        self.events.push(Event::EscortDone { id, won });
+                    }
+                    continue;
+                }
                 InteractState::Ready => {}
             }
-            let (id, kind, pos) = (it.id, it.kind, it.pos);
             let who = self.standing_in(kind, pos);
             let it = &mut self.interactables[i];
-            let rate = DT / kind.charge_secs();
+            let rate = DT / kind.charge_secs().max(DT);
             if who.is_empty() {
                 it.charge = (it.charge - rate * 0.5).max(0.0);
                 continue;
@@ -1706,9 +1730,13 @@ impl World {
                 continue;
             }
             it.charge = 0.0;
-            it.state = kind
-                .recharge()
-                .map_or(InteractState::Spent, InteractState::Recharging);
+            // A pot is gone at once; the rest stand a moment, used, before they go.
+            let linger = if kind == InteractableKind::Pot {
+                0.0
+            } else {
+                SPENT_LINGER
+            };
+            it.state = InteractState::Spent(linger);
             let by = self.activate(i, who);
             self.events.push(Event::Interacted { id, kind, by });
         }
@@ -1734,30 +1762,6 @@ impl World {
         let (kind, pos) = (self.interactables[i].kind, self.interactables[i].pos);
         let index = |w: &World, p: PlayerId| w.heroes.iter().position(|h| h.player == p);
         match kind {
-            InteractableKind::GreedShrine => {
-                let gold = GREED_GOLD + GREED_GOLD_PER_MINUTE * self.elapsed / 60.0;
-                for &p in &who {
-                    if let Some(h) = index(self, p) {
-                        self.give_gold(h, gold);
-                    }
-                }
-                let d = &mut self.difficulty;
-                d.enemy_health += GREED_DIFFICULTY;
-                d.enemy_damage += GREED_DIFFICULTY;
-                d.horde += GREED_DIFFICULTY;
-                who
-            }
-            InteractableKind::BloodShrine => {
-                self.boss_curses += 1;
-                who
-            }
-            InteractableKind::Moonwell => {
-                let by = who[0];
-                for gem in std::mem::take(&mut self.gems) {
-                    self.take_gem(gem, by);
-                }
-                vec![by]
-            }
             InteractableKind::ChallengeIdol => {
                 let living = self.heroes.iter().filter(|h| h.alive).count();
                 let n = CHALLENGE_ELITES + CHALLENGE_PER_HERO * living;
@@ -1771,6 +1775,26 @@ impl World {
                 }
                 self.interactables[i].state = InteractState::Challenge(elites);
                 who
+            }
+            InteractableKind::WarBanner => {
+                // Its taker carries it, to a spot well away, against the clock.
+                let by = who[0];
+                let speed = self.hero(by).map_or(7.0, |h| h.speed);
+                let taken: Vec<V2> = self.interactables.iter().map(|i| i.pos).collect();
+                let content = self.content.clone();
+                let zone = &content.zones[self.zone];
+                let to = spot(zone, pos, ESCORT_DISTANCE, &taken, &mut self.rng);
+                let left = escort_time(to.distance(pos), speed);
+                self.interactables[i].state = InteractState::Escort {
+                    carrier: by,
+                    to,
+                    left,
+                };
+                vec![by]
+            }
+            InteractableKind::Pot => {
+                self.break_pot(pos);
+                vec![who[0]]
             }
             InteractableKind::Chest => {
                 // Only the opener pays, and only the opener chooses.
@@ -1795,8 +1819,7 @@ impl World {
             InteractableKind::TitanShrine
             | InteractableKind::GoldenShrine
             | InteractableKind::CursedAltar
-            | InteractableKind::Cache
-            | InteractableKind::Merchant => {
+            | InteractableKind::Cache => {
                 for &p in &who {
                     if let Some(h) = index(self, p) {
                         self.offer(h, Source::Interactable(kind));
@@ -1807,7 +1830,6 @@ impl World {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2384,7 +2406,6 @@ mod tests {
             Card {
                 kind: CardKind::Tome(Stat::Health),
                 rarity: Rarity::Common,
-                price: 0,
             },
         );
         let hero = w.hero(0).unwrap();
@@ -2398,7 +2419,6 @@ mod tests {
             Card {
                 kind: CardKind::Tome(Stat::Speed),
                 rarity: Rarity::Legendary,
-                price: 0,
             },
         );
         let class_speed = w.content().classes[0].speed;
@@ -2463,7 +2483,7 @@ mod tests {
         assert!(w.paused(), "a shrine's choice waits like a level-up");
         assert!(matches!(
             w.interactable(id).unwrap().state,
-            InteractState::Recharging(_)
+            InteractState::Spent(_)
         ));
         assert!(w.drain_events().iter().any(|e| matches!(
             e,
@@ -2472,7 +2492,7 @@ mod tests {
     }
 
     #[test]
-    fn a_circle_drains_when_left_and_a_titan_shrine_fills_again() {
+    fn a_circle_drains_when_left_and_a_used_one_goes() {
         let mut w = world();
         let id = only(&mut w, InteractableKind::TitanShrine);
         steps(&mut w, TICK_HZ as usize);
@@ -2480,9 +2500,9 @@ mod tests {
         w.set_input(0, PlayerInput::default());
         steps(&mut w, TICK_HZ as usize * 3);
         assert_eq!(w.interactable(id).unwrap().charge, 0.0, "drained away");
-        w.interactables[0].state = InteractState::Recharging(0.5);
+        w.interactables[0].state = InteractState::Spent(0.5);
         steps(&mut w, TICK_HZ as usize);
-        assert!(w.interactable(id).unwrap().ready());
+        assert!(w.interactable(id).is_none(), "a used shrine leaves the world");
     }
 
     #[test]
@@ -2509,7 +2529,7 @@ mod tests {
             .cards
             .iter()
             .all(|c| c.rarity == Rarity::Legendary && matches!(c.kind, CardKind::Tome(_))));
-        assert_eq!(w.interactable(id).unwrap().state, InteractState::Spent);
+        assert!(matches!(w.interactable(id).unwrap().state, InteractState::Spent(_)));
     }
 
     #[test]
@@ -2552,7 +2572,6 @@ mod tests {
                 bane: Bane::Weaker(Stat::Health),
             }),
             rarity: Rarity::Rare,
-            price: 0,
         };
         let before = w.hero(0).unwrap().max_hp;
         w.take_card(0, personal);
@@ -2567,30 +2586,10 @@ mod tests {
                 bane: Bane::EnemySpeed,
             }),
             rarity: Rarity::Rare,
-            price: 0,
         };
         w.take_card(0, shared);
         assert_eq!(w.hero(0).unwrap().stats.get(Stat::Projectiles), 1.0);
         assert!(w.difficulty.enemy_speed > 0.0);
-    }
-
-    #[test]
-    fn greed_pays_now_and_hardens_the_horde_for_good() {
-        let mut w = world();
-        let plain = {
-            let mut p = world();
-            p.interactables.clear();
-            p.spawn_enemy(0, p.center(), p.center(), false);
-            p.enemies.last().unwrap().max_hp
-        };
-        let id = only(&mut w, InteractableKind::GreedShrine);
-        fill(&mut w, InteractableKind::GreedShrine);
-        assert!(w.hero(0).unwrap().gold >= GREED_GOLD as u32);
-        assert!(w.difficulty.enemy_health > 0.0 && w.difficulty.horde > 0.0);
-        assert_eq!(w.interactable(id).unwrap().state, InteractState::Spent);
-        w.spawn_enemy(0, w.center(), w.center(), false);
-        let hp = w.enemies.last().unwrap().max_hp;
-        assert!(hp > plain * (1.0 + GREED_DIFFICULTY * 0.9), "{hp} vs {plain}");
     }
 
     #[test]
@@ -2610,9 +2609,9 @@ mod tests {
         assert!(opener.offers[0]
             .cards
             .iter()
-            .all(|c| matches!(c.kind, CardKind::Item(i) if i.rarity() == c.rarity) && c.price == 0));
+            .all(|c| matches!(c.kind, CardKind::Item(i) if i.rarity() == c.rarity)));
         assert!(friend.offers.is_empty(), "a friend's chest is not ours");
-        assert_eq!(w.interactable(id).unwrap().state, InteractState::Spent);
+        assert!(matches!(w.interactable(id).unwrap().state, InteractState::Spent(_)));
     }
 
     #[test]
@@ -2632,7 +2631,7 @@ mod tests {
             }
         }
         steps(&mut w, 2);
-        assert_eq!(w.interactable(id).unwrap().state, InteractState::Spent);
+        assert!(matches!(w.interactable(id).unwrap().state, InteractState::Spent(_)));
         let cache = w
             .interactables
             .iter()
@@ -2645,41 +2644,7 @@ mod tests {
         w.heroes[0].pos = cache_pos;
         fill(&mut w, InteractableKind::Cache);
         assert_eq!(w.hero(0).unwrap().offers.len(), 1);
-        assert_eq!(w.interactable(cache_id).unwrap().state, InteractState::Spent);
-    }
-
-    #[test]
-    fn a_moonwell_draws_in_every_gem() {
-        let mut w = world();
-        only(&mut w, InteractableKind::Moonwell);
-        for k in 0..5u32 {
-            let far = w.center() + V2::new(60.0 + k as f32, 40.0);
-            w.gems.push(Gem {
-                id: 1000 + k,
-                pos: far,
-                xp: 1,
-                gold: 2,
-            });
-        }
-        fill(&mut w, InteractableKind::Moonwell);
-        assert!(w.gems.is_empty());
-        assert!(w.hero(0).unwrap().gold >= 10);
-    }
-
-    #[test]
-    fn a_mirror_sees_the_hosts_shrines_and_difficulty() {
-        let mut host = world();
-        only(&mut host, InteractableKind::GreedShrine);
-        let mut mirror = World::new(Arc::new(sample()), "elwynn", 99).unwrap();
-        for _ in 0..TICK_HZ * 3 {
-            host.step();
-            let events = host.drain_events();
-            mirror.apply_snapshot(host.snapshot(), events);
-        }
-        assert_eq!(mirror.interactables, host.interactables);
-        assert_eq!(mirror.difficulty, host.difficulty);
-        assert!(mirror.difficulty.horde > 0.0);
-        assert_eq!(mirror.hero(0).unwrap().gold, host.hero(0).unwrap().gold);
+        assert!(matches!(w.interactable(cache_id).unwrap().state, InteractState::Spent(_)));
     }
 
     #[test]
@@ -2701,7 +2666,6 @@ mod tests {
                 Card {
                     kind: CardKind::Item(item),
                     rarity: item.rarity(),
-                    price: 0,
                 },
             );
         }
@@ -2780,30 +2744,6 @@ mod tests {
     }
 
     #[test]
-    fn the_merchant_sells_at_a_price_and_waits_for_gold() {
-        let mut w = world();
-        only(&mut w, InteractableKind::Merchant);
-        fill(&mut w, InteractableKind::Merchant);
-        let card = w.hero(0).unwrap().offers[0].cards[0];
-        assert!(matches!(card.kind, CardKind::Item(_)));
-        assert_eq!(card.price, merchant_price(card.rarity));
-        let pick = PlayerInput {
-            pick: Some(0),
-            ..Default::default()
-        };
-        w.set_input(0, pick);
-        w.step();
-        assert_eq!(w.hero(0).unwrap().offers.len(), 1, "no gold, no sale");
-        w.heroes[0].gold = card.price + 3;
-        w.set_input(0, pick);
-        w.step();
-        let hero = w.hero(0).unwrap();
-        assert!(hero.offers.is_empty());
-        assert_eq!(hero.gold, 3);
-        assert_eq!(hero.items.len(), 1);
-    }
-
-    #[test]
     fn luck_finds_rarer_treasure() {
         let mut w = world();
         let options: Vec<CardKind> = Item::ALL.map(CardKind::Item).to_vec();
@@ -2830,7 +2770,7 @@ mod tests {
         let (id, def) = (boss.id, boss.def);
         assert_eq!(w.content().enemies[def].name, "Hogger");
         assert_eq!(w.next_boss, BOSS_EVERY * 2.0);
-        assert!(w.drain_events().contains(&Event::BossCame { def, count: 1 }));
+        assert!(w.drain_events().contains(&Event::BossCame { def }));
         w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 0.0;
         w.step();
         assert!(w
@@ -2840,22 +2780,211 @@ mod tests {
         assert!(w.drain_events().contains(&Event::BossDied { id }));
     }
 
+    /// Hero 0 too tough to fall, for tests that run a while: through its stats, so a card's
+    /// refresh keeps it.
+    fn sturdy(w: &mut World) {
+        w.heroes[0].stats.add(Stat::Health, 1e6);
+        w.refresh(0);
+        w.heroes[0].hp = w.heroes[0].max_hp;
+    }
+
+    /// The shrines standing, not counting pots and caches.
+    fn shrines(w: &World) -> Vec<&Interactable> {
+        w.interactables
+            .iter()
+            .filter(|i| i.live() && !matches!(i.kind, InteractableKind::Pot | InteractableKind::Cache))
+            .collect()
+    }
+
     #[test]
-    fn each_blood_shrine_brings_one_more_boss() {
+    fn a_used_shrine_makes_room_for_a_new_one_out_of_sight() {
         let mut w = world();
-        w.add_hero(1, "mage").unwrap();
-        only(&mut w, InteractableKind::BloodShrine);
-        fill(&mut w, InteractableKind::BloodShrine);
-        w.place(InteractableKind::BloodShrine, w.hero(0).unwrap().pos);
-        fill(&mut w, InteractableKind::BloodShrine);
-        assert_eq!(w.boss_curses, 2);
-        w.elapsed = w.next_boss;
+        sturdy(&mut w);
+        let cap = w.zone().shrines_at_once as usize;
+        assert_eq!(shrines(&w).len(), cap, "a full arena to start");
+        let first = shrines(&w)[0].id;
+        w.interactables.retain(|i| i.id != first);
+        play(&mut w, (arena::SHRINE_EVERY * TICK_HZ as f32) as usize + 2);
+        assert_eq!(shrines(&w).len(), cap, "a new one came");
+        let hero = w.hero(0).unwrap().pos;
+        let new = shrines(&w).into_iter().max_by_key(|i| i.id).unwrap();
+        assert!(new.pos.distance(hero) >= 40.0, "it came in sight: {:?}", new.pos);
+        play(&mut w, (arena::SHRINE_EVERY * TICK_HZ as f32) as usize * 3);
+        assert_eq!(shrines(&w).len(), cap, "never more than the zone allows");
+    }
+
+    #[test]
+    fn pots_stand_near_the_heroes_and_break_at_a_touch() {
+        let mut w = world();
+        sturdy(&mut w);
+        play(&mut w, TICK_HZ as usize * 20);
+        let pots: Vec<V2> = w
+            .interactables
+            .iter()
+            .filter(|i| i.kind == InteractableKind::Pot)
+            .map(|i| i.pos)
+            .collect();
+        assert_eq!(pots.len() as u32, w.zone().pots);
+        let hero = w.hero(0).unwrap().pos;
+        assert!(pots.iter().all(|p| p.distance(hero) < 40.0));
+        let (gems, pickups) = (w.gems.len(), w.pickups.len());
+        w.heroes[0].pos = pots[0];
         w.step();
-        let bosses: Vec<&Enemy> = w.enemies.iter().filter(|e| e.boss).collect();
-        assert_eq!(bosses.len(), 3);
-        let solo = w.content().enemies[bosses[0].def].hp;
-        assert!(bosses[0].max_hp > solo * 1.5, "two heroes face a tougher boss");
-        assert_eq!(w.boss_curses, 0, "the curses are spent");
+        assert!(w.drain_events().iter().any(|e| matches!(
+            e,
+            Event::Interacted { kind: InteractableKind::Pot, .. }
+        )));
+        assert!(w.gems.len() > gems || w.pickups.len() > pickups, "an empty pot");
+        play(&mut w, 2);
+        assert!(!w.interactables.iter().any(|i| i.pos == pots[0]), "the pot is gone");
+    }
+
+    #[test]
+    fn a_carried_banner_reaching_its_spot_in_time_leaves_a_cache() {
+        let mut w = world();
+        let id = only(&mut w, InteractableKind::WarBanner);
+        let start = w.interactable(id).unwrap().pos;
+        fill(&mut w, InteractableKind::WarBanner);
+        let InteractState::Escort { carrier, to, left } = w.interactable(id).unwrap().state else {
+            panic!("no carry under way");
+        };
+        assert_eq!(carrier, 0);
+        let far = to.distance(start);
+        assert!(far >= 30.0, "a carry of only {far} yards");
+        assert!(left > far / w.hero(0).unwrap().speed);
+        w.heroes[0].pos = to;
+        w.step();
+        assert!(w.drain_events().contains(&Event::EscortDone { id, won: true }));
+        assert!(w
+            .interactables
+            .iter()
+            .any(|i| i.kind == InteractableKind::Cache && i.pos == to));
+    }
+
+    #[test]
+    fn a_banner_carried_too_slowly_is_lost() {
+        let mut w = world();
+        let id = only(&mut w, InteractableKind::WarBanner);
+        fill(&mut w, InteractableKind::WarBanner);
+        let InteractState::Escort { left, .. } = w.interactable(id).unwrap().state else {
+            panic!("no carry under way");
+        };
+        w.heroes[0].max_hp = 1e9;
+        w.heroes[0].hp = 1e9;
+        play(&mut w, (left * TICK_HZ as f32) as usize + 2);
+        assert!(w.drain_events().contains(&Event::EscortDone { id, won: false }));
+        assert!(!w.interactables.iter().any(|i| i.kind == InteractableKind::Cache));
+    }
+
+    /// Lay `kind` at hero 0's feet and step once, so it is taken.
+    fn grab(w: &mut World, kind: PickupKind) {
+        let at = w.hero(0).unwrap().pos;
+        w.drop_pickup(at, kind);
+        w.step();
+    }
+
+    #[test]
+    fn a_health_shard_heals_a_quarter() {
+        let mut w = world();
+        w.heroes[0].hp = 10.0;
+        grab(&mut w, PickupKind::Health);
+        let hero = w.hero(0).unwrap();
+        assert!(hero.hp >= 10.0 + hero.max_hp * 0.25 - 1e-3);
+        assert!(w.pickups.is_empty());
+    }
+
+    #[test]
+    fn a_power_up_works_for_the_whole_party_then_runs_out() {
+        let mut w = world();
+        sturdy(&mut w);
+        w.add_hero(1, "mage").unwrap();
+        let speed = w.hero(1).unwrap().speed;
+        grab(&mut w, PickupKind::PowerUp(PowerUp::Swiftness));
+        assert!((w.hero(1).unwrap().speed - speed * (1.0 + SWIFTNESS)).abs() < 1e-3);
+        let secs = PowerUp::Swiftness.duration().unwrap();
+        play(&mut w, (secs * TICK_HZ as f32) as usize + 2);
+        assert!(w.buffs.is_empty());
+        assert!((w.hero(1).unwrap().speed - speed).abs() < 1e-3, "back to normal");
+    }
+
+    #[test]
+    fn berserk_bloodlust_shield_and_fortune_do_their_work() {
+        let mut w = world();
+        let def = w.content().abilities[0].clone();
+        let plain = w.sharpen(ability_stats(&def, 1, 0.0));
+        grab(&mut w, PickupKind::PowerUp(PowerUp::Berserk));
+        grab(&mut w, PickupKind::PowerUp(PowerUp::Bloodlust));
+        let sharp = w.sharpen(ability_stats(&def, 1, 0.0));
+        assert!((sharp.damage - plain.damage * 2.0).abs() < 1e-3);
+        assert!((sharp.cooldown - plain.cooldown * BLOODLUST).abs() < 1e-3);
+        grab(&mut w, PickupKind::PowerUp(PowerUp::DivineShield));
+        assert_eq!(w.hurt_hero(0, 50.0), 0.0);
+        grab(&mut w, PickupKind::PowerUp(PowerUp::Fortune));
+        let gold = w.hero(0).unwrap().gold;
+        w.give_gold(0, 10.0);
+        assert_eq!(w.hero(0).unwrap().gold, gold + 20);
+    }
+
+    #[test]
+    fn a_detonation_slays_the_horde_near_and_wounds_a_boss() {
+        let mut w = world();
+        w.interactables.clear();
+        let at = w.hero(0).unwrap().pos;
+        dummy(&mut w, 700, at + V2::new(10.0, 0.0), 500.0);
+        dummy(&mut w, 701, at + V2::new(10.0, 2.0), 10_000.0);
+        w.enemies[1].boss = true;
+        dummy(&mut w, 702, at + V2::new(60.0, 0.0), 500.0);
+        w.power_up(PowerUp::Detonation, 0);
+        assert!(w.enemy(700).unwrap().hp <= 0.0);
+        let boss = w.enemy(701).unwrap();
+        assert!((boss.hp - 10_000.0 * 0.85).abs() < 1.0);
+        assert_eq!(w.enemy(702).unwrap().hp, 500.0, "out of reach");
+    }
+
+    #[test]
+    fn a_magnet_draws_in_every_gem() {
+        let mut w = world();
+        for k in 0..5u32 {
+            let far = w.center() + V2::new(60.0 + k as f32, 40.0);
+            w.drop_gem(far, 1, 2);
+        }
+        grab(&mut w, PickupKind::PowerUp(PowerUp::Magnet));
+        assert!(w.gems.is_empty());
+        assert!(w.hero(0).unwrap().gold >= 10);
+    }
+
+    #[test]
+    fn what_nobody_takes_fades() {
+        let mut w = world();
+        sturdy(&mut w);
+        let far = w.center() + V2::new(70.0, 0.0);
+        w.drop_pickup(far, PickupKind::Health);
+        // Level-ups hold the clock a step each: play by the clock, not by steps.
+        for _ in 0..TICK_HZ * 60 {
+            if w.elapsed > arena::PICKUP_LIFE + 0.1 {
+                break;
+            }
+            play(&mut w, 1);
+        }
+        assert!(w.pickups.iter().all(|p| p.pos != far));
+    }
+
+    #[test]
+    fn a_mirror_sees_the_hosts_shrines_pickups_and_power_ups() {
+        let mut host = world();
+        let mut mirror = World::new(Arc::new(sample()), "elwynn", 99).unwrap();
+        grab(&mut host, PickupKind::PowerUp(PowerUp::Fortune));
+        let far = host.center() + V2::new(70.0, 0.0);
+        host.drop_pickup(far, PickupKind::Health);
+        for _ in 0..TICK_HZ * 3 {
+            host.step();
+            let events = host.drain_events();
+            mirror.apply_snapshot(host.snapshot(), events);
+        }
+        assert_eq!(mirror.interactables, host.interactables);
+        assert_eq!(mirror.pickups, host.pickups);
+        assert_eq!(mirror.buffs, host.buffs);
+        assert!(!mirror.buffs.is_empty());
     }
 
     #[test]

@@ -14,6 +14,7 @@ mod content;
 mod interact;
 mod items;
 mod math;
+mod powerups;
 mod rng;
 mod stats;
 mod world;
@@ -23,9 +24,13 @@ pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, WeaponDef,
     ZoneDef,
 };
-pub use interact::{chest_price, InteractState, Interactable, InteractableKind, Placement};
-pub use items::{merchant_price, ward_cooldown, Item};
+pub use interact::{
+    chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement,
+    ESCORT_GOAL,
+};
+pub use items::{ward_cooldown, Item};
 pub use math::V2;
+pub use powerups::{Pickup, PickupKind, PowerUp};
 pub use rng::Rng;
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
 pub use world::{

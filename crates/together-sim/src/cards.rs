@@ -135,8 +135,6 @@ pub enum CardKind {
 pub struct Card {
     pub kind: CardKind,
     pub rarity: Rarity,
-    /// Gold it costs to take: 0 but at the goblin merchant.
-    pub price: u32,
 }
 
 impl Card {

@@ -448,13 +448,20 @@ fn start_run(
     begin(&mut commands, sim);
 }
 
-/// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, and
-/// the boss comes 8 seconds in, so a short test run sees them all.
+/// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, one
+/// of each power-up lies on a ring inside it, and the boss comes 8 seconds in, so a short test
+/// run sees them all.
 fn showcase_for_tests(world: &mut World) {
     if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
         return;
     }
     world.next_boss = 8.0;
+    let ups = together_sim::PowerUp::ALL;
+    for (k, p) in ups.into_iter().enumerate() {
+        let angle = (k as f32 + 0.5) / ups.len() as f32 * std::f32::consts::TAU;
+        let at = world.center() + V2::from_angle(angle, 5.0);
+        world.drop_pickup(at, together_sim::PickupKind::PowerUp(p));
+    }
     let center = world.center();
     let mut kinds = Vec::new();
     let firsts: Vec<u32> = world
@@ -514,25 +521,19 @@ fn read_keys(
     mut input: ResMut<LocalInput>,
     mut up_since: Local<Option<f32>>,
 ) {
-    let Some(hero) = sim
+    let choosing = sim
         .world
         .hero(sim.me)
-        .filter(|h| h.alive && !h.offers.is_empty())
-    else {
+        .is_some_and(|h| h.alive && !h.offers.is_empty());
+    if !choosing {
         *up_since = None;
         return;
-    };
+    }
     if autoplay() {
         // Long enough for a test shot to see the cards.
         let since = *up_since.get_or_insert(real.elapsed_secs());
         if real.elapsed_secs() - since > 3.0 {
-            // The first card, or a pass on what it cannot pay for.
-            let first = hero.offers[0].cards.first();
-            if first.is_some_and(|c| c.price <= hero.gold) {
-                input.pick = Some(0);
-            } else {
-                input.skip = true;
-            }
+            input.pick = Some(0);
             *up_since = None;
         }
         return;
@@ -555,23 +556,35 @@ fn bevy_to_ground(p: Vec3) -> V2 {
     V2::new(-p.z, -p.x)
 }
 
-/// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: toward the nearest
-/// interactable it could use (a chest only once it can pay), until it stands well inside the
-/// circle. `None` when there is nothing to walk to, or cards are up.
+/// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: with a banner, to its
+/// destination; else toward the nearest interactable it could use (a chest only once it can
+/// pay), until it stands well inside the circle. `None` when there is nothing to walk to, or
+/// cards are up.
 fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
+    use together_sim::{InteractState, InteractableKind};
     let hero = world.hero(me).filter(|h| h.alive && h.offers.is_empty())?;
-    let target = world
-        .interactables
-        .iter()
-        .filter(|i| i.ready())
-        .filter(|i| {
-            i.kind != together_sim::InteractableKind::Chest
-                || hero.gold >= together_sim::chest_price(hero.chests)
-        })
-        .min_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))?;
-    let to = target.pos - from;
+    let carrying = world.interactables.iter().find_map(|i| match i.state {
+        InteractState::Escort { carrier, to, .. } if carrier == me => Some(to),
+        _ => None,
+    });
+    let (goal, near) = match carrying {
+        Some(to) => (to, 1.0),
+        None => {
+            let target = world
+                .interactables
+                .iter()
+                .filter(|i| i.ready())
+                .filter(|i| {
+                    i.kind != InteractableKind::Chest
+                        || hero.gold >= together_sim::chest_price(hero.chests)
+                })
+                .min_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))?;
+            (target.pos, target.kind.radius() * 0.4)
+        }
+    };
+    let to = goal - from;
     let dist = to.length();
-    if dist < target.kind.radius() * 0.4 {
+    if dist < near {
         return None;
     }
     Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist))
