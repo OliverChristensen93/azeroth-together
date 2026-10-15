@@ -231,7 +231,7 @@ impl World {
                 let blast: Vec<(u32, f32)> = self
                     .enemies
                     .iter()
-                    .filter(|e| e.hp > 0.0 && e.pos.distance(at) <= DETONATION_RADIUS)
+                    .filter(|e| e.engaged && e.hp > 0.0 && e.pos.distance(at) <= DETONATION_RADIUS)
                     .map(|e| (e.id, if e.boss { e.max_hp * DETONATION_BOSS } else { e.hp }))
                     .collect();
                 let Some(ability) = self.content.ability("detonation") else {

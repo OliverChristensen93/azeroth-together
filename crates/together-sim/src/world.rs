@@ -13,6 +13,7 @@
 
 mod arena;
 mod extraction;
+mod wildlife;
 
 use std::collections::HashMap;
 
@@ -23,6 +24,7 @@ use std::sync::Arc;
 use crate::cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
 use crate::content::{AbilityKind, Content};
 use crate::extraction::{Bounds, Extraction, Mode};
+use wildlife::{Wild, WildLink};
 use crate::interact::{
     chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
     ESCORT_DISTANCE, ESCORT_GOAL,
@@ -260,6 +262,11 @@ pub enum Event {
     AmbushWarned {
         exit: u8,
     },
+    /// Extraction: creature `id` of the map's wildlife noticed a hero (or was hurt) and gives
+    /// chase.
+    Engaged {
+        id: u32,
+    },
     /// Extraction: `player` left on the flight from exit `exit`.
     HeroExtracted {
         player: PlayerId,
@@ -395,10 +402,23 @@ pub struct Enemy {
     pub elite: bool,
     /// The zone's boss, who leaves a cache when it dies.
     pub boss: bool,
+    /// Chasing the heroes: the horde always is; a creature of the map's wildlife once it notices
+    /// a hero or is hurt. Heroes' spells only seek engaged enemies.
+    pub engaged: bool,
+    /// The map's creature this is, while it is one (extraction): the host's alone.
+    #[serde(skip)]
+    pub(crate) wild: Option<WildLink>,
     attack_cd: f32,
     /// The hero who hit it last: the one its death counts for.
     #[serde(skip)]
     last_hit: Option<PlayerId>,
+}
+
+impl Enemy {
+    /// One of the map's creatures, not the horde.
+    pub fn is_wild(&self) -> bool {
+        self.wild.is_some()
+    }
 }
 
 /// Experience on the ground, waiting for a hero to come close; some carry gold too.
@@ -533,6 +553,8 @@ pub struct World {
     pub next_boss: f32,
     /// The rules this run plays by, chosen by its zone.
     pub mode: Mode,
+    /// The map's creatures kept for this run (extraction), asleep or awake: the host's alone.
+    wild: Vec<Wild>,
 }
 
 impl World {
@@ -572,6 +594,7 @@ impl World {
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
             mode,
+            wild: Vec::new(),
         };
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
@@ -587,6 +610,7 @@ impl World {
             };
             world.place(kind, pos);
         }
+        world.keep_wildlife();
         Ok(world)
     }
 
@@ -801,6 +825,8 @@ impl World {
                     radius: d.radius * d.scale * if s.elite { ELITE_SCALE } else { 1.0 },
                     elite: s.elite,
                     boss: s.boss,
+                    engaged: true,
+                    wild: None,
                     attack_cd: 0.0,
                     last_hit: None,
                 })
@@ -867,6 +893,7 @@ impl World {
         self.use_interactables();
         self.tend_arena();
         self.tend_extraction();
+        self.tend_wildlife();
         self.level_up();
     }
 
@@ -1175,6 +1202,8 @@ impl World {
             radius,
             elite,
             boss: false,
+            engaged: true,
+            wild: None,
             attack_cd: 0.5,
             last_hit: None,
         });
@@ -1212,6 +1241,12 @@ impl World {
         }
         let mut swings = Vec::new();
         for (i, e) in self.enemies.iter_mut().enumerate() {
+            // A creature that has not noticed anyone stands (Task 6 walks it).
+            if !e.engaged {
+                e.moving = false;
+                e.pos += shove[i] * (DT * 8.0).min(0.5);
+                continue;
+            }
             let (player, target) = living
                 .iter()
                 .copied()
@@ -1280,6 +1315,7 @@ impl World {
         let mut near: Vec<(u32, f32)> = self
             .enemies
             .iter()
+            .filter(|e| e.engaged)
             .map(|e| (e.id, from.distance(e.pos)))
             .filter(|&(_, d)| d <= range)
             .collect();
@@ -1376,7 +1412,7 @@ impl World {
                 let hit: Vec<u32> = self
                     .enemies
                     .iter()
-                    .filter(|e| from.distance(e.pos) <= stats.radius)
+                    .filter(|e| e.engaged && from.distance(e.pos) <= stats.radius)
                     .map(|e| e.id)
                     .collect();
                 if hit.is_empty() {
@@ -1437,6 +1473,13 @@ impl World {
         let dealt = amount.min(e.hp);
         e.hp -= amount;
         e.last_hit = Some(by);
+        // A creature of the forest that is hurt gives chase.
+        let woke = !e.engaged;
+        e.engaged = true;
+        if let Some(link) = &mut e.wild {
+            link.quiet = 0.0;
+            link.returning = false;
+        }
         if let Some(hero) = self.heroes.iter_mut().find(|h| h.player == by) {
             hero.damage_done += f64::from(dealt);
             match hero.damage_by.iter_mut().find(|(a, _)| *a == ability) {
@@ -1449,6 +1492,9 @@ impl World {
             amount,
             crit,
         });
+        if woke {
+            self.events.push(Event::Engaged { id });
+        }
     }
 
     /// An item of `by`'s acting: a cast of its proc ability at `targets`, for the client to show;
@@ -1514,7 +1560,7 @@ impl World {
             let burnt: Vec<u32> = self
                 .enemies
                 .iter()
-                .filter(|e| e.hp > 0.0 && e.pos.distance(pos) <= EMBER_RADIUS)
+                .filter(|e| e.engaged && e.hp > 0.0 && e.pos.distance(pos) <= EMBER_RADIUS)
                 .map(|e| e.id)
                 .collect();
             let targets = burnt.iter().map(|&id| Target::Enemy(id)).collect();
@@ -1534,13 +1580,22 @@ impl World {
         let mut dead = Vec::new();
         self.enemies.retain(|e| {
             if e.hp <= 0.0 {
-                dead.push((e.id, e.pos, e.def, e.elite || e.boss, e.boss, e.max_hp, e.last_hit));
+                dead.push((
+                    e.id,
+                    e.pos,
+                    e.def,
+                    e.elite || e.boss,
+                    e.boss,
+                    e.max_hp,
+                    e.last_hit,
+                    e.wild.as_ref().map(|l| l.slot),
+                ));
                 false
             } else {
                 true
             }
         });
-        for (id, pos, def, elite, boss, max_hp, killer) in dead {
+        for (id, pos, def, elite, boss, max_hp, killer, slot) in dead {
             self.kills += 1;
             self.events.push(Event::EnemyDied { id });
             if boss {
@@ -1555,7 +1610,7 @@ impl World {
             } else {
                 0
             };
-            let paid = self.reward_of(killer);
+            let paid = self.reward_of(killer) * self.wild_died(slot);
             let scale = |n: u32| (n as f32 * paid).round() as u32;
             self.drop_gem(pos, scale(worth * reward), scale(gold));
             self.heat_from_kill(killer);
@@ -1978,6 +2033,8 @@ mod tests {
             radius: 0.6,
             elite: false,
             boss: false,
+            engaged: true,
+            wild: None,
             attack_cd: 100.0,
             last_hit: None,
         });

@@ -393,6 +393,7 @@ pub(super) fn apply_events(
                     fx.text(e, text, COLOR_HEAT);
                 }
             }
+            Event::Engaged { .. } => {}
             Event::HeroExtracted { player, .. } => {
                 if let Some(&e) = views.heroes.get(&player) {
                     fx.cast(e, TELEPORT, &[e], None);

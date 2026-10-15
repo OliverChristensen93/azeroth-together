@@ -101,7 +101,7 @@ impl World {
     }
 
     /// The party's heat: shared, or the hottest hero's.
-    fn party_heat(&self) -> f32 {
+    pub(super) fn party_heat(&self) -> f32 {
         match &self.mode {
             Mode::Extraction(x) => x.heat_by.iter().map(|&(_, h)| h).fold(x.heat, f32::max),
             Mode::Arena => 0.0,
@@ -128,7 +128,7 @@ impl World {
 
     /// `amount` heat: to the party when shared; else to `player`, or with `None` to every
     /// living hero.
-    fn add_heat(&mut self, player: Option<PlayerId>, amount: f32) {
+    pub(super) fn add_heat(&mut self, player: Option<PlayerId>, amount: f32) {
         let Some(settings) = self.extraction_settings() else {
             return;
         };
@@ -308,7 +308,11 @@ impl World {
         let horde = 1.0 + self.difficulty.horde;
         let target = (target_alive(self.elapsed, outside.len()) as f32 * busiest * horde) as usize;
         let target = target.min(def.max_enemies_per_hero as usize * outside.len());
-        let alive = self.enemies.iter().filter(|e| !e.elite && !e.boss).count();
+        let alive = self
+            .enemies
+            .iter()
+            .filter(|e| !e.elite && !e.boss && !e.is_wild())
+            .count();
         if alive >= target {
             return;
         }
@@ -342,7 +346,7 @@ impl World {
     }
 
     /// Enemy `id`'s health and damage times `by`, and its speed times `speed`.
-    fn toughen(&mut self, id: u32, by: f32, speed: f32) {
+    pub(super) fn toughen(&mut self, id: u32, by: f32, speed: f32) {
         if let Some(e) = self.enemies.iter_mut().find(|e| e.id == id) {
             e.hp *= by;
             e.max_hp *= by;
@@ -426,8 +430,9 @@ impl World {
             return;
         }
         let reach = def.recycle;
-        self.enemies
-            .retain(|e| e.elite || e.boss || living.iter().any(|p| p.distance(e.pos) <= reach));
+        self.enemies.retain(|e| {
+            e.elite || e.boss || e.is_wild() || living.iter().any(|p| p.distance(e.pos) <= reach)
+        });
     }
 
     /// Flights keep their exits' timetables: each lands `window` seconds before it departs and
@@ -555,12 +560,12 @@ fn hero_heat(x: &mut Extraction, player: PlayerId) -> &mut (PlayerId, f32) {
         .expect("just made")
 }
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::extraction::tests::test_content;
 
     /// An extraction run on the test map with `heroes` mages, settings as `settings` says.
-    pub(super) fn run(settings: &str, heroes: u8) -> World {
+    pub(crate) fn run(settings: &str, heroes: u8) -> World {
         let mut w = World::new(Arc::new(test_content(settings)), "goldshire", 7).unwrap();
         for p in 0..heroes {
             w.add_hero(p, "mage").unwrap();
@@ -569,11 +574,11 @@ mod tests {
     }
 
     /// No horde: only what a test puts there.
-    pub(super) fn hush(w: &mut World) {
+    pub(crate) fn hush(w: &mut World) {
         w.spawn_timer = f32::MAX;
     }
 
-    pub(super) fn at(w: &mut World, player: PlayerId, x: f32, y: f32) {
+    pub(crate) fn at(w: &mut World, player: PlayerId, x: f32, y: f32) {
         w.heroes
             .iter_mut()
             .find(|h| h.player == player)
@@ -581,20 +586,20 @@ mod tests {
             .pos = V2::new(x, y);
     }
 
-    pub(super) fn secs(w: &mut World, s: f32) {
+    pub(crate) fn secs(w: &mut World, s: f32) {
         for _ in 0..(s * TICK_HZ as f32).round() as usize {
             w.step();
         }
     }
 
-    pub(super) fn state(w: &World) -> &Extraction {
+    pub(crate) fn state(w: &World) -> &Extraction {
         match &w.mode {
             Mode::Extraction(x) => x,
             Mode::Arena => panic!("not an extraction run"),
         }
     }
 
-    pub(super) fn state_mut(w: &mut World) -> &mut Extraction {
+    pub(crate) fn state_mut(w: &mut World) -> &mut Extraction {
         match &mut w.mode {
             Mode::Extraction(x) => x,
             Mode::Arena => panic!("not an extraction run"),
