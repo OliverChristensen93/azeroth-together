@@ -11,6 +11,9 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   (shared XP, the run waits for every living hero's card pick) are already in.
 - `content/*.ron` — classes, abilities, enemies, zones. Read from disk at startup, so edits need no
   rebuild. `crates/together-sim/tests/shipped_content.rs` checks they parse and play.
+- Extraction mode: `content/extraction.ron` (maps: outline, safe ring, heat, exits) played in a
+  zone that points at it (`elwynn_extraction`). Rules in `together-sim/src/world/extraction.rs`,
+  data and state in `together-sim/src/extraction.rs`. Spec and plans under `docs/superpowers/`.
 - `crates/benilla-app/src/together/` — the client: steps the sim and draws it with the engine's
   unit, spell-visual and combat-text systems. It decides nothing about the game.
   - The real WoW 1.12 UI (FrameXML from the MPQ) and character controller are ON (no `CaptureMode`):
@@ -45,6 +48,9 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   never focused), `TOGETHER_AUTOPLAY=1` (walks and picks cards by itself), and
   `WOW_LIVE_SHOT=<png> WOW_LIVE_SHOT_AT=<s> WOW_LIVE_SHOT_COUNT=<n> WOW_LIVE_SHOT_EVERY=<s>` for screenshots,
   `TOGETHER_CAM_DIST=<yards>` for a close-up starting zoom, `TOGETHER_TRACE_JUMP=1` to log jump heights.
+- Extraction: `TOGETHER_ZONE=elwynn_extraction`; `TOGETHER_SHOWCASE=1` opens the exits at once;
+  `TOGETHER_TRACE_POS=1` logs the hero's position every 2 s, for reading off coordinates. From a
+  second worktree, point `WOW_DATA` at the main checkout's `WoW/Data`.
 - Co-op test on one PC: run one instance with `TOGETHER_HOST=1 TOGETHER_AUTOPLAY=1` and a second,
   a few seconds later, with `TOGETHER_JOIN=127.0.0.1 TOGETHER_AUTOPLAY=1` (`TOGETHER_NAME` names the hero).
   The host starts the run 20 s in once someone has joined. Co-op is host-authoritative: the host runs

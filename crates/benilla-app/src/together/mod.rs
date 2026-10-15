@@ -463,8 +463,8 @@ fn start_run(
 }
 
 /// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, one
-/// of each power-up lies on a ring inside it, and the boss comes 8 seconds in, so a short test
-/// run sees them all.
+/// of each power-up lies on a ring inside it, the boss comes 8 seconds in, and an extraction
+/// run's exits are open, so a short test run sees them all.
 fn showcase_for_tests(world: &mut World) {
     if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
         return;
@@ -491,6 +491,12 @@ fn showcase_for_tests(world: &mut World) {
     for (k, &id) in firsts.iter().enumerate() {
         let angle = k as f32 / firsts.len() as f32 * std::f32::consts::TAU;
         world.move_interactable(id, center + V2::from_angle(angle, 10.0));
+    }
+    // An extraction run's exits open at once, so a short test run reaches a flight.
+    if let together_sim::Mode::Extraction(x) = &mut world.mode {
+        for exit in &mut x.exits {
+            exit.open = true;
+        }
     }
 }
 
@@ -577,13 +583,22 @@ fn bevy_to_ground(p: Vec3) -> V2 {
     V2::new(-p.z, -p.x)
 }
 
-/// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: with a banner, to its
+/// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: in an extraction run,
+/// to an open exit or home when hot ([`extraction_goal`]); else, with a banner, to its
 /// destination; else toward the nearest interactable it could use (a chest only once it can
 /// pay), until it stands well inside the circle. `None` when there is nothing to walk to, or
 /// cards are up.
 fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
     use together_sim::{InteractState, InteractableKind};
     let hero = world.hero(me).filter(|h| h.alive && h.offers.is_empty())?;
+    if let Some(goal) = extraction_goal(world, me, from) {
+        let to = goal - from;
+        let dist = to.length();
+        if dist < 2.0 {
+            return None;
+        }
+        return Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist));
+    }
     let carrying = world.interactables.iter().find_map(|i| match i.state {
         InteractState::Escort { carrier, to, .. } if carrier == me => Some(to),
         _ => None,
@@ -609,6 +624,20 @@ fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
         return None;
     }
     Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist))
+}
+
+/// `TOGETHER_AUTOPLAY` in an extraction run: to the nearest open exit once one is open; home to
+/// the safe ring at three skulls; else `None`, to roam to shrines as in the arena.
+fn extraction_goal(world: &World, me: PlayerId, from: V2) -> Option<V2> {
+    let together_sim::Mode::Extraction(x) = &world.mode else {
+        return None;
+    };
+    let def = &world.content().extractions[x.def];
+    let exit = (0..def.exits.len())
+        .filter(|&i| x.exits[i].open)
+        .map(|i| def.exit_pos(i))
+        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)));
+    exit.or_else(|| (world.skulls_of(me) >= 3).then(|| def.safe_center()))
 }
 
 /// Where WoW's controller left the local hero, as the pose the next step takes. The run's edge

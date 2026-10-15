@@ -437,7 +437,6 @@ pub(super) fn sync(
     mut positions: Query<&mut SimPos>,
     mut dying: Query<(Entity, &Guid, &mut Dying)>,
     mut transforms: Query<&mut Transform, Without<SimPos>>,
-    mut visibility: Query<&mut Visibility>,
 ) {
     let world = &sim.world;
     let content = world.content().clone();
@@ -451,7 +450,8 @@ pub(super) fn sync(
     let fallback_y = world.zone().center[2];
 
     for hero in &world.heroes {
-        if views.heroes.contains_key(&hero.player) {
+        let gone = hero.extracted && hero.player != sim.me;
+        if gone || views.heroes.contains_key(&hero.player) {
             continue;
         }
         // The body and outfit tables load after boot.
@@ -489,9 +489,13 @@ pub(super) fn sync(
         }
         views.heroes.insert(hero.player, e);
     }
-    // A player who left: their hero goes with them.
+    // A player who left: their hero goes with them. So does another player's hero gone on a
+    // flight: out of the world for good. (The engine's cull owns a body's `Visibility`, so hiding
+    // it is not enough; our own hero's body stays, since the controller and camera hold it.)
     views.heroes.retain(|player, e| {
-        let keep = world.hero(*player).is_some();
+        let keep = world
+            .hero(*player)
+            .is_some_and(|h| !h.extracted || *player == sim.me);
         if !keep {
             index.0.retain(|_, v| v != e);
             commands.entity(*e).despawn();
@@ -587,23 +591,6 @@ pub(super) fn sync(
         fallback_y,
         &mut transforms,
     );
-    // A hero gone on a flight is out of the world: their body goes from sight.
-    for hero in &world.heroes {
-        let want = if hero.extracted {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        };
-        if let Some(mut v) = views
-            .heroes
-            .get(&hero.player)
-            .and_then(|&e| visibility.get_mut(e).ok())
-        {
-            if *v != want {
-                *v = want;
-            }
-        }
-    }
 
     if sim.stepped {
         for hero in &world.heroes {
