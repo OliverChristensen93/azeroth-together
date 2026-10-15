@@ -1,20 +1,97 @@
-// Arenas. `map` is the Map.dbc id (0 Eastern Kingdoms, 1 Kalimdor); `center` is in WoW
-// coordinates (x, y, z); `leash` is how far heroes may roam; `enemies` are weakest first.
-// Only zones whose terrain is in the game data can be played (Elwynn Forest, Westfall, Duskwood,
-// Gurubashi Arena and the Gates of Ahn'Qiraj with the current data).
+// Arenas, ported from benilla-app's survivors/data.rs. `map` is the Map.dbc id (0 Eastern Kingdoms,
+// 1 Kalimdor); `center` is in WoW coordinates (x, y, z); `leash` is how far heroes may roam;
+// `enemies` are weakest first. Only zones whose terrain is in the game data can be played.
 [
+    // bosses (later): Mother Fang (2541, 10, 4.6, 1.9), Narg the Taskmaster (774, 10, 4.2, 1.9),
+    //   Hogger (384, 11, 4.2, 1.9), Thuros Lightfingers (3341, 11, 4.2, 2.18),
+    //   Fedfennel (175, 12, 4.2, 1.9), Gruff Swiftbite (175, 12, 4.2, 1.9)
     (
         key: "elwynn",
         name: "Elwynn Forest",
+        continent: "Eastern Kingdoms",
+        description: "Rolling green woods around Goldshire, overrun by wolves, kobolds, murlocs and Defias cutthroats.",
         map: 0,
-        // Open, level ground among Elwynn Forest's own creatures.
         center: (-9548.5, 115.0, 60.0),
         leash: 150.0,
         enemies: [
             "young_wolf", "timber_wolf", "defias_thug", "mangy_wolf", "stonetusk_boar",
             "kobold_tunneler", "defias_cutpurse", "forest_spider", "murloc", "kobold_miner",
             "murloc_streamrunner", "rockhide_boar", "gray_forest_wolf", "defias_bandit",
-            "defias_rogue_wizard", "young_forest_bear",
+            "young_forest_bear", "defias_rogue_wizard",
+        ],
+    ),
+    // bosses (later): Brainwashed Noble (3267, 18, 4.2, 2.18),
+    //   Marisa du'Paige (2355, 18, 4.2, 2.09), Sergeant Brashclaw (383, 18, 4.2, 1.9),
+    //   Klaven Mortwake (5805, 23, 4.2, 2.18), Lupos (11412, 23, 5.4, 1.9),
+    //   Vultros (507, 26, 5.2, 1.52)
+    (
+        key: "westfall",
+        name: "Westfall",
+        continent: "Eastern Kingdoms",
+        description: "Abandoned farmland where gnolls, wild boars and the Defias Brotherhood prey on whatever is left.",
+        map: 0,
+        center: (-10252.2, 1483.5, 41.6),
+        leash: 150.0,
+        enemies: [
+            "young_fleshripper", "coyote", "defias_smuggler", "young_goretusk", "defias_trapper",
+            "fleshripper", "goretusk", "riverpaw_brute", "riverpaw_bandit", "great_goretusk",
+            "riverpaw_taskmaster", "defias_highwayman", "westfall_pygmy_venom_web_spider",
+            "riverpaw_mystic",
+        ],
+    ),
+    // bosses (later): Lupos (11412, 23, 5.4, 1.9), Naraxis (963, 27, 4.6, 1.9),
+    //   Nightbane Vile Fang (522, 30, 5.4, 1.9), Nightbane Tainted One (1098, 31, 5.4, 1.9),
+    //   Fenros (11179, 32, 5.4, 1.9), Nefaru (11181, 34, 5.4, 1.9)
+    (
+        key: "duskwood",
+        name: "Duskwood",
+        continent: "Eastern Kingdoms",
+        description: "A forest in endless night, crawling with giant spiders, the restless dead and the worgen of Nightbane.",
+        map: 0,
+        center: (-10051.8, -792.5, 36.5),
+        leash: 150.0,
+        enemies: [
+            "duskwood_pygmy_venom_web_spider", "venom_web_spider", "skeletal_warrior",
+            "green_recluse", "young_black_ravager", "black_widow_hatchling", "black_ravager",
+            "black_ravager_mastiff", "nightbane_worgen", "nightbane_shadow_weaver",
+            "nightbane_dark_runner", "nightbane_vile_fang", "fetid_corpse", "nightbane_tainted_one",
+        ],
+    ),
+    // bosses (later): King Bangalash (616, 43, 5.8, 3.0), Mokk the Savage (840, 44, 4.8, 2.4),
+    //   Bloodlord Mandokir (11288, 63, 5.0, 2.1), High Priest Thekal (15216, 63, 5.0, 2.3),
+    //   Jin'do the Hexxer (11311, 63, 4.6, 2.5), Hakkar (15295, 63, 4.4, 2.7)
+    (
+        key: "gurubashi_arena",
+        name: "Gurubashi Arena",
+        continent: "Stranglethorn Vale",
+        description: "The Gurubashi trolls' blood-soaked arena in Stranglethorn Vale; nowhere to run, and the jungle keeps sending more.",
+        map: 0,
+        center: (-13205.0, 272.0, 22.0),
+        leash: 30.0,
+        enemies: [
+            "shadowmaw_panther", "jungle_stalker", "zanzil_zombie", "gurubashi_axe_thrower",
+            "razzashi_serpent", "zulian_panther", "gurubashi_headhunter", "bloodseeker_bat",
+            "razzashi_raptor", "gurubashi_blood_drinker", "zulian_tiger", "hakkari_shadowcaster",
+            "gurubashi_champion", "gurubashi_bat_rider",
+        ],
+    ),
+    // bosses (later): Kurinnaxx (15742, 62, 5.0, 1.15), General Rajaxx (15376, 63, 4.8, 1.15),
+    //   Moam (15392, 63, 4.2, 1.6), Buru the Gorger (15654, 63, 4.4, 0.85),
+    //   Princess Huhuran (15739, 63, 5.0, 0.55), Ossirian the Unscarred (15432, 63, 4.6, 0.82)
+    (
+        key: "gates_of_ahnqiraj",
+        name: "Gates of Ahn'Qiraj",
+        continent: "Silithus",
+        description: "The scorched sands before the Scarab Wall, where the Qiraji swarm pours out of the hive.",
+        map: 1,
+        center: (-8180.0, 1536.0, 5.0),
+        leash: 80.0,
+        enemies: [
+            "sand_skitterer", "stonelash_scorpid", "twilight_avenger", "hiveashi_drone",
+            "stonelash_flayer", "hiveashi_defender", "dust_stormer", "twilight_stonecaller",
+            "hivezora_wasp", "hivezora_reaver", "hiveregal_ambusher", "vekniss_wasp",
+            "qiraji_gladiator", "vekniss_warrior", "obsidian_destroyer", "qiraji_champion",
+            "anubisath_sentinel",
         ],
     ),
 ]
