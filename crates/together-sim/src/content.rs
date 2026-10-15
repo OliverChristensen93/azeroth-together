@@ -88,6 +88,13 @@ pub struct EnemyDef {
     /// Body radius in yards, before `scale`.
     #[serde(default = "default_enemy_radius")]
     pub radius: f32,
+    /// Never notices a hero: fights back only when hurt (boars, Northshire's wolves). Only an
+    /// extraction map's wildlife minds it.
+    #[serde(default)]
+    pub neutral: bool,
+    /// Shouts when it engages, bringing its kind from further off (Defias, kobolds, gnolls).
+    #[serde(default)]
+    pub calls_help: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -484,6 +491,30 @@ impl Content {
         Ok(self)
     }
 
+    /// These contents with the creatures in `text` (`spawns.ron`), each set tied to its
+    /// extraction map and each creature to its enemy.
+    pub fn with_spawns(mut self, text: &str) -> Result<Self, ContentError> {
+        const FILE: &str = "spawns.ron";
+        #[derive(Deserialize)]
+        struct SpawnSet {
+            map: String,
+            spawns: Vec<ExtractionSpawn>,
+        }
+        type ExtractionSpawn = crate::extraction::SpawnDef;
+        let sets: Vec<SpawnSet> = parse(FILE, text)?;
+        let maps = index("extraction.ron", self.extractions.iter().map(|m| m.key.as_str()))?;
+        let enemies = index("enemies.ron", self.enemies.iter().map(|e| e.key.as_str()))?;
+        for set in sets {
+            let m = resolve(&maps, FILE, &set.map, &set.map)?;
+            let mut spawns = set.spawns;
+            for s in &mut spawns {
+                s.enemy_ix = resolve(&enemies, FILE, &set.map, &s.enemy)?;
+            }
+            self.extractions[m].spawns = spawns;
+        }
+        Ok(self)
+    }
+
     /// A copy of these contents with `t`'s multipliers applied.
     pub fn tuned(&self, t: &Tuning) -> Self {
         let mut c = self.clone();
@@ -543,6 +574,10 @@ pub(crate) mod tests {
          damage: 2.0, xp: 1),
         (key: "hogger", name: "Hogger", display: 384, level: 11, scale: 1.9, hp: 3000.0,
          speed: 4.2, damage: 40.0, xp: 150),
+        (key: "boar", name: "Stonetusk Boar", display: 503, level: 1, hp: 10.0, speed: 4.6,
+         damage: 2.0, xp: 1, neutral: true),
+        (key: "kobold", name: "Kobold Miner", display: 373, level: 1, hp: 10.0, speed: 4.2,
+         damage: 2.0, xp: 1, calls_help: true),
     ]"#;
     pub(crate) const ZONES: &str = r#"[
         (key: "elwynn", name: "Elwynn Forest", map: 0, center: (-9548.5, 115.0, 60.0),

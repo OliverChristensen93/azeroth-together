@@ -28,8 +28,8 @@ pub use content::{
     Tuning, WeaponDef, ZoneDef,
 };
 pub use extraction::{
-    AmbushDef, Bounds, ExitDef, ExitState, Extraction, ExtractionDef, ExtractionSettings, HeatDef, HunterDef,
-    Mode, SafeDef, SkullDef,
+    AmbushDef, Bounds, ExitDef, ExitState, Extraction, ExtractionDef, ExtractionSettings, HeatDef,
+    HotZoneDef, HunterDef, Mode, SafeDef, SkullDef, SpawnDef, WildlifeDef,
 };
 pub use interact::{
     chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement,

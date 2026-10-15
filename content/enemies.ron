@@ -5,38 +5,66 @@
 // Creatures whose model is missing from the game data are left out.
 [
     // --- Elwynn Forest, weakest first ---
-    (key: "young_wolf", name: "Young Wolf", display: 447, level: 1,
+    (key: "young_wolf", name: "Young Wolf", display: 447, level: 1, neutral: true,
      hp: 8.0, speed: 5.4, damage: 2.0, xp: 1),
-    (key: "timber_wolf", name: "Timber Wolf", display: 604, level: 2,
+    (key: "timber_wolf", name: "Timber Wolf", display: 604, level: 2, neutral: true,
      hp: 16.0, speed: 5.4, damage: 3.0, xp: 2),
-    (key: "defias_thug", name: "Defias Thug", display: 5035, level: 4, scale: 1.15,
+    (key: "defias_thug", name: "Defias Thug", display: 5035, level: 4, calls_help: true, scale: 1.15,
      hp: 21.0, speed: 4.2, damage: 7.0, xp: 2),
     (key: "mangy_wolf", name: "Mangy Wolf", display: 903, level: 6,
      hp: 34.0, speed: 5.4, damage: 10.0, xp: 3),
-    (key: "stonetusk_boar", name: "Stonetusk Boar", display: 503, level: 6,
+    (key: "stonetusk_boar", name: "Stonetusk Boar", display: 503, level: 6, neutral: true,
      hp: 40.0, speed: 4.6, damage: 11.0, xp: 3),
-    (key: "kobold_tunneler", name: "Kobold Tunneler", display: 139, level: 6,
+    (key: "kobold_tunneler", name: "Kobold Tunneler", display: 139, level: 6, calls_help: true,
      hp: 61.0, speed: 4.2, damage: 13.0, xp: 5),
-    (key: "defias_cutpurse", name: "Defias Cutpurse", display: 2361, level: 6, scale: 1.15,
+    (key: "defias_cutpurse", name: "Defias Cutpurse", display: 2361, level: 6, calls_help: true, scale: 1.15,
      hp: 70.0, speed: 4.2, damage: 14.0, xp: 5),
     (key: "forest_spider", name: "Forest Spider", display: 382, level: 6,
      hp: 85.0, speed: 4.2, damage: 16.0, xp: 5),
     (key: "murloc", name: "Murloc", display: 617, level: 7,
      hp: 92.0, speed: 4.2, damage: 17.0, xp: 6),
-    (key: "kobold_miner", name: "Kobold Miner", display: 373, level: 7,
+    (key: "kobold_miner", name: "Kobold Miner", display: 373, level: 7, calls_help: true,
      hp: 132.0, speed: 4.2, damage: 21.0, xp: 7),
     (key: "murloc_streamrunner", name: "Murloc Streamrunner", display: 527, level: 7,
      hp: 220.0, speed: 4.2, damage: 28.0, xp: 12),
-    (key: "rockhide_boar", name: "Rockhide Boar", display: 389, level: 8,
+    (key: "rockhide_boar", name: "Rockhide Boar", display: 389, level: 8, neutral: true,
      hp: 220.0, speed: 4.6, damage: 28.0, xp: 12),
     (key: "gray_forest_wolf", name: "Gray Forest Wolf", display: 380, level: 8,
      hp: 240.0, speed: 5.4, damage: 30.0, xp: 12),
-    (key: "defias_bandit", name: "Defias Bandit", display: 2357, level: 9, scale: 1.15,
+    (key: "defias_bandit", name: "Defias Bandit", display: 2357, level: 9, calls_help: true, scale: 1.15,
      hp: 283.0, speed: 4.2, damage: 34.0, xp: 14),
     (key: "young_forest_bear", name: "Young Forest Bear", display: 1006, level: 9, radius: 1.3,
      hp: 420.0, speed: 4.6, damage: 42.0, xp: 24),
-    (key: "defias_rogue_wizard", name: "Defias Rogue Wizard", display: 2359, level: 10, scale: 1.1,
+    (key: "defias_rogue_wizard", name: "Defias Rogue Wizard", display: 2359, level: 10, calls_help: true, scale: 1.1,
      hp: 420.0, speed: 3.8, damage: 44.0, xp: 24),
+    // --- Elwynn's wildlife only (spawns.ron), each with the numbers of a like creature above ---
+    // Like defias_bandit.
+    (key: "murloc_forager", name: "Murloc Forager", display: 441, level: 9,
+     hp: 283.0, speed: 4.2, damage: 34.0, xp: 14),
+    // Like gray_forest_wolf; gnolls call for help.
+    (key: "riverpaw_runt", name: "Riverpaw Runt", display: 10791, level: 8, calls_help: true,
+     hp: 240.0, speed: 4.2, damage: 30.0, xp: 12),
+    // Like defias_bandit, at a wolf's pace.
+    (key: "prowler", name: "Prowler", display: 11415, level: 9,
+     hp: 283.0, speed: 5.4, damage: 34.0, xp: 14),
+    // Like defias_thug.
+    (key: "kobold_worker", name: "Kobold Worker", display: 10912, level: 3, neutral: true,
+     calls_help: true, hp: 21.0, speed: 4.2, damage: 7.0, xp: 2),
+    // Like timber_wolf.
+    (key: "kobold_vermin", name: "Kobold Vermin", display: 10913, level: 2, neutral: true,
+     hp: 16.0, speed: 4.2, damage: 3.0, xp: 2),
+    // Like defias_thug.
+    (key: "kobold_laborer", name: "Kobold Laborer", display: 365, level: 4, calls_help: true,
+     hp: 21.0, speed: 4.2, damage: 7.0, xp: 2),
+    // Like young_forest_bear.
+    (key: "longsnout", name: "Longsnout", display: 381, level: 10, neutral: true, radius: 1.3,
+     hp: 420.0, speed: 4.6, damage: 42.0, xp: 24),
+    // Like kobold_miner.
+    (key: "kobold_geomancer", name: "Kobold Geomancer", display: 163, level: 8, calls_help: true,
+     hp: 132.0, speed: 4.2, damage: 21.0, xp: 7),
+    // Like gray_forest_wolf.
+    (key: "mine_spider", name: "Mine Spider", display: 368, level: 9,
+     hp: 240.0, speed: 4.2, damage: 30.0, xp: 12),
     // --- Westfall, weakest first ---
     (key: "young_fleshripper", name: "Young Fleshripper", display: 410, level: 11, scale: 0.8,
      hp: 8.0, speed: 5.2, damage: 2.0, xp: 1),

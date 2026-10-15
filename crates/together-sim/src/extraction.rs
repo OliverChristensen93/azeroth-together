@@ -17,7 +17,7 @@ pub struct ExtractionDef {
     pub key: String,
     /// The zone it is played in, a key into `zones.ron`: its enemies, shrines, centre and map.
     pub zone: String,
-    /// The playable area's outline in WoW `(x, y)`: a convex polygon, corners in order.
+    /// The playable area's outline in WoW `(x, y)`: a polygon, corners in order.
     pub boundary: Vec<[f32; 2]>,
     pub safe: SafeDef,
     /// Ordinary enemies further than this from every living hero are let go.
@@ -33,6 +33,16 @@ pub struct ExtractionDef {
     pub exits: Vec<ExitDef>,
     #[serde(default)]
     pub ambush: AmbushDef,
+    #[serde(default)]
+    pub wildlife: WildlifeDef,
+    #[serde(default)]
+    pub hot_zones: Vec<HotZoneDef>,
+    /// The heat-driven horde's size, times: smaller once the forest is dangerous too.
+    #[serde(default = "one")]
+    pub horde_share: f32,
+    /// The map's creatures, from `spawns.ron` ([`crate::Content::with_spawns`]).
+    #[serde(skip)]
+    pub spawns: Vec<SpawnDef>,
     /// The creature display a flight comes down as.
     pub flight_display: u32,
     #[serde(default)]
@@ -62,6 +72,12 @@ pub struct HeatDef {
     pub kill: f32,
     /// Gained each second a flight is on its way.
     pub flight: f32,
+    /// Gained for each creature that notices a hero.
+    #[serde(default)]
+    pub notice: f32,
+    /// Gained each second in a hot zone, on top of being outside.
+    #[serde(default)]
+    pub hot_zone: f32,
     /// The nightfall floor starts rising this many seconds in...
     pub floor_from: f32,
     /// ...by this much a minute.
@@ -135,6 +151,105 @@ impl Default for AmbushDef {
     }
 }
 
+/// How a map's creatures behave.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default)]
+pub struct WildlifeDef {
+    /// The share of the map's spawns a run keeps (every one in a hot zone is kept).
+    pub share: f32,
+    /// A creature wakes when a living hero comes this near its spawn, and sleeps again (unless
+    /// engaged) when every living hero is 20 yd further off than that.
+    pub wake: f32,
+    /// A creature notices a hero this near...
+    pub notice: f32,
+    /// ...plus this much for each level it has over the party's (less for each under)...
+    pub notice_per_level: f32,
+    /// ...never under this...
+    pub notice_min: f32,
+    /// ...times one plus this for each skull of the party's heat.
+    pub notice_per_skull: f32,
+    /// Its kind this near it engages with it...
+    pub social: f32,
+    /// ...or this near, when its kind calls for help.
+    pub help: f32,
+    /// Its health and damage, times the horde's of its kind.
+    pub toughness: f32,
+    /// XP and gold from it, times.
+    pub reward: f32,
+    /// Seconds an engaged creature nobody has hurt, and that has hurt nobody, keeps on before
+    /// it gives up...
+    pub give_up: f32,
+    /// ...once every living hero is further than this.
+    pub leash: f32,
+    /// Its spawn's respawn time, times.
+    pub respawn: f32,
+    /// Creatures awake at once, at most, per living hero.
+    pub max_awake: u32,
+    /// The share of its speed a creature walks at while idle or on patrol.
+    pub walk: f32,
+}
+
+impl Default for WildlifeDef {
+    fn default() -> Self {
+        Self {
+            share: 0.5,
+            wake: 140.0,
+            notice: 10.0,
+            notice_per_level: 1.0,
+            notice_min: 5.0,
+            notice_per_skull: 0.15,
+            social: 12.0,
+            help: 30.0,
+            toughness: 1.5,
+            reward: 2.0,
+            give_up: 10.0,
+            leash: 40.0,
+            respawn: 1.0,
+            max_awake: 120,
+            walk: 0.4,
+        }
+    }
+}
+
+/// A place dense with creatures, where heat climbs faster.
+#[derive(Clone, Debug, Deserialize)]
+pub struct HotZoneDef {
+    pub name: String,
+    pub center: [f32; 2],
+    pub radius: f32,
+}
+
+impl HotZoneDef {
+    pub fn contains(&self, p: V2) -> bool {
+        p.distance(V2::new(self.center[0], self.center[1])) <= self.radius
+    }
+}
+
+/// One of a map's creatures, from `spawns.ron`.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SpawnDef {
+    /// A key into `enemies.ron`.
+    pub enemy: String,
+    pub pos: [f32; 2],
+    /// How far from its spawn it wanders while idle; 0 stands.
+    #[serde(default)]
+    pub wander: f32,
+    /// Seconds it stays dead.
+    pub respawn: f32,
+    /// A patrol, walked in a loop; empty for none.
+    #[serde(default)]
+    pub path: Vec<[f32; 2]>,
+    /// [`SpawnDef::enemy`] resolved to an index into [`crate::Content::enemies`].
+    #[serde(skip)]
+    pub enemy_ix: usize,
+}
+
+impl SpawnDef {
+    pub fn at(&self) -> V2 {
+        V2::new(self.pos[0], self.pos[1])
+    }
+}
+
 /// A place to leave from, and its timetable.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ExitDef {
@@ -165,6 +280,10 @@ pub struct ExtractionSettings {
 
 fn yes() -> bool {
     true
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 impl Default for ExtractionSettings {
@@ -218,6 +337,11 @@ impl ExtractionDef {
     pub fn floor(&self, elapsed: f32) -> f32 {
         ((elapsed - self.heat.floor_from) / 60.0 * self.heat.floor_per_min).max(0.0)
     }
+
+    /// The hot zone `p` is in, if any.
+    pub fn hot_zone_at(&self, p: V2) -> Option<&HotZoneDef> {
+        self.hot_zones.iter().find(|z| z.contains(p))
+    }
 }
 
 /// Where heroes may go: the arena's circle, or an extraction map's outline.
@@ -227,7 +351,7 @@ pub enum Bounds {
         center: V2,
         radius: f32,
     },
-    /// A convex polygon, corners in order.
+    /// A polygon, corners in order.
     Polygon(Vec<V2>),
 }
 
@@ -573,5 +697,54 @@ pub(crate) mod tests {
     fn a_pack_whose_fewest_is_more_than_its_most_is_refused() {
         let err = maps_with("pack: (6, 10)", "pack: (10, 6)").unwrap_err();
         assert!(matches!(err, ContentError::Invalid { .. }), "{err}");
+    }
+
+    const ONE_SPAWN: &str = r#"[
+        (map: "goldshire", spawns: [
+            (enemy: "wolf", pos: (150.0, 0.0), respawn: 30.0, path: [(150.0, 0.0), (150.0, 40.0)]),
+        ]),
+    ]"#;
+
+    #[test]
+    fn spawns_attach_to_their_map_and_name_their_enemies() {
+        let c = test_content("").with_spawns(ONE_SPAWN).unwrap();
+        let s = &c.extractions[0].spawns;
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].enemy_ix, 0);
+        assert_eq!(s[0].at(), V2::new(150.0, 0.0));
+        assert_eq!(s[0].path.len(), 2);
+        assert_eq!(s[0].wander, 0.0);
+        assert!(c.enemies[2].neutral && !c.enemies[2].calls_help);
+        assert!(c.enemies[3].calls_help);
+    }
+
+    #[test]
+    fn spawns_for_a_missing_map_or_creature_are_refused() {
+        let base = || test_content("");
+        let err = base()
+            .with_spawns(&ONE_SPAWN.replace(r#"map: "goldshire""#, r#"map: "nowhere""#))
+            .unwrap_err();
+        assert!(matches!(err, ContentError::UnknownKey { .. }), "{err}");
+        let err = base()
+            .with_spawns(&ONE_SPAWN.replace(r#"enemy: "wolf""#, r#"enemy: "dragon""#))
+            .unwrap_err();
+        assert!(matches!(err, ContentError::UnknownKey { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_hot_zone_holds_what_is_within_its_radius() {
+        let zone = HotZoneDef {
+            name: "Den".into(),
+            center: [10.0, 0.0],
+            radius: 5.0,
+        };
+        assert!(zone.contains(V2::new(13.0, 0.0)));
+        assert!(!zone.contains(V2::new(16.0, 0.0)));
+        let c = test_content("");
+        let map = &c.extractions[0];
+        assert!(map.hot_zones.is_empty() && map.hot_zone_at(V2::ZERO).is_none());
+        assert_eq!(map.horde_share, 1.0);
+        assert_eq!(map.wildlife.wake, 140.0);
+        assert_eq!(map.heat.notice, 0.0);
     }
 }

@@ -5,9 +5,15 @@
     (
         key: "elwynn",
         zone: "elwynn_extraction",
-        // Elwynn between Stormwind's walls (north), Westfall (west), Redridge (east) and
-        // Duskwood (south). A convex outline, corners in order.
-        boundary: [(-8850.0, 820.0), (-8850.0, -1480.0), (-9990.0, -1480.0), (-9990.0, 820.0)],
+        // Elwynn from the spawn data's density map: south of Stormwind's walls (the city is not
+        // in the trimmed data), Northshire and the north-east ridge, Redridge's mountains on the
+        // east, Duskwood's river on the south (further south in the west, for Forest's Edge),
+        // Westfall on the west. Corners in order.
+        boundary: [
+            (-9135.0, 820.0), (-9135.0, 300.0), (-8850.0, 300.0), (-8850.0, -1300.0),
+            (-9300.0, -1480.0), (-9950.0, -1480.0), (-9950.0, -400.0), (-10150.0, -100.0),
+            (-10150.0, 700.0), (-9700.0, 820.0),
+        ],
         // Goldshire's crossroads (AreaPOI "Goldshire").
         safe: (center: (-9480.1, 63.5), radius: 40.0, margin: 50.0, cool: 15.0),
         recycle: 120.0,
@@ -21,6 +27,8 @@
             outside: 1.0,
             kill: 0.5,
             flight: 4.0,
+            notice: 2.0,
+            hot_zone: 3.0,
             floor_from: 180.0,
             floor_per_min: 40.0,
             reward_luck: 0.25,
@@ -49,6 +57,23 @@
         ],
         // Half the departures draw a pack, announced 20 seconds before the flight lands.
         ambush: (chance: 0.5, warn: 20.0, pack: (6, 10), per_skull: 0.25, ring: (40.0, 60.0)),
+        // Elwynn's creatures (spawns.ron): half of them kept, tougher than the horde, waking
+        // out of sight and noticing heroes who come close.
+        wildlife: (share: 0.5, wake: 140.0, notice: 10.0, notice_per_level: 1.0,
+                   notice_min: 5.0, notice_per_skull: 0.15, social: 12.0, help: 30.0,
+                   toughness: 1.5, reward: 2.0, give_up: 10.0, leash: 40.0, respawn: 1.0,
+                   max_awake: 120, walk: 0.4),
+        // Dense places where heat climbs faster: every creature in them is kept.
+        hot_zones: [
+            (name: "Jasperlode Mine", center: (-9180.0, -630.0), radius: 100.0),
+            (name: "Fargodeep Mine", center: (-9790.0, 140.0), radius: 100.0),
+            (name: "Crystal Lake", center: (-9480.0, -340.0), radius: 110.0),
+            (name: "Stone Cairn Lake", center: (-9380.0, -1080.0), radius: 150.0),
+            (name: "Brackwell Pumpkin Patch", center: (-9800.0, -890.0), radius: 90.0),
+            (name: "Forest's Edge", center: (-10010.0, 610.0), radius: 120.0),
+        ],
+        // The heat-driven horde at half size: the forest is dangerous too.
+        horde_share: 0.5,
         // `BatTaxi.m2`, the Undercity flight bat: the gryphon (display 6852) is not in the
         // trimmed data. Swap it when the full client data is in.
         flight_display: 1566,
