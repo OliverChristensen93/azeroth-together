@@ -840,8 +840,15 @@ impl World {
         self.move_heroes();
         self.revive_heroes();
         self.regenerate();
-        self.spawn_enemies();
-        self.spawn_bosses();
+        if matches!(self.mode, Mode::Arena) {
+            self.spawn_enemies();
+            self.spawn_bosses();
+        } else {
+            self.spawn_in_extraction();
+            if self.extraction_settings().is_some_and(|s| s.timed_boss) {
+                self.spawn_bosses();
+            }
+        }
         self.move_enemies();
         self.cast_abilities();
         self.land_hits();

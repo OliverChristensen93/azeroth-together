@@ -341,7 +341,7 @@ pub(crate) mod tests {
          interactables: [(kind: Chest, count: 1)], shrines_at_once: 1, pots: 0),
     ]"#;
 
-    /// `SETTINGS` is replaced by a test's settings, e.g. `heat_shared: false`.
+    /// `SETTINGS` is replaced by a test's settings ([`maps`]), e.g. `heat_shared: false`.
     pub(crate) const TEST_MAPS: &str = r#"[
         (key: "goldshire", zone: "goldshire",
          boundary: [(-300.0, -300.0), (300.0, -300.0), (300.0, 300.0), (-300.0, 300.0)],
@@ -365,8 +365,19 @@ pub(crate) mod tests {
              flight: 45.0, recall: 30.0),
          ],
          flight_display: 1566,
-         settings: (timed_boss: false, SETTINGS)),
+         settings: (SETTINGS)),
     ]"#;
+
+    /// The test maps with `settings`; none given is the default, written out, since a settings
+    /// block needs at least one field.
+    fn maps(settings: &str) -> String {
+        let settings = if settings.is_empty() {
+            "heat_shared: true"
+        } else {
+            settings
+        };
+        TEST_MAPS.replace("SETTINGS", settings)
+    }
 
     pub(crate) fn test_content(settings: &str) -> Content {
         Content::from_ron(ContentSources {
@@ -375,7 +386,7 @@ pub(crate) mod tests {
             enemies: ENEMIES,
             zones: TEST_ZONES,
         })
-        .and_then(|c| c.with_extractions(&TEST_MAPS.replace("SETTINGS", settings)))
+        .and_then(|c| c.with_extractions(&maps(settings)))
         .unwrap_or_else(|e| panic!("test content: {e}"))
     }
 
@@ -386,7 +397,7 @@ pub(crate) mod tests {
             enemies: ENEMIES,
             zones: TEST_ZONES,
         })?
-        .with_extractions(&TEST_MAPS.replace("SETTINGS", "").replace(from, to))
+        .with_extractions(&maps("").replace(from, to))
     }
 
     #[test]

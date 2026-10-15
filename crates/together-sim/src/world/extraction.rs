@@ -3,7 +3,7 @@
 //! only in an extraction run; an arena never reaches them.
 
 use super::*;
-use crate::extraction::{ExtractionDef, ExtractionSettings};
+use crate::extraction::{ExtractionDef, ExtractionSettings, SkullDef};
 
 impl World {
     /// Where heroes may go: the arena's leash, or the extraction map's outline.
@@ -148,6 +148,8 @@ impl World {
         self.tend_heat(def);
         self.lose_them(def);
         self.tell_skulls(def);
+        self.send_hunters(def);
+        self.recycle(def);
     }
 
     /// The floor rises with the night; heat climbs while anyone (shared) or the hero (not
@@ -255,6 +257,134 @@ impl World {
             .collect();
         x.told = now;
         self.events.extend(changed);
+    }
+    /// The horde, in an extraction run: around heroes outside the safe ring only, never within
+    /// its margin or past the outline; as big, as high in the roster and as tough as the heat of
+    /// the hero it comes for says.
+    pub(super) fn spawn_in_extraction(&mut self) {
+        self.spawn_timer -= DT;
+        if self.spawn_timer > 0.0 {
+            return;
+        }
+        self.spawn_timer = SPAWN_EVERY;
+        let content = self.content.clone();
+        let Some(def) = self.map(&content) else {
+            return;
+        };
+        let outside: Vec<(PlayerId, V2, SkullDef)> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive && !def.in_safe(h.pos))
+            .map(|h| (h.player, h.pos, *def.skull(self.heat_of(h.player))))
+            .collect();
+        if outside.is_empty() {
+            return;
+        }
+        let busiest = outside.iter().map(|o| o.2.spawns).fold(1.0, f32::max);
+        let horde = 1.0 + self.difficulty.horde;
+        let target = (target_alive(self.elapsed, outside.len()) as f32 * busiest * horde) as usize;
+        let alive = self.enemies.iter().filter(|e| !e.elite && !e.boss).count();
+        if alive >= target {
+            return;
+        }
+        let batch = ((target - alive) as f32 / 6.0).ceil().min(4.0) as usize;
+        let (low, top) = self.tiers();
+        let roster = self.zone().enemy_ix.clone();
+        let bounds = def.bounds();
+        for _ in 0..batch {
+            let (_, near, skull) = outside[self.rng.index(outside.len())];
+            let Some(pos) = self.spawn_spot(def, &bounds, near) else {
+                continue;
+            };
+            let tier = (low + self.rng.index(top - low + 1) + skull.tier).min(roster.len() - 1);
+            let elite = self.elapsed >= ELITES_FROM && self.rng.f32() < ELITE_CHANCE;
+            let id = self.spawn_enemy(roster[tier], pos, near, elite);
+            self.toughen(id, skull.toughness, 1.0);
+        }
+    }
+
+    /// A spot on the spawn ring round `near`, inside the outline and clear of the safe ring's
+    /// margin; `None` after a few tries.
+    fn spawn_spot(&mut self, def: &ExtractionDef, bounds: &Bounds, near: V2) -> Option<V2> {
+        for _ in 0..8 {
+            let angle = self.rng.range(0.0, std::f32::consts::TAU);
+            let at = near + V2::from_angle(angle, self.rng.range(SPAWN_RING.0, SPAWN_RING.1));
+            if bounds.inside(at, 0.0) && !def.in_margin(at) {
+                return Some(at);
+            }
+        }
+        None
+    }
+
+    /// Enemy `id`'s health and damage times `by`, and its speed times `speed`.
+    fn toughen(&mut self, id: u32, by: f32, speed: f32) {
+        if let Some(e) = self.enemies.iter_mut().find(|e| e.id == id) {
+            e.hp *= by;
+            e.max_hp *= by;
+            e.damage *= by;
+            e.speed *= speed;
+        }
+    }
+
+    /// When the hunt timer has run out, a hunter pack for a hero outside whose skull sends them:
+    /// the strongest enemies in play, faster than the rest, coming from the way home.
+    fn send_hunters(&mut self, def: &ExtractionDef) {
+        if let Some(x) = self.run_mut() {
+            x.hunt -= DT;
+            if x.hunt > 0.0 {
+                return;
+            }
+        }
+        let hunted: Vec<(PlayerId, V2, SkullDef)> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive && !def.in_safe(h.pos))
+            .map(|h| (h.player, h.pos, *def.skull(self.heat_of(h.player))))
+            .filter(|(_, _, s)| s.hunters_every > 0.0)
+            .collect();
+        if hunted.is_empty() {
+            return;
+        }
+        let (player, from, skull) = hunted[self.rng.index(hunted.len())];
+        let roster = self.zone().enemy_ix.clone();
+        let (_, top) = self.tiers();
+        let kind = roster[(top + skull.tier).min(roster.len() - 1)];
+        let pack = def.heat.hunters;
+        let count = pack.pack.0 + self.rng.index((pack.pack.1 - pack.pack.0 + 1) as usize) as u32;
+        let home = (def.safe_center() - from).normalize_or_zero();
+        let half = pack.cone.to_radians() / 2.0;
+        let bounds = def.bounds();
+        for _ in 0..count {
+            let (sin, cos) = self.rng.range(-half, half).sin_cos();
+            let way = V2::new(home.x * cos - home.y * sin, home.x * sin + home.y * cos);
+            let at = from + way * self.rng.range(pack.ring.0, pack.ring.1);
+            if !bounds.inside(at, 0.0) || def.in_margin(at) {
+                continue;
+            }
+            let id = self.spawn_enemy(kind, at, from, false);
+            self.toughen(id, skull.toughness, pack.speed);
+        }
+        if let Some(x) = self.run_mut() {
+            x.hunt = skull.hunters_every;
+        }
+        self.events.push(Event::HuntersCame { near: player });
+    }
+
+    /// Ordinary enemies further than the map's reach from every living hero are let go: a party
+    /// spread over the forest drags no tail of stragglers. Elites and bosses stay.
+    fn recycle(&mut self, def: &ExtractionDef) {
+        let living: Vec<V2> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| h.pos)
+            .collect();
+        if living.is_empty() {
+            return;
+        }
+        let reach = def.recycle;
+        self.enemies
+            .retain(|e| e.elite || e.boss || living.iter().any(|p| p.distance(e.pos) <= reach));
     }
 }
 
@@ -486,5 +616,87 @@ mod tests {
             "{}",
             w.heat_of(0)
         );
+    }
+
+    #[test]
+    fn nothing_spawns_while_everyone_is_home_or_near_the_safe_ring() {
+        let mut w = run("", 1);
+        secs(&mut w, 10.0);
+        assert!(w.enemies.is_empty(), "home: no horde");
+        at(&mut w, 0, 60.0, 0.0);
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..300 {
+            w.step();
+            for e in &w.enemies {
+                // Seen a step after spawning, so up to one step's walk nearer.
+                if seen.insert(e.id) {
+                    assert!(e.pos.distance(V2::ZERO) >= 89.5, "{:?}", e.pos);
+                }
+            }
+        }
+        assert!(!seen.is_empty(), "outside: a horde");
+    }
+
+    #[test]
+    fn more_skulls_bring_a_bigger_tougher_horde() {
+        let mut cold = run("", 1);
+        let mut hot = run("", 1);
+        at(&mut cold, 0, 200.0, 0.0);
+        at(&mut hot, 0, 200.0, 0.0);
+        state_mut(&mut hot).heat = 900.0;
+        secs(&mut cold, 3.0);
+        secs(&mut hot, 3.0);
+        assert!(hot.enemies.len() > cold.enemies.len());
+        let wolf = hot.content().enemies[0].hp;
+        assert!(hot.enemies.iter().all(|e| e.max_hp >= wolf * 1.7));
+        assert!(cold.enemies.iter().all(|e| e.max_hp < wolf * 1.1));
+    }
+
+    #[test]
+    fn hunters_come_between_a_hot_hero_and_home() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        at(&mut w, 0, 200.0, 0.0);
+        state_mut(&mut w).heat = 450.0;
+        w.step();
+        let hero = V2::new(200.0, 0.0);
+        let hunters: Vec<&Enemy> = w.enemies.iter().filter(|e| e.speed > 5.5).collect();
+        assert!((6..=10).contains(&hunters.len()), "{}", hunters.len());
+        let cone = 30f32.to_radians().cos();
+        for e in hunters {
+            let to = e.pos - hero;
+            let d = to.length();
+            assert!((50.0..=70.0).contains(&d), "{d}");
+            assert!(
+                -to.x / d >= cone - 1e-3,
+                "{:?} is not on the way home",
+                e.pos
+            );
+        }
+        assert!(w.drain_events().contains(&Event::HuntersCame { near: 0 }));
+    }
+
+    #[test]
+    fn far_enemies_are_let_go_but_never_elites() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        let near = w.spawn_enemy(0, V2::new(50.0, 0.0), V2::ZERO, false);
+        let far = w.spawn_enemy(0, V2::new(250.0, 0.0), V2::ZERO, false);
+        let elite = w.spawn_enemy(0, V2::new(-250.0, 0.0), V2::ZERO, true);
+        w.step();
+        assert!(w.enemy(near).is_some());
+        assert!(w.enemy(far).is_none());
+        assert!(w.enemy(elite).is_some());
+    }
+
+    #[test]
+    fn the_timed_boss_comes_only_when_asked_for() {
+        for (settings, comes) in [("", false), ("timed_boss: true", true)] {
+            let mut w = run(settings, 1);
+            hush(&mut w);
+            w.next_boss = 0.0;
+            w.step();
+            assert_eq!(w.enemies.iter().any(|e| e.boss), comes, "{settings}");
+        }
     }
 }
