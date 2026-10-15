@@ -16,6 +16,7 @@ fn shipped() -> Content {
     })
     .and_then(|c| c.with_rules(include_str!("../../../content/rules.ron")))
     .and_then(|c| c.with_extractions(include_str!("../../../content/extraction.ron")))
+    .and_then(|c| c.with_spawns(include_str!("../../../content/spawns.ron")))
     .unwrap_or_else(|e| panic!("content/ is invalid: {e}"))
 }
 
@@ -116,5 +117,17 @@ fn an_extraction_run_in_elwynn_heats_up_out_in_the_forest_and_kills_something() 
         }
         assert!(w.kills > 0, "{} killed nothing", class.key);
         assert!(w.heat_of(0) > 0.0, "{} stayed cool", class.key);
+    }
+}
+
+#[test]
+fn elwynns_forest_is_full_but_goldshire_is_clear() {
+    let c = shipped();
+    let map = &c.extractions[0];
+    assert!(map.spawns.len() > 600, "{}", map.spawns.len());
+    let bounds = map.bounds();
+    for s in &map.spawns {
+        assert!(bounds.inside(s.at(), 0.0), "outside the outline: {:?}", s.pos);
+        assert!(!map.in_margin(s.at()), "in Goldshire's margin: {:?}", s.pos);
     }
 }
