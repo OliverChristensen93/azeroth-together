@@ -1,8 +1,14 @@
 // Arenas, ported from benilla-app's survivors/data.rs. `map` is the Map.dbc id (0 Eastern Kingdoms,
 // 1 Kalimdor); `center` is in WoW coordinates (x, y, z); `leash` is how far heroes may roam;
-// `enemies` are weakest first. Only zones whose terrain is in the game data can be played.
+// `enemies` are weakest first; `boss` is the enemy key of the boss who comes every four minutes.
+// `shrines_at_once` is how many shrines, chests and banners stand at once (new ones come as old
+// ones are used); `pots` how many pots stand scattered over the arena; `elite_camps` how many
+// camps an elite guards (a new one comes some minutes after it dies); `interactables` are the
+// kinds that can come, each with how many may stand at once and how often it comes up (`weight`).
+// Only zones whose terrain is in the game data can be played. The "boss candidates" comments
+// are the original game's bosses (display, level, speed, scale), not all in the data.
 [
-    // bosses (later): Mother Fang (2541, 10, 4.6, 1.9), Narg the Taskmaster (774, 10, 4.2, 1.9),
+    // boss candidates: Mother Fang (2541, 10, 4.6, 1.9), Narg the Taskmaster (774, 10, 4.2, 1.9),
     //   Hogger (384, 11, 4.2, 1.9), Thuros Lightfingers (3341, 11, 4.2, 2.18),
     //   Fedfennel (175, 12, 4.2, 1.9), Gruff Swiftbite (175, 12, 4.2, 1.9)
     (
@@ -19,8 +25,20 @@
             "murloc_streamrunner", "rockhide_boar", "gray_forest_wolf", "defias_bandit",
             "young_forest_bear", "defias_rogue_wizard",
         ],
+        boss: "hogger",
+        shrines_at_once: 2,
+        pots: 10,
+        elite_camps: 3,
+        interactables: [
+            (kind: TitanShrine, count: 2, weight: 10),
+            (kind: GoldenShrine, count: 1, weight: 2),
+            (kind: CursedAltar, count: 1, weight: 6),
+            (kind: Chest, count: 2, weight: 10),
+            (kind: ChallengeIdol, count: 1, weight: 5),
+            (kind: WarBanner, count: 1, weight: 6),
+        ],
     ),
-    // bosses (later): Brainwashed Noble (3267, 18, 4.2, 2.18),
+    // boss candidates: Brainwashed Noble (3267, 18, 4.2, 2.18),
     //   Marisa du'Paige (2355, 18, 4.2, 2.09), Sergeant Brashclaw (383, 18, 4.2, 1.9),
     //   Klaven Mortwake (5805, 23, 4.2, 2.18), Lupos (11412, 23, 5.4, 1.9),
     //   Vultros (507, 26, 5.2, 1.52)
@@ -38,8 +56,20 @@
             "riverpaw_taskmaster", "defias_highwayman", "westfall_pygmy_venom_web_spider",
             "riverpaw_mystic",
         ],
+        boss: "sergeant_brashclaw",
+        shrines_at_once: 2,
+        pots: 10,
+        elite_camps: 3,
+        interactables: [
+            (kind: TitanShrine, count: 2, weight: 10),
+            (kind: GoldenShrine, count: 1, weight: 2),
+            (kind: CursedAltar, count: 1, weight: 6),
+            (kind: Chest, count: 2, weight: 10),
+            (kind: ChallengeIdol, count: 1, weight: 5),
+            (kind: WarBanner, count: 1, weight: 6),
+        ],
     ),
-    // bosses (later): Lupos (11412, 23, 5.4, 1.9), Naraxis (963, 27, 4.6, 1.9),
+    // boss candidates: Lupos (11412, 23, 5.4, 1.9), Naraxis (963, 27, 4.6, 1.9),
     //   Nightbane Vile Fang (522, 30, 5.4, 1.9), Nightbane Tainted One (1098, 31, 5.4, 1.9),
     //   Fenros (11179, 32, 5.4, 1.9), Nefaru (11181, 34, 5.4, 1.9)
     (
@@ -56,8 +86,20 @@
             "black_ravager_mastiff", "nightbane_worgen", "nightbane_shadow_weaver",
             "nightbane_dark_runner", "nightbane_vile_fang", "fetid_corpse", "nightbane_tainted_one",
         ],
+        boss: "fenros",
+        shrines_at_once: 2,
+        pots: 10,
+        elite_camps: 3,
+        interactables: [
+            (kind: TitanShrine, count: 2, weight: 10),
+            (kind: GoldenShrine, count: 1, weight: 2),
+            (kind: CursedAltar, count: 1, weight: 6),
+            (kind: Chest, count: 2, weight: 10),
+            (kind: ChallengeIdol, count: 1, weight: 5),
+            (kind: WarBanner, count: 1, weight: 6),
+        ],
     ),
-    // bosses (later): King Bangalash (616, 43, 5.8, 3.0), Mokk the Savage (840, 44, 4.8, 2.4),
+    // boss candidates: King Bangalash (616, 43, 5.8, 3.0), Mokk the Savage (840, 44, 4.8, 2.4),
     //   Bloodlord Mandokir (11288, 63, 5.0, 2.1), High Priest Thekal (15216, 63, 5.0, 2.3),
     //   Jin'do the Hexxer (11311, 63, 4.6, 2.5), Hakkar (15295, 63, 4.4, 2.7)
     (
@@ -74,8 +116,20 @@
             "razzashi_raptor", "gurubashi_blood_drinker", "zulian_tiger", "hakkari_shadowcaster",
             "gurubashi_champion", "gurubashi_bat_rider",
         ],
+        boss: "gurubashi_warlord",
+        shrines_at_once: 2,
+        pots: 3,
+        elite_camps: 1,
+        interactables: [
+            (kind: TitanShrine, count: 2, weight: 10),
+            (kind: GoldenShrine, count: 1, weight: 2),
+            (kind: CursedAltar, count: 1, weight: 6),
+            (kind: Chest, count: 2, weight: 10),
+            (kind: ChallengeIdol, count: 1, weight: 5),
+            (kind: WarBanner, count: 1, weight: 6),
+        ],
     ),
-    // bosses (later): Kurinnaxx (15742, 62, 5.0, 1.15), General Rajaxx (15376, 63, 4.8, 1.15),
+    // boss candidates: Kurinnaxx (15742, 62, 5.0, 1.15), General Rajaxx (15376, 63, 4.8, 1.15),
     //   Moam (15392, 63, 4.2, 1.6), Buru the Gorger (15654, 63, 4.4, 0.85),
     //   Princess Huhuran (15739, 63, 5.0, 0.55), Ossirian the Unscarred (15432, 63, 4.6, 0.82)
     (
@@ -92,6 +146,18 @@
             "hivezora_wasp", "hivezora_reaver", "hiveregal_ambusher", "vekniss_wasp",
             "qiraji_gladiator", "vekniss_warrior", "obsidian_destroyer", "qiraji_champion",
             "anubisath_sentinel",
+        ],
+        boss: "anubisath_guardian",
+        shrines_at_once: 2,
+        pots: 6,
+        elite_camps: 2,
+        interactables: [
+            (kind: TitanShrine, count: 2, weight: 10),
+            (kind: GoldenShrine, count: 1, weight: 2),
+            (kind: CursedAltar, count: 1, weight: 6),
+            (kind: Chest, count: 2, weight: 10),
+            (kind: ChallengeIdol, count: 1, weight: 5),
+            (kind: WarBanner, count: 1, weight: 6),
         ],
     ),
 ]

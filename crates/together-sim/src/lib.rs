@@ -11,18 +11,32 @@
 
 mod cards;
 mod content;
+mod interact;
+mod items;
 mod math;
+mod powerups;
 mod rng;
+mod stats;
 mod world;
 
-pub use cards::{ability_stats, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
-pub use content::{
-    AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, WeaponDef,
-    ZoneDef,
+pub use cards::{
+    ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK,
 };
+pub use content::{
+    AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
+    WeaponDef, ZoneDef,
+};
+pub use interact::{
+    chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement,
+    ESCORT_GOAL,
+};
+pub use items::{ward_cooldown, Item};
 pub use math::V2;
+pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
+pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
 pub use world::{
     xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput,
-    Snapshot, Target, World, WorldError, DT, MAX_ABILITIES, REVIVE_RANGE, REVIVE_SECS, TICK_HZ,
+    Snapshot, Source, Target, World, WorldError, DT, ELITE_SCALE, MAX_ABILITIES, REVIVE_RANGE,
+    REVIVE_SECS, TICK_HZ,
 };

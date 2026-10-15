@@ -9,6 +9,8 @@ use std::fmt;
 
 use serde::Deserialize;
 
+use crate::interact::Placement;
+
 /// How an ability picks its targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 pub enum AbilityKind {
@@ -35,6 +37,15 @@ fn default_range() -> f32 {
 }
 fn default_enemy_radius() -> f32 {
     0.6
+}
+fn three() -> u32 {
+    3
+}
+fn five() -> u32 {
+    5
+}
+fn six() -> u32 {
+    6
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -99,6 +110,27 @@ pub struct ZoneDef {
     pub leash: f32,
     /// Enemy keys, weakest first: the run brings in stronger ones as it goes on.
     pub enemies: Vec<String>,
+    /// The kinds of shrine, altar, chest and banner that stand about the arena, each with how
+    /// many may stand at once; none when left out.
+    #[serde(default)]
+    pub interactables: Vec<Placement>,
+    /// How many of them stand at once (5 when left out): new ones come as old ones are used.
+    #[serde(default = "five")]
+    pub shrines_at_once: u32,
+    /// How many pots stand scattered over the arena (6 when left out); a broken one is made good
+    /// out of sight.
+    #[serde(default = "six")]
+    pub pots: u32,
+    /// How many camps an elite guards (3 when left out); each gets a new elite the rules'
+    /// `elite_respawn` seconds after its last one dies.
+    #[serde(default = "three")]
+    pub elite_camps: u32,
+    /// The enemy key of the zone's boss, who comes every few minutes; none when left out.
+    #[serde(default)]
+    pub boss: String,
+    /// [`ZoneDef::boss`] resolved to an index into [`Content::enemies`].
+    #[serde(skip)]
+    pub boss_ix: Option<usize>,
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
@@ -160,6 +192,54 @@ fn white() -> u32 {
     0xFF_FF_FF
 }
 
+fn four() -> u32 {
+    4
+}
+fn five_u8() -> u8 {
+    5
+}
+fn ninety() -> f32 {
+    90.0
+}
+fn one_eighty() -> f32 {
+    180.0
+}
+
+/// The run's limits, from `rules.ron`: numbers a game mode may set its own way. Every one has a
+/// default, so a mode's file names only what it changes.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Rules {
+    /// How many different tomes a hero holds; once full, only those are raised.
+    #[serde(default = "four")]
+    pub tome_slots: u32,
+    /// The rank a tome stops at.
+    #[serde(default = "five_u8")]
+    pub tome_max_rank: u8,
+    /// The most copies of one item a hero holds. An item whose chance tops out sooner stops there
+    /// ([`crate::Item::max_copies`]).
+    #[serde(default = "five_u8")]
+    pub item_max_copies: u8,
+    /// Seconds between chances of a new shrine, while fewer than a zone's
+    /// [`ZoneDef::shrines_at_once`] stand.
+    #[serde(default = "ninety")]
+    pub shrine_every: f32,
+    /// Seconds after a camp's elite dies before a new one takes its place.
+    #[serde(default = "one_eighty")]
+    pub elite_respawn: f32,
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            tome_slots: four(),
+            tome_max_rank: five_u8(),
+            item_max_copies: five_u8(),
+            shrine_every: ninety(),
+            elite_respawn: one_eighty(),
+        }
+    }
+}
+
 /// All the game's data, its cross-references checked.
 #[derive(Clone, Debug)]
 pub struct Content {
@@ -167,6 +247,8 @@ pub struct Content {
     pub abilities: Vec<AbilityDef>,
     pub enemies: Vec<EnemyDef>,
     pub zones: Vec<ZoneDef>,
+    /// [`Rules::default`] until [`Content::with_rules`] reads a file.
+    pub rules: Rules,
 }
 
 #[derive(Debug)]
@@ -292,6 +374,10 @@ impl Content {
                 .iter()
                 .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
                 .collect::<Result<_, _>>()?;
+            zone.boss_ix = Some(zone.boss.as_str())
+                .filter(|k| !k.is_empty())
+                .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
+                .transpose()?;
             if zone.enemy_ix.is_empty() {
                 return Err(ContentError::Invalid {
                     file: "zones.ron",
@@ -305,7 +391,21 @@ impl Content {
             abilities,
             enemies,
             zones,
+            rules: Rules::default(),
         })
+    }
+
+    /// These contents with the rules in `text` (`rules.ron`) in place of the defaults.
+    pub fn with_rules(mut self, text: &str) -> Result<Self, ContentError> {
+        self.rules = ron::from_str(text).map_err(|e| ContentError::Parse {
+            file: "rules.ron",
+            message: e.to_string(),
+        })?;
+        Ok(self)
+    }
+
+    pub fn ability(&self, key: &str) -> Option<usize> {
+        self.abilities.iter().position(|a| a.key == key)
     }
 
     pub fn class(&self, key: &str) -> Option<usize> {
@@ -330,14 +430,22 @@ pub(crate) mod tests {
          cooldown: 1.0, range: 24.0, missile_speed: 28.0),
         (key: "nova", name: "Frost Nova", visual: 122, kind: Nova, damage: 8.0,
          cooldown: 5.0, radius: 9.0),
+        (key: "static_shard", name: "Static Shard", visual: 421, kind: Strike, damage: 0.0),
+        (key: "ember_core", name: "Ember Core", visual: 2120, kind: Nova, damage: 0.0),
+        (key: "frost_ward", name: "Frost Ward", visual: 122, kind: Nova, damage: 0.0),
+        (key: "detonation", name: "Arcane Detonation", visual: 1449, kind: Nova, damage: 0.0),
     ]"#;
     pub(crate) const ENEMIES: &str = r#"[
         (key: "wolf", name: "Young Wolf", display: 447, level: 1, hp: 10.0, speed: 5.0,
          damage: 2.0, xp: 1),
+        (key: "hogger", name: "Hogger", display: 384, level: 11, scale: 1.9, hp: 3000.0,
+         speed: 4.2, damage: 40.0, xp: 150),
     ]"#;
     pub(crate) const ZONES: &str = r#"[
         (key: "elwynn", name: "Elwynn Forest", map: 0, center: (-9548.5, 115.0, 60.0),
-         leash: 150.0, enemies: ["wolf"]),
+         leash: 150.0, enemies: ["wolf"], boss: "hogger",
+         interactables: [(kind: TitanShrine, count: 2), (kind: Chest, count: 3),
+                         (kind: CursedAltar, count: 1)], shrines_at_once: 4),
     ]"#;
 
     pub(crate) fn sample() -> Content {
@@ -357,6 +465,7 @@ pub(crate) mod tests {
         assert_eq!(c.abilities[mage.start_ix].key, "frostbolt");
         assert_eq!(mage.pool_ix.len(), 2);
         assert_eq!(c.enemies[c.zones[0].enemy_ix[0]].name, "Young Wolf");
+        assert_eq!(c.zones[0].boss_ix.map(|b| c.enemies[b].name.as_str()), Some("Hogger"));
     }
 
     #[test]
@@ -396,6 +505,15 @@ pub(crate) mod tests {
         })
         .unwrap_err();
         assert!(matches!(err, ContentError::DuplicateKey { .. }));
+    }
+
+    #[test]
+    fn rules_left_out_keep_their_defaults() {
+        let c = sample().with_rules("(tome_slots: 2)").unwrap();
+        assert_eq!(c.rules.tome_slots, 2);
+        assert_eq!(c.rules.tome_max_rank, Rules::default().tome_max_rank);
+        let err = sample().with_rules("(tome_slots: \"many\")").unwrap_err();
+        assert!(err.to_string().starts_with("rules.ron:"));
     }
 
     #[test]

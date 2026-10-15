@@ -1,0 +1,14 @@
+// The run's limits. A game mode can ship its own copy; anything it leaves out keeps the default
+// shown here.
+(
+    // Different tomes a hero can hold; once full, level-ups and shrines only raise those.
+    tome_slots: 4,
+    // The rank a tome stops at. Rarity still sets how much each pick adds.
+    tome_max_rank: 5,
+    // The most copies of one item. Items with a chance stop where their chance tops out.
+    item_max_copies: 5,
+    // Seconds between chances of a new shrine, while fewer than the zone's `shrines_at_once` stand.
+    shrine_every: 90.0,
+    // Seconds after a camp's elite dies before a new one guards the camp again.
+    elite_respawn: 180.0,
+)

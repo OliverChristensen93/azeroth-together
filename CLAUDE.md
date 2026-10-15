@@ -9,8 +9,17 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
 - `crates/together-sim/` — the game rules: a pure-Rust, headless simulation at a fixed 30 Hz
   (`World::step`), plus the content types. No Bevy. Every hero has a `PlayerId`; co-op rules
   (shared XP, the run waits for every living hero's card pick) are already in.
-- `content/*.ron` — classes, abilities, enemies, zones. Read from disk at startup, so edits need no
-  rebuild. `crates/together-sim/tests/shipped_content.rs` checks they parse and play.
+  - Megabonk-style systems, each in its own file: `stats.rs` (the hero stat block, pacts, the
+    party's `Difficulty`), `interact.rs` (shrines, chests, the War Banner, pots: kinds, the fill
+    circle, placement), `items.rs` (passive items and their copy limits), `powerups.rs` (party
+    power-ups, health shards, pot loot), `world/arena.rs` (the arena's upkeep: shrines and pots
+    coming back, elite camps, pickups, power-ups running out). Cards (`cards.rs`) are spells,
+    tomes (4 slots, rank 5), pacts, items or the gold/heal/reroll fallback. Gold: every coin goes
+    into every hero's own purse; each hero pays for their own chests.
+- `content/*.ron` — classes, abilities, enemies, zones, and `rules.ron` (tome slots and ranks, item
+  copies, shrine and elite-camp timers: what a game mode may set its own way). Read from disk at
+  startup, so edits need no rebuild. `crates/together-sim/tests/shipped_content.rs` checks they
+  parse and play.
 - `crates/benilla-app/src/together/` — the client: steps the sim and draws it with the engine's
   unit, spell-visual and combat-text systems. It decides nothing about the game.
   - The real WoW 1.12 UI (FrameXML from the MPQ) and character controller are ON (no `CaptureMode`):
@@ -55,6 +64,9 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   key behind the code is `benilla-config/together-host-key.txt`. `cargo test -p together-net -- --ignored`
   runs the online invite test.
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
+  `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
+  start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries
+  banners. The host moves a shrine or camp that lands in water or a building (`view::settle_shrines`).
   On Windows every test window (`WOW_LIVE_SHOT` etc.) opens behind the user's work, parked on the
   primary monitor's right edge with a 32 px sliver showing (`capture/probes/run.rs`); keep it so.
 - Sharing with a friend: `scripts/package.sh` builds the `share` profile without `dev` and writes

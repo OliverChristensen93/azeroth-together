@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use together_sim::{Content, ContentSources, Event, PlayerInput, World, TICK_HZ, V2};
+use together_sim::{
+    Content, ContentSources, Event, InteractableKind, Item, PlayerInput, World, TICK_HZ, V2,
+};
 
 fn shipped() -> Content {
     Content::from_ron(ContentSources {
@@ -12,6 +14,7 @@ fn shipped() -> Content {
         enemies: include_str!("../../../content/enemies.ron"),
         zones: include_str!("../../../content/zones.ron"),
     })
+    .and_then(|c| c.with_rules(include_str!("../../../content/rules.ron")))
     .unwrap_or_else(|e| panic!("content/ is invalid: {e}"))
 }
 
@@ -19,6 +22,47 @@ fn shipped() -> Content {
 fn shipped_content_is_valid() {
     let c = shipped();
     assert!(!c.classes.is_empty() && !c.zones.is_empty());
+}
+
+#[test]
+fn every_item_that_strikes_has_its_ability() {
+    let c = shipped();
+    for item in Item::ALL {
+        if let Some(key) = item.proc() {
+            assert!(c.ability(key).is_some(), "{key} is missing from abilities.ron");
+        }
+    }
+}
+
+#[test]
+fn every_zone_starts_with_its_few_shrines_inside_its_arena() {
+    let c = Arc::new(shipped());
+    for zone in &c.zones {
+        assert!(
+            zone.interactables
+                .iter()
+                .any(|p| p.kind == InteractableKind::Chest),
+            "{} has no chests",
+            zone.key
+        );
+        let w = World::new(c.clone(), &zone.key, 11).unwrap();
+        let center = w.center();
+        let pots = w
+            .interactables
+            .iter()
+            .filter(|i| i.kind == InteractableKind::Pot)
+            .count() as u32;
+        assert_eq!(pots, zone.pots, "{}", zone.key);
+        assert_eq!(
+            w.interactables.len() as u32 - pots,
+            zone.shrines_at_once,
+            "{}",
+            zone.key
+        );
+        for i in &w.interactables {
+            assert!(i.pos.distance(center) <= zone.leash, "{} {:?}", zone.key, i);
+        }
+    }
 }
 
 #[test]

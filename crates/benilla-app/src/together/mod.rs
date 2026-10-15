@@ -11,7 +11,7 @@
 //! why nothing here decides anything about the game.
 //!
 //! Configuration, for now: `TOGETHER_CLASS` (default `mage`), `TOGETHER_ZONE` (default `elwynn`),
-//! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the four RON files; default
+//! `TOGETHER_NAME` (the hero's name), `TOGETHER_CONTENT` (a folder with the RON files; default
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
 mod actions;
@@ -52,7 +52,8 @@ pub(crate) fn start_map() -> u32 {
     START_MAP.load(Ordering::Relaxed)
 }
 
-/// The four content files' text, for the content hash a co-op client and host compare.
+/// The content files' text, for the content hash a co-op client and host compare: classes,
+/// abilities, enemies, and the zones with the rules after them.
 static CONTENT_TEXTS: OnceLock<(String, String, String, String)> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static (String, String, String, String) {
@@ -106,12 +107,14 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         include_str!("../../../../content/enemies.ron"),
     )?;
     let zones = read("zones.ron", include_str!("../../../../content/zones.ron"))?;
+    let rules = read("rules.ron", include_str!("../../../../content/rules.ron"))?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         abilities: &abilities,
         enemies: &enemies,
         zones: &zones,
     })
+    .and_then(|c| c.with_rules(&rules))
     .map_err(|e| e.to_string())?;
     let zone = content
         .zone(&zone_key())
@@ -128,7 +131,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     }
     START_MAP.store(content.zones[zone].map, Ordering::Relaxed);
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, zones));
+    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, format!("{zones}\n{rules}")));
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -298,6 +301,7 @@ impl Plugin for TogetherPlugin {
                     menu::apply_ui_scale,
                     menu::show_menu,
                     menu::fill_icons,
+                    levelup::fill_texture_icons,
                     hud::show_hud,
                     levelup::refresh,
                     levelup::clicks,
@@ -340,6 +344,7 @@ impl Plugin for TogetherPlugin {
                     read_keys,
                     feed_pose,
                     step_sim,
+                    view::settle_shrines,
                     view::apply_events,
                     view::sync,
                     view::write_vitals,
@@ -357,6 +362,7 @@ impl Plugin for TogetherPlugin {
                     actions::fill_action_bar,
                     actions::drop_manual_casts,
                     hud::refresh,
+                    hud::prompt,
                     back_to_menu,
                 )
                     .chain()
@@ -441,7 +447,42 @@ fn start_run(
     let zone = content.zones[selection.zone].key.clone();
     let roster = net.roster(&own);
     net.broadcast_start(&zone);
-    begin(&mut commands, Sim::hosted(&zone, &roster));
+    let mut sim = Sim::hosted(&zone, &roster);
+    showcase_for_tests(&mut sim.world);
+    begin(&mut commands, sim);
+}
+
+/// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, one
+/// of each power-up lies on a ring inside it, an elite camp stands 25 yards off, and the boss
+/// comes 8 seconds in, so a short test run sees them all.
+fn showcase_for_tests(world: &mut World) {
+    if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
+        return;
+    }
+    world.next_boss = 8.0;
+    world.move_camp(0, world.center() + V2::new(25.0, 0.0));
+    let ups = together_sim::PowerUp::ALL;
+    for (k, p) in ups.into_iter().enumerate() {
+        let angle = (k as f32 + 0.5) / ups.len() as f32 * std::f32::consts::TAU;
+        let at = world.center() + V2::from_angle(angle, 5.0);
+        world.drop_pickup(at, together_sim::PickupKind::PowerUp(p));
+    }
+    let center = world.center();
+    let mut kinds = Vec::new();
+    let firsts: Vec<u32> = world
+        .interactables
+        .iter()
+        .filter(|i| {
+            let new = !kinds.contains(&i.kind);
+            kinds.push(i.kind);
+            new
+        })
+        .map(|i| i.id)
+        .collect();
+    for (k, &id) in firsts.iter().enumerate() {
+        let angle = k as f32 / firsts.len() as f32 * std::f32::consts::TAU;
+        world.move_interactable(id, center + V2::from_angle(angle, 10.0));
+    }
 }
 
 /// Midday, whatever the clock says.
@@ -454,8 +495,8 @@ fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState>>) {
     }
 }
 
-/// `TOGETHER_AUTOPLAY=1`: the local hero takes the first card, so a test run plays on without
-/// anyone at the keys.
+/// `TOGETHER_AUTOPLAY=1`: the local hero takes the first card and walks to the shrines and
+/// chests ([`autowalk`]), so a test run plays on without anyone at the keys.
 fn autoplay() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
@@ -520,10 +561,47 @@ fn bevy_to_ground(p: Vec3) -> V2 {
     V2::new(-p.z, -p.x)
 }
 
+/// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: with a banner, to its
+/// destination; else toward the nearest interactable it could use (a chest only once it can
+/// pay), until it stands well inside the circle. `None` when there is nothing to walk to, or
+/// cards are up.
+fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
+    use together_sim::{InteractState, InteractableKind};
+    let hero = world.hero(me).filter(|h| h.alive && h.offers.is_empty())?;
+    let carrying = world.interactables.iter().find_map(|i| match i.state {
+        InteractState::Escort { carrier, to, .. } if carrier == me => Some(to),
+        _ => None,
+    });
+    let (goal, near) = match carrying {
+        Some(to) => (to, 1.0),
+        None => {
+            let target = world
+                .interactables
+                .iter()
+                .filter(|i| i.ready())
+                .filter(|i| {
+                    i.kind != InteractableKind::Chest
+                        || hero.gold >= together_sim::chest_price(hero.chests)
+                })
+                .min_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))?;
+            (target.pos, target.kind.radius() * 0.4)
+        }
+    };
+    let to = goal - from;
+    let dist = to.length();
+    if dist < near {
+        return None;
+    }
+    Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist))
+}
+
 /// Where WoW's controller left the local hero, as the pose the next step takes. The arena's edge
 /// is a wall: a hero past the leash is put back on it, so nobody runs off the end of the loaded
 /// world. Until the controller has the hero, the terrain streams around the arena's centre.
+#[allow(clippy::too_many_arguments)]
 fn feed_pose(
+    time: Res<Time>,
+    world_point: benilla_world::world_point::WorldPoint,
     views: Res<view::Views>,
     sim: Res<Sim>,
     mut player: ResMut<crate::player::Player>,
@@ -543,16 +621,26 @@ fn feed_pose(
         input.pose = None;
         return;
     };
-    let mut pos = bevy_to_ground(tf.translation);
+    let at = bevy_to_ground(tf.translation);
+    let mut pos = at;
+    if autoplay() {
+        if let Some(to) = autowalk(&sim.world, sim.me, pos, time.delta_secs()) {
+            pos = to;
+        }
+    }
     let leash = sim.world.zone().leash;
     let off = pos - center;
     if off.length() > leash {
         pos = center + off.normalize_or_zero() * leash;
-        let back = units::ground_to_bevy(pos, tf.translation.y);
-        tf.translation.x = back.x;
-        tf.translation.z = back.z;
-        player.pos.x = back.x;
-        player.pos.z = back.z;
+    }
+    if pos != at {
+        let mut back = units::ground_to_bevy(pos, tf.translation.y);
+        // Onto the ground there, so a hero put up a slope does not end up inside it.
+        if let Some(h) = world_point.terrain_height_under(back) {
+            back.y = back.y.max(h);
+        }
+        tf.translation = back;
+        player.pos = back;
     }
     let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
     input.pose = Some(HeroPose {
