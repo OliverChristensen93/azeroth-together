@@ -25,9 +25,9 @@ Chest, Challenge Idol, Moonwell); items and a stage boss are in progress.
 | 0d | Damage meter, WoW party frames | Details!/Recount | ✅ Done | |
 | 1a | **Tomes**: stat upgrades that take no slot | Megabonk | 🟢 Greenlit · 🧪 | Damage, cooldown, area, speed, health, regen, armor, pickup range, luck, XP and gold gain, as cards beside spell cards. Built on the Megabonk branch. |
 | 1b | **In-run items** in 5 slots: 2 rings, 2 trinkets, 1 necklace | Azeroth Survivors, Megabonk | 🟢 Greenlit · 🧪 | Drop from chests, equipped in the run. The necklace is the strongest slot and can carry Unique effects that augment or link spells (2e). Being built on the Megabonk branch (its slot rules may differ). See [A](#a-items-and-tomes-in-a-run). |
-| 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Leaning no | Fixed recipes turn a run into a hunt for the partner piece: the same forcing we want to avoid. Augments (2c) do the job better. |
+| 2a | Evolutions: max-rank spell + a specific item becomes a new spell | Vampire Survivors | ⛔ Skipped for now | Fixed recipes turn a run into a hunt for the partner piece. We test augments (2c) first and revisit. |
 | 2b | Fusions: two spells merge into one | — | ⛔ Not doing | Fixed recipes force a hunt; any-with-any has no good meaning; and fusing *removes* half of each spell (a trap's summon, a damage spell's damage), stranding the modifiers built for it. |
-| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Pools mix spell-specific and shared tag-based augments. See [C](#c-augments). |
+| 2c | **Augments**: choose a modifier for a spell at ranks 7 and 14 (max rank 14) | Hades, Azeroth Survivors items | 🟢 Greenlit | The core way spells grow. Pools: ~4 spell-specific per spell plus a shared tag library (agreed). How the pick is offered: 💬 see [C](#c-augments). |
 | 2d | Grimoire: a codex of augments and Uniques you have found, the rest as hints | VS collection | 💡 New idea | Knowledge as progression between runs. |
 | 2e | **Unique items that augment or link spells** (e.g. "When Ice Barrier breaks, cast Frost Nova") | Azeroth Survivors | 🟢 Greenlit | Mostly necklaces. Triggered casts use your rank and augments and ignore cooldown. |
 | 2f | **Spell design rules**: about 12 spells per class, each reworked for the genre; single-target spells prioritize bosses and elites | Azeroth Survivors | 🟢 Greenlit | Kidney Shot just damages and stuns. Single-target and area spells both earn a place. We have 68 spells today (~7.5 per class). |
@@ -104,9 +104,27 @@ Spells grow by **augments** chosen at **rank 7** and **rank 14**; 14 is max rank
 all 6 spells would take 78 rank-ups, so most spells reach rank 7 (their first augment) and two or
 three committed spells reach 14. Rank 14 is a commitment, not a given. Tune when playable.
 
-**How the milestone works.** At rank 7 and rank 14, the upgrade card offers 1 of 3 augments
-(rarity-rolled: rarer augments are stronger versions or rarer kinds). Rerolls and freeze work as on
-any hand. A spell ends a run with at most two augments.
+**How the milestone works (proposed, 💬).** A spell that reaches rank 7 (or 14) is *ready to
+augment*, and an **Augment screen** opens right away with 3 augments for it (rarity-rolled: rarer
+augments are stronger versions or rarer kinds). It is a bonus screen: it does not use a level-up.
+On it you can:
+
+- **Pick** one.
+- **Reroll** for 3 new options, using the run's rerolls.
+- **Hold**: take nothing now; the Augment screen comes back with 3 fresh options after your next
+  level-up, again as a bonus.
+
+The price of holding: the spell **stays at rank 7** (no further rank cards for it) and has no
+augment while you wait. So you can hunt for Frostfire when Spellfire shows up, keep levelling
+everything else, and the cost falls only on the spell you are being picky about. A spell ends a run
+with at most two augments.
+
+- *The alternative considered:* the augment hand replaces the next level-up, and skipping costs that
+  level-up. Harsher, and hunting a conversion would mean giving up spell and tome picks.
+- **Synergy weighting:** the augment hand leans toward your build's tags (Frost spells owned →
+  Frostfire more likely than Spellfire), never guaranteed; talents can lean it further.
+- **Co-op:** level-ups pause the run until everyone has picked, and augment screens add pauses. Try
+  the pause first; if it interrupts too much, let augment screens be picked with 1/2/3 while moving.
 
 **The two tiers do different jobs:**
 
@@ -279,8 +297,8 @@ WoW maps have little verticality, so jumps should be about crossing the horde, n
 
 ## Open questions for us
 
-1. Evolutions: confirm as not doing?
-2. Augment pools: 4 spell-specific per spell plus a shared tag library, as in [C](#c-augments)?
+1. The augment flow: the bonus Augment screen with Pick / Reroll / Hold, as in [C](#c-augments)?
+2. Co-op: should augment screens pause the run like level-ups?
 3. The talent web: its size, how points are earned, its first notables and keystones.
 4. Dormant gear: what a piece costs to switch on, and whether order or rarity changes the price.
 5. Movement feel (10b): which of dash charges, double jump, glide, momentum and jump pads.
@@ -294,6 +312,8 @@ Answered (2026-10-15):
 - **Power budget:** 0% early, up to ~40% late.
 - **Defensive button:** Q/E/F, 30 s–2 min, augmentable, no cast times for now.
 - **Fusions:** not doing.
-- **Augments:** the growth system, at ranks 7 and 14, max rank 14.
+- **Augments:** the growth system, at ranks 7 and 14, max rank 14; pools of ~4 spell-specific
+  augments per spell plus a shared tag library.
+- **Evolutions:** skipped for now; test augments first.
 - **Talent web:** start with it.
 - **Gear:** jewelry in the run; armor and weapons brought in, dormant, switched on with gold.
