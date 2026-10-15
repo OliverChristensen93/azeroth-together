@@ -298,6 +298,8 @@ pub(super) fn build_menu(
         zone_frame(ui, &art, f, &content);
         class_panel(ui, &art, f);
         lobby_panel(ui, &art, f);
+        super::dev::dev_panel(ui, &art, f);
+        super::dev::dev_button(ui, &art, f);
 
         // The hero's name line, GlueFontNormalHuge at BOTTOM (0,100).
         ui.spawn(Node {
@@ -416,7 +418,7 @@ pub(super) fn build_menu(
 }
 
 /// A character-select style frame: the tooltip fill and the name border.
-fn framed(
+pub(super) fn framed(
     ui: &mut ChildSpawnerCommands,
     art: &GlueArt,
     node: Node,

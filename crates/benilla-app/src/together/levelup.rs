@@ -57,6 +57,10 @@ pub(super) enum HandButton {
 #[derive(Component)]
 pub(super) struct RerollText;
 
+/// How much of the screen's bottom the level-up screen leaves clear for WoW's action bar, in
+/// the 768-unit canvas.
+const BAR_CLEAR: f32 = 64.0;
+
 /// The Skip button's caption: Hold on an augment screen.
 #[derive(Component)]
 pub(super) struct SkipText;
@@ -115,10 +119,13 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
             LevelUpRoot,
+            // Short of the bottom: WoW's action bar (drawn under our screens) stays undimmed.
             Node {
                 position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(BAR_CLEAR),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
@@ -914,6 +921,8 @@ pub(super) fn refresh(
                 ));
                 if let Some(&(visual, rank)) = now.spells.get(i) {
                     slot.insert((
+                        super::tooltip::SpellSlot(i),
+                        Interaction::default(),
                         SpellIcon(visual),
                         ImageNode {
                             color: Color::srgba(0.2, 0.2, 0.2, 1.0),

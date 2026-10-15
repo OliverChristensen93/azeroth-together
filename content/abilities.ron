@@ -41,7 +41,7 @@
      description: "Instantly blasts the enemy closest to you with fire."),
     (key: "cone_of_cold", name: "Cone of Cold", visual: 120, kind: Nova,
      damage: 14.0, cooldown: 4.5, radius: 11.0, target: Some(Ahead),
-     tags: [Frost, Area, Direct, Slow],
+     tags: [Frost, Area, Cone, Direct, Slow],
      description: "A wide sweep of cold hits every enemy ahead of you and Chills them."),
     (key: "blast_wave", name: "Blast Wave", visual: 11113, kind: Nova,
      damage: 18.0, cooldown: 6.5, radius: 8.0, tags: [Fire, Area, Direct, Slow, Knockback],

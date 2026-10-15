@@ -591,6 +591,8 @@ pub struct World {
     pub next_boss: f32,
     /// Experience earned per experience picked up: 1 in a normal run.
     pub xp_rate: f32,
+    /// The rank a newly learned spell starts at: 1 in a normal run.
+    pub learn_rank: u8,
 }
 
 impl World {
@@ -630,6 +632,7 @@ impl World {
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
             xp_rate: 1.0,
+            learn_rank: 1,
         };
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
@@ -1020,9 +1023,14 @@ impl World {
     fn take_card(&mut self, h: usize, card: Card) {
         let hero = &mut self.heroes[h];
         match card.kind {
-            CardKind::Learn(ability) => hero
-                .abilities
-                .push(Owned::new(ability, card.rarity.learn_bonus())),
+            CardKind::Learn(ability) => {
+                hero.abilities.push(Owned {
+                    level: self.learn_rank.clamp(1, MAX_RANK),
+                    ..Owned::new(ability, card.rarity.learn_bonus())
+                });
+                // A spell learned at a milestone's rank (a test run's) shows its screen next.
+                self.queue_augments(h, true);
+            }
             CardKind::Upgrade(ability) => {
                 if let Some(owned) = hero.abilities.iter_mut().find(|o| o.ability == ability) {
                     owned.level = (owned.level + 1).min(MAX_RANK);

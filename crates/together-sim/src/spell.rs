@@ -22,6 +22,8 @@ pub enum Tag {
     Melee,
     Chain,
     Area,
+    /// An area in a cone from the caster.
+    Cone,
     /// A lasting area on the ground.
     Ground,
     Beam,
@@ -42,7 +44,7 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub const ALL: [Tag; 26] = [
+    pub const ALL: [Tag; 27] = [
         Tag::Physical,
         Tag::Fire,
         Tag::Frost,
@@ -54,6 +56,7 @@ impl Tag {
         Tag::Melee,
         Tag::Chain,
         Tag::Area,
+        Tag::Cone,
         Tag::Ground,
         Tag::Beam,
         Tag::Summon,
@@ -95,6 +98,7 @@ impl Tag {
             Tag::Melee => "Melee",
             Tag::Chain => "Chain",
             Tag::Area => "Area",
+            Tag::Cone => "Cone",
             Tag::Ground => "Ground",
             Tag::Beam => "Beam",
             Tag::Summon => "Summon",
@@ -172,6 +176,15 @@ pub enum Targeting {
     Caster,
 }
 
+/// Which way a cone points: ahead of the caster (its own way), behind it, or four narrower cones
+/// in every direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cone {
+    Ahead,
+    Behind,
+    Four,
+}
+
 /// Seconds a Chill lasts, and how much it slows.
 pub const CHILL_SECS: f32 = 3.0;
 pub const CHILL_SLOW: f32 = 0.4;
@@ -208,6 +221,8 @@ pub struct CastSpec {
     pub radius: f32,
     /// Inner edge of a ring, 0 for a full circle.
     pub ring: f32,
+    /// Which way a cone points, for a spell aimed [`Targeting::Ahead`].
+    pub cone: Cone,
     pub missile_speed: f32,
     pub crit: f32,
     /// What a critical strike multiplies by.

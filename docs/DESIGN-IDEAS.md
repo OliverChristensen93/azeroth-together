@@ -104,7 +104,7 @@ single spell's name. Tags appear as chips on the card, like Path of Exile's gem 
 | Family | Tags |
 |---|---|
 | School | Physical, Fire, Frost, Arcane, Nature, Shadow, Holy (and pairs from conversion: Frostfire, Shadowflame…) |
-| Delivery | Projectile, Melee, Chain, Area (nova), Ground (lasting zone), Beam, Summon, Aura, Totem, Shield |
+| Delivery | Projectile, Melee, Chain, Area (nova), Cone, Ground (lasting zone), Beam, Summon, Aura, Totem, Shield |
 | Effect | Direct, Damage over time, Slow, Root, Freeze, Stun, Fear, Knockback, Heal |
 
 Examples:

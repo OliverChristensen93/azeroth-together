@@ -15,6 +15,7 @@
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
 mod actions;
+mod dev;
 mod dress;
 mod hud;
 mod levelup;
@@ -23,6 +24,7 @@ mod menu;
 mod meter;
 mod party;
 mod session;
+mod tooltip;
 mod ui;
 mod units;
 mod view;
@@ -177,8 +179,9 @@ const PLAYBACK_DEPTH: usize = 2;
 const PLAYBACK_MAX: usize = 8;
 
 impl Sim {
-    /// A run for everyone in `roster` (just us, alone), stepped here.
-    fn hosted(zone: &str, roster: &[together_net::LobbyPlayer]) -> Self {
+    /// A run for everyone in `roster` (just us, alone), stepped here, with the dev panel's test
+    /// settings applied.
+    fn hosted(zone: &str, roster: &[together_net::LobbyPlayer], dev: &dev::DevTuning) -> Self {
         let seed = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -196,6 +199,7 @@ impl Sim {
             );
         }
         give_loadout(&mut world);
+        dev.apply(&mut world);
         Self {
             world,
             me: 0,
@@ -291,11 +295,18 @@ impl Plugin for TogetherPlugin {
             .init_resource::<EndRun>()
             .init_resource::<session::Net>()
             .init_resource::<lobby::JoinDialog>()
+            .init_resource::<dev::DevSettings>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
                 Startup,
-                (hud::setup, levelup::setup, meter::setup, menu::spawn_root),
+                (
+                    hud::setup,
+                    levelup::setup,
+                    meter::setup,
+                    tooltip::setup,
+                    menu::spawn_root,
+                ),
             )
             .add_systems(
                 Update,
@@ -312,6 +323,7 @@ impl Plugin for TogetherPlugin {
                     meter::refresh,
                     ui::tune_ui,
                     session::close_on_exit,
+                    tooltip::show_tip,
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
@@ -325,6 +337,8 @@ impl Plugin for TogetherPlugin {
                     lobby::type_address,
                     lobby::clicks,
                     lobby::refresh.before(crate::glue::GlueVisuals),
+                    dev::clicks,
+                    dev::refresh.before(crate::glue::GlueVisuals),
                     session::lobby,
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     menu::preview_hero,
@@ -403,6 +417,7 @@ fn start_run(
     mut player: ResMut<crate::player::Player>,
     mut next: ResMut<NextState<Phase>>,
     mut net: ResMut<session::Net>,
+    dev: Res<dev::DevSettings>,
 ) {
     let content = content();
     let mut begin = |commands: &mut Commands, sim: Sim| {
@@ -452,7 +467,7 @@ fn start_run(
     let zone = content.zones[selection.zone].key.clone();
     let roster = net.roster(&own);
     net.broadcast_start(&zone);
-    let mut sim = Sim::hosted(&zone, &roster);
+    let mut sim = Sim::hosted(&zone, &roster, &dev.tuning);
     showcase_for_tests(&mut sim.world);
     begin(&mut commands, sim);
 }

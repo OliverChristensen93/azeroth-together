@@ -68,6 +68,11 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `TOGETHER_XP_RATE=<n>` multiplies experience; `TOGETHER_LOADOUT=frostbolt@4,fireball@9+frostfire`
   starts the host's hero with those spells, ranks and augments (names as on the cards, any case);
   `TOGETHER_CLASS` beats the menu's saved pick. The mage's movement ability is Blink on F (30 s).
+  The menu's Dev panel (`together/dev.rs`, saved in `benilla-config/together-dev-run.txt`) sets
+  experience, hero and enemy health, enemy damage, horde size and the rank new spells start at, for
+  runs this player starts or hosts; `TOGETHER_DEV_PANEL=1` opens it. Spell tooltips are
+  `together/tooltip.rs` (WoW's own action-button tooltip is turned off in `ui.rs`);
+  `TOGETHER_TIP_SLOT=<n>` shows button n's for a test shot.
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries

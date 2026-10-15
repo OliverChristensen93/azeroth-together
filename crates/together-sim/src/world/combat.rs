@@ -16,7 +16,7 @@
 use super::*;
 use crate::augments::{Augment, Milestone};
 use crate::spell::{
-    control_secs, CastSpec, Tag, Tags, Targeting, BURN_SECS, CHILL_SECS, CHILL_SLOW,
+    control_secs, CastSpec, Cone, Tag, Tags, Targeting, BURN_SECS, CHILL_SECS, CHILL_SLOW,
     CONE_HALF_ANGLE, FREEZE_SECS,
 };
 
@@ -258,8 +258,15 @@ fn in_area(spec: &CastSpec, center: V2, facing: V2, pos: V2) -> bool {
         return true;
     }
     let f = facing.normalize_or_zero();
-    let cos = (off.x * f.x + off.y * f.y) / d;
-    cos >= CONE_HALF_ANGLE.cos()
+    let side = V2::new(-f.y, f.x);
+    let (dirs, half): (&[V2], f32) = match spec.cone {
+        Cone::Ahead => (&[f], CONE_HALF_ANGLE),
+        Cone::Behind => (&[f * -1.0], CONE_HALF_ANGLE),
+        // Four cones half as wide, so together they cover half the circle.
+        Cone::Four => (&[f, side, f * -1.0, side * -1.0], CONE_HALF_ANGLE * 0.5),
+    };
+    dirs.iter()
+        .any(|dir| (off.x * dir.x + off.y * dir.y) / d >= half.cos())
 }
 
 /// The distance from `p` to the line through `a` toward `b`, and how far along it `p` lies (in
@@ -297,7 +304,7 @@ impl World {
     /// A cast of `owned` by hero `h`: its rank, the hero's stats, the party's power-ups and its
     /// augments, with the hero-wide capstones' bonuses (Critical Mass, Arcane Charge, Channelled
     /// Focus, Phoenix Ground, Fortified) on top.
-    pub(crate) fn spell_spec(&self, h: usize, owned: &Owned) -> CastSpec {
+    pub fn spell_spec(&self, h: usize, owned: &Owned) -> CastSpec {
         let hero = &self.heroes[h];
         let def = &self.content.abilities[owned.ability];
         let st = self.sharpen(owned.stats(def).with(&hero.stats));
@@ -314,6 +321,7 @@ impl World {
             range: st.range,
             radius: st.radius,
             ring: 0.0,
+            cone: Cone::Ahead,
             missile_speed: def.missile_speed,
             crit: CRIT_CHANCE + hero.stats.get(Stat::Crit),
             crit_mult: 2.0,
@@ -1860,6 +1868,28 @@ mod tests {
             w.enemy(id).unwrap().pos.distance(at) < 0.05,
             "a frozen enemy moved"
         );
+    }
+
+    #[test]
+    fn cone_shapes_point_where_their_augment_says() {
+        // The hero faces +x. (augments, enemy offset, hit?)
+        let cases: [(&[Augment], f32, f32, bool); 6] = [
+            (&[], 4.0, 0.0, true),
+            (&[], -4.0, 0.0, false),
+            (&[Augment::Reversed], -4.0, 0.0, true),
+            (&[Augment::Reversed], 4.0, 0.0, false),
+            (&[Augment::FourWinds], 0.0, 4.0, true),
+            (&[Augment::FullCircle], 0.0, -4.0, true),
+        ];
+        for (augments, dx, dy, hit) in cases {
+            let mut w = mage();
+            spells(&mut w, &[("cone_of_cold", 5, augments)]);
+            w.heroes[0].facing = V2::new(1.0, 0.0);
+            let id = foe(&mut w, dx, dy, 1e6);
+            w.step();
+            let struck = w.enemy(id).unwrap().hp < 1e6;
+            assert_eq!(struck, hit, "{augments:?} at ({dx}, {dy})");
+        }
     }
 
     #[test]

@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::spell::{CastSpec, Tag, Tags, Targeting};
+use crate::spell::{CastSpec, Cone, Tag, Tags, Targeting};
 
 /// What a spell's next augment is: a general one (ranks 5 and 15) or one of its capstones
 /// (rank 10).
@@ -60,6 +60,10 @@ pub enum Augment {
     Concentrated,
     Echo,
     Ring,
+    // --- General: cones ---
+    Reversed,
+    FourWinds,
+    FullCircle,
     // --- General: ground ---
     Lingering,
     Mobile,
@@ -140,7 +144,7 @@ pub enum Augment {
 
 impl Augment {
     /// Every general augment, in the library's order.
-    pub const GENERAL: [Augment; 32] = [
+    pub const GENERAL: [Augment; 35] = [
         Augment::Frostfire,
         Augment::Spellfire,
         Augment::Spellfrost,
@@ -151,6 +155,9 @@ impl Augment {
         Augment::Concentrated,
         Augment::Echo,
         Augment::Ring,
+        Augment::Reversed,
+        Augment::FourWinds,
+        Augment::FullCircle,
         Augment::Lingering,
         Augment::Mobile,
         Augment::Targeted,
@@ -227,6 +234,9 @@ impl Augment {
             Augment::Concentrated => "Concentrated",
             Augment::Echo => "Echo",
             Augment::Ring => "Ring",
+            Augment::Reversed => "Reversed",
+            Augment::FourWinds => "Four Winds",
+            Augment::FullCircle => "Full Circle",
             Augment::Lingering => "Lingering",
             Augment::Mobile => "Mobile",
             Augment::Targeted => "Targeted",
@@ -301,6 +311,9 @@ impl Augment {
             Augment::Concentrated => "-30% area, +40% damage.",
             Augment::Echo => "Repeats at half strength 1 second later.",
             Augment::Ring => "Hits a ring from 5 to 12 yards instead of a circle. +50% damage.",
+            Augment::Reversed => "The cone points behind you instead of ahead.",
+            Augment::FourWinds => "Four narrower cones, one in each direction.",
+            Augment::FullCircle => "Hits all around you instead of a cone, with 30% less reach.",
             Augment::Lingering => "Lasts 50% longer.",
             Augment::Mobile => "Follows you.",
             Augment::Targeted => "Lands on the thickest crowd within 25 yards instead of around you.",
@@ -409,6 +422,14 @@ impl Augment {
             .collect()
     }
 
+    /// A cone's new shape: a spell takes at most one.
+    pub fn is_cone_shape(self) -> bool {
+        matches!(
+            self,
+            Augment::Reversed | Augment::FourWinds | Augment::FullCircle
+        )
+    }
+
     /// A conversion: it adds a school, and a spell takes at most one.
     pub fn is_conversion(self) -> bool {
         matches!(
@@ -429,6 +450,9 @@ impl Augment {
             }
             Augment::Wide | Augment::Concentrated | Augment::Echo | Augment::Ring => {
                 Requires::AnyOf(&[Area])
+            }
+            Augment::Reversed | Augment::FourWinds | Augment::FullCircle => {
+                Requires::AnyOf(&[Cone])
             }
             Augment::Lingering | Augment::Mobile => Requires::AnyOf(&[Ground]),
             Augment::Targeted => Requires::Placeable,
@@ -467,6 +491,9 @@ impl Augment {
             return false;
         }
         if self.is_conversion() && taken.iter().any(|a| a.is_conversion()) {
+            return false;
+        }
+        if self.is_cone_shape() && taken.iter().any(|a| a.is_cone_shape()) {
             return false;
         }
         // A shield deals no damage itself: damage trades mean nothing to it.
@@ -529,6 +556,13 @@ impl Augment {
                 s.radius = s.radius.max(12.0);
                 s.damage *= 1.5;
             }
+            Augment::Reversed => s.cone = Cone::Behind,
+            Augment::FourWinds => s.cone = Cone::Four,
+            Augment::FullCircle => {
+                s.targeting = Targeting::Around;
+                s.radius *= 0.7;
+                s.tags = s.tags.without(Tag::Cone);
+            }
             Augment::Lingering => s.ground *= 1.5,
             Augment::Mobile => s.follows = true,
             Augment::Targeted => s.targeted = true,
@@ -590,6 +624,7 @@ impl Augment {
             }
             Augment::DragonsBreath => {
                 s.targeting = Targeting::Ahead;
+                s.tags = s.tags.with(Tag::Cone);
                 s.damage *= 1.6;
                 s.stun = s.stun.max(2.0);
                 s.tags = s.tags.with(Tag::Stun);
@@ -622,6 +657,7 @@ mod tests {
             range: 20.0,
             radius: 3.0,
             ring: 0.0,
+            cone: Cone::Ahead,
             missile_speed: 20.0,
             crit: 0.05,
             crit_mult: 2.0,
@@ -690,6 +726,20 @@ mod tests {
         Augment::Frostfire.shape(&mut s);
         assert!(s.tags.has(Tag::Frost) && s.tags.has(Tag::Fire) && s.tags.has(Tag::Slow));
         assert!(s.chill > 0.0);
+    }
+
+    #[test]
+    fn a_cone_takes_one_new_shape() {
+        let cone = spec(&[Tag::Frost, Tag::Area, Tag::Cone]);
+        assert!(Augment::Reversed.fits(&cone, &[]));
+        assert!(Augment::Wide.fits(&cone, &[]), "a cone is still an area");
+        assert!(!Augment::FourWinds.fits(&cone, &[Augment::Reversed]));
+        assert!(!Augment::Reversed.fits(&spec(&[Tag::Area]), &[]));
+        let mut round = cone.clone();
+        round.targeting = Targeting::Ahead;
+        Augment::FullCircle.shape(&mut round);
+        assert_eq!(round.targeting, Targeting::Around);
+        assert!((round.radius - 2.1).abs() < 1e-4);
     }
 
     #[test]
