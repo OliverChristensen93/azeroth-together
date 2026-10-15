@@ -94,6 +94,17 @@ pub enum PickupKind {
 /// A health shard's share of its taker's health.
 pub const HEALTH_SHARD: f32 = 0.25;
 
+/// What a broken pot held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PotLoot {
+    /// Coins, this much gold in all, spilled at the pot.
+    Gold(u32),
+    /// Gems, this much experience in all, spilled at the pot.
+    Xp(u32),
+    /// A health shard or power-up, a few steps off.
+    Pickup(PickupKind),
+}
+
 /// Something on the ground, gone after `left` seconds if nobody takes it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pickup {

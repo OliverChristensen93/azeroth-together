@@ -117,7 +117,8 @@ pub struct ZoneDef {
     /// How many of them stand at once (5 when left out): new ones come as old ones are used.
     #[serde(default = "five")]
     pub shrines_at_once: u32,
-    /// How many pots stand near the heroes at once (6 when left out).
+    /// How many pots stand scattered over the arena (6 when left out); a broken one is made good
+    /// out of sight.
     #[serde(default = "six")]
     pub pots: u32,
     /// How many camps an elite guards (3 when left out); each gets a new elite the rules'

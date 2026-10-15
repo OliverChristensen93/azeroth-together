@@ -34,7 +34,8 @@ pub enum InteractableKind {
     ChallengeIdol,
     /// Taken up, it must be carried to a marked spot in time; there a cache waits.
     WarBanner,
-    /// Breaks at a touch, spilling coins, experience, a health shard or a power-up.
+    /// Breaks at a touch: coins, experience, a health shard or a power-up. Scattered over the
+    /// arena, with a new one now and then as they break.
     Pot,
 }
 
@@ -81,7 +82,7 @@ impl InteractableKind {
     pub fn radius(self) -> f32 {
         match self {
             InteractableKind::Chest | InteractableKind::Cache => 2.5,
-            InteractableKind::Pot => 1.5,
+            InteractableKind::Pot => 1.0,
             _ => 3.0,
         }
     }

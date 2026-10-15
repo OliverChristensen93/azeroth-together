@@ -30,7 +30,7 @@ use crate::items::{
     SHARD_REACH, SHARD_SHARE,
 };
 use crate::math::V2;
-use crate::powerups::{Pickup, PickupKind, PowerUp, BERSERK, BLOODLUST, SWIFTNESS};
+use crate::powerups::{Pickup, PickupKind, PotLoot, PowerUp, BERSERK, BLOODLUST, SWIFTNESS};
 use crate::rng::Rng;
 use crate::stats::{Bane, Difficulty, Pact, Stat, Stats};
 #[cfg(test)]
@@ -232,6 +232,12 @@ pub enum Event {
     EscortDone {
         id: u32,
         won: bool,
+    },
+    /// `by` broke pot `id`, and this is what it held.
+    PotBroken {
+        id: u32,
+        by: PlayerId,
+        loot: PotLoot,
     },
     /// `by` took something from the ground; a power-up works for the whole party.
     PickupTaken {
@@ -499,10 +505,9 @@ pub struct World {
     pub pickups: Vec<Pickup>,
     /// The party's power-ups at work, with the seconds each has left.
     pub buffs: Vec<(PowerUp, f32)>,
-    /// Seconds until the arena next gets a new shrine, pot or stray power-up.
+    /// Seconds until the arena next gets a chance at a new shrine, or a new pot.
     shrine_timer: f32,
     pot_timer: f32,
-    powerup_timer: f32,
     pending: Vec<PendingHit>,
     inputs: HashMap<PlayerId, PlayerInput>,
     events: Vec<Event>,
@@ -539,8 +544,7 @@ impl World {
             pickups: Vec::new(),
             buffs: Vec::new(),
             shrine_timer: shrine_every,
-            pot_timer: 0.0,
-            powerup_timer: arena::POWERUP_EVERY,
+            pot_timer: arena::POT_EVERY,
             pending: Vec::new(),
             inputs: HashMap::new(),
             events: Vec::new(),
@@ -557,6 +561,7 @@ impl World {
             world.place(kind, pos);
         }
         world.place_camps();
+        world.place_pots();
         Ok(world)
     }
 
@@ -1896,8 +1901,9 @@ impl World {
                 vec![by]
             }
             InteractableKind::Pot => {
-                self.break_pot(pos);
-                vec![who[0]]
+                let (id, by) = (self.interactables[i].id, who[0]);
+                self.break_pot(id, pos, by);
+                vec![by]
             }
             InteractableKind::Chest => {
                 // Only the opener pays, and only the opener chooses.
@@ -2918,30 +2924,86 @@ mod tests {
         assert_eq!(shrines(&w).len(), cap, "never more than the zone allows");
     }
 
+    /// The pots standing.
+    fn pots(w: &World) -> Vec<V2> {
+        w.interactables
+            .iter()
+            .filter(|i| i.kind == InteractableKind::Pot && i.ready())
+            .map(|i| i.pos)
+            .collect()
+    }
+
     #[test]
-    fn pots_stand_near_the_heroes_and_break_at_a_touch() {
+    fn pots_start_scattered_over_the_arena_and_break_at_a_touch() {
+        let mut w = world();
+        let all = pots(&w);
+        assert_eq!(all.len() as u32, w.zone().pots, "a full arena to start");
+        let center = w.center();
+        let spread = all.iter().map(|p| p.distance(center)).fold(0.0f32, f32::max);
+        assert!(spread > 60.0, "bunched near the start: {spread}");
+        let pot = all[0];
+        w.heroes[0].pos = pot + V2::new(0.8, 0.0);
+        w.step();
+        let events = w.drain_events();
+        let loot = events.iter().find_map(|e| match e {
+            Event::PotBroken { by: 0, loot, .. } => Some(*loot),
+            _ => None,
+        });
+        match loot.expect("no word of what it held") {
+            PotLoot::Gold(g) => assert!(g > 0 && w.hero(0).unwrap().gold > 0),
+            PotLoot::Xp(x) => assert!(x > 0),
+            PotLoot::Pickup(kind) => {
+                let lying = w.pickups.iter().find(|p| p.kind == kind).expect("dropped");
+                let off = lying.pos.distance(w.hero(0).unwrap().pos);
+                assert!(off > 3.0 && off < 6.0, "{off} yards off");
+            }
+        }
+        assert!(!pots(&w).contains(&pot), "the pot is gone");
+    }
+
+    #[test]
+    fn a_power_up_from_a_pot_waits_a_few_steps_off() {
+        let mut w = world();
+        w.interactables.clear();
+        let at = w.hero(0).unwrap().pos + V2::new(1.0, 0.0);
+        // Break pots until one holds a power-up.
+        for _ in 0..200 {
+            let id = w.place(InteractableKind::Pot, at);
+            w.break_pot(id, at, 0);
+            if w.pickups.iter().any(|p| matches!(p.kind, PickupKind::PowerUp(_))) {
+                break;
+            }
+        }
+        let up = w
+            .pickups
+            .iter()
+            .find(|p| matches!(p.kind, PickupKind::PowerUp(_)))
+            .expect("no power-up in 200 pots")
+            .clone();
+        w.step();
+        assert!(w.pickups.iter().any(|p| p.id == up.id), "taken without a step to it");
+        assert!(w.buffs.is_empty() || up.kind == PickupKind::PowerUp(PowerUp::Magnet));
+        w.heroes[0].pos = up.pos;
+        w.step();
+        assert!(w.pickups.iter().all(|p| p.id != up.id), "not taken when stepped on");
+    }
+
+    #[test]
+    fn a_broken_pot_is_made_good_out_of_sight() {
         let mut w = world();
         sturdy(&mut w);
-        play(&mut w, TICK_HZ as usize * 20);
-        let pots: Vec<V2> = w
+        let pot = pots(&w)[0];
+        w.interactables.retain(|i| i.pos != pot);
+        play(&mut w, (arena::POT_EVERY * TICK_HZ as f32) as usize + 2);
+        assert_eq!(pots(&w).len() as u32, w.zone().pots, "no new pot came");
+        let hero = w.hero(0).unwrap().pos;
+        let newest = w
             .interactables
             .iter()
             .filter(|i| i.kind == InteractableKind::Pot)
-            .map(|i| i.pos)
-            .collect();
-        assert_eq!(pots.len() as u32, w.zone().pots);
-        let hero = w.hero(0).unwrap().pos;
-        assert!(pots.iter().all(|p| p.distance(hero) < 40.0));
-        let (gems, pickups) = (w.gems.len(), w.pickups.len());
-        w.heroes[0].pos = pots[0];
-        w.step();
-        assert!(w.drain_events().iter().any(|e| matches!(
-            e,
-            Event::Interacted { kind: InteractableKind::Pot, .. }
-        )));
-        assert!(w.gems.len() > gems || w.pickups.len() > pickups, "an empty pot");
-        play(&mut w, 2);
-        assert!(!w.interactables.iter().any(|i| i.pos == pots[0]), "the pot is gone");
+            .max_by_key(|i| i.id)
+            .unwrap();
+        assert!(newest.pos.distance(hero) >= arena::POT_UNSEEN, "it came in sight");
     }
 
     #[test]

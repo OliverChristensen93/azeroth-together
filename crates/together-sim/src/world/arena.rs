@@ -1,6 +1,6 @@
-//! The arena's comings and goings: new shrines as old ones are used, pots near the heroes and a
-//! stray power-up now and then; what a broken pot spills; health shards and power-ups taken from
-//! the ground; and the party's power-ups running out.
+//! The arena's comings and goings: new shrines as old ones are used, elites back at their camps,
+//! pots scattered over the arena and new ones as they break; what a broken pot holds; health
+//! shards and power-ups taken from the ground; and the party's power-ups running out.
 
 use super::*;
 use crate::interact::pick_kind;
@@ -9,20 +9,20 @@ use crate::powerups::{DETONATION_BOSS, DETONATION_RADIUS, HEALTH_SHARD};
 /// How far from a hero a new shrine appears: out of sight. How often is the rules'
 /// `shrine_every`.
 const SHRINE_RING: (f32, f32) = (45.0, 75.0);
-/// Seconds between new pots, how far from a hero they appear, and how far from every hero one
-/// is let go, to come back nearer.
-const POT_EVERY: f32 = 2.0;
-const POT_RING: (f32, f32) = (12.0, 30.0);
-const POT_RECYCLE: f32 = 90.0;
-/// Seconds between stray power-ups, and how far from a hero they appear.
-pub(super) const POWERUP_EVERY: f32 = 45.0;
-const POWERUP_RING: (f32, f32) = (10.0, 22.0);
+/// Seconds between chances of a new pot, while fewer than the zone's
+/// [`crate::ZoneDef::pots`] stand; a new one never appears this near a hero, nor this near
+/// another pot.
+pub(super) const POT_EVERY: f32 = 8.0;
+pub(super) const POT_UNSEEN: f32 = 30.0;
+const POT_GAP: f32 = 10.0;
 /// Seconds a health shard or power-up lies before it fades, and how near a hero takes it (before
-/// [`Stat::Pickup`]).
-pub(super) const PICKUP_LIFE: f32 = 30.0;
-const PICKUP_REACH: f32 = 2.0;
-/// How far from a broken pot its spill lands.
-const SPILL: (f32, f32) = (1.0, 3.0);
+/// [`Stat::Pickup`]): a step onto it, not a pass by.
+pub(super) const PICKUP_LIFE: f32 = 45.0;
+const PICKUP_REACH: f32 = 1.5;
+/// How far a broken pot's coins and gems spill; a health shard or power-up from it lands a few
+/// steps past the pot, away from who broke it, to be walked to.
+const SPILL: (f32, f32) = (0.5, 1.5);
+const DROP_AWAY: f32 = 3.5;
 
 impl World {
     /// Each step's upkeep of the arena: used interactables leave when their time is up and pots
@@ -40,14 +40,8 @@ impl World {
             .filter(|h| h.alive)
             .map(|h| h.pos)
             .collect();
-        self.interactables.retain(|i| {
-            let gone = matches!(i.state, InteractState::Spent(t) if t <= 0.0);
-            let far = i.kind == InteractableKind::Pot
-                && i.ready()
-                && !living.is_empty()
-                && living.iter().all(|p| p.distance(i.pos) > POT_RECYCLE);
-            !gone && !far
-        });
+        self.interactables
+            .retain(|i| !matches!(i.state, InteractState::Spent(t) if t <= 0.0));
         let buffs = self.buffs.len();
         for b in &mut self.buffs {
             b.1 -= DT;
@@ -76,14 +70,32 @@ impl World {
             self.pot_timer = POT_EVERY;
             self.spawn_pot(&living);
         }
-        self.powerup_timer -= DT;
-        if self.powerup_timer <= 0.0 {
-            self.powerup_timer = POWERUP_EVERY;
-            let near = living[self.rng.index(living.len())];
-            let at = self.free_spot(near, POWERUP_RING);
-            let p = PowerUp::ALL[self.rng.index(PowerUp::ALL.len())];
-            self.drop_pickup(at, PickupKind::PowerUp(p));
+    }
+
+    /// The zone's [`crate::ZoneDef::pots`], scattered over the whole arena for the run's start.
+    pub(super) fn place_pots(&mut self) {
+        for _ in 0..self.zone().pots {
+            if let Some(at) = self.pot_spot(&[]) {
+                self.place(InteractableKind::Pot, at);
+            }
         }
+    }
+
+    /// A spot for a pot anywhere in the arena, out of sight of every hero at `living` and clear
+    /// of the other pots and interactables; `None` if a few tries find none.
+    fn pot_spot(&mut self, living: &[V2]) -> Option<V2> {
+        let center = self.center();
+        let edge = self.zone().leash - 5.0;
+        for _ in 0..20 {
+            let r = self.rng.range(0.0, edge * edge).sqrt();
+            let at = center + V2::from_angle(self.rng.range(0.0, std::f32::consts::TAU), r);
+            let seen = living.iter().any(|p| p.distance(at) < POT_UNSEEN);
+            let crowded = self.interactables.iter().any(|i| i.pos.distance(at) < POT_GAP);
+            if !seen && !crowded {
+                return Some(at);
+            }
+        }
+        None
     }
 
     /// The zone's [`crate::ZoneDef::elite_camps`], spread over the arena clear of the start and of
@@ -160,7 +172,8 @@ impl World {
         self.place(kind, at);
     }
 
-    /// A new pot near a living hero, if fewer than the zone's [`crate::ZoneDef::pots`] stand.
+    /// A new pot somewhere in the arena, out of sight, if fewer than the zone's
+    /// [`crate::ZoneDef::pots`] stand.
     fn spawn_pot(&mut self, living: &[V2]) {
         let pots = self
             .interactables
@@ -170,38 +183,49 @@ impl World {
         if pots >= self.zone().pots {
             return;
         }
-        let near = living[self.rng.index(living.len())];
-        let at = self.free_spot(near, POT_RING);
-        self.place(InteractableKind::Pot, at);
+        if let Some(at) = self.pot_spot(living) {
+            self.place(InteractableKind::Pot, at);
+        }
     }
 
-    /// A pot at `pos` broke: a few coins, a few gems, a health shard or a power-up spill around it.
-    pub(super) fn break_pot(&mut self, pos: V2) {
+    /// Pot `id` at `pos` broke under `by`: a handful of coins, a few gems, a health shard or a
+    /// power-up, told to the clients ([`Event::PotBroken`]). Coins and gems spill at the pot,
+    /// where `by` gathers them at once; a shard or power-up lands a few steps past it, to be
+    /// walked to when it suits.
+    pub(super) fn break_pot(&mut self, id: u32, pos: V2, by: PlayerId) {
         let minutes = self.elapsed / 60.0;
         let roll = self.rng.f32();
         let spill = |w: &mut World| {
             let angle = w.rng.range(0.0, std::f32::consts::TAU);
             pos + V2::from_angle(angle, w.rng.range(SPILL.0, SPILL.1))
         };
-        if roll < 0.4 {
-            for _ in 0..2 + self.rng.index(3) {
+        let from = self.hero(by).map_or(pos, |h| h.pos);
+        let away = pos + (pos - from).normalize_or_zero() * DROP_AWAY;
+        let loot = if roll < 0.4 {
+            let each = (2.0 + minutes).ceil() as u32;
+            let coins = 2 + self.rng.index(3) as u32;
+            for _ in 0..coins {
                 let at = spill(self);
-                self.drop_gem(at, 0, (2.0 + minutes).ceil() as u32);
+                self.drop_gem(at, 0, each);
             }
+            PotLoot::Gold(each * coins)
         } else if roll < 0.7 {
-            let xp = (xp_to_next(self.level) * 0.08).ceil().max(1.0) as u32;
-            for _ in 0..2 + self.rng.index(2) {
+            let each = (xp_to_next(self.level) * 0.08).ceil().max(1.0) as u32;
+            let gems = 2 + self.rng.index(2) as u32;
+            for _ in 0..gems {
                 let at = spill(self);
-                self.drop_gem(at, xp, 0);
+                self.drop_gem(at, each, 0);
             }
+            PotLoot::Xp(each * gems)
         } else if roll < 0.88 {
-            let at = spill(self);
-            self.drop_pickup(at, PickupKind::Health);
+            self.drop_pickup(away, PickupKind::Health);
+            PotLoot::Pickup(PickupKind::Health)
         } else {
-            let at = spill(self);
             let p = PowerUp::ALL[self.rng.index(PowerUp::ALL.len())];
-            self.drop_pickup(at, PickupKind::PowerUp(p));
-        }
+            self.drop_pickup(away, PickupKind::PowerUp(p));
+            PotLoot::Pickup(PickupKind::PowerUp(p))
+        };
+        self.events.push(Event::PotBroken { id, by, loot });
     }
 
     /// Experience and gold on the ground at `pos`, told to the clients.

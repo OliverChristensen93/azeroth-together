@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use benilla_world::world_point::{Subject, WorldPoint};
 use bevy::prelude::*;
 use together_sim::{
-    Event, InteractState, InteractableKind, PickupKind, PlayerId, PowerUp, Target, ELITE_SCALE, V2,
+    Event, InteractState, InteractableKind, PickupKind, PlayerId, PotLoot, PowerUp, Target,
+    ELITE_SCALE, V2,
 };
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
@@ -153,8 +154,8 @@ fn shrine_look(kind: InteractableKind) -> (u32, f32) {
         InteractableKind::ChallengeIdol => (652, 1.0),
         // `BattlefieldBannerAlliance.mdx`, the battlegrounds' flag.
         InteractableKind::WarBanner => (5651, 1.0),
-        // `TitanVase01.mdx`.
-        InteractableKind::Pot => (52, 1.0),
+        // `TitanVase01.mdx`, at half its size: a pot, not a pillar.
+        InteractableKind::Pot => (52, 0.5),
     }
 }
 
@@ -213,8 +214,11 @@ fn pickup_look(kind: PickupKind) -> (u32, f32) {
     }
 }
 
-/// The colour a power-up's name floats up in when it is taken, 0xAARRGGBB.
+/// The colour a power-up's name floats up in when it is taken, and a pot's experience and health
+/// shard when it breaks, 0xAARRGGBB.
 const COLOR_POWER_UP: u32 = 0xFF66_CCFF;
+const COLOR_XP: u32 = 0xFFC0_80FF;
+const COLOR_HEAL: u32 = 0xFF40_FF60;
 
 /// The step's events as visuals. Runs before [`sync`], so a dying enemy is still mapped.
 pub(super) fn apply_events(
@@ -300,6 +304,23 @@ pub(super) fn apply_events(
             | Event::BossCame { .. }
             | Event::BossDied { .. }
             | Event::EscortDone { .. } => {}
+            Event::PotBroken { by, loot, .. } => {
+                // What came out, over whoever broke it: everyone sees what a friend found.
+                let Some(&e) = views.heroes.get(&by) else {
+                    continue;
+                };
+                let (text, color) = match loot {
+                    PotLoot::Gold(g) => (format!("Urn: +{g} gold"), COLOR_GOLD),
+                    PotLoot::Xp(x) => (format!("Urn: +{x} experience"), COLOR_XP),
+                    PotLoot::Pickup(PickupKind::Health) => {
+                        ("Urn: a health shard!".to_string(), COLOR_HEAL)
+                    }
+                    PotLoot::Pickup(PickupKind::PowerUp(p)) => {
+                        (format!("Urn: {}!", p.name()), COLOR_POWER_UP)
+                    }
+                };
+                fx.text(e, text, color);
+            }
             Event::PickupTaken { kind, by, .. } => {
                 let Some(&e) = views.heroes.get(&by) else {
                     continue;

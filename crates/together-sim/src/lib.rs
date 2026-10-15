@@ -32,7 +32,7 @@ pub use interact::{
 };
 pub use items::{ward_cooldown, Item};
 pub use math::V2;
-pub use powerups::{Pickup, PickupKind, PowerUp};
+pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
 pub use world::{

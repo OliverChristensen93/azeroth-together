@@ -205,49 +205,117 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(fonts);
 }
 
-/// The spell whose icon a tome of `stat` wears: one of the shipped abilities, whose icons the
-/// game data is sure to have.
-fn stat_icon(stat: Stat) -> u32 {
+/// What a card shows in its icon slot: a spell's own icon, or an icon texture by path (a book
+/// for a tome, the item's own for an item), so a tome or an item never looks like a spell.
+#[derive(Clone, Copy)]
+enum Icon {
+    Spell(u32),
+    Texture(&'static str),
+}
+
+/// An icon slot filled from a texture under `Interface\Icons`, by name.
+#[derive(Component)]
+pub(super) struct TextureIcon(&'static str);
+
+/// The book a tome of `stat` wears.
+fn tome_icon(stat: Stat) -> &'static str {
     match stat {
-        // Mortal Strike, Blade Flurry, Arcane Explosion, Hurricane.
-        Stat::Damage => 12294,
-        Stat::Cooldown => 13877,
-        Stat::Area => 1449,
-        Stat::Speed => 16914,
-        // Holy Wrath, Holy Nova, Thunder Clap, Arcane Missiles.
-        Stat::Health => 2812,
-        Stat::Regen => 15237,
-        Stat::Armor => 6343,
-        Stat::Pickup => 7268,
-        // Starfire, Mind Blast, Judgement, Aimed Shot, Multi-Shot.
-        Stat::Luck => 2912,
-        Stat::XpGain => 8092,
-        Stat::GoldGain => 20271,
-        Stat::Crit => 19434,
-        Stat::Projectiles => 2643,
+        Stat::Damage => "INV_Misc_Book_07",
+        Stat::Cooldown => "INV_Misc_Book_08",
+        Stat::Area => "INV_Misc_Book_06",
+        Stat::Speed => "INV_Misc_Book_04",
+        Stat::Health => "INV_Misc_Book_09",
+        Stat::Regen => "INV_Misc_Book_03",
+        Stat::Armor => "INV_Misc_Book_10",
+        Stat::Pickup => "INV_Misc_Book_05",
+        Stat::Luck => "INV_Misc_Book_11",
+        Stat::XpGain => "INV_Misc_Book_12",
+        Stat::GoldGain => "INV_Misc_Book_02",
+        Stat::Crit => "INV_Misc_Book_01",
+        Stat::Projectiles => "INV_Misc_Book_13",
     }
 }
 
-/// The spell whose icon an item's card wears, from the shipped abilities as [`stat_icon`]'s are.
-fn item_icon(item: Item) -> u32 {
+/// The icon an item wears: a gem, a fang, a key, a charm, a ring, a bag.
+fn item_icon(item: Item) -> &'static str {
     match item {
-        // Chain Lightning, Flamestrike, Death Coil, Gouge.
-        Item::StaticShard => 421,
-        Item::EmberCore => 2120,
-        Item::VampiricFang => 6789,
-        Item::SkeletonKey => 1776,
-        // Entangling Roots, Whirlwind, Frost Nova, Eviscerate.
-        Item::RabbitsFoot => 339,
-        Item::BerserkersRing => 1680,
-        Item::FrostWard => 122,
-        Item::GoblinPurse => 2098,
+        Item::StaticShard => "INV_Misc_Gem_Sapphire_02",
+        Item::EmberCore => "INV_Misc_Gem_Ruby_02",
+        Item::VampiricFang => "INV_Misc_MonsterFang_01",
+        Item::SkeletonKey => "INV_Misc_Key_03",
+        Item::RabbitsFoot => "INV_Jewelry_Talisman_04",
+        Item::BerserkersRing => "INV_Jewelry_Ring_15",
+        Item::FrostWard => "INV_Misc_Gem_Diamond_02",
+        Item::GoblinPurse => "INV_Misc_Bag_10",
     }
 }
 
+/// What kind of card it is: named on the card under its icon, and tinting its background.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Spell,
+    Tome,
+    Item,
+    Pact,
+    /// Gold, a heal or a reroll, when nothing else is left.
+    Fallback,
+}
+
+impl Kind {
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Spell => "SPELL",
+            Kind::Tome => "TOME",
+            Kind::Item => "ITEM",
+            Kind::Pact => "PACT",
+            Kind::Fallback => "BOON",
+        }
+    }
+
+    /// The card's background: brown for spells, blue for tomes, green for items, purple for
+    /// pacts, grey for the rest.
+    fn tint(self) -> Color {
+        match self {
+            Kind::Spell => Color::srgba(0.07, 0.06, 0.05, 0.95),
+            Kind::Tome => Color::srgba(0.04, 0.07, 0.15, 0.95),
+            Kind::Item => Color::srgba(0.04, 0.11, 0.06, 0.95),
+            Kind::Pact => Color::srgba(0.11, 0.04, 0.12, 0.95),
+            Kind::Fallback => Color::srgba(0.09, 0.09, 0.09, 0.95),
+        }
+    }
+}
+
+/// A card's background colour, which it lightens to under the mouse.
+#[derive(Component)]
+pub(super) struct CardTint(Color);
+
+/// Fill [`TextureIcon`] slots once the asset reader is up.
+pub(super) fn fill_texture_icons(
+    mut commands: Commands,
+    mut slots: Query<(Entity, &mut ImageNode, &TextureIcon), Without<TextureDone>>,
+    mut assets: Option<ResMut<benilla_assets::WorldAssets>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(assets) = assets.as_deref_mut() else {
+        return;
+    };
+    for (e, mut img, icon) in &mut slots {
+        let path = format!(r"Interface\Icons\{}.blp", icon.0);
+        if let Some(h) = assets.sprite_texture(&path, &mut images) {
+            img.image = h;
+            img.color = Color::WHITE;
+        }
+        commands.entity(e).insert(TextureDone);
+    }
+}
+
+/// A [`TextureIcon`] slot already filled.
+#[derive(Component)]
+pub(super) struct TextureDone;
 /// What a card shows.
 struct Face {
-    /// The spell whose icon it wears.
-    icon: u32,
+    icon: Icon,
+    kind: Kind,
     name: String,
     /// The line under the name.
     sub: String,
@@ -317,7 +385,8 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
         lines.push((format!("+{:.0}% damage", bonus * 100.0), GREEN));
     }
     Face {
-        icon: def.visual,
+        icon: Icon::Spell(def.visual),
+        kind: Kind::Spell,
         name: def.name.clone(),
         sub,
         badge,
@@ -357,7 +426,8 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 )
             };
             Face {
-                icon: stat_icon(stat),
+                icon: Icon::Texture(tome_icon(stat)),
+                kind: Kind::Tome,
                 name: stat.tome().into(),
                 sub,
                 badge: format!("{}/{}", rank + 1, rules.tome_max_rank),
@@ -378,7 +448,8 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 lines.push((format!("You hold {held}: {}", item.describe(held)), GREY));
             }
             Face {
-                icon: item_icon(item),
+                icon: Icon::Texture(item_icon(item)),
+                kind: Kind::Item,
                 name: item.name().into(),
                 sub: format!("Item  ·  copy {} of {max}", held + 1),
                 badge: format!("{}/{max}", held + 1),
@@ -389,8 +460,8 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
             }
         }
         CardKind::Gold => Face {
-            // Judgement.
-            icon: 20271,
+            icon: Icon::Texture("INV_Misc_Coin_02"),
+            kind: Kind::Fallback,
             name: "Purse of Gold".into(),
             sub: "Nothing left to learn".into(),
             badge: "GOLD".into(),
@@ -400,8 +471,8 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
             footer: "Before your gold gain".into(),
         },
         CardKind::Heal => Face {
-            // Holy Nova.
-            icon: 15237,
+            icon: Icon::Texture("INV_Potion_51"),
+            kind: Kind::Fallback,
             name: "Healing Draught".into(),
             sub: "Nothing left to learn".into(),
             badge: "HEAL".into(),
@@ -411,8 +482,8 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
             footer: String::new(),
         },
         CardKind::Reroll => Face {
-            // Eviscerate.
-            icon: 2098,
+            icon: Icon::Texture("INV_Scroll_03"),
+            kind: Kind::Fallback,
             name: "Gambler's Coin".into(),
             sub: "Nothing left to learn".into(),
             badge: "REROLL".into(),
@@ -422,7 +493,8 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
             footer: String::new(),
         },
         CardKind::Pact(pact) => Face {
-            icon: stat_icon(pact.boon),
+            icon: Icon::Texture("INV_Misc_Bone_HumanSkull_01"),
+            kind: Kind::Pact,
             name: format!("Pact of {}", pact.boon.name()),
             sub: "A bargain with the altar".into(),
             badge: "PACT".into(),
@@ -469,7 +541,8 @@ fn build_card(
             border: UiRect::all(Val::Px(2.0)),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.07, 0.06, 0.05, 0.95)),
+        BackgroundColor(face.kind.tint()),
+        CardTint(face.kind.tint()),
         BorderColor::all(border),
     ))
     .with_children(|c| {
@@ -519,8 +592,7 @@ fn build_card(
             b.spawn(flat_label(&fonts.text, face.badge.clone(), 8.0, badge_fg));
         });
 
-        c.spawn((
-            SpellIcon(face.icon),
+        let mut icon = c.spawn((
             ImageNode {
                 color: Color::srgba(0.2, 0.2, 0.2, 1.0),
                 ..default()
@@ -533,10 +605,14 @@ fn build_card(
             },
             BorderColor::all(Color::srgb(0.7, 0.7, 0.7)),
         ));
+        match face.icon {
+            Icon::Spell(visual) => icon.insert(SpellIcon(visual)),
+            Icon::Texture(name) => icon.insert(TextureIcon(name)),
+        };
         c.spawn((
             label(
                 &fonts.text,
-                card.rarity.name().to_uppercase(),
+                format!("{} {}", card.rarity.name().to_uppercase(), face.kind.name()),
                 8.0,
                 if card.rarity == Rarity::Common {
                     GREY
@@ -742,16 +818,16 @@ pub(super) fn refresh(
 pub(super) fn clicks(
     mut input: ResMut<LocalInput>,
     mut cards: Query<
-        (&CardButton, &Interaction, &mut BackgroundColor),
+        (&CardButton, &CardTint, &Interaction, &mut BackgroundColor),
         (Changed<Interaction>, Without<HandButton>),
     >,
     mut buttons: Query<(&HandButton, &Interaction, &mut BackgroundColor), Changed<Interaction>>,
 ) {
-    for (card, interaction, mut bg) in &mut cards {
+    for (card, tint, interaction, mut bg) in &mut cards {
         match interaction {
             Interaction::Pressed => input.pick = Some(card.0),
-            Interaction::Hovered => bg.0 = Color::srgba(0.14, 0.12, 0.09, 0.97),
-            Interaction::None => bg.0 = Color::srgba(0.07, 0.06, 0.05, 0.95),
+            Interaction::Hovered => bg.0 = tint.0.lighter(0.06),
+            Interaction::None => bg.0 = tint.0,
         }
     }
     for (button, interaction, mut bg) in &mut buttons {

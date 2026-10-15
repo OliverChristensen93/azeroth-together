@@ -301,6 +301,7 @@ impl Plugin for TogetherPlugin {
                     menu::apply_ui_scale,
                     menu::show_menu,
                     menu::fill_icons,
+                    levelup::fill_texture_icons,
                     hud::show_hud,
                     levelup::refresh,
                     levelup::clicks,

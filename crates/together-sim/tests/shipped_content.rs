@@ -47,7 +47,18 @@ fn every_zone_starts_with_its_few_shrines_inside_its_arena() {
         );
         let w = World::new(c.clone(), &zone.key, 11).unwrap();
         let center = w.center();
-        assert_eq!(w.interactables.len() as u32, zone.shrines_at_once, "{}", zone.key);
+        let pots = w
+            .interactables
+            .iter()
+            .filter(|i| i.kind == InteractableKind::Pot)
+            .count() as u32;
+        assert_eq!(pots, zone.pots, "{}", zone.key);
+        assert_eq!(
+            w.interactables.len() as u32 - pots,
+            zone.shrines_at_once,
+            "{}",
+            zone.key
+        );
         for i in &w.interactables {
             assert!(i.pos.distance(center) <= zone.leash, "{} {:?}", zone.key, i);
         }
