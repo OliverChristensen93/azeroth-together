@@ -5,19 +5,22 @@
 //! client sends its [`ClientMsg::Input`] (where its own controller put its hero, and its card
 //! choices). Before a run, the host's lobby collects who joins with which hero.
 //!
-//! Messages travel over TCP as a little-endian `u32` length and a `postcard` body. [`Host`] and
+//! Messages travel over TCP, or over QUIC for a game joined by invite code ([`invite`]), as a
+//! little-endian `u32` length and a `postcard` body. [`Host`] and
 //! [`Client`] run the sockets on their own threads; the game polls them once a frame and never
 //! blocks.
 
 mod client;
 mod host;
+mod invite;
 mod wire;
 
 use serde::{Deserialize, Serialize};
 use together_sim::{Event, PlayerId, PlayerInput, Snapshot};
 
 pub use client::{Client, ClientEvent};
-pub use host::{ConnId, Host, HostEvent};
+pub use host::{ConnId, Host, HostEvent, Invite};
+pub use invite::{code_for, new_host_key, parse_code};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
 pub const PROTOCOL: u32 = 2;

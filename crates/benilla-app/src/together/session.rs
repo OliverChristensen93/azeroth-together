@@ -16,8 +16,8 @@ use std::sync::Mutex;
 
 use bevy::prelude::*;
 use together_net::{
-    content_hash, Client, ClientEvent, ClientMsg, ConnId, HeroPick, Host, HostEvent, LobbyPlayer,
-    ServerMsg, DEFAULT_PORT, PROTOCOL,
+    content_hash, new_host_key, Client, ClientEvent, ClientMsg, ConnId, HeroPick, Host, HostEvent,
+    Invite, LobbyPlayer, ServerMsg, DEFAULT_PORT, PROTOCOL,
 };
 use together_sim::{Event, PlayerId, PlayerInput, Snapshot, World, DT};
 use web_time::Instant;
@@ -64,6 +64,15 @@ pub(super) struct HostSide {
     sent: Option<(String, Vec<LobbyPlayer>)>,
     /// Steps since the run began, which pace the snapshots.
     steps: u32,
+    /// The invite code has been written to the log (for test runs to read).
+    logged_code: bool,
+}
+
+impl HostSide {
+    /// Where the invite code stands.
+    pub fn invite(&self) -> Invite {
+        self.host.lock().unwrap().invite()
+    }
 }
 
 pub(super) struct Peer {
@@ -140,11 +149,13 @@ impl Net {
         }
     }
 
-    /// Start hosting on [`DEFAULT_PORT`].
+    /// Start hosting: on [`DEFAULT_PORT`] (any free port if it is taken) for the local network, and
+    /// by invite code ([`host_key`]) for everyone else.
     pub fn host(&mut self) {
-        match Host::listen(DEFAULT_PORT) {
+        match Host::listen(DEFAULT_PORT).or_else(|_| Host::listen(0)) {
             Ok(host) => {
                 let port = host.local_addr().port();
+                host.open_invites(host_key());
                 self.role = Role::Host(HostSide {
                     host: Mutex::new(host),
                     lan: lan_address().unwrap_or_else(|| "this computer's address".into()),
@@ -152,6 +163,7 @@ impl Net {
                     peers: Vec::new(),
                     sent: None,
                     steps: 0,
+                    logged_code: false,
                 });
                 self.status = "Waiting for friends to join".into();
             }
@@ -162,7 +174,7 @@ impl Net {
         }
     }
 
-    /// Start joining the host at `addr`.
+    /// Start joining the host an invite code or address names.
     pub fn join(&mut self, addr: &str) {
         self.role = Role::Client(ClientSide {
             client: Mutex::new(Client::connect(addr)),
@@ -179,7 +191,11 @@ impl Net {
             next_ping: 0.0,
             ping_ms: None,
         });
-        self.status = format!("Connecting to {addr}…");
+        self.status = if together_net::parse_code(addr).is_some() {
+            "Connecting by invite code…".into()
+        } else {
+            format!("Connecting to {addr}…")
+        };
     }
 
     /// End the session: stop hosting (dropping every connection) or leave.
@@ -223,6 +239,37 @@ impl Net {
             h.sent = None;
         }
     }
+}
+
+/// This player's host key, `benilla-config/together-host-key.txt`: made once, so the invite code
+/// a friend saved keeps working. A key that cannot be saved still hosts, under a new code.
+fn host_key() -> [u8; 32] {
+    let path = crate::local_state::home().map(|h| h.join("together-host-key.txt"));
+    let saved = path
+        .as_ref()
+        .and_then(|p| crate::local_state::read_to_string(p).ok())
+        .and_then(|text| decode_hex(text.trim()));
+    if let Some(key) = saved {
+        return key;
+    }
+    let key = new_host_key();
+    if let Some(p) = &path {
+        let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        let _ = crate::local_state::write_atomic(p, &hex);
+    }
+    key
+}
+
+/// 64 hex digits as 32 bytes.
+fn decode_hex(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 {
+        return None;
+    }
+    let mut key = [0u8; 32];
+    for (i, b) in key.iter_mut().enumerate() {
+        *b = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(key)
 }
 
 /// The name the player's hero goes by: `TOGETHER_NAME`, else the Windows user name.
@@ -271,6 +318,12 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
         Role::Solo => {}
         Role::Host(h) => {
             let host = h.host.lock().unwrap();
+            if !h.logged_code {
+                if let Invite::Ready(code) = host.invite() {
+                    info!("together: invite code {code}");
+                    h.logged_code = true;
+                }
+            }
             for event in host.poll() {
                 match event {
                     HostEvent::Joined(..) => {}

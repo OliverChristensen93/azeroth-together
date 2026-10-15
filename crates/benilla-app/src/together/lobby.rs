@@ -1,9 +1,12 @@
-//! The co-op panel on the menu: hosting (the address to share, who has joined, Start Run),
-//! joining (the host's address, typed in, then the host's lobby), and what went wrong.
+//! The co-op panel on the menu: hosting (the invite code to share, who has joined, Start Run),
+//! joining (an invite code pasted in, or an address typed, then the host's lobby), and what went
+//! wrong.
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
+use bevy::window::{PrimaryWindow, RawHandleWrapper};
+use together_net::Invite;
 
 use super::menu::Selection;
 use super::session::{Net, Role, MAX_PLAYERS};
@@ -11,6 +14,10 @@ use super::{content, StartRequest};
 use crate::char_select::race_name;
 use crate::glue::widgets::GlueDisabled;
 use crate::glue::GlueClicks;
+use crate::textinput::{wayland_display, HostClipboard};
+
+/// The longest code or address the join box takes.
+const MAX_TYPED: usize = 128;
 
 /// The Join Co-op dialog: open while the player types the host's address.
 #[derive(Resource)]
@@ -40,6 +47,10 @@ fn saved_address() -> Option<String> {
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum LobbyAction {
+    /// The host's invite code onto the clipboard.
+    CopyCode,
+    /// The clipboard into the join box.
+    Paste,
     StartRun,
     Stop,
     Connect,
@@ -54,25 +65,63 @@ pub(super) struct LobbyPanel;
 #[derive(Component)]
 pub(super) struct LobbyText;
 
-/// Typed characters into the address while the dialog is open; Enter connects, Escape closes.
+/// The clipboard's text, through the engine's pasteboard.
+fn clipboard_text(
+    clipboard: &mut HostClipboard,
+    window: &Query<&RawHandleWrapper, With<PrimaryWindow>>,
+) -> Option<String> {
+    clipboard.read(wayland_display(window.iter().next()))
+}
+
+/// Pasted text into the join box: the code or address in it, whatever surrounds it.
+fn paste_into(dialog: &mut JoinDialog, text: &str) {
+    let cleaned: String = text
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || ".:-[]".contains(*c))
+        .take(MAX_TYPED)
+        .collect();
+    if !cleaned.is_empty() {
+        dialog.address = cleaned;
+    }
+}
+
+/// Typed characters into the address while the dialog is open; Ctrl+V pastes, Enter connects,
+/// Escape closes.
 pub(super) fn type_address(
     mut keyboard: MessageReader<KeyboardInput>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut dialog: ResMut<JoinDialog>,
     mut net: ResMut<Net>,
+    mut clipboard: NonSendMut<HostClipboard>,
+    window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
 ) {
     if !dialog.open {
         keyboard.clear();
         return;
     }
+    let ctrl = keys.any_pressed([
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+    ]);
     for key in keyboard.read() {
         if key.state != ButtonState::Pressed {
             continue;
         }
+        if ctrl && key.key_code == KeyCode::KeyV {
+            if let Some(text) = clipboard_text(&mut clipboard, &window) {
+                paste_into(&mut dialog, &text);
+            }
+            continue;
+        }
         match &key.logical_key {
+            Key::Character(_) if ctrl => {}
             Key::Character(s) => {
                 for c in s.chars() {
                     let ok = c.is_ascii_alphanumeric() || ".:-[]".contains(c);
-                    if ok && dialog.address.len() < 64 {
+                    if ok && dialog.address.len() < MAX_TYPED {
                         dialog.address.push(c);
                     }
                 }
@@ -100,12 +149,15 @@ fn connect(dialog: &mut JoinDialog, net: &mut Net) {
 }
 
 /// The panel's buttons.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn clicks(
     clicks: Res<GlueClicks>,
     actions: Query<(Entity, &LobbyAction)>,
     mut dialog: ResMut<JoinDialog>,
     mut net: ResMut<Net>,
     mut start: ResMut<StartRequest>,
+    mut clipboard: NonSendMut<HostClipboard>,
+    window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
 ) {
     let Some(action) = actions
         .iter()
@@ -115,6 +167,19 @@ pub(super) fn clicks(
         return;
     };
     match action {
+        LobbyAction::CopyCode => {
+            if let Role::Host(h) = &net.role {
+                if let Invite::Ready(code) = h.invite() {
+                    clipboard.write(wayland_display(window.iter().next()), &code);
+                    net.status = "Invite code copied: paste it to your friends".into();
+                }
+            }
+        }
+        LobbyAction::Paste => {
+            if let Some(text) = clipboard_text(&mut clipboard, &window) {
+                paste_into(&mut dialog, &text);
+            }
+        }
         LobbyAction::StartRun => start.0 = true,
         LobbyAction::Stop => {
             let why = if net.is_client() {
@@ -172,10 +237,10 @@ pub(super) fn refresh(
     let (body, visible): (String, &[LobbyAction]) = if dialog.open {
         (
             format!(
-                "Join a friend's run\n\nHost address:  {}_\n\nType the address your friend's Host Co-op panel shows, then Connect (or Enter).",
+                "Join a friend's run\n\n{}_\n\nPaste the invite code your friend sent you (Ctrl+V or Paste), then Connect. On the same network, their address works too.",
                 dialog.address
             ),
-            &[LobbyAction::Connect, LobbyAction::Cancel],
+            &[LobbyAction::Paste, LobbyAction::Connect, LobbyAction::Cancel],
         )
     } else {
         match &net.role {
@@ -195,9 +260,26 @@ pub(super) fn refresh(
                         p.hero.race,
                     )
                 }));
+                let (invite, ready) = match h.invite() {
+                    Invite::Ready(code) => (
+                        format!("Invite code: send it to your friends\n{code}"),
+                        true,
+                    ),
+                    Invite::Failed(why) => (format!("No invite code ({why})"), false),
+                    Invite::Opening | Invite::Off => ("Getting your invite code…".into(), false),
+                };
+                let buttons: &[LobbyAction] = if ready {
+                    &[
+                        LobbyAction::CopyCode,
+                        LobbyAction::StartRun,
+                        LobbyAction::Stop,
+                    ]
+                } else {
+                    &[LobbyAction::StartRun, LobbyAction::Stop]
+                };
                 (
                     format!(
-                        "Hosting co-op in {}\nFriends join with:  {}:{}\n\n{}\n{}   ·   {}/{MAX_PLAYERS} players\nAllow the game through Windows Firewall if it asks.",
+                        "Hosting co-op in {}\n\n{invite}\nOn the same network: {}:{}\n\n{}\n{}   ·   {}/{MAX_PLAYERS} players",
                         content.zones[selection.zone].name,
                         h.lan,
                         h.port,
@@ -205,7 +287,7 @@ pub(super) fn refresh(
                         net.status,
                         h.peers.len() + 1,
                     ),
-                    &[LobbyAction::StartRun, LobbyAction::Stop],
+                    buttons,
                 )
             }
             Role::Client(c) => {
@@ -214,10 +296,14 @@ pub(super) fn refresh(
                     .as_deref()
                     .and_then(|z| content.zone(z))
                     .map_or("…".to_string(), |z| content.zones[z].name.clone());
+                let host = if together_net::parse_code(&c.addr).is_some() {
+                    "by invite code".to_string()
+                } else {
+                    c.addr.clone()
+                };
                 (
                     format!(
-                        "Joined {}  ·  {zone}\n\n{}\n{}",
-                        c.addr,
+                        "Joined {host}  ·  {zone}\n\n{}\n{}",
                         roster_lines(
                             c.lobby.iter().map(|p| (
                                 p.player,
