@@ -217,6 +217,16 @@ pub struct Rules {
     /// [`ZoneDef::shrines_at_once`] stand.
     #[serde(default = "ninety")]
     pub shrine_every: f32,
+    /// Health every hero heals a second, on top of [`crate::Stat::Regen`]; 0 when left out.
+    #[serde(default)]
+    pub hero_regen: f32,
+    /// A level-up heals every living hero this share of their maximum health; 0 when left out.
+    #[serde(default)]
+    pub level_up_heal: f32,
+    /// Each level past the first adds this share of the class's base health to the maximum; 0
+    /// when left out.
+    #[serde(default)]
+    pub max_hp_per_level: f32,
 }
 
 impl Default for Rules {
@@ -226,6 +236,9 @@ impl Default for Rules {
             tome_max_rank: five_u8(),
             item_max_copies: five_u8(),
             shrine_every: ninety(),
+            hero_regen: 0.0,
+            level_up_heal: 0.0,
+            max_hp_per_level: 0.0,
         }
     }
 }

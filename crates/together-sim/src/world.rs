@@ -962,7 +962,8 @@ impl World {
     fn refresh(&mut self, h: usize) {
         let hero = &mut self.heroes[h];
         let class = &self.content.classes[hero.class];
-        let max = class.base_hp * (1.0 + hero.stats.get(Stat::Health));
+        let growth = (self.level - 1) as f32 * self.content.rules.max_hp_per_level;
+        let max = class.base_hp * (1.0 + hero.stats.get(Stat::Health) + growth);
         if max > hero.max_hp && hero.alive {
             hero.hp += max - hero.max_hp;
         }
@@ -1055,10 +1056,12 @@ impl World {
         }
     }
 
-    /// Living heroes heal by their [`Stat::Regen`], and their Frost Wards recover.
+    /// Living heroes heal by their [`Stat::Regen`] and the rules' base regen, and their Frost
+    /// Wards recover.
     fn regenerate(&mut self) {
+        let base = self.content.rules.hero_regen;
         for hero in self.heroes.iter_mut().filter(|h| h.alive) {
-            let regen = hero.stats.get(Stat::Regen);
+            let regen = hero.stats.get(Stat::Regen) + base;
             hero.hp = (hero.hp + regen * DT).min(hero.max_hp);
             hero.barrier = (hero.barrier - DT).max(0.0);
         }
@@ -1622,6 +1625,15 @@ impl World {
         while self.xp >= xp_to_next(self.level) {
             self.xp -= xp_to_next(self.level);
             self.level += 1;
+            // Every hero's maximum grows with the level; the living heal a share of theirs.
+            let heal = self.content.rules.level_up_heal;
+            for h in 0..self.heroes.len() {
+                self.refresh(h);
+                let hero = &mut self.heroes[h];
+                if hero.alive {
+                    hero.hp = (hero.hp + hero.max_hp * heal).min(hero.max_hp);
+                }
+            }
             // The fallen too (their hands wait until they are raised); not those who left.
             for h in 0..self.heroes.len() {
                 if !self.heroes[h].extracted {
@@ -2548,6 +2560,50 @@ mod tests {
         );
         steps(&mut w, TICK_HZ as usize);
         assert!(w.hero(0).unwrap().hp > hp + 2.0, "regen did not heal");
+    }
+
+    /// The sample world with `rules` (a `rules.ron`) in place of the defaults.
+    fn world_with(rules: &str) -> World {
+        let content = sample().with_rules(rules).unwrap();
+        let mut w = World::new(Arc::new(content), "elwynn", 1).unwrap();
+        w.add_hero(0, "mage").unwrap();
+        w.interactables.clear();
+        w
+    }
+
+    #[test]
+    fn every_hero_heals_the_rules_base_regen() {
+        let mut w = world_with("(hero_regen: 1.0)");
+        w.heroes[0].hp = 50.0;
+        steps(&mut w, TICK_HZ as usize);
+        let hp = w.hero(0).unwrap().hp;
+        assert!((hp - 51.0).abs() < 0.05, "{hp}");
+    }
+
+    #[test]
+    fn a_level_up_raises_max_health_and_heals_a_share_of_it() {
+        let mut w = world_with("(level_up_heal: 0.1, max_hp_per_level: 0.03)");
+        let base = w.hero(0).unwrap().max_hp;
+        w.heroes[0].hp = 50.0;
+        w.xp = xp_to_next(w.level);
+        w.step();
+        let hero = w.hero(0).unwrap();
+        let max = base * 1.03;
+        assert!((hero.max_hp - max).abs() < 1e-3, "{}", hero.max_hp);
+        // The 3% more maximum comes with as much health, then a tenth of the maximum.
+        let want = 50.0 + (max - base) + max * 0.1;
+        assert!((hero.hp - want).abs() < 1e-3, "{} want {want}", hero.hp);
+    }
+
+    #[test]
+    fn the_fallen_are_not_healed_by_a_level_up() {
+        let mut w = world_with("(level_up_heal: 0.1, max_hp_per_level: 0.03)");
+        w.add_hero(1, "mage").unwrap();
+        w.heroes[1].alive = false;
+        w.heroes[1].hp = 0.0;
+        w.xp = xp_to_next(w.level);
+        w.step();
+        assert_eq!(w.hero(1).unwrap().hp, 0.0);
     }
 
     #[test]

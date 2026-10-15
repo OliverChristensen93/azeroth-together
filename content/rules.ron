@@ -9,4 +9,10 @@
     item_max_copies: 5,
     // Seconds between chances of a new shrine, while fewer than the zone's `shrines_at_once` stand.
     shrine_every: 90.0,
+    // Health every hero heals a second, on top of regen from tomes.
+    hero_regen: 1.0,
+    // A level-up heals every living hero this share of their maximum health...
+    level_up_heal: 0.10,
+    // ...and each level adds this share of the class's base health to the maximum.
+    max_hp_per_level: 0.03,
 )
