@@ -340,6 +340,7 @@ impl Plugin for TogetherPlugin {
                     read_keys,
                     feed_pose,
                     step_sim,
+                    view::settle_shrines,
                     view::apply_events,
                     view::sync,
                     view::write_vitals,
@@ -357,6 +358,7 @@ impl Plugin for TogetherPlugin {
                     actions::fill_action_bar,
                     actions::drop_manual_casts,
                     hud::refresh,
+                    hud::prompt,
                     back_to_menu,
                 )
                     .chain()
@@ -441,7 +443,33 @@ fn start_run(
     let zone = content.zones[selection.zone].key.clone();
     let roster = net.roster(&own);
     net.broadcast_start(&zone);
-    begin(&mut commands, Sim::hosted(&zone, &roster));
+    let mut sim = Sim::hosted(&zone, &roster);
+    showcase_for_tests(&mut sim.world);
+    begin(&mut commands, sim);
+}
+
+/// `TOGETHER_SHOWCASE=1`: one interactable of each kind moves onto a ring around the start, so a
+/// test run sees them all at once.
+fn showcase_for_tests(world: &mut World) {
+    if std::env::var_os("TOGETHER_SHOWCASE").is_none() {
+        return;
+    }
+    let center = world.center();
+    let mut kinds = Vec::new();
+    let firsts: Vec<u32> = world
+        .interactables
+        .iter()
+        .filter(|i| {
+            let new = !kinds.contains(&i.kind);
+            kinds.push(i.kind);
+            new
+        })
+        .map(|i| i.id)
+        .collect();
+    for (k, &id) in firsts.iter().enumerate() {
+        let angle = k as f32 / firsts.len() as f32 * std::f32::consts::TAU;
+        world.move_interactable(id, center + V2::from_angle(angle, 10.0));
+    }
 }
 
 /// Midday, whatever the clock says.
@@ -454,8 +482,8 @@ fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState>>) {
     }
 }
 
-/// `TOGETHER_AUTOPLAY=1`: the local hero takes the first card, so a test run plays on without
-/// anyone at the keys.
+/// `TOGETHER_AUTOPLAY=1`: the local hero takes the first card and walks to the shrines and
+/// chests ([`autowalk`]), so a test run plays on without anyone at the keys.
 fn autoplay() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
@@ -520,10 +548,35 @@ fn bevy_to_ground(p: Vec3) -> V2 {
     V2::new(-p.z, -p.x)
 }
 
+/// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: toward the nearest
+/// interactable it could use (a chest only once it can pay), until it stands well inside the
+/// circle. `None` when there is nothing to walk to, or cards are up.
+fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
+    let hero = world.hero(me).filter(|h| h.alive && h.offers.is_empty())?;
+    let target = world
+        .interactables
+        .iter()
+        .filter(|i| i.ready())
+        .filter(|i| {
+            i.kind != together_sim::InteractableKind::Chest
+                || hero.gold >= together_sim::chest_price(hero.chests)
+        })
+        .min_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))?;
+    let to = target.pos - from;
+    let dist = to.length();
+    if dist < target.kind.radius() * 0.4 {
+        return None;
+    }
+    Some(from + to.normalize_or_zero() * (hero.speed * dt).min(dist))
+}
+
 /// Where WoW's controller left the local hero, as the pose the next step takes. The arena's edge
 /// is a wall: a hero past the leash is put back on it, so nobody runs off the end of the loaded
 /// world. Until the controller has the hero, the terrain streams around the arena's centre.
+#[allow(clippy::too_many_arguments)]
 fn feed_pose(
+    time: Res<Time>,
+    world_point: benilla_world::world_point::WorldPoint,
     views: Res<view::Views>,
     sim: Res<Sim>,
     mut player: ResMut<crate::player::Player>,
@@ -543,16 +596,26 @@ fn feed_pose(
         input.pose = None;
         return;
     };
-    let mut pos = bevy_to_ground(tf.translation);
+    let at = bevy_to_ground(tf.translation);
+    let mut pos = at;
+    if autoplay() {
+        if let Some(to) = autowalk(&sim.world, sim.me, pos, time.delta_secs()) {
+            pos = to;
+        }
+    }
     let leash = sim.world.zone().leash;
     let off = pos - center;
     if off.length() > leash {
         pos = center + off.normalize_or_zero() * leash;
-        let back = units::ground_to_bevy(pos, tf.translation.y);
-        tf.translation.x = back.x;
-        tf.translation.z = back.z;
-        player.pos.x = back.x;
-        player.pos.z = back.z;
+    }
+    if pos != at {
+        let mut back = units::ground_to_bevy(pos, tf.translation.y);
+        // Onto the ground there, so a hero put up a slope does not end up inside it.
+        if let Some(h) = world_point.terrain_height_under(back) {
+            back.y = back.y.max(h);
+        }
+        tf.translation = back;
+        player.pos = back;
     }
     let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
     input.pose = Some(HeroPose {

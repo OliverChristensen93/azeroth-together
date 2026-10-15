@@ -1,9 +1,12 @@
-//! A plain text HUD: the clock, the kills and the hero's spells (and, joined, the ping to the
-//! host); fallen friends and how to raise them; and the end of the run.
+//! A plain text HUD: the clock, the kills, the gold and the hero's spells (and, joined, the ping
+//! to the host); fallen friends and how to raise them; what a shrine or chest nearby does and how
+//! full its circle is; and the end of the run.
 
 use bevy::prelude::*;
 
-use together_sim::{REVIVE_RANGE, REVIVE_SECS};
+use together_sim::{
+    chest_price, InteractState, Interactable, InteractableKind, REVIVE_RANGE, REVIVE_SECS,
+};
 
 use super::Sim;
 
@@ -20,11 +23,25 @@ pub(super) struct CenterPanel;
 #[derive(Component)]
 pub(super) struct HudTop;
 
+/// The prompt by a shrine or chest: its text, and the bar its circle fills.
+#[derive(Component)]
+pub(super) struct PromptPanel;
+
+#[derive(Component)]
+pub(super) struct PromptText;
+
+#[derive(Component)]
+pub(super) struct PromptFill;
+
+/// How near an interactable's circle the prompt comes up, in yards past its edge.
+const PROMPT_REACH: f32 = 8.0;
+
 /// The run's HUD shows in a run; at the menu the status line and any panel are hidden.
+#[allow(clippy::type_complexity)]
 pub(super) fn show_hud(
     phase: Res<State<super::Phase>>,
-    mut top: Query<&mut Visibility, (With<HudTop>, Without<CenterPanel>)>,
-    mut panel: Query<&mut Visibility, (With<CenterPanel>, Without<HudTop>)>,
+    mut top: Query<&mut Visibility, (With<HudTop>, Without<CenterPanel>, Without<PromptPanel>)>,
+    mut panel: Query<&mut Visibility, (Or<(With<CenterPanel>, With<PromptPanel>)>, Without<HudTop>)>,
 ) {
     let playing = *phase.get() == super::Phase::Playing;
     let want = if playing {
@@ -82,7 +99,10 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 StatusText,
             ));
             p.spawn((
-                Text::new("WoW controls   ·   level-up: 1 2 3 or click a card, R rerolls"),
+                Text::new(
+                    "WoW controls   ·   cards: 1 2 3 or click, R rerolls   ·   \
+                     stand in a shrine's circle to use it",
+                ),
                 TextFont {
                     font: font.clone(),
                     font_size: 9.0,
@@ -121,6 +141,119 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 ));
             });
         });
+    // Low in the middle, over the action bar and clear of the hero.
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                bottom: Val::Percent(22.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            Visibility::Hidden,
+            PromptPanel,
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(5.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    text(&font, 12.0),
+                    TextLayout::new_with_justify(Justify::Center),
+                    PromptText,
+                ));
+                b.spawn((
+                    Node {
+                        width: Val::Px(180.0),
+                        height: Val::Px(7.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.1, 0.1, 0.1, 0.9)),
+                    BorderColor::all(Color::srgb(0.6, 0.5, 0.3)),
+                ))
+                .with_children(|bar| {
+                    bar.spawn((
+                        Node {
+                            width: Val::Percent(0.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(1.0, 0.82, 0.0)),
+                        PromptFill,
+                    ));
+                });
+            });
+        });
+}
+
+/// The interactable nearest the hero at `at` that is worth a prompt: one ready to use, or a
+/// challenge still being fought, within [`PROMPT_REACH`] of its circle.
+fn nearby(world: &together_sim::World, at: together_sim::V2) -> Option<&Interactable> {
+    world
+        .interactables
+        .iter()
+        .filter(|i| i.ready() || matches!(i.state, InteractState::Challenge(_)))
+        .filter(|i| i.pos.distance(at) <= i.kind.radius() + PROMPT_REACH)
+        .min_by(|a, b| a.pos.distance(at).total_cmp(&b.pos.distance(at)))
+}
+
+/// The prompt by a shrine or chest the hero stands near: its name, what it does, its price, and
+/// the bar its circle fills; by a challenge, the elites still standing.
+pub(super) fn prompt(
+    sim: Res<Sim>,
+    mut panel: Query<&mut Visibility, With<PromptPanel>>,
+    mut text: Query<&mut Text, With<PromptText>>,
+    mut fill: Query<&mut Node, With<PromptFill>>,
+) {
+    let world = &sim.world;
+    let hero = world
+        .hero(sim.me)
+        .filter(|h| h.alive && h.offers.is_empty() && !world.game_over());
+    let near = hero.and_then(|h| nearby(world, h.pos).map(|i| (h, i)));
+    if let Ok(mut vis) = panel.single_mut() {
+        let want = if near.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    let Some((hero, it)) = near else {
+        return;
+    };
+    let mut s = format!("{}\n{}", it.kind.name(), it.kind.description());
+    if let InteractState::Challenge(left) = &it.state {
+        s = format!("{}\n{} elites still stand", it.kind.name(), left.len());
+    } else if it.kind == InteractableKind::Chest {
+        let price = chest_price(hero.chests);
+        s.push_str(&format!("\nCosts {price} gold  ·  you have {}", hero.gold));
+    }
+    if it.ready() && it.charge == 0.0 {
+        s.push_str("\nStand in the circle");
+    }
+    if let Ok(mut t) = text.single_mut() {
+        if t.0 != s {
+            t.0 = s;
+        }
+    }
+    if let Ok(mut node) = fill.single_mut() {
+        let width = Val::Percent(it.charge * 100.0);
+        if node.width != width {
+            node.width = width;
+        }
+    }
 }
 
 fn clock(secs: f32) -> String {
@@ -150,10 +283,17 @@ pub(super) fn refresh(
         let ping = net
             .ping_ms()
             .map_or(String::new(), |ms| format!("   Ping {ms} ms"));
+        let danger = world.difficulty.overall();
+        let danger = if danger > 0.0 {
+            format!("   Danger +{:.0}%", danger * 100.0)
+        } else {
+            String::new()
+        };
         let mut s = format!(
-            "{}   Kills {}{ping}\n{}",
+            "{}   Kills {}   Gold {}{danger}{ping}\n{}",
             clock(world.elapsed),
             world.kills,
+            hero.gold,
             owned.join("   "),
         );
         // Friends who have fallen, while the run goes on.
