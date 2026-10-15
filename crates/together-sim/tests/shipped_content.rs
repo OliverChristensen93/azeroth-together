@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use together_sim::{
-    Content, ContentSources, Event, InteractableKind, Item, PlayerInput, World, TICK_HZ, V2,
+    Content, ContentSources, Event, InteractableKind, Item, Mode, PlayerInput, World, TICK_HZ, V2,
 };
 
 fn shipped() -> Content {
@@ -15,6 +15,7 @@ fn shipped() -> Content {
         zones: include_str!("../../../content/zones.ron"),
     })
     .and_then(|c| c.with_rules(include_str!("../../../content/rules.ron")))
+    .and_then(|c| c.with_extractions(include_str!("../../../content/extraction.ron")))
     .unwrap_or_else(|e| panic!("content/ is invalid: {e}"))
 }
 
@@ -57,7 +58,9 @@ fn every_zone_starts_with_its_few_shrines_inside_its_arena() {
 #[test]
 fn every_class_survives_a_minute_in_every_zone_and_kills_something() {
     let c = Arc::new(shipped());
-    for zone in &c.zones {
+    // Extraction zones start their heroes in a safe ring where nothing spawns; they have their
+    // own run below.
+    for zone in c.zones.iter().filter(|z| z.extraction_ix.is_none()) {
         for class in &c.classes {
             let mut w = World::new(c.clone(), &zone.key, 3).unwrap();
             w.add_hero(0, &class.key).unwrap();
@@ -80,5 +83,38 @@ fn every_class_survives_a_minute_in_every_zone_and_kills_something() {
             assert!(w.kills > 0, "{} in {} killed nothing", class.key, zone.key);
             assert!(events.iter().any(|e| matches!(e, Event::Cast { .. })));
         }
+    }
+}
+
+#[test]
+fn an_extraction_run_in_elwynn_heats_up_out_in_the_forest_and_kills_something() {
+    let c = Arc::new(shipped());
+    let zone = c.zone("elwynn_extraction").expect("the zone");
+    let map = c.zones[zone].extraction_ix.expect("its map");
+    assert_eq!(c.extractions[map].key, "elwynn");
+    for class in &c.classes {
+        let mut w = World::new(c.clone(), "elwynn_extraction", 9).unwrap();
+        w.add_hero(0, &class.key).unwrap();
+        assert!(matches!(w.mode, Mode::Extraction(_)));
+        // North out of Goldshire for 20 seconds, then circle out in the forest.
+        for step in 0..(TICK_HZ * 80) {
+            let a = step as f32 * 0.01;
+            let move_dir = if step < TICK_HZ * 20 {
+                V2::new(1.0, 0.0)
+            } else {
+                V2::new(a.cos(), a.sin())
+            };
+            w.set_input(
+                0,
+                PlayerInput {
+                    move_dir,
+                    pick: Some(0),
+                    ..Default::default()
+                },
+            );
+            w.step();
+        }
+        assert!(w.kills > 0, "{} killed nothing", class.key);
+        assert!(w.heat_of(0) > 0.0, "{} stayed cool", class.key);
     }
 }

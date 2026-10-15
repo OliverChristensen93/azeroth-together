@@ -1,0 +1,46 @@
+// Extraction maps: a whole zone open, a safe ring where nothing spawns, heat that climbs out in
+// the forest, and exits that open on a timer. Positions are WoW (x, y): x north, y west.
+// `zone` is the zones.ron entry the map is played in. Every number is a starting value to tune.
+[
+    (
+        key: "elwynn",
+        zone: "elwynn_extraction",
+        // Elwynn between Stormwind's walls (north), Westfall (west), Redridge (east) and
+        // Duskwood (south). A convex outline, corners in order.
+        boundary: [(-8850.0, 820.0), (-8850.0, -1480.0), (-9990.0, -1480.0), (-9990.0, 820.0)],
+        // Goldshire's crossroads (AreaPOI "Goldshire").
+        safe: (center: (-9480.1, 63.5), radius: 40.0, margin: 50.0, cool: 15.0),
+        recycle: 120.0,
+        heat: (
+            outside: 1.0,
+            kill: 0.5,
+            flight: 4.0,
+            floor_from: 180.0,
+            floor_per_min: 40.0,
+            reward_luck: 0.25,
+            quiet_range: 40.0,
+            quiet_secs: 10.0,
+            skulls: [
+                (at: 0.0, spawns: 1.0, tier: 0, toughness: 1.0, hunters_every: 0.0, reward: 1.0),
+                (at: 100.0, spawns: 1.3, tier: 1, toughness: 1.15, hunters_every: 0.0, reward: 1.5),
+                (at: 250.0, spawns: 1.6, tier: 1, toughness: 1.3, hunters_every: 0.0, reward: 2.0),
+                (at: 450.0, spawns: 2.0, tier: 2, toughness: 1.5, hunters_every: 20.0, reward: 2.75),
+                (at: 700.0, spawns: 2.5, tier: 3, toughness: 1.75, hunters_every: 15.0, reward: 3.5),
+                (at: 1000.0, spawns: 3.0, tier: 4, toughness: 2.0, hunters_every: 10.0, reward: 5.0),
+            ],
+            hunters: (pack: (6, 10), ring: (50.0, 70.0), cone: 60.0, speed: 1.2),
+        ),
+        exits: [
+            // By Stormwind's gate (AreaPOI "Stormwind").
+            (name: "Stormwind Gate", pos: (-9150.0, 360.0), radius: 15.0, opens_at: 480.0,
+             call: 3.0, flight: 45.0, recall: 30.0),
+            // Eastvale Logging Camp, read off the world map: check it in game.
+            (name: "Eastvale Logging Camp", pos: (-9467.0, -1276.0), radius: 15.0,
+             opens_at: 840.0, call: 3.0, flight: 45.0, recall: 30.0),
+        ],
+        // `BatTaxi.m2`, the Undercity flight bat: the gryphon (display 6852) is not in the
+        // trimmed data. Swap it when the full client data is in.
+        flight_display: 1566,
+        settings: (heat_shared: true, lose_them: false, solo_extract: true, timed_boss: false),
+    ),
+]
