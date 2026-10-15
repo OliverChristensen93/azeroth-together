@@ -29,6 +29,8 @@ pub(super) struct Views {
     pub gems: HashMap<u32, Entity>,
     pub interactables: HashMap<u32, ShrineView>,
     pub pickups: HashMap<u32, Entity>,
+    /// An extraction run's rings, beams and flights; built on its first frame.
+    extraction: Option<ExtractionView>,
     /// Interactables whose spot has been checked for water and walls.
     settled: HashSet<u32>,
     /// Creature entries whose names are in the [`NameCache`].
@@ -55,6 +57,15 @@ impl ShrineView {
             commands.entity(e).despawn();
         }
     }
+}
+
+/// The bodies that draw an extraction map: the safe ring, and per exit its ring, its beam while
+/// open, and its flight while one comes down or waits.
+pub(super) struct ExtractionView {
+    safe: Entity,
+    rings: Vec<Entity>,
+    beams: Vec<Option<Entity>>,
+    flights: Vec<Option<Entity>>,
 }
 
 impl Views {
@@ -216,6 +227,24 @@ fn pickup_look(kind: PickupKind) -> (u32, f32) {
 /// The colour a power-up's name floats up in when it is taken, 0xAARRGGBB.
 const COLOR_POWER_UP: u32 = 0xFF66_CCFF;
 
+/// GameObject serials for an extraction map's rings and beams: the safe ring, then two per exit.
+const EXTRACTION_SERIAL_BASE: u64 = 0x3000_0000;
+/// Creature serials for the flights to the exits, and the entry that names them.
+const FLIGHT_SERIAL_BASE: u64 = 0x3800_0000;
+const FLIGHT_ENTRY: u32 = 0xF000;
+/// `G_RuneGroundGreen01.mdx` for the safe ring and `G_RuneGroundBlue01.mdx` for an exit, each
+/// with its radius at scale 1.
+const SAFE_RUNE: (u32, f32) = (674, 2.8);
+const EXIT_RUNE: (u32, f32) = (343, 1.0);
+/// How high a flight starts down, and over its last how many seconds it comes.
+const FLIGHT_HEIGHT: f32 = 40.0;
+const FLIGHT_DESCENT: f32 = 8.0;
+/// Teleport: Stormwind, whose visual plays as a hero leaves.
+const TELEPORT: u32 = 3561;
+/// The colours heat and exit news float up in, 0xAARRGGBB.
+const COLOR_HEAT: u32 = 0xFFFF_6A00;
+const COLOR_EXIT: u32 = 0xFF66_FF99;
+
 /// The step's events as visuals. Runs before [`sync`], so a dying enemy is still mapped.
 pub(super) fn apply_events(
     mut commands: Commands,
@@ -330,13 +359,42 @@ pub(super) fn apply_events(
                     }
                 }
             }
-            // Extraction: drawn from the world's state; Task 9 adds their text.
-            Event::HeatChanged { .. }
-            | Event::HuntersCame { .. }
-            | Event::ExitOpened { .. }
-            | Event::FlightCalled { .. }
-            | Event::FlightLanded { .. }
-            | Event::HeroExtracted { .. } => {}
+            Event::HeatChanged { player, skulls } => {
+                if player.is_none_or(|p| p == sim.me) {
+                    if let Some(&e) = views.heroes.get(&sim.me) {
+                        let text = match skulls {
+                            0 => "The heat is off".to_string(),
+                            n => format!("Heat {n}!"),
+                        };
+                        fx.text(e, text, COLOR_HEAT);
+                    }
+                }
+            }
+            Event::HuntersCame { near } => {
+                if near == sim.me {
+                    if let Some(&e) = views.heroes.get(&near) {
+                        fx.text(e, "Hunters are cutting you off!".into(), COLOR_HEAT);
+                    }
+                }
+            }
+            Event::ExitOpened { exit } => {
+                if let Some(&e) = views.heroes.get(&sim.me) {
+                    fx.text(e, format!("{} is open", exit_name(&sim.world, exit)), COLOR_EXIT);
+                }
+            }
+            Event::FlightCalled { exit, .. } => {
+                if let Some(&e) = views.heroes.get(&sim.me) {
+                    let text = format!("A flight is coming to {}", exit_name(&sim.world, exit));
+                    fx.text(e, text, COLOR_EXIT);
+                }
+            }
+            // The flight is drawn from the world's state.
+            Event::FlightLanded { .. } => {}
+            Event::HeroExtracted { player, .. } => {
+                if let Some(&e) = views.heroes.get(&player) {
+                    fx.cast(e, TELEPORT, &[e], None);
+                }
+            }
         }
     }
 }
@@ -379,6 +437,7 @@ pub(super) fn sync(
     mut positions: Query<&mut SimPos>,
     mut dying: Query<(Entity, &Guid, &mut Dying)>,
     mut transforms: Query<&mut Transform, Without<SimPos>>,
+    mut visibility: Query<&mut Visibility>,
 ) {
     let world = &sim.world;
     let content = world.content().clone();
@@ -518,6 +577,33 @@ pub(super) fn sync(
 
     let me = world.hero(sim.me).map_or(world.center(), |h| h.pos);
     sync_shrines(&mut commands, world, &mut views, &ground, fallback_y, me, &mut transforms);
+    sync_extraction(
+        &mut commands,
+        world,
+        &mut views,
+        &mut names,
+        &mut index,
+        &ground,
+        fallback_y,
+        &mut transforms,
+    );
+    // A hero gone on a flight is out of the world: their body goes from sight.
+    for hero in &world.heroes {
+        let want = if hero.extracted {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if let Some(mut v) = views
+            .heroes
+            .get(&hero.player)
+            .and_then(|&e| visibility.get_mut(e).ok())
+        {
+            if *v != want {
+                *v = want;
+            }
+        }
+    }
 
     if sim.stepped {
         for hero in &world.heroes {
@@ -666,6 +752,152 @@ fn sync_shrines(
         keep
     });
 }
+/// An extraction run's map: the safe ring and each exit's ring, kept on the ground as the terrain
+/// loads; a beam over each open exit, seen from anywhere; and each exit's flight, coming down over
+/// its last seconds and standing in the ring once landed.
+#[allow(clippy::too_many_arguments)]
+fn sync_extraction(
+    commands: &mut Commands,
+    world: &together_sim::World,
+    views: &mut Views,
+    names: &mut NameCache,
+    index: &mut GuidIndex,
+    ground: &impl Fn(V2, f32) -> Vec3,
+    fallback_y: f32,
+    transforms: &mut Query<&mut Transform, Without<SimPos>>,
+) {
+    let together_sim::Mode::Extraction(x) = &world.mode else {
+        return;
+    };
+    let def = &world.content().extractions[x.def];
+    let lift = Vec3::Y * 0.05;
+    let view = views.extraction.get_or_insert_with(|| {
+        let (rune, r) = SAFE_RUNE;
+        let safe = units::spawn_object(
+            commands,
+            EXTRACTION_SERIAL_BASE,
+            rune,
+            def.safe.radius / r,
+            ground(def.safe_center(), fallback_y) + lift,
+        );
+        let rings = (0..def.exits.len())
+            .map(|i| {
+                let (rune, r) = EXIT_RUNE;
+                units::spawn_object(
+                    commands,
+                    EXTRACTION_SERIAL_BASE + 1 + 2 * i as u64,
+                    rune,
+                    def.exits[i].radius / r,
+                    ground(def.exit_pos(i), fallback_y) + lift,
+                )
+            })
+            .collect();
+        ExtractionView {
+            safe,
+            rings,
+            beams: vec![None; def.exits.len()],
+            flights: vec![None; def.exits.len()],
+        }
+    });
+    // Rings spawned before the terrain under them loaded settle onto it.
+    let seats = std::iter::once((view.safe, def.safe_center()))
+        .chain(view.rings.iter().enumerate().map(|(i, &e)| (e, def.exit_pos(i))));
+    for (e, at) in seats {
+        if let Ok(mut tf) = transforms.get_mut(e) {
+            let want = ground(at, tf.translation.y) + lift;
+            if tf.translation != want {
+                tf.translation = want;
+            }
+        }
+    }
+    for (i, state) in x.exits.iter().enumerate() {
+        let at = def.exit_pos(i);
+        match (state.open, view.beams[i]) {
+            (true, None) => {
+                let serial = EXTRACTION_SERIAL_BASE + 2 + 2 * i as u64;
+                let e = units::spawn_object(commands, serial, BEAM, BEAM_SCALE * 2.0, ground(at, fallback_y));
+                view.beams[i] = Some(e);
+            }
+            (false, Some(e)) => {
+                commands.entity(e).despawn();
+                view.beams[i] = None;
+            }
+            _ => {}
+        }
+        let height = match (state.flight, state.landed) {
+            (Some(left), _) if left <= FLIGHT_DESCENT => Some(left / FLIGHT_DESCENT * FLIGHT_HEIGHT),
+            (_, true) => Some(0.0),
+            _ => None,
+        };
+        match (height, view.flights[i]) {
+            (Some(h), None) => {
+                if views.named.insert(FLIGHT_ENTRY) {
+                    names.insert_creature(
+                        FLIGHT_ENTRY,
+                        Some(CreatureRecord {
+                            name: "Flight".into(),
+                            subname: None,
+                            creature_type: 0,
+                            pet_family: 0,
+                            rank: 0,
+                            type_flags: 0,
+                            civilian: true,
+                            racial_leader: false,
+                            display_id: def.flight_display,
+                        }),
+                    );
+                }
+                let kind = UnitKind::Creature { entry: FLIGHT_ENTRY };
+                let serial = FLIGHT_SERIAL_BASE + i as u64;
+                let e = units::spawn_unit(
+                    commands,
+                    &UnitSpec {
+                        kind,
+                        serial,
+                        display: def.flight_display,
+                        scale: 1.0,
+                        level: 60,
+                        faction: units::FACTION_FRIENDLY,
+                        bytes0: 1 << 8,
+                        weapons: &[],
+                        sheath: 0,
+                        extra: &[],
+                    },
+                    ground(at, fallback_y) + Vec3::Y * h,
+                    0.0,
+                );
+                index.0.insert(units::unit_guid(kind, serial), e);
+                view.flights[i] = Some(e);
+            }
+            (Some(h), Some(e)) => {
+                if let Ok(mut tf) = transforms.get_mut(e) {
+                    let want = ground(at, fallback_y) + Vec3::Y * h;
+                    if tf.translation != want {
+                        tf.translation = want;
+                    }
+                }
+            }
+            (None, Some(e)) => {
+                index.0.retain(|_, v| *v != e);
+                commands.entity(e).despawn();
+                view.flights[i] = None;
+            }
+            (None, None) => {}
+        }
+    }
+}
+
+/// Exit `exit`'s name on the map being played; empty in the arena.
+fn exit_name(world: &together_sim::World, exit: u8) -> String {
+    match &world.mode {
+        together_sim::Mode::Extraction(x) => world.content().extractions[x.def]
+            .exits
+            .get(usize::from(exit))
+            .map_or_else(String::new, |e| e.name.clone()),
+        together_sim::Mode::Arena => String::new(),
+    }
+}
+
 /// Whether a spot is dry ground in the open: `None` until the terrain under it has loaded.
 fn usable(world_point: &WorldPoint, at: V2) -> Option<bool> {
     let probe = units::ground_to_bevy(at, 0.0);
