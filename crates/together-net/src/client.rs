@@ -1,4 +1,5 @@
-//! The client's side: one connection to a host, read and written on its own threads.
+//! The client's side: one connection to a host, by address or by invite code, read and written
+//! on its own threads.
 
 use std::io::{BufReader, BufWriter};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -6,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
+use crate::invite::{self, Link};
 use crate::wire;
 use crate::{with_default_port, ClientMsg, ServerMsg};
 
@@ -28,15 +30,15 @@ pub struct Client {
 }
 
 impl Client {
-    /// Start connecting to `addr` (`host` or `host:port`); [`ClientEvent::Connected`] or
-    /// [`ClientEvent::Disconnected`] tells how it went.
-    pub fn connect(addr: &str) -> Client {
-        let addr = with_default_port(addr);
+    /// Start connecting to `to`: an invite code, or an address (`host` or `host:port`).
+    /// [`ClientEvent::Connected`] or [`ClientEvent::Disconnected`] tells how it went.
+    pub fn connect(to: &str) -> Client {
+        let to = to.to_owned();
         let (tx, events) = mpsc::channel();
         let (out, outgoing) = mpsc::channel::<Vec<u8>>();
         let _ = thread::Builder::new()
             .name("together-client".into())
-            .spawn(move || run(addr, tx, outgoing));
+            .spawn(move || run(to, tx, outgoing));
         Client { events, out }
     }
 
@@ -52,20 +54,21 @@ impl Client {
     }
 }
 
-fn run(addr: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
-    let stream = match connect(&addr) {
-        Ok(s) => s,
+fn run(to: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
+    let link = match invite::parse_code(&to) {
+        Some(host) => invite::dial(host),
+        None => connect(&with_default_port(&to)),
+    };
+    let Link {
+        reader,
+        writer,
+        close,
+    } = match link {
+        Ok(l) => l,
         Err(why) => {
             let _ = events.send(ClientEvent::Disconnected(why));
             return;
         }
-    };
-    let _ = stream.set_nodelay(true);
-    let (Ok(reader), Ok(shutdown)) = (stream.try_clone(), stream.try_clone()) else {
-        let _ = events.send(ClientEvent::Disconnected(
-            "could not open the connection".into(),
-        ));
-        return;
     };
     let _ = events.send(ClientEvent::Connected);
 
@@ -73,13 +76,13 @@ fn run(addr: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
     let _ = thread::Builder::new()
         .name("together-client-write".into())
         .spawn(move || {
-            let mut out = BufWriter::new(stream);
+            let mut out = BufWriter::new(writer);
             for frame in outgoing {
                 if wire::write_frame(&mut out, &frame).is_err() {
                     break;
                 }
             }
-            let _ = shutdown.shutdown(std::net::Shutdown::Both);
+            close();
         });
 
     let mut input = BufReader::new(reader);
@@ -100,7 +103,8 @@ fn run(addr: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
     }
 }
 
-fn connect(addr: &str) -> Result<TcpStream, String> {
+/// A TCP connection to `addr`, as the two halves the connection threads take.
+fn connect(addr: &str) -> Result<Link, String> {
     let targets: Vec<_> = addr
         .to_socket_addrs()
         .map_err(|e| format!("cannot find {addr}: {e}"))?
@@ -108,7 +112,21 @@ fn connect(addr: &str) -> Result<TcpStream, String> {
     let mut last = format!("cannot find {addr}");
     for target in targets {
         match TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) {
-            Ok(s) => return Ok(s),
+            Ok(stream) => {
+                let _ = stream.set_nodelay(true);
+                let opened = || -> std::io::Result<Link> {
+                    let reader = stream.try_clone()?;
+                    let shutdown = stream.try_clone()?;
+                    Ok(Link {
+                        reader: Box::new(reader),
+                        writer: Box::new(stream),
+                        close: Box::new(move || {
+                            let _ = shutdown.shutdown(std::net::Shutdown::Both);
+                        }),
+                    })
+                };
+                return opened().map_err(|_| "could not open the connection".to_string());
+            }
             Err(e) => last = format!("cannot reach {addr}: {e}"),
         }
     }
@@ -220,6 +238,56 @@ mod tests {
             })
         });
         assert!(why.contains("cannot reach"), "{why}");
+    }
+
+    /// The whole invite path over the internet: number 0's address lookup and relays. Needs a
+    /// network, so it runs only when asked: `cargo test -p together-net -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_client_joins_by_invite_code() {
+        let host = Host::listen(0).unwrap();
+        let key = crate::new_host_key();
+        host.open_invites(key);
+        let code = wait_for(Duration::from_secs(30), || match host.invite() {
+            crate::Invite::Ready(code) => Some(code),
+            crate::Invite::Failed(why) => panic!("{why}"),
+            _ => None,
+        });
+        assert_eq!(code, crate::code_for(&key));
+        let client = Client::connect(&code);
+        let mut why = None;
+        wait_for(Duration::from_secs(40), || {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Connected => Some(()),
+                ClientEvent::Disconnected(w) => {
+                    why = Some(w);
+                    Some(())
+                }
+                _ => None,
+            })
+        });
+        assert_eq!(why, None);
+        let hello = ClientMsg::Hello {
+            protocol: PROTOCOL,
+            content: 7,
+            hero: pick(),
+        };
+        client.send(&hello);
+        let (conn, got) = wait_for(Duration::from_secs(20), || {
+            host.poll().into_iter().find_map(|e| match e {
+                HostEvent::Message(c, m) => Some((c, m)),
+                _ => None,
+            })
+        });
+        assert_eq!(got, hello);
+        host.send(conn, &ServerMsg::Welcome { you: 1 });
+        let welcome = wait_for(Duration::from_secs(20), || {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Message(m) => Some(m),
+                _ => None,
+            })
+        });
+        assert_eq!(welcome, ServerMsg::Welcome { you: 1 });
     }
 
     #[test]

@@ -110,6 +110,8 @@ crate-internal. It is one new module plus a few lines in `lib.rs`; the rest of t
 - [x] Party frames (WoW's own), a damage meter that compares players, and revive by standing
       beside a fallen friend.
 - [x] A shareable build (`scripts/package.sh`) without Blizzard data.
+- [x] Internet play by invite code (iroh: hole punching, public relays as fallback); the code is
+      permanent per host, copied with a button and pasted with Ctrl+V.
 - [ ] A debug overlay for ping, bandwidth and entity counts.
 
 **Done when:** two PCs play a 10-minute run with 200+ enemies, smoothly, on LAN and over the internet.

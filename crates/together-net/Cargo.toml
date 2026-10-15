@@ -12,3 +12,7 @@ workspace = true
 together-sim = { path = "../together-sim" }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
+# Invite codes: QUIC connections dialed by an endpoint's key, through home routers (hole punching,
+# with n0's public relays as the fallback), so nobody forwards a port.
+iroh = "1.3"
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "time", "sync"] }
