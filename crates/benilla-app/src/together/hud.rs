@@ -289,6 +289,103 @@ fn clock(secs: f32) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
+/// The way `to` points, as a compass word (WoW's `x` is north, `y` west; the minimap is
+/// north-up).
+fn compass(to: together_sim::V2) -> &'static str {
+    const WAYS: [&str; 8] = ["N", "NW", "W", "SW", "S", "SE", "E", "NE"];
+    let turn = to.y.atan2(to.x) / std::f32::consts::FRAC_PI_4;
+    WAYS[(turn.round() as i32).rem_euclid(8) as usize]
+}
+
+/// Extraction runs: the heat and what it pays, Goldshire when the hero is in it, and how each
+/// exit stands and where it lies. `None` in the arena.
+fn extraction_status(world: &together_sim::World, hero: &together_sim::Hero) -> Option<String> {
+    let together_sim::Mode::Extraction(x) = &world.mode else {
+        return None;
+    };
+    let def = &world.content().extractions[x.def];
+    let heat = world.heat_of(hero.player);
+    let skulls = def.skull_index(heat);
+    let skull = &def.heat.skulls[skulls];
+    let top = def.heat.skulls.len() - 1;
+    let next = def.heat.skulls.get(skulls + 1).map_or(String::new(), |n| {
+        let part = ((heat - skull.at) / (n.at - skull.at) * 100.0).clamp(0.0, 99.0);
+        format!("   next {part:.0}%")
+    });
+    let mut s = format!(
+        "\nHeat {skulls}/{top}   Rewards x{:.2}{next}   Night floor {:.0}",
+        skull.reward, x.floor
+    );
+    if def.in_safe(hero.pos) {
+        s.push_str("\nGoldshire: safe. Nothing new comes; heat cools while everyone is home.");
+    }
+    for (i, (exit, state)) in def.exits.iter().zip(&x.exits).enumerate() {
+        let to = def.exit_pos(i) - hero.pos;
+        let way = format!("{:.0} yd {}", to.length(), compass(to));
+        let line = if !state.open {
+            let left = (exit.opens_at - world.elapsed).max(0.0);
+            format!("{} opens in {}", exit.name, clock(left))
+        } else if let Some(left) = state.flight {
+            format!("{}: flight lands in {}   {way}", exit.name, clock(left.max(0.0)))
+        } else if state.landed {
+            format!("{}: the flight waits for everyone   {way}", exit.name)
+        } else if state.calling > 0.0 {
+            format!("{}: calling a flight {:.0}%   {way}", exit.name, state.calling * 100.0)
+        } else {
+            format!("{}: open, stand in it to call a flight   {way}", exit.name)
+        };
+        s.push('\n');
+        s.push_str(&line);
+    }
+    Some(s)
+}
+
+/// Extraction runs: what the center panel says once the hero has left (`over`: the whole run
+/// has ended), with `next` telling how to go on. `None` in the arena.
+fn extraction_end(
+    world: &together_sim::World,
+    hero: &together_sim::Hero,
+    over: bool,
+    next: &str,
+) -> Option<String> {
+    let together_sim::Mode::Extraction(x) = &world.mode else {
+        return None;
+    };
+    let def = &world.content().extractions[x.def];
+    if !over {
+        let out: Vec<String> = world
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| format!("{} is still out there", h.name))
+            .collect();
+        return Some(format!("You got out!\n\n{}", out.join("\n")));
+    }
+    let title = if hero.extracted {
+        "You got out!"
+    } else {
+        "You did not make it out."
+    };
+    let party: Vec<String> = world
+        .heroes
+        .iter()
+        .map(|h| {
+            let how = if h.extracted { "got out" } else { "fell" };
+            format!("{}: {how}", h.name)
+        })
+        .collect();
+    Some(format!(
+        "{title}\n\n{}\n\n{}  ·  Level {}  ·  {} kills  ·  {} gold  ·  peak heat {}/{}\n\n{next}",
+        party.join("\n"),
+        clock(world.elapsed),
+        world.level,
+        world.kills,
+        hero.gold,
+        def.skull_index(x.peak),
+        def.heat.skulls.len() - 1,
+    ))
+}
+
 pub(super) fn refresh(
     sim: Res<Sim>,
     mut status: Query<&mut Text, (With<StatusText>, Without<CardsText>)>,
@@ -335,7 +432,11 @@ pub(super) fn refresh(
             .collect();
         if !bosses.is_empty() {
             s.push_str(&format!("\nBOSS  {}", bosses.join("   ")));
-        } else if let Some(boss) = world.zone().boss_ix {
+        } else if let Some(boss) = world
+            .zone()
+            .boss_ix
+            .filter(|_| world.extraction_settings().is_none_or(|s| s.timed_boss))
+        {
             s.push_str(&format!(
                 "\n{} comes in {}",
                 content.enemies[boss].name,
@@ -380,9 +481,12 @@ pub(super) fn refresh(
             s.push('\n');
             s.push_str(&held.join("   "));
         }
+        if let Some(lines) = extraction_status(world, hero) {
+            s.push_str(&lines);
+        }
         // Friends who have fallen, while the run goes on.
         if hero.alive && !world.game_over() {
-            for h in world.heroes.iter().filter(|h| !h.alive) {
+            for h in world.heroes.iter().filter(|h| !h.alive && !h.extracted) {
                 s.push_str(&format!(
                     "\n{} has fallen: stand beside them to raise them",
                     h.name
@@ -395,23 +499,27 @@ pub(super) fn refresh(
     }
 
     let center = if world.game_over() {
-        let fallen = if world.heroes.len() > 1 {
-            "The party has fallen."
-        } else {
-            "You have fallen."
-        };
         let next = if net.is_client() {
             "The host takes everyone back to the menu"
         } else {
             "Press Enter to return to the menu"
         };
-        Some(format!(
-            "{fallen}\n\nSurvived {}  ·  Level {}  ·  {} kills  ·  {:.0} damage\n\n{next}",
-            clock(world.elapsed),
-            world.level,
-            world.kills,
-            hero.damage_done,
-        ))
+        extraction_end(world, hero, true, next).or_else(|| {
+            let fallen = if world.heroes.len() > 1 {
+                "The party has fallen."
+            } else {
+                "You have fallen."
+            };
+            Some(format!(
+                "{fallen}\n\nSurvived {}  ·  Level {}  ·  {} kills  ·  {:.0} damage\n\n{next}",
+                clock(world.elapsed),
+                world.level,
+                world.kills,
+                hero.damage_done,
+            ))
+        })
+    } else if hero.extracted {
+        extraction_end(world, hero, false, "")
     } else if !hero.alive {
         let raising = if hero.revive > 0.0 {
             format!("Being raised…  {:.0}%", hero.revive * 100.0)
