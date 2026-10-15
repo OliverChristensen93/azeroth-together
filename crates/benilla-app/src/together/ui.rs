@@ -22,17 +22,35 @@ for i = 1, NUM_CHAT_WINDOWS do
 end
 "#;
 
-/// Run [`TUNE_UI`] once per UI session (a `/reload` is a new one), after its load has finished.
+/// Run [`TUNE_UI`] once per UI session (a `/reload` is a new one), after its load has finished,
+/// and show WoW's interface only in a run: at the menu, `UIParent` (and so every frame on it) is
+/// hidden behind our own screen.
 pub(super) fn tune_ui(
     script: Option<NonSend<UiScript>>,
     loading: Option<Res<PendingEntryUiLoad>>,
+    phase: Res<State<super::Phase>>,
     mut done: Local<Option<u64>>,
+    mut shown: Local<Option<(u64, super::Phase)>>,
 ) {
     let Some(script) = script else { return };
-    if loading.is_some() || *done == Some(script.session()) {
+    if loading.is_some() {
         return;
     }
-    if script.run(TUNE_UI).is_ok() {
-        *done = Some(script.session());
+    let session = script.session();
+    if *done != Some(session) && script.run(TUNE_UI).is_ok() {
+        *done = Some(session);
+    }
+    if *done != Some(session) {
+        return;
+    }
+    let want = (session, *phase.get());
+    if *shown != Some(want) {
+        let chunk = match want.1 {
+            super::Phase::Menu => "UIParent:Hide()",
+            super::Phase::Playing => "UIParent:Show()",
+        };
+        if script.run(chunk).is_ok() {
+            *shown = Some(want);
+        }
     }
 }

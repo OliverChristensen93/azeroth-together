@@ -216,11 +216,16 @@ pub(super) fn sync(
             continue;
         };
         let class = &content.classes[hero.class];
-        let Some((display, (race, sex))) = class
-            .looks
-            .iter()
-            .find_map(|&d| creatures.display_race_sex(d).map(|rs| (d, rs)))
-        else {
+        // Ours wears the look picked at the menu; another's, its class's first.
+        let look = if hero.player == LOCAL_PLAYER {
+            Some((sim.look.0, (sim.look.1, sim.look.2)))
+        } else {
+            class
+                .looks
+                .iter()
+                .find_map(|&d| creatures.display_race_sex(d).map(|rs| (d, rs)))
+        };
+        let Some((display, (race, sex))) = look else {
             continue;
         };
         let weapons: Vec<Weapon> = class

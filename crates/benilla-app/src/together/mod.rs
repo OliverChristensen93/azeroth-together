@@ -17,6 +17,7 @@
 mod actions;
 mod dress;
 mod hud;
+mod menu;
 mod ui;
 mod units;
 mod view;
@@ -119,10 +120,27 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The run being played, and the clock that steps it.
+/// The game's content, as [`prepare`] loaded it.
+pub(super) fn content() -> Arc<Content> {
+    CONTENT.get().expect("together::prepare ran").clone()
+}
+
+/// The screen the game is on.
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(super) enum Phase {
+    /// The main menu: pick a class, a look and a zone.
+    #[default]
+    Menu,
+    /// A run.
+    Playing,
+}
+
+/// The run being played, and the clock that steps it. Present only during a run.
 #[derive(Resource)]
 pub(super) struct Sim {
     pub world: World,
+    /// The local hero's body: `(display, race, sex)`.
+    pub look: (u32, u8, u8),
     /// Real seconds not yet simulated; always under one [`DT`] after a frame's steps.
     acc: f32,
     /// Steps taken this frame, so the views know to roll their interpolation forward.
@@ -130,18 +148,18 @@ pub(super) struct Sim {
 }
 
 impl Sim {
-    fn new() -> Self {
-        let content = CONTENT.get().expect("together::prepare ran").clone();
+    fn new(class: &str, zone: &str, look: (u32, u8, u8)) -> Self {
         let seed = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0x9E37_79B9_7F4A_7C15);
-        let mut world = World::new(content, &zone_key(), seed).expect("zone checked in prepare");
+        let mut world = World::new(content(), zone, seed).expect("zone from the content");
         world
-            .add_hero(LOCAL_PLAYER, &class_key())
-            .expect("class checked in prepare");
+            .add_hero(LOCAL_PLAYER, class)
+            .expect("class from the content");
         Self {
             world,
+            look,
             acc: 0.0,
             stepped: false,
         }
@@ -153,7 +171,7 @@ impl Sim {
     }
 }
 
-/// Everything this mode spawned, despawned when a run restarts.
+/// Everything a run spawned, despawned when it ends.
 #[derive(Component)]
 pub(super) struct TogetherEntity;
 
@@ -165,15 +183,56 @@ struct LocalInput {
     pick: Option<u8>,
 }
 
+/// Play Solo was clicked: [`start_run`] begins the run.
+#[derive(Resource, Default)]
+pub(super) struct StartRequest(pub bool);
+
 pub(crate) struct TogetherPlugin;
 
 impl Plugin for TogetherPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Sim::new())
+        let playing = || in_state(Phase::Playing).and(resource_exists::<Sim>);
+        app.init_state::<Phase>()
+            .insert_resource(menu::Selection::new(&content()))
+            .init_resource::<StartRequest>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
-            .add_systems(Startup, hud::setup)
-            .add_systems(Update, daylight)
+            .add_systems(Startup, (hud::setup, menu::spawn_root))
+            .add_systems(
+                Update,
+                (
+                    daylight,
+                    follow_map,
+                    menu::apply_ui_scale,
+                    menu::show_menu,
+                    hud::show_hud,
+                    ui::tune_ui,
+                ),
+            )
+            // The menu.
+            .add_systems(
+                Update,
+                (
+                    menu::restore_pick,
+                    menu::build_menu,
+                    menu::menu_clicks,
+                    menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
+                    menu::fill_icons,
+                    menu::preview_hero,
+                    start_run,
+                )
+                    .chain()
+                    .run_if(in_state(Phase::Menu)),
+            )
+            .add_systems(
+                Update,
+                menu::menu_camera
+                    .in_set(WorldStage::Input)
+                    .after(crate::player::PlayerControlSet)
+                    .run_if(in_state(Phase::Menu)),
+            )
+            .add_systems(OnExit(Phase::Menu), menu::clear_preview)
+            // The run.
             .add_systems(
                 Update,
                 (
@@ -188,7 +247,8 @@ impl Plugin for TogetherPlugin {
                     .chain()
                     .in_set(WorldStage::Input)
                     // The controller has moved the hero this frame before its pose is read.
-                    .after(crate::player::PlayerControlSet),
+                    .after(crate::player::PlayerControlSet)
+                    .run_if(playing()),
             )
             .add_systems(
                 Update,
@@ -196,13 +256,57 @@ impl Plugin for TogetherPlugin {
                     actions::fill_action_bar,
                     actions::drop_manual_casts,
                     hud::refresh,
-                    restart,
-                    ui::tune_ui,
+                    back_to_menu,
                 )
                     .chain()
-                    .after(WorldStage::Input),
+                    .after(WorldStage::Input)
+                    .run_if(playing()),
             );
     }
+}
+
+/// The world stands in the zone being played, or last played: picking another at the menu
+/// changes nothing until Play, and entering one on another continent raises the loading screen.
+fn follow_map(
+    selection: Res<menu::Selection>,
+    current: Option<ResMut<benilla_world::world_map::CurrentMap>>,
+) {
+    let Some(mut current) = current else {
+        return;
+    };
+    let want = content().zones[selection.stage].map;
+    if current.0 != want {
+        current.0 = want;
+    }
+}
+
+/// Play Solo: a fresh run of the picked class and look in the picked zone, the controller taking
+/// the new hero.
+fn start_run(
+    time: Res<Time<Real>>,
+    mut commands: Commands,
+    mut start: ResMut<StartRequest>,
+    mut selection: ResMut<menu::Selection>,
+    mut player: ResMut<crate::player::Player>,
+    mut next: ResMut<NextState<Phase>>,
+) {
+    // `TOGETHER_AUTOPLAY` plays on its own once the menu has stood a few seconds.
+    let auto = autoplay() && time.elapsed_secs() > 12.0;
+    if !std::mem::take(&mut start.0) && !auto {
+        return;
+    }
+    let Some(look) = selection.hero_look() else {
+        return;
+    };
+    let content = content();
+    selection.stage = selection.zone;
+    commands.insert_resource(Sim::new(
+        &content.classes[selection.class].key,
+        &content.zones[selection.zone].key,
+        look,
+    ));
+    player.active = false;
+    next.set(Phase::Playing);
 }
 
 /// Midday, whatever the clock says.
@@ -331,25 +435,41 @@ fn step_sim(
     }
 }
 
-/// Enter after the run ends: a fresh run on the same zone, the controller taking the new hero.
-fn restart(
+/// Enter after the run ends: back to the menu. Everything the run spawned goes, and the hero's
+/// controller lets go.
+#[allow(clippy::too_many_arguments)]
+fn back_to_menu(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    mut sim: ResMut<Sim>,
+    sim: Res<Sim>,
     mut views: ResMut<view::Views>,
     mut index: ResMut<crate::net::GuidIndex>,
     mut player: ResMut<crate::player::Player>,
+    mut virtual_time: ResMut<Time<Virtual>>,
+    mut next: ResMut<NextState<Phase>>,
     spawned: Query<Entity, With<TogetherEntity>>,
+    real: Res<Time<Real>>,
+    mut over_since: Local<Option<f32>>,
 ) {
-    if !sim.world.game_over() || !keys.just_pressed(KeyCode::Enter) {
+    if !sim.world.game_over() {
+        *over_since = None;
         return;
     }
+    let since = *over_since.get_or_insert(real.elapsed_secs());
+    // `TOGETHER_AUTOPLAY` goes back by itself after a few seconds of the results.
+    let auto = autoplay() && real.elapsed_secs() - since > 4.0;
+    if !keys.just_pressed(KeyCode::Enter) && !auto {
+        return;
+    }
+    *over_since = None;
     for e in &spawned {
         commands.entity(e).despawn();
     }
     let gone: std::collections::HashSet<Entity> = spawned.iter().collect();
     index.0.retain(|_, e| !gone.contains(e));
     *views = view::Views::default();
-    *sim = Sim::new();
+    commands.remove_resource::<Sim>();
     player.active = false;
+    virtual_time.unpause();
+    next.set(Phase::Menu);
 }

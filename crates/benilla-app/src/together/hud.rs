@@ -15,6 +15,36 @@ pub(super) struct CardsText;
 #[derive(Component)]
 pub(super) struct CenterPanel;
 
+/// The run's status line and hint, shown only in a run.
+#[derive(Component)]
+pub(super) struct HudTop;
+
+/// The run's HUD shows in a run; at the menu the status line and any panel are hidden.
+pub(super) fn show_hud(
+    phase: Res<State<super::Phase>>,
+    mut top: Query<&mut Visibility, (With<HudTop>, Without<CenterPanel>)>,
+    mut panel: Query<&mut Visibility, (With<CenterPanel>, Without<HudTop>)>,
+) {
+    let playing = *phase.get() == super::Phase::Playing;
+    let want = if playing {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut v in &mut top {
+        if *v != want {
+            *v = want;
+        }
+    }
+    if !playing {
+        for mut v in &mut panel {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+            }
+        }
+    }
+}
+
 fn text(font: &Handle<Font>, size: f32) -> (Text, TextFont, TextColor, TextShadow) {
     (
         Text::new(""),
@@ -32,14 +62,18 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     // Top centre, clear of WoW's player and target frames (left) and minimap (right).
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            top: Val::Px(6.0),
-            flex_direction: FlexDirection::Column,
-            align_items: AlignItems::Center,
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                top: Val::Px(6.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Visibility::Hidden,
+            HudTop,
+        ))
         .with_children(|p| {
             p.spawn((
                 text(&font, 20.0),
@@ -124,7 +158,7 @@ pub(super) fn refresh(
 
     let center = if world.game_over() {
         Some(format!(
-            "You have fallen.\n\nSurvived {}  ·  Level {}  ·  {} kills  ·  {:.0} damage\n\nPress Enter to try again",
+            "You have fallen.\n\nSurvived {}  ·  Level {}  ·  {} kills  ·  {:.0} damage\n\nPress Enter to return to the menu",
             clock(world.elapsed),
             world.level,
             world.kills,
