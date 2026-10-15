@@ -58,14 +58,19 @@ Eastvale flight, and do I cut through the forest or take the road?"
   mine entrances' height).
 - `content/enemies.ron` gains an entry per creature kind the bake needs (Murloc Forager, Riverpaw
   Runt, Prowler, Kobold Miner and so on), with the display ids from the database.
-- `wildlife_share` (start 0.6) keeps that share of the spawns, chosen once per run by the run's
-  seed, so the forest is busy but not wall-to-wall. Hot zones keep all of theirs.
+- `wildlife_share` (start 0.5) keeps that share of the spawns, chosen once per run by the run's
+  seed. Wildlife is tougher than the horde (section 3.3), so fewer creatures still make a pull
+  dangerous. Hot zones keep all of theirs.
 
 ### 3.2 Only near the heroes
 
 - A spawn exists in the world only while a living hero is within `wake_range` (start 140 yd).
   Further off it sleeps: not simulated, not in snapshots. About 40 to 80 creatures are awake
   around a hero at a time.
+- `wake_range` is beyond the distance the client draws units at, so creatures are always already
+  standing there when they come into sight: nothing appears from nowhere.
+- Fallback, only if a playtest shows the awake count costs too much: one creature stands for its
+  group, and the rest of the group comes out of its camp when it is pulled.
 - A killed spawn stays dead for its respawn time (most are 180 s in the data; `respawn` scales
   it), whether or not anyone is near.
 - Sleeping and waking keep each spawn's place, so a camp is where you left it.
@@ -81,7 +86,9 @@ Eastvale flight, and do I cut through the forest or take the road?"
 - **Social pull:** creatures of the same kind within `social_range` (start 12 yd) of it engage
   too.
 - **Calling for help:** kinds marked `calls_help` in `enemies.ron` (Defias, kobolds, gnolls)
-  bring 2 to 4 of their kind 3 seconds after engaging, arriving from out of sight.
+  shout when they engage, and every awake creature of their kind within `help_range` (start 30
+  yd) engages too and comes running. It brings creatures that were already standing there, never
+  new ones.
 - Wildlife is tougher than the horde: health and damage times `wildlife_toughness` (start 1.5),
   and more XP and gold. Tagging a camp costs something.
 - An engaged creature that has not hurt or been hurt by a hero for 10 seconds, with every hero
@@ -125,7 +132,7 @@ Eastvale flight, and do I cut through the forest or take the road?"
   Wildlife has its own ceiling (`max_awake`, start 120 per hero).
 - `cast_abilities` and item procs pick targets among engaged enemies only.
 - New events: `Engaged { id }` (an enemy noticed a hero; the client shows a "!" over it),
-  `CalledHelp { id }`, `AmbushWarned { exit }`, `FlightDeparted { exit }`.
+  `CalledHelp { id }` (the shout), `AmbushWarned { exit }`, `FlightDeparted { exit }`.
 
 ## 5. Client
 
