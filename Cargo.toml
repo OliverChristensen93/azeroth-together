@@ -73,3 +73,9 @@ incremental = true
 # Not for speed: under `incremental`, thin-local LTO leaves promoted `anon.*.llvm.*` symbols
 # unresolved and the link fails intermittently (rustc #86049).
 lto = "off"
+
+# Azeroth Together's shareable build (`scripts/package.sh`): `release`, built without `dev` (no
+# source-tree paths; data and settings beside the exe), and without debug symbols.
+[profile.share]
+inherits = "release"
+strip = true

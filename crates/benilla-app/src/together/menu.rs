@@ -149,7 +149,7 @@ fn hero_title(content: &Content, sel: &Selection) -> String {
     }
 }
 
-fn rgb(hex: u32) -> Color {
+pub(super) fn rgb(hex: u32) -> Color {
     Color::srgb_u8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
 

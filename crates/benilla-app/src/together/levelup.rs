@@ -442,7 +442,11 @@ pub(super) fn refresh(
     )>,
     mut shown: Local<Option<Shown>>,
 ) {
-    let hero = sim.as_ref().and_then(|s| s.world.hero(s.me));
+    // A fallen hero chooses once raised.
+    let hero = sim
+        .as_ref()
+        .and_then(|s| s.world.hero(s.me))
+        .filter(|h| h.alive);
     let offer = hero.and_then(|h| h.offers.first().map(|o| (h, o)));
     let want = if offer.is_some() {
         Visibility::Inherited

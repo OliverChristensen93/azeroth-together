@@ -10,6 +10,11 @@ use super::ProbeClock;
 /// ([`benilla_world::bgwin::no_pixel_run`], 640×360) is also parked once, per [`Park`]; a run that
 /// photographs pixels keeps the full window. Pinning overrides [`benilla_world::bgwin`]'s levels.
 /// Writes only on change: marking `Window` changed re-applies its whole state through winit.
+///
+/// Off macOS nothing throttles a covered window, so no run is pinned there: every probe window,
+/// pixel runs included, stays at the normal level, under whatever the person is doing, and is
+/// parked on the primary monitor's right edge ([`Park::Edge`]) unless `WOW_PROBE_PARK` says
+/// otherwise. Its pixels still render: a screenshot reads the frame, not the screen.
 pub(crate) struct ProbeFocusPlugin;
 
 impl Plugin for ProbeFocusPlugin {
@@ -39,17 +44,22 @@ const PARK_EDGE_SLIVER: f32 = 32.0;
 /// menu bar.
 const PROBE_WINDOW_MARGIN: f32 = 36.0;
 
+/// Whether a covered window is throttled here, which is what pinning works around.
+const OCCLUSION_THROTTLES: bool = cfg!(target_os = "macos");
+
 fn park_mode() -> Park {
     match std::env::var("WOW_PROBE_PARK").as_deref() {
         Ok("edge") => Park::Edge,
         Ok("off") => Park::Off,
-        _ => Park::Corner,
+        Ok("corner") => Park::Corner,
+        _ if OCCLUSION_THROTTLES => Park::Corner,
+        _ => Park::Edge,
     }
 }
 
 fn keep_probe_window_on_top(
     mut windows: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
-    monitors: Query<&bevy::window::Monitor>,
+    monitors: Query<(&bevy::window::Monitor, Has<bevy::window::PrimaryMonitor>)>,
     mut parked: Local<bool>,
 ) {
     let Ok(mut w) = windows.single_mut() else {
@@ -57,8 +67,9 @@ fn keep_probe_window_on_top(
     };
     let no_pixel = benilla_world::bgwin::no_pixel_run();
     let mode = park_mode();
-    // A pixel run is always pinned; a no-pixel run only in `Corner`, the others dodge by position.
-    let want_top = !no_pixel || mode == Park::Corner;
+    // A pixel run is pinned where covering throttles it; otherwise a run is pinned only in
+    // `Corner`, and the others dodge by position.
+    let want_top = (!no_pixel && OCCLUSION_THROTTLES) || mode == Park::Corner;
     let level = if want_top {
         bevy::window::WindowLevel::AlwaysOnTop
     } else {
@@ -67,21 +78,23 @@ fn keep_probe_window_on_top(
     if w.window_level != level {
         w.window_level = level;
     }
-    if *parked || !no_pixel {
+    if *parked || (!no_pixel && OCCLUSION_THROTTLES) {
         return;
     }
-    // `WindowPosition::At` is physical pixels, the resolution logical: scale the width.
-    let Some(m) = monitors.iter().next() else {
+    // `WindowPosition::At` is physical pixels, the resolution logical: scale the width. The
+    // primary monitor's own edge, so a second screen beside it is not where the window lands.
+    let Some((m, _)) = monitors.iter().max_by_key(|(_, primary)| *primary) else {
         return; // no monitor entity yet (frame 1)
     };
     let scale = m.scale_factor as f32;
     let width = (w.resolution.width() * scale) as i32;
-    let screen = m.physical_width as i32;
+    let (left, top) = (m.physical_position.x, m.physical_position.y);
+    let screen = left + m.physical_width as i32;
     let margin = (PROBE_WINDOW_MARGIN * scale) as i32;
     let pos = match mode {
-        Park::Corner => IVec2::new((screen - width - margin).max(0), margin),
-        Park::Edge => IVec2::new(screen - (PARK_EDGE_SLIVER * scale) as i32, margin),
-        Park::Off => IVec2::new(screen + margin, margin),
+        Park::Corner => IVec2::new((screen - width - margin).max(left), top + margin),
+        Park::Edge => IVec2::new(screen - (PARK_EDGE_SLIVER * scale) as i32, top + margin),
+        Park::Off => IVec2::new(screen + margin, top + margin),
     };
     w.position = bevy::window::WindowPosition::At(pos);
     *parked = true;

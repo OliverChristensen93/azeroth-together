@@ -20,7 +20,7 @@ pub use client::{Client, ClientEvent};
 pub use host::{ConnId, Host, HostEvent};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;
@@ -56,6 +56,8 @@ pub enum ClientMsg {
     Pick(HeroPick),
     /// This frame's input, during a run.
     Input(PlayerInput),
+    /// Asks for a [`ServerMsg::Pong`] with the same stamp, to time the round trip.
+    Ping(u32),
 }
 
 /// What the host tells a client.
@@ -79,6 +81,8 @@ pub enum ServerMsg {
     },
     /// The host ended the run and went back to its menu.
     Ended,
+    /// The answer to a [`ClientMsg::Ping`].
+    Pong(u32),
 }
 
 /// A stable hash of some text (FNV-1a), for comparing content files across machines.

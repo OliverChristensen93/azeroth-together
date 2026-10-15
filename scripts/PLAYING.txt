@@ -1,0 +1,51 @@
+AZEROTH TOGETHER
+================
+
+A co-op survivors game in World of Warcraft 1.12, for up to four players.
+
+
+SETTING UP (once)
+-----------------
+This folder has the game, but not World of Warcraft's art and sound: you bring
+those from your own copy of AzerothSurvivors (by Aethus).
+
+1. Find your AzerothSurvivors folder. It holds AzerothSurvivors.exe and a
+   folder called Data.
+2. Copy that Data folder into this folder, next to azeroth-together.exe:
+
+       AzerothTogether\
+           azeroth-together.exe
+           content\
+           Data\          <- copied from AzerothSurvivors
+           PLAYING.txt
+
+3. Double-click azeroth-together.exe.
+
+The game keeps its settings in a benilla-config folder it makes here.
+
+
+PLAYING TOGETHER
+----------------
+One player hosts, the others join.
+
+Host:
+  - Pick a hero and a zone, then click Host Co-op.
+  - The first time, Windows Firewall asks about the game: click Allow.
+  - The panel shows an address like 192.168.0.103:7777. Send it to your friends.
+  - When everyone is in, click Start Run.
+
+Join:
+  - Pick a hero, click Join Co-op, type the host's address, press Enter.
+
+On the same home network, the address the panel shows works as it is.
+
+Over the internet, the host must forward TCP port 7777 on their router to their
+PC, and friends type the host's public IP address instead (search "what is my
+IP" on the host's PC). Everyone needs the same version of the game.
+
+
+IN A RUN
+--------
+WoW controls: WASD, right mouse to turn, Space to jump.
+Level up: 1, 2, 3 or click a card; R rerolls.
+A fallen friend comes back if you stand beside them for 3 seconds.

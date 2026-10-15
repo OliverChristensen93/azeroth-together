@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::io::{self, BufReader, BufWriter};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -25,7 +25,22 @@ pub enum HostEvent {
     Left(ConnId),
 }
 
-type Writers = Arc<Mutex<HashMap<ConnId, Sender<Arc<Vec<u8>>>>>>;
+/// A connection's outgoing frames, and how many of them its writer has not yet put on the wire.
+struct Writer {
+    tx: Sender<Arc<Vec<u8>>>,
+    queued: Arc<AtomicUsize>,
+}
+
+impl Writer {
+    fn send(&self, frame: Arc<Vec<u8>>) {
+        self.queued.fetch_add(1, Ordering::Relaxed);
+        if self.tx.send(frame).is_err() {
+            self.queued.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+type Writers = Arc<Mutex<HashMap<ConnId, Writer>>>;
 
 /// A listening host. Dropping it stops listening and closes every connection.
 pub struct Host {
@@ -71,7 +86,7 @@ impl Host {
     pub fn send(&self, to: ConnId, msg: &ServerMsg) {
         if let Ok(frame) = wire::encode(msg) {
             if let Some(w) = self.writers.lock().unwrap().get(&to) {
-                let _ = w.send(Arc::new(frame));
+                w.send(Arc::new(frame));
             }
         }
     }
@@ -81,7 +96,7 @@ impl Host {
         if let Ok(frame) = wire::encode(msg) {
             let frame = Arc::new(frame);
             for w in self.writers.lock().unwrap().values() {
-                let _ = w.send(frame.clone());
+                w.send(frame.clone());
             }
         }
     }
@@ -89,6 +104,16 @@ impl Host {
     /// Close one connection (its reader then reports [`HostEvent::Left`]).
     pub fn kick(&self, conn: ConnId) {
         self.writers.lock().unwrap().remove(&conn);
+    }
+
+    /// Frames sent to `conn` that its connection has not yet written: more than a couple means the
+    /// line is slower than the game, and what is queued is already stale.
+    pub fn backlog(&self, conn: ConnId) -> usize {
+        self.writers
+            .lock()
+            .unwrap()
+            .get(&conn)
+            .map_or(0, |w| w.queued.load(Ordering::Relaxed))
     }
 
     /// How many are connected.
@@ -138,7 +163,14 @@ fn start_connection(
     stream.set_nodelay(true)?;
     let reader = stream.try_clone()?;
     let (tx, rx) = mpsc::channel::<Arc<Vec<u8>>>();
-    writers.lock().unwrap().insert(conn, tx);
+    let queued = Arc::new(AtomicUsize::new(0));
+    writers.lock().unwrap().insert(
+        conn,
+        Writer {
+            tx,
+            queued: queued.clone(),
+        },
+    );
 
     // Writer: frames out until the host drops its sender (kick, or the host goes).
     let shutdown = stream.try_clone()?;
@@ -147,7 +179,9 @@ fn start_connection(
         .spawn(move || {
             let mut out = BufWriter::new(stream);
             for frame in rx {
-                if wire::write_frame(&mut out, &frame).is_err() {
+                let sent = wire::write_frame(&mut out, &frame);
+                queued.fetch_sub(1, Ordering::Relaxed);
+                if sent.is_err() {
                     break;
                 }
             }

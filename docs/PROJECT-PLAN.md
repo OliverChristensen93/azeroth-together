@@ -103,7 +103,13 @@ crate-internal. It is one new module plus a few lines in `lib.rs`; the rest of t
       replicon/lightyear. The sim already snapshots itself, so a library bought little.
 - [x] Host / join by IP from the menu (up to 4 players), a lobby panel, and a content-hash check.
       Inputs sent up, snapshots and events sent down; each client owns its own hero's position.
-- [ ] Interpolation for remote heroes and enemies; local movement prediction.
+- [x] Interpolation for remote heroes and enemies: the client plays snapshots back a little
+      behind (a jitter buffer); the local hero is the client's own, so it never waits.
+- [x] Lean wire: 15 snapshots a second, enemies packed (~13 bytes each), gems as events, a slow
+      connection skipped rather than queued; a ping readout for clients.
+- [x] Party frames (WoW's own), a damage meter that compares players, and revive by standing
+      beside a fallen friend.
+- [x] A shareable build (`scripts/package.sh`) without Blizzard data.
 - [ ] A debug overlay for ping, bandwidth and entity counts.
 
 **Done when:** two PCs play a 10-minute run with 200+ enemies, smoothly, on LAN and over the internet.

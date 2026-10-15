@@ -23,6 +23,6 @@ pub use content::{
 pub use math::V2;
 pub use rng::Rng;
 pub use world::{
-    xp_to_next, Enemy, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput, Snapshot,
-    Target, World, WorldError, DT, MAX_ABILITIES, TICK_HZ,
+    xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose, Offer, Owned, PlayerId, PlayerInput,
+    Snapshot, Target, World, WorldError, DT, MAX_ABILITIES, REVIVE_RANGE, REVIVE_SECS, TICK_HZ,
 };

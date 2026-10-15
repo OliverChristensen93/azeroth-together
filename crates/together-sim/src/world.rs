@@ -41,6 +41,14 @@ const SPAWN_RING: (f32, f32) = (34.0, 42.0);
 const SPAWN_EVERY: f32 = 0.12;
 /// The run's length; enemy health and damage grow toward it.
 const RUN_SECS: f32 = 900.0;
+/// A living hero this close to a fallen friend raises them...
+pub const REVIVE_RANGE: f32 = 3.5;
+/// ...after standing by for this many seconds.
+pub const REVIVE_SECS: f32 = 3.0;
+/// A raised hero's share of its health.
+const REVIVE_HEALTH: f32 = 0.5;
+/// Seconds a raised hero cannot be hurt, to get clear of the horde that felled it.
+const REVIVE_WARD: f32 = 2.0;
 
 /// The experience to go from `level` to the next: cheap early, steeper later.
 pub fn xp_to_next(level: u32) -> f32 {
@@ -127,8 +135,19 @@ pub enum Event {
     EnemyDied {
         id: u32,
     },
+    /// An enemy left experience on the ground where it died.
+    GemDropped {
+        id: u32,
+        pos: V2,
+        xp: u32,
+    },
     HeroDied {
         player: PlayerId,
+    },
+    /// A fallen hero was raised by a friend standing by.
+    HeroRevived {
+        player: PlayerId,
+        by: PlayerId,
     },
     GemCollected {
         id: u32,
@@ -195,6 +214,10 @@ pub struct Hero {
     /// Re-deals of a hand left this run.
     pub rerolls: u32,
     pub alive: bool,
+    /// Fallen: how far a friend standing by has raised it, 0 to 1.
+    pub revive: f32,
+    /// Seconds left of a raised hero's grace, when nothing can hurt it.
+    pub ward: f32,
     /// Damage this hero has dealt over the run.
     pub damage_done: f64,
     /// The same, by ability (an index into the content's abilities): the damage meter.
@@ -225,7 +248,8 @@ pub struct Gem {
 }
 
 /// What a co-op client needs to draw the world, sent by the host after each step
-/// ([`World::snapshot`], [`World::apply_snapshot`]).
+/// ([`World::snapshot`], [`World::apply_snapshot`]). Gems are not in it: they never move, so they
+/// travel as the [`Event::GemDropped`] and [`Event::GemCollected`] that make and take them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub tick: u64,
@@ -234,8 +258,40 @@ pub struct Snapshot {
     pub xp: f32,
     pub kills: u32,
     pub heroes: Vec<Hero>,
-    pub enemies: Vec<Enemy>,
-    pub gems: Vec<Gem>,
+    pub enemies: Vec<EnemyState>,
+}
+
+/// An enemy as a snapshot carries it: only what a client draws, packed small, since a late run
+/// has hundreds of them in every snapshot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EnemyState {
+    pub id: u32,
+    pub def: u16,
+    /// From the zone's centre, in sixteenths of a yard.
+    pub pos: (i16, i16),
+    /// The way it faces, in 256ths of a turn.
+    pub facing: u8,
+    pub moving: bool,
+    /// Health and its maximum, rounded up to whole points.
+    pub hp: u32,
+    pub max_hp: u32,
+}
+
+/// Yards to sixteenths, held to `i16`.
+fn pack_yards(yards: f32) -> i16 {
+    (yards * 16.0)
+        .round()
+        .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
+}
+
+/// A direction to 256ths of a turn.
+fn pack_facing(dir: V2) -> u8 {
+    let turns = dir.y.atan2(dir.x) / std::f32::consts::TAU;
+    ((turns.rem_euclid(1.0) * 256.0).round() as u32 % 256) as u8
+}
+
+fn unpack_facing(f: u8) -> V2 {
+    V2::from_angle(f32::from(f) / 256.0 * std::f32::consts::TAU, 1.0)
 }
 
 /// Damage on its way: a missile still flying.
@@ -378,6 +434,8 @@ impl World {
             offers: Vec::new(),
             rerolls: REROLLS,
             alive: true,
+            revive: 0.0,
+            ward: 0.0,
             damage_done: 0.0,
             damage_by: Vec::new(),
         });
@@ -421,6 +479,7 @@ impl World {
     /// The part of the world a co-op client draws: everything it shows, nothing it would need to
     /// step the world itself.
     pub fn snapshot(&self) -> Snapshot {
+        let center = self.center();
         Snapshot {
             tick: self.tick,
             elapsed: self.elapsed,
@@ -428,8 +487,22 @@ impl World {
             xp: self.xp,
             kills: self.kills,
             heroes: self.heroes.clone(),
-            enemies: self.enemies.clone(),
-            gems: self.gems.clone(),
+            enemies: self
+                .enemies
+                .iter()
+                .map(|e| EnemyState {
+                    id: e.id,
+                    def: e.def as u16,
+                    pos: (
+                        pack_yards(e.pos.x - center.x),
+                        pack_yards(e.pos.y - center.y),
+                    ),
+                    facing: pack_facing(e.facing),
+                    moving: e.moving,
+                    hp: e.hp.max(0.0).ceil() as u32,
+                    max_hp: e.max_hp.ceil() as u32,
+                })
+                .collect(),
         }
     }
 
@@ -442,8 +515,35 @@ impl World {
         self.xp = snapshot.xp;
         self.kills = snapshot.kills;
         self.heroes = snapshot.heroes;
-        self.enemies = snapshot.enemies;
-        self.gems = snapshot.gems;
+        let center = self.center();
+        let defs = &self.content.enemies;
+        self.enemies = snapshot
+            .enemies
+            .into_iter()
+            .filter_map(|s| {
+                let def = usize::from(s.def);
+                let d = defs.get(def)?;
+                Some(Enemy {
+                    id: s.id,
+                    def,
+                    pos: center + V2::new(f32::from(s.pos.0) / 16.0, f32::from(s.pos.1) / 16.0),
+                    facing: unpack_facing(s.facing),
+                    moving: s.moving,
+                    hp: s.hp as f32,
+                    max_hp: s.max_hp as f32,
+                    damage: 0.0,
+                    radius: d.radius * d.scale,
+                    attack_cd: 0.0,
+                })
+            })
+            .collect();
+        for event in &events {
+            match *event {
+                Event::GemDropped { id, pos, xp } => self.gems.push(Gem { id, pos, xp }),
+                Event::GemCollected { id, .. } => self.gems.retain(|g| g.id != id),
+                _ => {}
+            }
+        }
         self.events.extend(events);
     }
 
@@ -476,6 +576,7 @@ impl World {
         self.tick += 1;
         self.elapsed += DT;
         self.move_heroes();
+        self.revive_heroes();
         self.spawn_enemies();
         self.move_enemies();
         self.cast_abilities();
@@ -587,6 +688,42 @@ impl World {
             let off = hero.pos - center;
             if off.length() > leash {
                 hero.pos = center + off.normalize_or_zero() * leash;
+            }
+        }
+    }
+
+    /// A fallen hero with a living friend standing by comes back after [`REVIVE_SECS`] of it, with
+    /// half its health and a moment's grace; left alone, the progress ebbs away.
+    fn revive_heroes(&mut self) {
+        let living: Vec<(PlayerId, V2)> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| (h.player, h.pos))
+            .collect();
+        for hero in &mut self.heroes {
+            if hero.alive {
+                hero.ward = (hero.ward - DT).max(0.0);
+                continue;
+            }
+            let by = living
+                .iter()
+                .find(|(p, at)| *p != hero.player && at.distance(hero.pos) <= REVIVE_RANGE)
+                .map(|&(p, _)| p);
+            let Some(by) = by else {
+                hero.revive = (hero.revive - DT / REVIVE_SECS).max(0.0);
+                continue;
+            };
+            hero.revive += DT / REVIVE_SECS;
+            if hero.revive >= 1.0 {
+                hero.alive = true;
+                hero.revive = 0.0;
+                hero.hp = hero.max_hp * REVIVE_HEALTH;
+                hero.ward = REVIVE_WARD;
+                self.events.push(Event::HeroRevived {
+                    player: hero.player,
+                    by,
+                });
             }
         }
     }
@@ -722,12 +859,16 @@ impl World {
         else {
             return;
         };
+        if hero.ward > 0.0 {
+            return;
+        }
         hero.hp -= amount;
         if hero.hp <= 0.0 {
+            // Its cards wait: a fallen hero is not waited on, and chooses once raised.
             hero.hp = 0.0;
             hero.alive = false;
             hero.moving = false;
-            hero.offers.clear();
+            hero.revive = 0.0;
             self.events.push(Event::HeroDied { player });
         }
     }
@@ -904,6 +1045,7 @@ impl World {
             let xp = self.content.enemies[def].xp;
             let gem = self.id();
             self.gems.push(Gem { id: gem, pos, xp });
+            self.events.push(Event::GemDropped { id: gem, pos, xp });
         }
     }
 
@@ -933,10 +1075,8 @@ impl World {
         while self.xp >= xp_to_next(self.level) {
             self.xp -= xp_to_next(self.level);
             self.level += 1;
+            // The fallen too: their hands wait until they are raised.
             for h in 0..self.heroes.len() {
-                if !self.heroes[h].alive {
-                    continue;
-                }
                 let offer = self.deal(h);
                 if !offer.cards.is_empty() {
                     self.heroes[h].offers.push(offer);
@@ -1221,6 +1361,13 @@ mod tests {
         }
         assert_eq!(mirror.tick, host.tick);
         assert_eq!(mirror.enemies.len(), host.enemies.len());
+        assert_eq!(mirror.gems, host.gems, "gems arrive as events");
+        for (m, h) in mirror.enemies.iter().zip(&host.enemies) {
+            assert_eq!(m.id, h.id);
+            assert!(m.pos.distance(h.pos) < 0.05, "packed position drifted");
+            assert!(h.facing == V2::ZERO || m.facing.distance(h.facing.normalize_or_zero()) < 0.05);
+            assert!((m.hp - h.hp).abs() < 1.0);
+        }
         assert_eq!(mirror.hero(1).unwrap().name, "Friend");
         assert_eq!(mirror.hero(1).unwrap().race, 4);
         assert_eq!(mirror.paused(), host.paused());
@@ -1366,6 +1513,81 @@ mod tests {
         let tick = w.tick;
         w.step();
         assert_eq!(w.tick, tick);
+    }
+
+    /// Steps, taking the first card whenever one is up, so the run never stalls on a hand.
+    fn play(w: &mut World, n: usize) {
+        for _ in 0..n {
+            for p in w.heroes.iter().map(|h| h.player).collect::<Vec<_>>() {
+                w.set_input(
+                    p,
+                    PlayerInput {
+                        pick: Some(0),
+                        ..Default::default()
+                    },
+                );
+            }
+            w.step();
+        }
+    }
+
+    #[test]
+    fn a_friend_standing_by_raises_a_fallen_hero() {
+        let mut w = world();
+        w.add_hero(1, "mage").unwrap();
+        w.heroes[0].max_hp = 1e9;
+        w.heroes[0].hp = 1e9;
+        w.hurt_hero(1, 10_000.0);
+        assert!(!w.hero(1).unwrap().alive);
+        assert!(!w.game_over(), "one hero still stands");
+        // The heroes start 2.5 yards apart: inside reach.
+        play(&mut w, (REVIVE_SECS * TICK_HZ as f32) as usize + 2);
+        let hero = w.hero(1).unwrap();
+        assert!(hero.alive, "not raised");
+        assert!((hero.hp - hero.max_hp * REVIVE_HEALTH).abs() < 1e-3);
+        assert!(w
+            .drain_events()
+            .contains(&Event::HeroRevived { player: 1, by: 0 }));
+        // The grace: a blow right after rising does nothing.
+        w.hurt_hero(1, 10_000.0);
+        assert!(w.hero(1).unwrap().alive);
+    }
+
+    #[test]
+    fn a_fallen_hero_alone_stays_down() {
+        let mut w = world();
+        w.add_hero(1, "mage").unwrap();
+        w.heroes[0].max_hp = 1e9;
+        w.heroes[0].hp = 1e9;
+        w.heroes[1].pos = w.heroes[0].pos + V2::new(REVIVE_RANGE * 3.0, 0.0);
+        w.hurt_hero(1, 10_000.0);
+        play(&mut w, (REVIVE_SECS * TICK_HZ as f32) as usize * 2);
+        assert!(!w.hero(1).unwrap().alive);
+        assert_eq!(w.hero(1).unwrap().revive, 0.0);
+    }
+
+    #[test]
+    fn a_fallen_hero_keeps_its_cards_and_is_not_waited_on() {
+        let mut w = world();
+        w.add_hero(1, "mage").unwrap();
+        w.heroes[1].pos = w.heroes[0].pos + V2::new(REVIVE_RANGE * 3.0, 0.0);
+        w.hurt_hero(1, 10_000.0);
+        w.xp = xp_to_next(1);
+        w.step();
+        assert_eq!(
+            w.hero(1).unwrap().offers.len(),
+            1,
+            "a hand for the fallen too"
+        );
+        w.set_input(
+            0,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(!w.paused(), "the run waited on a fallen hero");
     }
 
     #[test]

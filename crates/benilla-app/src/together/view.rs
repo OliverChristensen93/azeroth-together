@@ -83,6 +83,9 @@ impl SimPos {
 #[derive(Component)]
 pub(super) struct Dying(f32);
 
+/// The priest's Resurrection (rank 1), whose visual raises a fallen hero.
+const RESURRECTION: u32 = 2006;
+
 /// Hero guids (player guids, high word 0) are this plus the player id.
 pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
 
@@ -149,6 +152,16 @@ pub(super) fn apply_events(
                     }
                 }
             }
+            Event::HeroRevived { player, by } => {
+                // The raiser casts Resurrection on the fallen; its health returns with the
+                // next vitals, which stands it up.
+                if let (Some(&from), Some(&to)) = (views.heroes.get(&by), views.heroes.get(&player))
+                {
+                    fx.cast(from, RESURRECTION, &[to], None);
+                }
+            }
+            // Gems are drawn from the world's list, which the drop already filled.
+            Event::GemDropped { .. } => {}
             Event::GemCollected { id, .. } => {
                 if let Some(e) = views.gems.remove(&id) {
                     commands.entity(e).despawn();

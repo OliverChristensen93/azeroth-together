@@ -50,6 +50,12 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   The host starts the run 20 s in once someone has joined. Co-op is host-authoritative: the host runs
   `together-sim`, `together-net` (TCP, port 7777) sends inputs up and snapshots + events down, and each
   client mirrors the world (`World::apply_snapshot`) but owns its own hero's position.
+  `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
+  On Windows every test window (`WOW_LIVE_SHOT` etc.) opens behind the user's work, parked on the
+  primary monitor's right edge with a 32 px sliver showing (`capture/probes/run.rs`); keep it so.
+- Sharing with a friend: `scripts/package.sh` builds the `share` profile without `dev` and writes
+  `dist/AzerothTogether.zip` (exe, `content/`, `PLAYING.txt`; never Blizzard data). The friend copies
+  the `Data` folder from their own AzerothSurvivors install next to the exe.
 - Engine change made for the trimmed data: `benilla-formats/src/creatures.rs` drops a
   CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
   humanoid NPCs are composited live instead of rendering bodiless.

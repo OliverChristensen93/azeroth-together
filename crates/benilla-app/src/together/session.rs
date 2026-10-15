@@ -1,10 +1,16 @@
 //! Co-op sessions: hosting or joining, the lobby before a run, and the run's traffic.
 //!
-//! The host runs the game for everyone ([`together_sim::World`]); after each step it sends every
-//! client the world and the step's events ([`ServerMsg::State`]). A client never steps the world:
-//! it mirrors the host's ([`World::apply_snapshot`]) and draws it with the same code the host
-//! draws with, and it sends where its own controller put its hero and its card choices
-//! ([`ClientMsg::Input`]), as a WoW client tells its server its moves.
+//! The host runs the game for everyone ([`together_sim::World`]); every [`SEND_EVERY`] steps it
+//! sends each client the world and the events since its last ([`ServerMsg::State`]). A client
+//! never steps the world: it plays the host's snapshots back at an even pace, a little behind, so a
+//! late or bunched packet does not show ([`super::step_sim`]), mirrors them
+//! ([`World::apply_snapshot`]) and draws them with the same code the host draws with. It sends
+//! where its own controller put its hero and its card choices ([`ClientMsg::Input`]), as a WoW
+//! client tells its server its moves.
+//!
+//! A slow line never builds a queue: while a client's connection still holds unsent snapshots,
+//! the host skips it and keeps its events for the next one, so the client sees the newest world,
+//! late, rather than an ever older one.
 
 use std::sync::Mutex;
 
@@ -13,13 +19,23 @@ use together_net::{
     content_hash, Client, ClientEvent, ClientMsg, ConnId, HeroPick, Host, HostEvent, LobbyPlayer,
     ServerMsg, DEFAULT_PORT, PROTOCOL,
 };
-use together_sim::{PlayerId, PlayerInput, World};
+use together_sim::{Event, PlayerId, PlayerInput, Snapshot, World, DT};
+use web_time::Instant;
 
 use super::content;
 use super::menu::Selection;
 
 /// The most players in a run, the host included.
 pub(super) const MAX_PLAYERS: usize = 4;
+
+/// Steps per snapshot sent: 15 a second, which the client's playback smooths.
+pub(super) const SEND_EVERY: u32 = 2;
+
+/// A connection still writing more snapshots than this is skipped until it catches up.
+const MAX_BACKLOG: usize = 2;
+
+/// Seconds between pings.
+const PING_EVERY: f32 = 1.0;
 
 /// The co-op session, if any: what the menu's lobby shows and what a run talks over.
 #[derive(Resource, Default)]
@@ -46,12 +62,16 @@ pub(super) struct HostSide {
     pub peers: Vec<Peer>,
     /// The lobby last sent, so it is sent again only when it changes.
     sent: Option<(String, Vec<LobbyPlayer>)>,
+    /// Steps since the run began, which pace the snapshots.
+    steps: u32,
 }
 
 pub(super) struct Peer {
     conn: ConnId,
     pub player: PlayerId,
     pub hero: HeroPick,
+    /// Events not yet sent to this player: since its last snapshot.
+    pending: Vec<Event>,
 }
 
 pub(super) struct ClientSide {
@@ -66,6 +86,41 @@ pub(super) struct ClientSide {
     pub start: Option<String>,
     /// The pick we last told the host.
     sent_pick: Option<HeroPick>,
+    /// When the session began, the clock for ping stamps.
+    epoch: Instant,
+    /// When our hero's pose last went to the host.
+    last_pose: Option<Instant>,
+    /// The ping in flight (its stamp), and when the next goes.
+    ping_out: Option<u32>,
+    next_ping: f32,
+    /// The last round trip to the host, in milliseconds.
+    pub ping_ms: Option<u32>,
+}
+
+/// Time the round trip now and then: a ping when none is in flight and its time has come.
+fn send_ping(client: &Client, epoch: Instant, ping_out: &mut Option<u32>, next_ping: &mut f32) {
+    let now = epoch.elapsed().as_secs_f32();
+    if ping_out.is_none() && now >= *next_ping {
+        let stamp = (now * 1000.0) as u32;
+        client.send(&ClientMsg::Ping(stamp));
+        *ping_out = Some(stamp);
+        *next_ping = now + PING_EVERY;
+    }
+}
+
+impl ClientSide {
+    /// Seconds since the session began.
+    fn now(&self) -> f32 {
+        self.epoch.elapsed().as_secs_f32()
+    }
+
+    /// A pong for the ping in flight times the round trip.
+    fn pong(&mut self, stamp: u32) {
+        if self.ping_out == Some(stamp) {
+            self.ping_out = None;
+            self.ping_ms = Some(((self.now() * 1000.0) as u32).saturating_sub(stamp));
+        }
+    }
 }
 
 impl Net {
@@ -75,6 +130,14 @@ impl Net {
 
     pub fn is_client(&self) -> bool {
         matches!(self.role, Role::Client(_))
+    }
+
+    /// Joined: the last round trip to the host, in milliseconds.
+    pub fn ping_ms(&self) -> Option<u32> {
+        match &self.role {
+            Role::Client(c) => c.ping_ms,
+            _ => None,
+        }
     }
 
     /// Start hosting on [`DEFAULT_PORT`].
@@ -88,6 +151,7 @@ impl Net {
                     port,
                     peers: Vec::new(),
                     sent: None,
+                    steps: 0,
                 });
                 self.status = "Waiting for friends to join".into();
             }
@@ -109,6 +173,11 @@ impl Net {
             lobby: Vec::new(),
             start: None,
             sent_pick: None,
+            epoch: Instant::now(),
+            last_pose: None,
+            ping_out: None,
+            next_ping: 0.0,
+            ping_ms: None,
         });
         self.status = format!("Connecting to {addr}…");
     }
@@ -135,8 +204,12 @@ impl Net {
     }
 
     /// The host: tell every client the run begins.
-    pub fn broadcast_start(&self, zone: &str) {
-        if let Role::Host(h) = &self.role {
+    pub fn broadcast_start(&mut self, zone: &str) {
+        if let Role::Host(h) = &mut self.role {
+            h.steps = 0;
+            for p in &mut h.peers {
+                p.pending.clear();
+            }
             h.host.lock().unwrap().broadcast(&ServerMsg::Start {
                 zone: zone.to_owned(),
             });
@@ -228,7 +301,12 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                             .expect("checked for room");
                         host.send(conn, &ServerMsg::Welcome { you: player });
                         net.status = format!("{} joined", hero.name);
-                        h.peers.push(Peer { conn, player, hero });
+                        h.peers.push(Peer {
+                            conn,
+                            player,
+                            hero,
+                            pending: Vec::new(),
+                        });
                     }
                     HostEvent::Message(conn, ClientMsg::Pick(hero)) => {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
@@ -236,6 +314,9 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                         }
                     }
                     HostEvent::Message(_, ClientMsg::Input(_)) => {}
+                    HostEvent::Message(conn, ClientMsg::Ping(stamp)) => {
+                        host.send(conn, &ServerMsg::Pong(stamp));
+                    }
                     HostEvent::Left(conn) => {
                         if let Some(i) = h.peers.iter().position(|p| p.conn == conn) {
                             net.status = format!("{} left", h.peers[i].hero.name);
@@ -265,6 +346,10 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
         }
         Role::Client(c) => {
             let events = c.client.lock().unwrap().poll();
+            if c.me.is_some() {
+                let client = c.client.lock().unwrap();
+                send_ping(&client, c.epoch, &mut c.ping_out, &mut c.next_ping);
+            }
             let mut gone = None;
             for event in events {
                 match event {
@@ -289,7 +374,12 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                         c.zone = Some(zone);
                         c.lobby = players;
                     }
-                    ClientEvent::Message(ServerMsg::Start { zone }) => c.start = Some(zone),
+                    ClientEvent::Message(ServerMsg::Start { zone }) => {
+                        c.start = Some(zone);
+                        // A ping across the loading screen would time the load, not the line.
+                        c.ping_out = None;
+                    }
+                    ClientEvent::Message(ServerMsg::Pong(stamp)) => c.pong(stamp),
                     ClientEvent::Message(ServerMsg::State { .. } | ServerMsg::Ended) => {}
                     ClientEvent::Disconnected(why) => {
                         gone = Some(format!("Disconnected: {why}"));
@@ -335,6 +425,9 @@ pub(super) fn host_receive(net: &mut Net, world: &mut World) {
                 );
                 host.kick(conn);
             }
+            HostEvent::Message(conn, ClientMsg::Ping(stamp)) => {
+                host.send(conn, &ServerMsg::Pong(stamp));
+            }
             HostEvent::Message(_, ClientMsg::Pick(_)) | HostEvent::Joined(..) => {}
             HostEvent::Left(conn) => {
                 if let Some(i) = h.peers.iter().position(|p| p.conn == conn) {
@@ -347,51 +440,82 @@ pub(super) fn host_receive(net: &mut Net, world: &mut World) {
     }
 }
 
-/// The host, after a step: the world and that step's events to every client.
-pub(super) fn host_send(net: &Net, world: &World, events_from: usize) {
-    let Role::Host(h) = &net.role else {
+/// The host, after a step: the step's events kept for every client, and every [`SEND_EVERY`]
+/// steps the world and those events to each client whose connection keeps up.
+pub(super) fn host_send(net: &mut Net, world: &World, events_from: usize) {
+    let Role::Host(h) = &mut net.role else {
         return;
     };
     if h.peers.is_empty() {
         return;
     }
-    let events = world.events()[events_from..].to_vec();
-    h.host.lock().unwrap().broadcast(&ServerMsg::State {
-        snapshot: world.snapshot(),
-        events,
-    });
+    let events = &world.events()[events_from..];
+    for p in &mut h.peers {
+        p.pending.extend_from_slice(events);
+    }
+    h.steps += 1;
+    if h.steps % SEND_EVERY != 0 {
+        return;
+    }
+    let snapshot = world.snapshot();
+    let host = h.host.lock().unwrap();
+    for p in &mut h.peers {
+        if host.backlog(p.conn) > MAX_BACKLOG {
+            continue;
+        }
+        host.send(
+            p.conn,
+            &ServerMsg::State {
+                snapshot: snapshot.clone(),
+                events: std::mem::take(&mut p.pending),
+            },
+        );
+    }
 }
 
 /// What a client heard from its host during a run.
 pub(super) enum Heard {
-    /// A step, applied to the mirror.
-    Stepped,
+    /// A snapshot, for the playback to apply in its turn.
+    State(Snapshot, Vec<Event>),
     /// The host ended the run.
     Ended,
     /// The connection is gone, and why.
     Lost(String),
 }
 
-/// A client, during a run: the host's steps into the mirror, and this frame's input to the host.
-pub(super) fn client_exchange(net: &mut Net, world: &mut World, input: PlayerInput) -> Vec<Heard> {
+/// A client, during a run: this frame's input to the host, and what the host sent. The pose goes
+/// at most once a step's time; a card choice goes at once.
+pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
     let Role::Client(c) = &mut net.role else {
         return Vec::new();
     };
     let client = c.client.lock().unwrap();
-    if input.pose.is_some() || input.pick.is_some() || input.reroll || input.skip {
+    let choice = input.pick.is_some() || input.reroll || input.skip;
+    let pose_due =
+        input.pose.is_some() && c.last_pose.is_none_or(|t| t.elapsed().as_secs_f32() >= DT);
+    if choice || pose_due {
         client.send(&ClientMsg::Input(input));
+        if input.pose.is_some() {
+            c.last_pose = Some(Instant::now());
+        }
     }
     let mut heard = Vec::new();
+    let mut pongs = Vec::new();
     for event in client.poll() {
         match event {
             ClientEvent::Message(ServerMsg::State { snapshot, events }) => {
-                world.apply_snapshot(snapshot, events);
-                heard.push(Heard::Stepped);
+                heard.push(Heard::State(snapshot, events));
             }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
+            ClientEvent::Message(ServerMsg::Pong(stamp)) => pongs.push(stamp),
             ClientEvent::Disconnected(why) => heard.push(Heard::Lost(why)),
             ClientEvent::Message(_) | ClientEvent::Connected => {}
         }
+    }
+    send_ping(&client, c.epoch, &mut c.ping_out, &mut c.next_ping);
+    drop(client);
+    for stamp in pongs {
+        c.pong(stamp);
     }
     heard
 }
@@ -412,7 +536,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                 net.leave(format!("Disconnected: {why}"));
                 return true;
             }
-            Heard::Stepped => {}
+            Heard::State(..) => {}
         }
     }
     false

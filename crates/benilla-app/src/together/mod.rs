@@ -21,18 +21,22 @@ mod levelup;
 mod lobby;
 mod menu;
 mod meter;
+mod party;
 mod session;
 mod ui;
 mod units;
 mod view;
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use benilla_world::schedule::WorldStage;
 use bevy::prelude::*;
-use together_sim::{Content, ContentSources, HeroPose, PlayerId, PlayerInput, World, DT, V2};
+use together_sim::{
+    Content, ContentSources, Event, HeroPose, PlayerId, PlayerInput, Snapshot, World, DT, V2,
+};
 
 /// Set by [`crate::run_together`] before the app builds.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -152,11 +156,22 @@ pub(super) struct Sim {
     /// Our player: 0 alone or hosting, the host's pick when joined.
     pub me: PlayerId,
     /// Solo or host: real seconds not yet simulated, always under one [`DT`] after a frame's
-    /// steps. Joined: seconds since the host's last step arrived.
+    /// steps. Joined: playback seconds since the last snapshot was applied.
     acc: f32,
+    /// Seconds between the states the views interpolate: a step, or a host's snapshot.
+    span: f32,
+    /// Joined: the host's snapshots not yet played, oldest first.
+    inbox: VecDeque<(Snapshot, Vec<Event>)>,
+    /// Joined: playback has begun (the inbox first fills to [`PLAYBACK_DEPTH`]).
+    playing: bool,
     /// Steps taken (or arrived) this frame, so the views roll their interpolation forward.
     pub stepped: bool,
 }
+
+/// Snapshots a client holds in hand before playing them: the delay that hides a late packet.
+const PLAYBACK_DEPTH: usize = 2;
+/// More than this waiting (a burst after a stall) and the oldest are played at once.
+const PLAYBACK_MAX: usize = 8;
 
 impl Sim {
     /// A run for everyone in `roster` (just us, alone), stepped here.
@@ -180,6 +195,9 @@ impl Sim {
             world,
             me: 0,
             acc: 0.0,
+            span: DT,
+            inbox: VecDeque::new(),
+            playing: false,
             stepped: false,
         }
     }
@@ -190,13 +208,50 @@ impl Sim {
             world: World::new(content(), zone, 0).ok()?,
             me,
             acc: 0.0,
+            span: DT * session::SEND_EVERY as f32,
+            inbox: VecDeque::new(),
+            playing: false,
             stepped: false,
         })
     }
 
-    /// How far between the last two steps the present lies, 0..1, for smooth movement.
+    /// How far between the last two states the present lies, 0..1, for smooth movement.
     pub fn alpha(&self) -> f32 {
-        (self.acc / DT).clamp(0.0, 1.0)
+        (self.acc / self.span).clamp(0.0, 1.0)
+    }
+
+    /// Joined: the host's snapshots into the mirror, one per [`Self::span`] of playback, played a
+    /// little behind so they come out evenly however the network delivered them. A fuller inbox
+    /// plays a touch faster and an emptier one slower, which keeps the delay near
+    /// [`PLAYBACK_DEPTH`]; an empty one holds the last state.
+    fn play_back(&mut self, dt: f32) {
+        while self.inbox.len() > PLAYBACK_MAX {
+            self.apply_next();
+        }
+        if !self.playing {
+            if self.inbox.len() < PLAYBACK_DEPTH {
+                return;
+            }
+            self.playing = true;
+            self.acc = self.span;
+        }
+        let depth = self.inbox.len() as f32 - PLAYBACK_DEPTH as f32;
+        self.acc += dt * (1.0 + 0.1 * depth).clamp(0.85, 1.3);
+        while self.acc >= self.span {
+            if self.inbox.is_empty() {
+                self.acc = self.span;
+                break;
+            }
+            self.apply_next();
+            self.acc -= self.span;
+        }
+    }
+
+    fn apply_next(&mut self) {
+        if let Some((snapshot, events)) = self.inbox.pop_front() {
+            self.world.apply_snapshot(snapshot, events);
+            self.stepped = true;
+        }
     }
 }
 
@@ -249,6 +304,7 @@ impl Plugin for TogetherPlugin {
                     meter::refresh,
                     ui::tune_ui,
                     session::close_on_exit,
+                    party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
             // The menu.
@@ -405,6 +461,21 @@ fn autoplay() -> bool {
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
 }
 
+/// `TOGETHER_FRAIL=<player>`: that hero drops to 1 health 15 seconds in, once, so a co-op test
+/// sees a fall and a revive.
+fn frail_for_tests(world: &mut World) {
+    static WHO: OnceLock<Option<PlayerId>> = OnceLock::new();
+    let Some(who) = *WHO.get_or_init(|| std::env::var("TOGETHER_FRAIL").ok()?.parse().ok()) else {
+        return;
+    };
+    let due = world.elapsed >= 15.0 && world.elapsed < 15.0 + DT * 1.5;
+    if let Some(h) = world.heroes.iter_mut().find(|h| h.player == who && h.alive) {
+        if due {
+            h.hp = 1.0;
+        }
+    }
+}
+
 /// While the cards are up: 1, 2 or 3 picks one, R rerolls. Everything else (movement, jumping,
 /// the camera, the panels) is WoW's own key bindings.
 fn read_keys(
@@ -414,7 +485,10 @@ fn read_keys(
     mut input: ResMut<LocalInput>,
     mut up_since: Local<Option<f32>>,
 ) {
-    let choosing = sim.world.hero(sim.me).is_some_and(|h| !h.offers.is_empty());
+    let choosing = sim
+        .world
+        .hero(sim.me)
+        .is_some_and(|h| h.alive && !h.offers.is_empty());
     if !choosing {
         *up_since = None;
         return;
@@ -512,18 +586,19 @@ fn step_sim(
             pose: input.pose,
             ..Default::default()
         };
-        let heard = session::client_exchange(&mut net, &mut sim.world, held);
-        if heard.iter().any(|h| matches!(h, session::Heard::Stepped)) {
-            sim.stepped = true;
-            sim.acc = 0.0;
-        } else {
-            sim.acc = (sim.acc + time.delta_secs()).min(1.0);
-        }
+        let heard = session::client_exchange(&mut net, held);
         if session::client_left_run(&mut net, &heard) {
             end.0 = true;
         }
+        for h in heard {
+            if let session::Heard::State(snapshot, events) = h {
+                sim.inbox.push_back((snapshot, events));
+            }
+        }
+        sim.play_back(time.delta_secs());
     } else {
         session::host_receive(&mut net, &mut sim.world);
+        frail_for_tests(&mut sim.world);
         let Some(pose) = input.pose else {
             return;
         };
@@ -545,7 +620,7 @@ fn step_sim(
             sim.world.set_input(sim.me, held);
             let from = sim.world.events().len();
             sim.world.step();
-            session::host_send(&net, &sim.world, from);
+            session::host_send(&mut net, &sim.world, from);
             sim.stepped = true;
         }
     }

@@ -1,7 +1,9 @@
-//! A plain text HUD: the local hero's health, the party's level and experience, the clock and the
-//! kills; the level-up cards while they are up; and the end of the run.
+//! A plain text HUD: the clock, the kills and the hero's spells (and, joined, the ping to the
+//! host); fallen friends and how to raise them; and the end of the run.
 
 use bevy::prelude::*;
+
+use together_sim::{REVIVE_RANGE, REVIVE_SECS};
 
 use super::Sim;
 
@@ -145,12 +147,24 @@ pub(super) fn refresh(
             .map(|o| format!("{} {}", content.abilities[o.ability].name, o.level))
             .collect();
         // Health, level and experience are in WoW's own player frame and XP bar.
-        let s = format!(
-            "{}   Kills {}\n{}",
+        let ping = net
+            .ping_ms()
+            .map_or(String::new(), |ms| format!("   Ping {ms} ms"));
+        let mut s = format!(
+            "{}   Kills {}{ping}\n{}",
             clock(world.elapsed),
             world.kills,
             owned.join("   "),
         );
+        // Friends who have fallen, while the run goes on.
+        if hero.alive && !world.game_over() {
+            for h in world.heroes.iter().filter(|h| !h.alive) {
+                s.push_str(&format!(
+                    "\n{} has fallen: stand beside them to raise them",
+                    h.name
+                ));
+            }
+        }
         if t.0 != s {
             t.0 = s;
         }
@@ -174,9 +188,26 @@ pub(super) fn refresh(
             world.kills,
             hero.damage_done,
         ))
+    } else if !hero.alive {
+        let raising = if hero.revive > 0.0 {
+            format!("Being raised…  {:.0}%", hero.revive * 100.0)
+        } else {
+            format!("A friend who stands beside you for {REVIVE_SECS:.0} seconds raises you.")
+        };
+        Some(format!("You have fallen.\n\n{raising}"))
     } else if !hero.offers.is_empty() {
         // The level-up screen ([`super::levelup`]) is up.
         None
+    } else if let Some(down) = world
+        .heroes
+        .iter()
+        .find(|h| !h.alive && h.revive > 0.0 && h.pos.distance(hero.pos) <= REVIVE_RANGE)
+    {
+        Some(format!(
+            "Raising {}…  {:.0}%",
+            down.name,
+            down.revive * 100.0
+        ))
     } else if world.paused() {
         Some("Waiting for the others to choose…".into())
     } else {
