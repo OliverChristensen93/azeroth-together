@@ -22,6 +22,13 @@ pub struct ExtractionDef {
     pub safe: SafeDef,
     /// Ordinary enemies further than this from every living hero are let go.
     pub recycle: f32,
+    /// Ordinary enemies at most, per hero outside the safe ring, however hot: a ceiling on the
+    /// horde's cost to the host and its snapshots.
+    pub max_enemies_per_hero: u32,
+    /// How far from the safe ring's centre the run's first shrines stand, nearest and furthest.
+    pub first_shrines: (f32, f32),
+    /// A ready shrine further than this from every living hero goes, making room for one near them.
+    pub shrine_reach: f32,
     pub heat: HeatDef,
     pub exits: Vec<ExitDef>,
     /// The creature display a flight comes down as.
@@ -347,6 +354,9 @@ pub(crate) mod tests {
          boundary: [(-300.0, -300.0), (300.0, -300.0), (300.0, 300.0), (-300.0, 300.0)],
          safe: (center: (0.0, 0.0), radius: 40.0, margin: 50.0, cool: 15.0),
          recycle: 120.0,
+         max_enemies_per_hero: 150,
+         first_shrines: (100.0, 250.0),
+         shrine_reach: 300.0,
          heat: (outside: 1.0, kill: 0.5, flight: 4.0, floor_from: 180.0, floor_per_min: 40.0,
                 reward_luck: 0.25, quiet_range: 40.0, quiet_secs: 10.0,
                 skulls: [

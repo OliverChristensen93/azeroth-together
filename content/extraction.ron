@@ -11,6 +11,12 @@
         // Goldshire's crossroads (AreaPOI "Goldshire").
         safe: (center: (-9480.1, 63.5), radius: 40.0, margin: 50.0, cool: 15.0),
         recycle: 120.0,
+        // A ceiling on the horde however hot it gets: about the arena's own at its busiest.
+        max_enemies_per_hero: 150,
+        // The first shrines stand this far from Goldshire; a ready one further than
+        // `shrine_reach` from every hero goes, so new ones come near the heroes.
+        first_shrines: (100.0, 400.0),
+        shrine_reach: 300.0,
         heat: (
             outside: 1.0,
             kill: 0.5,

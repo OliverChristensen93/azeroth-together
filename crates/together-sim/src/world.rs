@@ -576,6 +576,16 @@ impl World {
         };
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
+            // An extraction run's first shrines stand within reach of home, not across the map.
+            let pos = match world.map(&content) {
+                Some(def) => {
+                    let (home, ring) = (def.safe_center(), def.first_shrines);
+                    let taken: Vec<V2> = world.interactables.iter().map(|i| i.pos).collect();
+                    let zone = &content.zones[zone];
+                    world.fitting(|w| spot(zone, home, ring, &taken, &mut w.rng))
+                }
+                None => pos,
+            };
             world.place(kind, pos);
         }
         Ok(world)
@@ -1878,7 +1888,7 @@ impl World {
                 let taken: Vec<V2> = self.interactables.iter().map(|i| i.pos).collect();
                 let content = self.content.clone();
                 let zone = &content.zones[self.zone];
-                let to = spot(zone, pos, ESCORT_DISTANCE, &taken, &mut self.rng);
+                let to = self.fitting(|w| spot(zone, pos, ESCORT_DISTANCE, &taken, &mut w.rng));
                 let left = escort_time(to.distance(pos), speed);
                 self.interactables[i].state = InteractState::Escort {
                     carrier: by,

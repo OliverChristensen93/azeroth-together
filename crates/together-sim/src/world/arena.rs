@@ -89,7 +89,8 @@ impl World {
     fn free_spot(&mut self, around: V2, ring: (f32, f32)) -> V2 {
         let taken: Vec<V2> = self.interactables.iter().map(|i| i.pos).collect();
         let content = self.content.clone();
-        spot(&content.zones[self.zone], around, ring, &taken, &mut self.rng)
+        let zone = &content.zones[self.zone];
+        self.fitting(|w| spot(zone, around, ring, &taken, &mut w.rng))
     }
 
     /// A new shrine, out of sight of a living hero, if fewer than the zone's

@@ -5,6 +5,9 @@
 use super::*;
 use crate::extraction::{ExtractionDef, ExtractionSettings, SkullDef};
 
+/// Draws [`World::fitting`] makes before it settles for a spot that does not fit.
+const FIT_TRIES: usize = 8;
+
 impl World {
     /// Where heroes may go: the arena's leash, or the extraction map's outline.
     pub fn bounds(&self) -> Bounds {
@@ -19,7 +22,7 @@ impl World {
 
     /// The extraction map this run plays, read from `content` (the world's own, or a clone of it
     /// held while the world changes); `None` in the arena.
-    fn map<'c>(&self, content: &'c Content) -> Option<&'c ExtractionDef> {
+    pub(super) fn map<'c>(&self, content: &'c Content) -> Option<&'c ExtractionDef> {
         match &self.mode {
             Mode::Extraction(x) => content.extractions.get(x.def),
             Mode::Arena => None,
@@ -31,6 +34,25 @@ impl World {
             Mode::Extraction(x) => Some(x),
             Mode::Arena => None,
         }
+    }
+
+    /// A spot drawn by `draw` that fits the run: in the arena, the first drawn; in an extraction
+    /// run, the first of a few inside the outline (with room to spare) and clear of the safe ring's
+    /// margin, or failing that the last drawn, made to fit ([`World::placeable`]).
+    pub(super) fn fitting(&mut self, mut draw: impl FnMut(&mut World) -> V2) -> V2 {
+        let content = self.content.clone();
+        let Some(def) = self.map(&content) else {
+            return draw(self);
+        };
+        let bounds = def.bounds();
+        let mut at = V2::ZERO;
+        for _ in 0..FIT_TRIES {
+            at = draw(self);
+            if bounds.inside(at, 3.0) && !def.in_margin(at) {
+                return at;
+            }
+        }
+        self.placeable(at)
     }
 
     /// Where an interactable put at `pos` stands: there, in the arena; in an extraction run,
@@ -150,6 +172,7 @@ impl World {
         self.tell_skulls(def);
         self.send_hunters(def);
         self.recycle(def);
+        self.let_far_shrines_go(def);
         self.tend_exits(def);
     }
 
@@ -284,6 +307,7 @@ impl World {
         let busiest = outside.iter().map(|o| o.2.spawns).fold(1.0, f32::max);
         let horde = 1.0 + self.difficulty.horde;
         let target = (target_alive(self.elapsed, outside.len()) as f32 * busiest * horde) as usize;
+        let target = target.min(def.max_enemies_per_hero as usize * outside.len());
         let alive = self.enemies.iter().filter(|e| !e.elite && !e.boss).count();
         if alive >= target {
             return;
@@ -369,6 +393,25 @@ impl World {
             x.hunt = skull.hunters_every;
         }
         self.events.push(Event::HuntersCame { near: player });
+    }
+
+    /// A ready shrine, altar, chest or banner further than the map's reach from every living hero
+    /// goes, making room for a new one near them. An earned cache stays where it was left.
+    fn let_far_shrines_go(&mut self, def: &ExtractionDef) {
+        let living: Vec<V2> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| h.pos)
+            .collect();
+        if living.is_empty() {
+            return;
+        }
+        let reach = def.shrine_reach;
+        self.interactables.retain(|i| {
+            let far = living.iter().all(|p| p.distance(i.pos) > reach);
+            !(far && i.ready() && i.kind != InteractableKind::Cache)
+        });
     }
 
     /// Ordinary enemies further than the map's reach from every living hero are let go: a party
@@ -916,5 +959,113 @@ mod tests {
         );
         w.step();
         assert!(!w.paused());
+    }
+
+    /// Inside the outline with room to spare, and clear of the safe ring's margin.
+    fn fits(w: &World, p: V2) -> bool {
+        let def = &w.content().extractions[0];
+        def.bounds().inside(p, 3.0) && !def.in_margin(p)
+    }
+
+    #[test]
+    fn the_first_shrines_stand_near_home_inside_the_outline() {
+        let content = Arc::new(test_content(""));
+        for seed in 1..20 {
+            let w = World::new(content.clone(), "goldshire", seed).unwrap();
+            for i in &w.interactables {
+                assert!(fits(&w, i.pos), "seed {seed}: {:?}", i.pos);
+                assert!(
+                    i.pos.distance(V2::ZERO) <= 250.0 + 1e-3,
+                    "seed {seed}: {:?}",
+                    i.pos
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shrines_and_power_ups_near_a_hero_by_the_edge_stay_inside() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        at(&mut w, 0, 250.0, 0.0);
+        for _ in 0..40 {
+            w.interactables.clear();
+            w.pickups.clear();
+            w.shrine_timer = 0.0;
+            w.powerup_timer = 0.0;
+            w.step();
+            let shrines = w.interactables.iter().map(|i| i.pos);
+            let pickups = w.pickups.iter().map(|p| p.pos);
+            for p in shrines.chain(pickups) {
+                assert!(fits(&w, p), "{p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_banner_is_carried_to_a_spot_inside_the_outline() {
+        let content = Arc::new(test_content(""));
+        for seed in 1..12 {
+            let mut w = World::new(content.clone(), "goldshire", seed).unwrap();
+            w.add_hero(0, "mage").unwrap();
+            hush(&mut w);
+            w.interactables.clear();
+            at(&mut w, 0, 250.0, 0.0);
+            let id = w.place(InteractableKind::WarBanner, V2::new(250.0, 0.0));
+            let mut to = None;
+            for _ in 0..600 {
+                w.step();
+                if let Some(InteractState::Escort { to: dest, .. }) =
+                    w.interactable(id).map(|i| i.state.clone())
+                {
+                    to = Some(dest);
+                    break;
+                }
+            }
+            let to = to.expect("the banner was taken up");
+            assert!(fits(&w, to), "seed {seed}: {to:?}");
+        }
+    }
+
+    #[test]
+    fn far_ready_shrines_go_but_caches_stay() {
+        let mut w = run("", 1);
+        hush(&mut w);
+        w.interactables.clear();
+        let far = w.place(InteractableKind::TitanShrine, V2::new(-290.0, -290.0));
+        let near = w.place(InteractableKind::TitanShrine, V2::new(150.0, 0.0));
+        let cache = w.place(InteractableKind::Cache, V2::new(290.0, 290.0));
+        w.step();
+        assert!(w.interactable(far).is_none(), "far from everyone: gone");
+        assert!(w.interactable(near).is_some());
+        assert!(w.interactable(cache).is_some(), "an earned cache stays");
+    }
+
+    #[test]
+    fn the_horde_keeps_to_its_cap_however_hot() {
+        let mut content = test_content("");
+        content.extractions[0].max_enemies_per_hero = 20;
+        let mut w = World::new(Arc::new(content), "goldshire", 3).unwrap();
+        for p in 0..4 {
+            w.add_hero(p, "mage").unwrap();
+        }
+        for (p, (x, y)) in [
+            (200.0, 200.0),
+            (200.0, -200.0),
+            (-200.0, 200.0),
+            (-200.0, -200.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            at(&mut w, p as PlayerId, x, y);
+        }
+        state_mut(&mut w).heat = 1000.0;
+        state_mut(&mut w).hunt = f32::MAX;
+        for _ in 0..300 {
+            w.step();
+            let horde = w.enemies.iter().filter(|e| !e.elite && !e.boss).count();
+            assert!(horde <= 80, "{horde}");
+        }
     }
 }
