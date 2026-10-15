@@ -29,11 +29,10 @@ see [Later](#later).
 
 - Branch `extraction-mode`, started from the `megabonk-systems` branch
   (`megabonk` remote, `OliverChristensen93/azeroth-together-megabonk`).
-- The Megabonk session has been asked for these fixes, which this mode relies on:
-  - tome slots (start 4) and a tome max rank (start 5); maxed tomes are not offered;
-  - a max number of copies per item (start 5); maxed items are not offered;
-  - a fallback card (gold or a heal) when nothing is left to offer;
-  - those numbers as content settings, not Rust consts.
+- This mode relies on the run limits `megabonk-systems` added in `186ba20`: tome slots (4) and a
+  tome max rank (5), items to 5 copies, maxed tomes and items no longer offered, fallback cards
+  when nothing is left, all in `content/rules.ron`. Extraction mode can ship its own rules where
+  playtests call for different limits.
 - `megabonk-systems` branches from `00037fc` and lacks `4ca19bc` (join by invite code). Merge
   `phase-1-sim-core` into `extraction-mode` before building, so co-op over the internet keeps working.
 - Reused from `megabonk-systems` as they are: gold and purses, the hero stat block, tomes, pacts,
