@@ -12,7 +12,7 @@
         fog_color: (0.04, 0.07, 0.08),
         // How far the world is drawn, yards: past the fog, short of the stock 350.
         view_distance: 120.0,
-        // A warm glow at each hero, linear RGB.
-        hero_light: (color: (1.0, 0.82, 0.6), intensity: 0.6, range: 9.0),
+        // A warm glow at each hero, linear RGB: a pool of light around the hero's feet, not a beacon.
+        hero_light: (color: (1.0, 0.82, 0.6), intensity: 3.5, range: 12.0),
     ),
 )
