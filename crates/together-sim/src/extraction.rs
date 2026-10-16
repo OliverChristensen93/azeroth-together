@@ -451,6 +451,10 @@ pub struct Extraction {
     /// Seconds until the next hunter pack may come.
     pub hunt: f32,
     pub exits: Vec<ExitState>,
+    /// Ambush packs, `(enemy id, when their flight departs)`: they wait at the exit for the
+    /// party, so the recycle spares them until then. The host's alone.
+    #[serde(skip)]
+    pub ambushers: Vec<(u32, f32)>,
 }
 
 /// How one exit stands.
@@ -494,6 +498,7 @@ impl Extraction {
                     ..ExitState::default()
                 })
                 .collect(),
+            ambushers: Vec::new(),
         }
     }
 }

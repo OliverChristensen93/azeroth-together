@@ -437,7 +437,8 @@ impl World {
         });
     }
     /// Ordinary enemies further than the map's reach from every living hero are let go: a party
-    /// spread over the forest drags no tail of stragglers. Elites and bosses stay.
+    /// spread over the forest drags no tail of stragglers. Elites, bosses, the forest's creatures
+    /// and an ambush still waiting for its flight stay.
     fn recycle(&mut self, def: &ExtractionDef) {
         let living: Vec<V2> = self
             .heroes
@@ -449,8 +450,20 @@ impl World {
             return;
         }
         let reach = def.recycle;
+        let now = self.elapsed;
+        let waiting: Vec<u32> = match self.run_mut() {
+            Some(x) => {
+                x.ambushers.retain(|&(_, until)| now < until);
+                x.ambushers.iter().map(|&(id, _)| id).collect()
+            }
+            None => Vec::new(),
+        };
         self.enemies.retain(|e| {
-            e.elite || e.boss || e.is_wild() || living.iter().any(|p| p.distance(e.pos) <= reach)
+            e.elite
+                || e.boss
+                || e.is_wild()
+                || waiting.contains(&e.id)
+                || living.iter().any(|p| p.distance(e.pos) <= reach)
         });
     }
 
@@ -555,6 +568,10 @@ impl World {
         let kind = roster[(top + skull.tier).min(roster.len() - 1)];
         let side = self.rng.range(0.0, std::f32::consts::TAU);
         let bounds = def.bounds();
+        let departs = match &self.mode {
+            Mode::Extraction(x) => x.exits[exit].departs,
+            Mode::Arena => return,
+        };
         for _ in 0..count {
             let angle = side + self.rng.range(-0.5, 0.5);
             let r = self.rng.range(def.ambush.ring.0, def.ambush.ring.1);
@@ -564,6 +581,9 @@ impl World {
             }
             let id = self.spawn_enemy(kind, pos, at, false);
             self.toughen(id, skull.toughness, 1.0);
+            if let Some(x) = self.run_mut() {
+                x.ambushers.push((id, departs));
+            }
         }
     }
 }
@@ -1125,6 +1145,27 @@ pub(super) mod tests {
             let d = e.pos.distance(gate);
             assert!((35.0..=61.0).contains(&d), "{d}");
         }
+    }
+
+    #[test]
+    fn an_ambush_waits_at_its_flight_for_a_party_still_far_off_until_it_departs() {
+        let mut content = test_content("");
+        content.extractions[0].ambush.chance = 1.0;
+        let mut w = World::new(Arc::new(content), "goldshire", 5).unwrap();
+        w.add_hero(0, "mage").unwrap();
+        hush(&mut w);
+        // The hero hangs back 220 yd from the East Gate, out of the recycle's reach.
+        at(&mut w, 0, -20.0, 0.0);
+        w.heroes[0].abilities.clear();
+        w.elapsed = 29.0;
+        secs(&mut w, 2.0);
+        assert!(w.enemies.len() >= 6, "the pack came: {}", w.enemies.len());
+        secs(&mut w, 25.0);
+        assert!(w.enemies.len() >= 6, "still waiting while boarding: {}", w.enemies.len());
+        // Departed at 60: from then on it is a straggler like any other.
+        assert!(!state(&w).ambushers.is_empty());
+        secs(&mut w, 6.0);
+        assert!(state(&w).ambushers.is_empty());
     }
 
     #[test]
