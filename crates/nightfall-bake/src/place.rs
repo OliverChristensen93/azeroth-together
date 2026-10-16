@@ -65,4 +65,14 @@ mod tests {
         let p = placement_point([5.0, 0.0, 0.0], [0.0, 180.0, 0.0], 2.0, [1.0, 0.0, 0.0]);
         assert!(close(p, [7.0, 0.0, 0.0]), "{p:?}");
     }
+
+    /// The engine's golden tilt case (`placement_rotation`): a roll of 90 degrees turns the
+    /// model's local +x to world -x and lays its local +y along world up.
+    #[test]
+    fn a_tilt_matches_the_engines_golden_case() {
+        let x = placement_point([0.0; 3], [0.0, 0.0, 90.0], 1.0, [1.0, 0.0, 0.0]);
+        assert!(close(x, [-1.0, 0.0, 0.0]), "{x:?}");
+        let y = placement_point([0.0; 3], [0.0, 0.0, 90.0], 1.0, [0.0, 1.0, 0.0]);
+        assert!(close(y, [0.0, 0.0, 1.0]), "{y:?}");
+    }
 }
