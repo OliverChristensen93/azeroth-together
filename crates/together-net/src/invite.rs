@@ -9,8 +9,10 @@
 //! The QUIC stream is wrapped in blocking `Read` and `Write` halves ([`Link`]), so the same reader
 //! and writer threads serve it as serve a TCP socket.
 
+use std::future::Future;
 use std::io::{self, Read, Write};
-use std::sync::OnceLock;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use iroh::endpoint::{presets, Connection, RecvStream, SendStream};
@@ -56,7 +58,10 @@ pub fn parse_code(text: &str) -> Option<EndpointId> {
     EndpointId::from_z32(&code.to_ascii_lowercase()).ok()
 }
 
-/// One connection's two directions as blocking halves, and how to close it.
+/// One connection's two directions as blocking halves, and how to close it. Closing flushes
+/// first: drop the writer, then call `close`, and what was written (a refusal, a last message)
+/// still reaches the peer. `close` may wait, up to [`crate::LINGER`], so it is called on a
+/// connection's own threads, never the game's.
 pub(crate) struct Link {
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
@@ -79,10 +84,27 @@ impl Read for BlockingRecv {
     }
 }
 
+/// Resolves once everything sent on a finished stream is acknowledged (or the connection is gone).
+type Flushed = Pin<Box<dyn Future<Output = ()> + Send>>;
+
 /// A QUIC stream's sending half, written by blocking on the runtime from a plain thread.
 struct BlockingSend {
     rt: Handle,
     send: SendStream,
+    /// Filled when this half is dropped: the link's close waits on it.
+    flushed: Arc<Mutex<Option<Flushed>>>,
+}
+
+impl Drop for BlockingSend {
+    /// Finish the stream, so the peer reads to its end, and leave the close a way to wait until
+    /// the peer has everything.
+    fn drop(&mut self) {
+        let _ = self.send.finish();
+        let stopped = self.send.stopped();
+        *self.flushed.lock().unwrap() = Some(Box::pin(async move {
+            let _ = stopped.await;
+        }));
+    }
 }
 
 impl Write for BlockingSend {
@@ -99,8 +121,14 @@ impl Write for BlockingSend {
 
 /// The halves of one stream on `conn`; closing ends the connection (and, for a joining game,
 /// its endpoint).
+///
+/// Closing a QUIC connection drops whatever the peer has not yet acknowledged, so the close waits
+/// first, on the runtime and without blocking its caller: until the finished stream's data is all
+/// acknowledged, or, if the writer is still alive, until the peer hangs up; at most
+/// [`crate::LINGER`] either way.
 fn link(conn: Connection, send: SendStream, recv: RecvStream, endpoint: Option<Endpoint>) -> Link {
     let rt = runtime().handle().clone();
+    let flushed = Arc::new(Mutex::new(None));
     Link {
         reader: Box::new(BlockingRecv {
             rt: rt.clone(),
@@ -109,12 +137,25 @@ fn link(conn: Connection, send: SendStream, recv: RecvStream, endpoint: Option<E
         writer: Box::new(BlockingSend {
             rt: rt.clone(),
             send,
+            flushed: flushed.clone(),
         }),
         close: Box::new(move || {
-            conn.close(0u32.into(), b"bye");
-            if let Some(endpoint) = endpoint {
-                rt.spawn(async move { endpoint.close().await });
-            }
+            rt.spawn(async move {
+                let flushed = flushed.lock().unwrap().take();
+                let delivered = async {
+                    match flushed {
+                        Some(flushed) => flushed.await,
+                        None => {
+                            conn.closed().await;
+                        }
+                    }
+                };
+                let _ = tokio::time::timeout(crate::LINGER, delivered).await;
+                conn.close(0u32.into(), b"bye");
+                if let Some(endpoint) = endpoint {
+                    endpoint.close().await;
+                }
+            });
         }),
     }
 }

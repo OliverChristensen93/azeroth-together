@@ -99,6 +99,7 @@ fn run<Down: DeserializeOwned>(
         .is_err()
     {
         let _ = events.send(ClientEvent::Disconnected("could not greet the host".into()));
+        drop(out);
         close();
         return;
     }
@@ -106,6 +107,7 @@ fn run<Down: DeserializeOwned>(
         Ok(Verdict::Welcome) => {}
         Ok(refused) => {
             let _ = events.send(ClientEvent::Disconnected(handshake::refusal(&refused, game)));
+            drop(out);
             close();
             return;
         }
@@ -113,6 +115,7 @@ fn run<Down: DeserializeOwned>(
             let _ = events.send(ClientEvent::Disconnected(
                 "the host closed the connection".into(),
             ));
+            drop(out);
             close();
             return;
         }
@@ -128,6 +131,8 @@ fn run<Down: DeserializeOwned>(
                     break;
                 }
             }
+            // The game's last messages are flushed by the close.
+            drop(out);
             close();
         });
 
@@ -158,19 +163,8 @@ fn connect(addr: &str) -> Result<Link, String> {
     for target in targets {
         match TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) {
             Ok(stream) => {
-                let _ = stream.set_nodelay(true);
-                let opened = || -> std::io::Result<Link> {
-                    let reader = stream.try_clone()?;
-                    let shutdown = stream.try_clone()?;
-                    Ok(Link {
-                        reader: Box::new(reader),
-                        writer: Box::new(stream),
-                        close: Box::new(move || {
-                            let _ = shutdown.shutdown(std::net::Shutdown::Both);
-                        }),
-                    })
-                };
-                return opened().map_err(|_| "could not open the connection".to_string());
+                return crate::host::tcp_link(stream)
+                    .map_err(|_| "could not open the connection".to_string());
             }
             Err(e) => last = format!("cannot reach {addr}: {e}"),
         }
@@ -291,6 +285,34 @@ mod tests {
         assert_eq!(host.connections(), 0);
     }
 
+    /// A game's refusal ("party full") is a message and then a kick: the message must arrive
+    /// before the connection ends.
+    #[test]
+    fn a_message_sent_just_before_a_kick_arrives() {
+        let host = TestHost::listen(0, GAME).unwrap();
+        let client = TestClient::connect(&local(&host), GAME);
+        let conn = wait(|| {
+            host.poll().into_iter().find_map(|e| match e {
+                HostEvent::Joined(c, _) => Some(c),
+                _ => None,
+            })
+        });
+        host.send(conn, &Down::Start("the party is full".into()));
+        host.kick(conn);
+        let mut seen = Vec::new();
+        let why = wait(|| {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Message(m) => {
+                    seen.push(m);
+                    None
+                }
+                ClientEvent::Disconnected(why) => Some(why),
+                ClientEvent::Connected => None,
+            })
+        });
+        assert_eq!(seen, [Down::Start("the party is full".into())], "{why}");
+    }
+
     #[test]
     fn a_connection_that_never_greets_never_joins_and_blocks_nobody() {
         let host = TestHost::listen(0, GAME).unwrap();
@@ -406,5 +428,27 @@ mod tests {
             })
         });
         assert_eq!(welcome, Down::Welcome(1));
+
+        // A refusal ("party full") is a message and a kick; over QUIC a plain close would drop it.
+        host.send(conn, &Down::Start("the party is full".into()));
+        host.kick(conn);
+        let refused = wait_for(Duration::from_secs(20), || {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Message(m) => Some(m),
+                _ => None,
+            })
+        });
+        assert_eq!(refused, Down::Start("the party is full".into()));
+
+        // A player of another game on this host's code is told which game the host plays.
+        let other = TestClient::connect(&code, "nightfall");
+        let why = wait_for(Duration::from_secs(40), || {
+            other.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Disconnected(why) => Some(why),
+                ClientEvent::Connected => panic!("connected to another game's host"),
+                ClientEvent::Message(_) => None,
+            })
+        });
+        assert_eq!(why, "That host is playing Test, not Nightfall.");
     }
 }

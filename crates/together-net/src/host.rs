@@ -2,14 +2,14 @@
 //! players in, and per player a reader and a writer thread.
 
 use std::collections::HashMap;
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Read};
 use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -233,19 +233,41 @@ impl<Up, Down> Drop for Host<Up, Down> {
     }
 }
 
-/// A TCP connection as the two halves the connection threads take.
-fn tcp_link(stream: TcpStream) -> io::Result<Link> {
+/// A TCP connection as the two halves the connection threads take, on either end.
+///
+/// Its close sends what is queued and our end-of-stream first, then waits (up to
+/// [`crate::LINGER`]) for the peer to hang up, reading and dropping whatever it still sends:
+/// closing a socket with unread data resets it, and a reset can drop a refusal not yet read.
+pub(crate) fn tcp_link(stream: TcpStream) -> io::Result<Link> {
     stream.set_nonblocking(false)?;
     stream.set_nodelay(true)?;
     let reader = stream.try_clone()?;
-    let shutdown = stream.try_clone()?;
+    let closing = stream.try_clone()?;
     Ok(Link {
         reader: Box::new(reader),
         writer: Box::new(stream),
         close: Box::new(move || {
-            let _ = shutdown.shutdown(std::net::Shutdown::Both);
+            let _ = closing.shutdown(std::net::Shutdown::Write);
+            wait_for_hang_up(&closing);
+            let _ = closing.shutdown(std::net::Shutdown::Both);
         }),
     })
+}
+
+/// Read and drop until the peer closes its end, or [`crate::LINGER`] passes.
+fn wait_for_hang_up(mut stream: &TcpStream) {
+    let deadline = Instant::now() + crate::LINGER;
+    let mut sink = [0u8; 1024];
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            return;
+        }
+        match stream.read(&mut sink) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
 }
 
 fn accept_loop<Up: DeserializeOwned + Send + 'static>(
@@ -287,12 +309,15 @@ fn serve<Up: DeserializeOwned + Send + 'static>(
     let verdict = match wire::read::<Greeting>(&mut input) {
         Ok(greeting) => handshake::judge(&greeting, intake.game),
         Err(_) => {
+            drop(out);
             close();
             return;
         }
     };
     let told = wire::encode(&verdict).and_then(|frame| wire::write_frame(&mut out, &frame));
     if verdict != Verdict::Welcome || told.is_err() {
+        // The writer goes first, so the close flushes the refusal to the peer before it closes.
+        drop(out);
         close();
         return;
     }
@@ -317,6 +342,8 @@ fn serve<Up: DeserializeOwned + Send + 'static>(
                     break;
                 }
             }
+            // A kick's last frames (a refusal) are flushed by the close.
+            drop(out);
             close();
         });
     if writer.is_err() {
@@ -325,6 +352,11 @@ fn serve<Up: DeserializeOwned + Send + 'static>(
     }
     let _ = intake.events.send(HostEvent::Joined(conn, from));
     while let Ok(msg) = wire::read::<Up>(&mut input) {
+        // A kicked connection stays open while its close flushes; what it says meanwhile is
+        // not the game's to hear.
+        if !intake.writers.lock().unwrap().contains_key(&conn) {
+            break;
+        }
         if intake.events.send(HostEvent::Message(conn, msg)).is_err() {
             break;
         }

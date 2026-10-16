@@ -23,6 +23,11 @@ pub use invite::{code_for, new_host_key, parse_code};
 /// Which game a host or client plays, the same on both ends: `"survivors"`, `"nightfall"`.
 pub type GameTag = &'static str;
 
+/// How long closing a connection waits for what was written to reach the peer, or for the peer
+/// to hang up, before closing anyway: long enough for a refusal to be read, short enough that a
+/// silent peer holds nothing up.
+pub(crate) const LINGER: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;
 
