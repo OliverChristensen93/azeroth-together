@@ -394,6 +394,43 @@ pub enum Augment {
     Windfury,
     Stormlash,
     MaelstromWeapon,
+    // --- Capstones: paladin ---
+    HammerOfTheRighteous,
+    WrathOfTheExecutioner,
+    BlessedHammer,
+    JudgementOfLight,
+    DivineStorm,
+    JudgementOfTheCrusader,
+    Exorcist,
+    ArtOfWar,
+    BanishEvil,
+    InfusionOfLight,
+    GlimmerOfLight,
+    Daybreak,
+    SacredGround,
+    HallowedGround,
+    ConsecratedChill,
+    Wrathful,
+    DivinePurpose,
+    StunningWrath,
+    FistOfJustice,
+    ShockwaveHammer,
+    LastingJustice,
+    AvengersShield,
+    HolyRetribution,
+    Reckoning,
+    HolyPower,
+    DivineFavor,
+    LightOfDawn,
+    AuraMastery,
+    Devotion,
+    Sanctity,
+    SealOfLight,
+    SealOfRighteousness,
+    SealOfWisdom,
+    ImprovedLayOnHands,
+    MartyrsHands,
+    HandOfProtection,
 }
 
 impl Augment {
@@ -468,7 +505,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 252] = [
+    pub const CAPSTONES: [Augment; 288] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -721,6 +758,42 @@ impl Augment {
         Augment::Windfury,
         Augment::Stormlash,
         Augment::MaelstromWeapon,
+        Augment::HammerOfTheRighteous,
+        Augment::WrathOfTheExecutioner,
+        Augment::BlessedHammer,
+        Augment::JudgementOfLight,
+        Augment::DivineStorm,
+        Augment::JudgementOfTheCrusader,
+        Augment::Exorcist,
+        Augment::ArtOfWar,
+        Augment::BanishEvil,
+        Augment::InfusionOfLight,
+        Augment::GlimmerOfLight,
+        Augment::Daybreak,
+        Augment::SacredGround,
+        Augment::HallowedGround,
+        Augment::ConsecratedChill,
+        Augment::Wrathful,
+        Augment::DivinePurpose,
+        Augment::StunningWrath,
+        Augment::FistOfJustice,
+        Augment::ShockwaveHammer,
+        Augment::LastingJustice,
+        Augment::AvengersShield,
+        Augment::HolyRetribution,
+        Augment::Reckoning,
+        Augment::HolyPower,
+        Augment::DivineFavor,
+        Augment::LightOfDawn,
+        Augment::AuraMastery,
+        Augment::Devotion,
+        Augment::Sanctity,
+        Augment::SealOfLight,
+        Augment::SealOfRighteousness,
+        Augment::SealOfWisdom,
+        Augment::ImprovedLayOnHands,
+        Augment::MartyrsHands,
+        Augment::HandOfProtection,
     ];
 
     pub fn name(self) -> &'static str {
@@ -1043,6 +1116,42 @@ impl Augment {
             Augment::Windfury => "Windfury",
             Augment::Stormlash => "Stormlash",
             Augment::MaelstromWeapon => "Maelstrom Weapon",
+            Augment::HammerOfTheRighteous => "Hammer of the Righteous",
+            Augment::WrathOfTheExecutioner => "Wrath of the Executioner",
+            Augment::BlessedHammer => "Blessed Hammer",
+            Augment::JudgementOfLight => "Judgement of Light",
+            Augment::DivineStorm => "Divine Storm",
+            Augment::JudgementOfTheCrusader => "Judgement of the Crusader",
+            Augment::Exorcist => "Exorcist",
+            Augment::ArtOfWar => "Art of War",
+            Augment::BanishEvil => "Banish Evil",
+            Augment::InfusionOfLight => "Infusion of Light",
+            Augment::GlimmerOfLight => "Glimmer of Light",
+            Augment::Daybreak => "Daybreak",
+            Augment::SacredGround => "Sacred Ground",
+            Augment::HallowedGround => "Hallowed Ground",
+            Augment::ConsecratedChill => "Consecrated Chill",
+            Augment::Wrathful => "Wrathful",
+            Augment::DivinePurpose => "Divine Purpose",
+            Augment::StunningWrath => "Stunning Wrath",
+            Augment::FistOfJustice => "Fist of Justice",
+            Augment::ShockwaveHammer => "Shockwave Hammer",
+            Augment::LastingJustice => "Lasting Justice",
+            Augment::AvengersShield => "Avenger's Shield",
+            Augment::HolyRetribution => "Holy Retribution",
+            Augment::Reckoning => "Reckoning",
+            Augment::HolyPower => "Holy Power",
+            Augment::DivineFavor => "Divine Favor",
+            Augment::LightOfDawn => "Light of Dawn",
+            Augment::AuraMastery => "Aura Mastery",
+            Augment::Devotion => "Devotion",
+            Augment::Sanctity => "Sanctity",
+            Augment::SealOfLight => "Seal of Light",
+            Augment::SealOfRighteousness => "Seal of Righteousness",
+            Augment::SealOfWisdom => "Seal of Wisdom",
+            Augment::ImprovedLayOnHands => "Improved Lay on Hands",
+            Augment::MartyrsHands => "Martyr's Hands",
+            Augment::HandOfProtection => "Hand of Protection",
         }
     }
 
@@ -1367,6 +1476,42 @@ impl Augment {
             Augment::Windfury => "20% chance a hit strikes twice more at once; each Windfury hit banks a Lightning Shield orb.",
             Augment::Stormlash => "Its mark is +30%.",
             Augment::MaelstromWeapon => "Every 5th Stormstrike makes your next Lightning Bolt or Chain Lightning deal double.",
+            Augment::HammerOfTheRighteous => "Its hit bursts within 3 yards for half its damage.",
+            Augment::WrathOfTheExecutioner => "It seeks the most wounded enemy instead, +200% against enemies below 20% health, and a kill makes it ready.",
+            Augment::BlessedHammer => "Its crits heal you 3% of your health.",
+            Augment::JudgementOfLight => "A judged enemy that strikes you heals you 2% of your health.",
+            Augment::DivineStorm => "Judges every enemy within 8 yards of you instead, at 60%.",
+            Augment::JudgementOfTheCrusader => "Judged enemies are Marked +10% for 6 seconds.",
+            Augment::Exorcist => "+100% damage to bosses and elites.",
+            Augment::ArtOfWar => "Your Holy crits have a 20% chance to make Exorcism ready.",
+            Augment::BanishEvil => "Its target is Stunned for 2 seconds.",
+            Augment::InfusionOfLight => "Its crits bank a Holy Light charge (even without Holy Light).",
+            Augment::GlimmerOfLight => "Its target keeps a Glimmer for 10 seconds; each heal you get strikes every Glimmered enemy for 50% of the heal.",
+            Augment::Daybreak => "Below 50% health it heals 15% and comes back twice as fast.",
+            Augment::SacredGround => "Heroes standing in it heal 1% of their health a second.",
+            Augment::HallowedGround => "While you stand in it you take 15% less damage, and enemies in it are Weakened.",
+            Augment::ConsecratedChill => "Enemies in it are Chilled.",
+            Augment::Wrathful => "+100% damage to bosses and elites.",
+            Augment::DivinePurpose => "Each enemy it hits takes 0.2 seconds off your defensive button's cooldown.",
+            Augment::StunningWrath => "It Stuns for 1 second.",
+            Augment::FistOfJustice => "Your Holy crits take 1 second off its cooldown.",
+            Augment::ShockwaveHammer => "Also strikes and stuns every enemy within 5 yards of its targets.",
+            Augment::LastingJustice => "Its Stun lasts 1.5 seconds longer.",
+            Augment::AvengersShield => "Its overflow is a shield that strikes 3 enemies and Stuns them for 1 second.",
+            Augment::HolyRetribution => "Its retaliation strikes every enemy within 5 yards.",
+            Augment::Reckoning => "Each block has a 20% chance to cast Judgement (yours, if you know it).",
+            Augment::HolyPower => "Each heal it gives makes your next Holy damage spell deal +50%.",
+            Augment::DivineFavor => "30% of its heals are doubled.",
+            Augment::LightOfDawn => "Its overflow strikes every enemy in a 10-yard cone ahead of you.",
+            Augment::AuraMastery => "Each blow it answers also heals the hero struck for 20% of the retaliation.",
+            Augment::Devotion => "You and allies in reach also take 10% less damage.",
+            Augment::Sanctity => "You and allies in reach deal +10% damage.",
+            Augment::SealOfLight => "Each hit heals you 1% of your health.",
+            Augment::SealOfRighteousness => "Each hit also strikes every enemy within 4 yards of its target for 40%.",
+            Augment::SealOfWisdom => "Each hit takes 0.2 seconds off Holy Light's cooldown.",
+            Augment::ImprovedLayOnHands => "For 10 seconds after it heals, that hero takes 30% less damage.",
+            Augment::MartyrsHands => "It heals below 40% instead of 20%, and every enemy within 10 yards takes holy damage equal to the heal.",
+            Augment::HandOfProtection => "After it heals, that hero takes no damage for 2 seconds.",
         }
     }
 
@@ -1505,6 +1650,32 @@ impl Augment {
                 "healing_wave"
             }
             Augment::Windfury | Augment::Stormlash | Augment::MaelstromWeapon => "stormstrike",
+            Augment::HammerOfTheRighteous
+            | Augment::WrathOfTheExecutioner
+            | Augment::BlessedHammer => "hammer_of_wrath",
+            Augment::JudgementOfLight | Augment::DivineStorm | Augment::JudgementOfTheCrusader => {
+                "judgement"
+            }
+            Augment::Exorcist | Augment::ArtOfWar | Augment::BanishEvil => "exorcism",
+            Augment::InfusionOfLight | Augment::GlimmerOfLight | Augment::Daybreak => "holy_shock",
+            Augment::SacredGround | Augment::HallowedGround | Augment::ConsecratedChill => {
+                "consecration"
+            }
+            Augment::Wrathful | Augment::DivinePurpose | Augment::StunningWrath => "holy_wrath",
+            Augment::FistOfJustice | Augment::ShockwaveHammer | Augment::LastingJustice => {
+                "hammer_of_justice"
+            }
+            Augment::AvengersShield | Augment::HolyRetribution | Augment::Reckoning => {
+                "holy_shield"
+            }
+            Augment::HolyPower | Augment::DivineFavor | Augment::LightOfDawn => "holy_light",
+            Augment::AuraMastery | Augment::Devotion | Augment::Sanctity => "retribution_aura",
+            Augment::SealOfLight | Augment::SealOfRighteousness | Augment::SealOfWisdom => {
+                "seal_of_command"
+            }
+            Augment::ImprovedLayOnHands | Augment::MartyrsHands | Augment::HandOfProtection => {
+                "lay_on_hands"
+            }
             _ => return None,
         })
     }
@@ -2147,6 +2318,51 @@ impl Augment {
             }
             Augment::TidalFocus => s.cooldown *= 0.7,
             Augment::Stormlash => s.fx.mark = s.fx.mark.max(0.3),
+            // Paladin capstones that change the cast's numbers.
+            Augment::HammerOfTheRighteous => s.radius = s.radius.max(3.0),
+            Augment::WrathOfTheExecutioner => {
+                s.targeting = Targeting::Weakest;
+                s.execute += 2.0;
+                s.fx.execute_at = 0.2;
+            }
+            Augment::DivineStorm => {
+                s.targeting = Targeting::Nearest;
+                s.count = 99;
+                s.range = 8.0;
+                s.damage *= 0.6;
+            }
+            Augment::JudgementOfTheCrusader => {
+                s.fx.mark = s.fx.mark.max(0.1);
+                s.fx.mark_secs = s.fx.mark_secs.max(6.0);
+            }
+            Augment::Exorcist | Augment::Wrathful => s.fx.vs_elite += 1.0,
+            Augment::BanishEvil => {
+                s.stun = s.stun.max(2.0);
+                s.tags = s.tags.with(Tag::Stun);
+            }
+            Augment::SacredGround => {
+                s.fx.heal = s.fx.heal.max(0.01);
+                s.tags = s.tags.with(Tag::Heal);
+            }
+            Augment::HallowedGround => s.fx.weaken = s.fx.weaken.max(1.5),
+            Augment::ConsecratedChill => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::StunningWrath => {
+                s.stun = s.stun.max(1.0);
+                s.tags = s.tags.with(Tag::Stun);
+            }
+            Augment::ShockwaveHammer => s.radius = s.radius.max(5.0),
+            Augment::LastingJustice => s.stun += 1.5,
+            Augment::AvengersShield => {
+                s.fx.overflow = s.fx.overflow.max(3);
+                s.stun = s.stun.max(1.0);
+                s.tags = s.tags.with(Tag::Stun);
+            }
+            Augment::Devotion => s.fx.buff.guard = s.fx.buff.guard.max(0.1),
+            Augment::Sanctity => s.fx.buff.power += 0.1,
+            Augment::MartyrsHands => s.fx.heal_below = s.fx.heal_below.max(0.4),
             _ => {}
         }
     }

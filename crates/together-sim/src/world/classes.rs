@@ -59,6 +59,11 @@ pub struct StatusFx {
     pub hexed_by: Option<PlayerId>,
     /// The hunter whose Hunter's Mark is on it.
     pub marked_by: Option<PlayerId>,
+    /// The paladin whose Judgement is on it (Judgement of Light), and whose Glimmer of Light,
+    /// with seconds left.
+    pub judged_by: Option<PlayerId>,
+    pub glimmer_by: Option<PlayerId>,
+    pub glimmer_secs: f32,
     /// An Earthbind Totem has rooted it once (Earthgrab).
     pub grabbed: bool,
 }
@@ -264,7 +269,7 @@ impl World {
     /// damage, and the class capstones that change numbers.
     pub(super) fn class_spec(&self, h: usize, owned: &Owned, s: &mut CastSpec) {
         let def = &self.content.abilities[owned.ability];
-        if def.damage > 0.0 {
+        if def.damage > 0.0 && def.heal > 0.0 {
             s.fx.heal = def.heal * s.damage / def.damage;
         }
         s.fx.buff.thorns = def.thorns * s.damage;
@@ -275,6 +280,7 @@ impl World {
         self.warlock_spec(h, owned, s);
         self.hunter_spec(h, owned, s);
         self.shaman_spec(h, owned, s);
+        self.paladin_spec(h, owned, s);
     }
 
     /// The share of each tick of `by`'s damage over time from `spec` that heals `by`, beside the
@@ -322,12 +328,18 @@ impl World {
         if spec.fx.combo > 0 {
             self.give_combo(h, spec.fx.combo);
         }
+        let kind = self.content.abilities[spec.ability].kind;
+        if spec.fx.heal > 0.0 && matches!(kind, AbilityKind::Strike | AbilityKind::Bolt) {
+            let amount = spec.fx.heal * self.heroes[h].max_hp;
+            self.heal_hero(h, amount, Some(spec));
+        }
         self.warrior_after(h, owned, spec);
         self.rogue_after(h, owned, spec);
         self.priest_after(h, owned, spec);
         self.warlock_after(h, owned, spec);
         self.hunter_after(h, owned, spec);
         self.shaman_after(h, owned, spec);
+        self.paladin_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -414,6 +426,7 @@ impl World {
             self.strike(player, spec, id, scale, pos, Crit::Roll);
         }
         self.warrior_overflow(h, spec);
+        self.paladin_overflow(h, spec);
         true
     }
 
@@ -466,6 +479,7 @@ impl World {
         let before = hero.hp;
         hero.hp = (hero.hp + amount).min(hero.max_hp);
         let healed = hero.hp - before;
+        self.paladin_healed(t, amount);
         let Some(spec) = spec else {
             return healed;
         };
@@ -590,6 +604,7 @@ impl World {
         self.warlock_strike(h, id, spec, damage, crit, scale);
         self.hunter_strike(h, id, spec, damage, crit, scale);
         self.shaman_strike(h, id, spec, damage, crit, scale);
+        self.paladin_strike(h, id, spec, damage, crit, scale);
     }
 
     /// The other classes' status effects one hit of `spec` leaves on enemy `ei`, struck from
@@ -675,7 +690,8 @@ impl World {
             * self.warrior_guard(h)
             * self.priest_guard(h)
             * self.warlock_guard(h)
-            * self.shaman_guard(h);
+            * self.shaman_guard(h)
+            * self.paladin_guard(h);
         let player = self.heroes[h].player;
         let pos = self.heroes[h].pos;
         let banks: Vec<(usize, WardKind)> = self.heroes[h]
@@ -702,6 +718,7 @@ impl World {
             });
             self.warrior_blocked(h, &spec, from);
             self.rogue_blocked(h, &spec, from);
+            self.paladin_blocked(h, &spec, from);
             return 0.0;
         }
         if let (Some(enemy), Some(&(ability, _))) =
@@ -712,17 +729,19 @@ impl World {
             self.strike(player, &spec, enemy, 1.0, pos, Crit::Roll);
             self.shaman_charge_spent(h, ability, None);
         }
-        let thorns: Vec<(usize, f32)> = self.heroes[h]
+        let thorns: Vec<(PlayerId, usize, f32)> = self.heroes[h]
             .spell
             .fx
             .buffs
             .iter()
             .filter(|b| b.fx.thorns > 0.0)
-            .map(|b| (b.ability, b.fx.thorns))
+            .map(|b| (b.by, b.ability, b.fx.thorns))
             .collect();
         if let Some(enemy) = from {
-            for (ability, dmg) in thorns {
-                self.damage_enemy(player, ability, enemy, dmg, false);
+            for (by, ability, dmg) in thorns {
+                // Thorns from a friend's Aura count as the friend's damage.
+                self.damage_enemy(by, ability, enemy, dmg, false);
+                self.paladin_thorns(h, by, ability, dmg);
             }
         }
         amount
@@ -888,6 +907,7 @@ impl World {
             self.heal_hero(t, amount, Some(&spec));
             self.priest_charge_spent(h, ability, t, amount);
             self.shaman_charge_spent(h, ability, Some(t));
+            self.paladin_charge_spent(h, ability, t, amount);
             let (player, target) = (self.heroes[h].player, self.heroes[t].player);
             self.events.push(Event::Cast {
                 caster: player,
@@ -908,6 +928,10 @@ impl World {
             st.root = (st.root - DT).max(0.0);
             st.weaken = (st.weaken - DT).max(0.0);
             st.lost = (st.lost - DT).max(0.0);
+            st.glimmer_secs = (st.glimmer_secs - DT).max(0.0);
+            if st.glimmer_secs == 0.0 {
+                st.glimmer_by = None;
+            }
             st.shadow_vuln_secs = (st.shadow_vuln_secs - DT).max(0.0);
             if st.shadow_vuln_secs == 0.0 {
                 st.shadow_vuln = 0;
@@ -933,6 +957,7 @@ impl World {
         self.warlock_deaths(deaths);
         self.hunter_deaths(deaths);
         self.shaman_deaths(deaths);
+        self.paladin_deaths(deaths);
     }
 
     /// After a nova of `spec` by hero `h` hit `hit` around `center`: the capstones that count
@@ -957,6 +982,7 @@ impl World {
         self.warrior_nova(h, spec, center, hit);
         self.rogue_nova(h, spec, center, hit);
         self.priest_nova(h, spec, center, hit);
+        self.paladin_nova(h, spec, center, hit);
     }
 
     /// Where a ground area of `spec` cast from `origin` is put: at the origin for a totem, a trap
@@ -1122,6 +1148,7 @@ impl World {
     /// A blow of `amount` from enemy `from` reached hero `h`'s health, and it still stands.
     pub(super) fn after_blow(&mut self, h: usize, amount: f32, from: Option<u32>) {
         self.priest_blow(h, amount, from);
+        self.paladin_blow(h, amount, from);
     }
 
     /// Hero `h`'s absorbing shield broke.

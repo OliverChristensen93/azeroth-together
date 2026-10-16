@@ -50,9 +50,11 @@
         speed: 7.0,
         start: "hammer_of_wrath",
         pool: [
-            "hammer_of_wrath", "consecration", "holy_shock", "exorcism", "holy_wrath",
-            "hammer_of_justice", "judgement",
+            "hammer_of_wrath", "judgement", "exorcism", "holy_shock", "consecration", "holy_wrath",
+            "hammer_of_justice", "holy_shield", "holy_light", "retribution_aura", "seal_of_command",
+            "lay_on_hands",
         ],
+        defensive: "divine_shield",
     ),
     (
         key: "hunter",
