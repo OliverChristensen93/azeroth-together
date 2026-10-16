@@ -23,7 +23,9 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
 - `content/*.ron` — classes, abilities, enemies, zones, and `rules.ron` (tome slots and ranks, item
   copies, shrine and elite-camp timers: what a game mode may set its own way). Read from disk at
   startup, so edits need no rebuild. `crates/together-sim/tests/shipped_content.rs` checks they
-  parse and play.
+  parse and play. An ability's description holds placeholders (`{damage}`, `{range}`, `{area}`,
+  `{targets}`, `{duration}`, ...; `together_sim::PLACEHOLDERS`) that `describe` fills from the
+  spell's cast, so cards and tooltips always give its real numbers.
 - `crates/benilla-app/src/together/` — the client: steps the sim and draws it with the engine's
   unit, spell-visual and combat-text systems. It decides nothing about the game.
   - The real WoW 1.12 UI (FrameXML from the MPQ) and character controller are ON (no `CaptureMode`):

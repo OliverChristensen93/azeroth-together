@@ -1189,7 +1189,9 @@ pub(super) fn refresh_menu_ui(
             if a.description.is_empty() {
                 a.name.clone()
             } else {
-                format!("{}: {}", a.name, a.description)
+                let spec = together_sim::CastSpec::base(s.0, a);
+                let text = together_sim::describe(a, &spec, class.base_hp);
+                format!("{}: {text}", a.name)
             }
         })
         .unwrap_or_else(|| "Spells: point at one to read it".into());

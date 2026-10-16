@@ -169,7 +169,10 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
         WHITE,
         WHITE,
     ));
-    out.push(Line::one(def.description.clone(), GOLD));
+    out.push(Line::one(
+        together_sim::describe(def, &s, hero.max_hp),
+        GOLD,
+    ));
 
     // Every number it has, one a line.
     let stat = |name: &str, value: String| Line::two(name, value, GREY, WHITE);

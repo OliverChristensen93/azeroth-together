@@ -8,6 +8,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::content::{AbilityDef, AbilityKind};
+
+/// A spell's chance to crit before any bonus.
+pub const BASE_CRIT: f32 = 0.05;
+
 /// What a spell is: its school, how it travels, what it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Tag {
@@ -295,9 +300,199 @@ pub fn control_secs(secs: f32, elite: bool, boss: bool) -> f32 {
     }
 }
 
+impl CastSpec {
+    /// Ability `ability` (`def`) cast with nothing on it: no rank, stats, upgrades or augments.
+    pub fn base(ability: usize, def: &AbilityDef) -> CastSpec {
+        let tags = def.tag_set;
+        CastSpec {
+            ability,
+            tags,
+            targeting: def.targeting(),
+            damage: def.damage,
+            cooldown: def.cooldown,
+            count: def.count,
+            volley: def.volley.max(1),
+            pierce: 0,
+            range: def.range,
+            radius: def.radius,
+            ring: 0.0,
+            cone: Cone::Ahead,
+            missile_speed: def.missile_speed,
+            crit: BASE_CRIT,
+            crit_mult: 2.0,
+            chill: if tags.has(Tag::Slow) { CHILL_SECS } else { 0.0 },
+            slow: CHILL_SLOW,
+            freeze: if tags.has(Tag::Freeze) {
+                def.freeze
+            } else {
+                0.0
+            },
+            freeze_chance: 0.0,
+            permafrost: false,
+            stun: if tags.has(Tag::Stun) { 1.0 } else { 0.0 },
+            knockback: if tags.has(Tag::Knockback) {
+                def.knockback
+            } else {
+                0.0
+            },
+            burn: def.burn,
+            dot_mult: 1.0,
+            dot_speed: 1.0,
+            dot_secs: 1.0,
+            tick_rate: 1.0,
+            contagion: false,
+            ground: if def.kind == AbilityKind::Ground {
+                def.duration
+            } else {
+                def.leaves_ground
+            },
+            follows: false,
+            targeted: false,
+            echo: false,
+            twin: false,
+            returning: false,
+            vs_chilled: 0.0,
+            vs_frozen: 0.0,
+            execute: 0.0,
+            shatter: 0.0,
+            shield: def.shield,
+            charges: 1,
+        }
+    }
+}
+
+/// The placeholders an ability's description may hold, each `{name}`; [`describe`] fills them
+/// from the cast, so the text always gives its real numbers.
+pub const PLACEHOLDERS: [&str; 19] = [
+    "damage",
+    "range",
+    "radius",
+    "area",
+    "targets",
+    "count",
+    "volley",
+    "cooldown",
+    "duration",
+    "tick",
+    "ground",
+    "chill",
+    "slow",
+    "freeze",
+    "stun",
+    "burn",
+    "burn_secs",
+    "shield",
+    "shield_hp",
+];
+
+/// A number as a description gives it: whole when it is, else to one decimal.
+fn num(v: f32) -> String {
+    if (v - v.round()).abs() < 0.05 {
+        format!("{:.0}", v)
+    } else {
+        format!("{:.1}", v)
+    }
+}
+
+/// `def`'s description with its placeholders filled from cast `s`, for a hero of `max_hp`
+/// health. An unknown placeholder is left as written.
+pub fn describe(def: &AbilityDef, s: &CastSpec, max_hp: f32) -> String {
+    let value = |name: &str| -> Option<String> {
+        Some(match name {
+            "damage" => num(s.damage.round()),
+            "range" => num(s.range),
+            "radius" => num(s.radius),
+            "area" => match (s.targeting, s.cone) {
+                (Targeting::Ahead, Cone::Ahead) => {
+                    format!("in a {}-yard cone ahead of you", num(s.radius))
+                }
+                (Targeting::Ahead, Cone::Behind) => {
+                    format!("in a {}-yard cone behind you", num(s.radius))
+                }
+                (Targeting::Ahead, Cone::Four) => {
+                    format!("in {}-yard cones on all four sides of you", num(s.radius))
+                }
+                _ if s.ring > 0.0 => format!(
+                    "between {} and {} yards from you",
+                    num(s.ring),
+                    num(s.radius)
+                ),
+                _ => format!("within {} yards of you", num(s.radius)),
+            },
+            "targets" => match (s.targeting, s.count) {
+                (Targeting::ElitesFirst, 1) => {
+                    "the nearest elite or boss, else the nearest enemy".to_string()
+                }
+                (Targeting::ElitesFirst, n) => {
+                    format!("the {n} nearest enemies, elites and bosses first")
+                }
+                (Targeting::Densest, _) => "the thickest crowd".to_string(),
+                (_, 1) => "the nearest enemy".to_string(),
+                (_, n) => format!("the {n} nearest enemies"),
+            },
+            "count" => s.count.to_string(),
+            "volley" => s.volley.to_string(),
+            "cooldown" => num(s.cooldown),
+            "duration" => num(if def.kind == AbilityKind::Ground {
+                s.ground
+            } else {
+                def.duration
+            }),
+            "tick" => num(1.0 / s.tick_rate.max(0.1)),
+            "ground" => num(s.ground),
+            "chill" => num(s.chill),
+            "slow" => num(s.slow * 100.0),
+            "freeze" => num(s.freeze),
+            "stun" => num(s.stun),
+            "burn" => num((s.burn * s.dot_mult * s.dot_secs * s.tick_rate * 100.0).round()),
+            "burn_secs" => num(BURN_SECS * s.dot_secs / s.dot_speed.max(0.1)),
+            "shield" => num((s.shield * 100.0).round()),
+            "shield_hp" => num((s.shield * max_hp).round()),
+            _ => return None,
+        })
+    };
+    let text = &def.description;
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut rest = text.as_str();
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after
+            .find('}')
+            .and_then(|close| Some((close, value(&after[..close])?)))
+        {
+            Some((close, v)) => {
+                out.push_str(&v);
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_description_gives_the_casts_own_numbers() {
+        let mut def = crate::content::tests::sample().abilities[0].clone();
+        def.description = "Hits {targets} within {range} yards for {damage}, {nope}.".into();
+        let mut s = CastSpec::base(0, &def);
+        s.damage = 12.4;
+        s.range = 20.0 * 1.1;
+        s.targeting = Targeting::Nearest;
+        s.count = 3;
+        assert_eq!(
+            describe(&def, &s, 100.0),
+            "Hits the 3 nearest enemies within 22 yards for 12, {nope}."
+        );
+    }
 
     #[test]
     fn tags_hold_what_they_are_given() {

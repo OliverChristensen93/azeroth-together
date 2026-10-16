@@ -7,8 +7,8 @@
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, fallback_gold, shield_size, AbilityKind, Augment, Boost, Card, CardKind, Hero,
-    InteractableKind, Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
+    ability_stats, describe, fallback_gold, shield_size, AbilityKind, Augment, Boost, Card,
+    CardKind, CastSpec, Hero, InteractableKind, Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
 };
 
 use super::menu::SpellIcon;
@@ -353,38 +353,17 @@ fn spell_face(
     let learn = upgrade.is_none();
     let content = content();
     let def = &content.abilities[ability];
-    let reach = |count: u32| match def.kind {
-        AbilityKind::Nova => format!("{:.0} yd around you", def.radius),
-        _ if count > 1 => format!("{count} targets within {:.0} yd", def.range),
-        _ => format!("{:.0} yd range", def.range),
-    };
     let text = |s: String| (s, Color::srgb(1.0, 0.9, 0.6));
-    let shield = def.kind == AbilityKind::Shield;
     let mut lines = Vec::new();
     let (badge, sub, bonus, footer) = if learn {
-        let s = ability_stats(def, rarity.learn_bonus()).with(&hero.stats);
-        if shield {
-            let size = shield_size(def.shield, rarity.learn_bonus());
+        // The description has every other number; a shield's gives its cooldown too.
+        if def.kind != AbilityKind::Shield {
             lines.push(text(format!(
-                "A shield of {:.0}% of your health every {:.1} sec",
-                size * 100.0,
-                s.cooldown
+                "Every {:.1} sec",
+                ability_stats(def, rarity.learn_bonus())
+                    .with(&hero.stats)
+                    .cooldown
             )));
-        } else if def.kind == AbilityKind::Ground {
-            lines.push(text(format!(
-                "{:.0} damage a second for {:.0} sec, every {:.1} sec",
-                s.damage.round(),
-                def.duration,
-                s.cooldown
-            )));
-            lines.push(text(reach(s.count)));
-        } else {
-            lines.push(text(format!(
-                "{:.0} damage every {:.1} sec",
-                s.damage.round(),
-                s.cooldown
-            )));
-            lines.push(text(reach(s.count)));
         }
         (
             "NEW".to_string(),
@@ -429,13 +408,28 @@ fn spell_face(
         bright: learn,
         // An upgrade shows only what it gives; the spell itself is on its icon's tooltip.
         description: if learn {
-            def.description.clone()
+            learn_text(hero, ability, rarity)
         } else {
             String::new()
         },
         lines,
         footer,
     }
+}
+
+/// A new spell's description with its numbers as it would be learned now: the card's bonus and
+/// the hero's stats on it.
+fn learn_text(hero: &Hero, ability: usize, rarity: Rarity) -> String {
+    let def = &content().abilities[ability];
+    let st = ability_stats(def, rarity.learn_bonus()).with(&hero.stats);
+    let mut s = CastSpec::base(ability, def);
+    s.damage = st.damage;
+    s.cooldown = st.cooldown;
+    s.count = st.count;
+    s.range = st.range;
+    s.radius = st.radius;
+    s.shield = shield_size(def.shield, rarity.learn_bonus());
+    describe(def, &s, hero.max_hp)
 }
 
 /// A stat as it stands on the hero, for "now » after" lines.

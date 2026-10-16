@@ -313,61 +313,14 @@ impl World {
         let hero = &self.heroes[h];
         let def = &self.content.abilities[owned.ability];
         let st = self.sharpen(owned.stats(def).with(&hero.stats));
-        let tags = def.tag_set;
-        let mut s = CastSpec {
-            ability: owned.ability,
-            tags,
-            targeting: def.targeting(),
-            damage: st.damage,
-            cooldown: st.cooldown,
-            count: st.count,
-            volley: def.volley.max(1),
-            pierce: 0,
-            range: st.range,
-            radius: st.radius,
-            ring: 0.0,
-            cone: Cone::Ahead,
-            missile_speed: def.missile_speed,
-            crit: CRIT_CHANCE + hero.stats.get(Stat::Crit),
-            crit_mult: 2.0,
-            chill: if tags.has(Tag::Slow) { CHILL_SECS } else { 0.0 },
-            slow: CHILL_SLOW,
-            freeze: if tags.has(Tag::Freeze) {
-                def.freeze
-            } else {
-                0.0
-            },
-            freeze_chance: 0.0,
-            permafrost: false,
-            stun: if tags.has(Tag::Stun) { 1.0 } else { 0.0 },
-            knockback: if tags.has(Tag::Knockback) {
-                def.knockback
-            } else {
-                0.0
-            },
-            burn: def.burn,
-            dot_mult: 1.0,
-            dot_speed: 1.0,
-            dot_secs: 1.0,
-            tick_rate: 1.0,
-            contagion: false,
-            ground: if def.kind == AbilityKind::Ground {
-                def.duration
-            } else {
-                def.leaves_ground
-            },
-            follows: false,
-            targeted: false,
-            echo: false,
-            twin: false,
-            returning: false,
-            vs_chilled: 0.0,
-            vs_frozen: 0.0,
-            execute: 0.0,
-            shatter: 0.0,
-            shield: shield_size(def.shield, owned.bonus),
-            charges: 1,
-        };
+        let mut s = CastSpec::base(owned.ability, def);
+        s.damage = st.damage;
+        s.cooldown = st.cooldown;
+        s.count = st.count;
+        s.range = st.range;
+        s.radius = st.radius;
+        s.crit = CRIT_CHANCE + hero.stats.get(Stat::Crit);
+        s.shield = shield_size(def.shield, owned.bonus);
         owned.mods.apply(&mut s);
         for &a in &owned.augments {
             a.shape(&mut s);

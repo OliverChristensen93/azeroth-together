@@ -62,7 +62,7 @@ const HERO_RADIUS: f32 = 0.7;
 /// Within this many yards of a hero an experience gem is collected, before [`Stat::Pickup`].
 const MAGNET: f32 = 4.5;
 /// The chance of a critical strike, before [`Stat::Crit`].
-const CRIT_CHANCE: f32 = 0.05;
+const CRIT_CHANCE: f32 = crate::spell::BASE_CRIT;
 /// The chance an enemy's gem also carries gold.
 const GOLD_CHANCE: f32 = 0.3;
 /// A gem's gold, per point of the enemy's experience.
@@ -1014,6 +1014,7 @@ impl World {
             }
             if skip {
                 self.heroes[h].offers.remove(0);
+                self.redeal_stale(h);
                 continue;
             }
             let hand = &self.heroes[h].offers[0];
@@ -1022,6 +1023,38 @@ impl World {
             };
             self.heroes[h].offers.remove(0);
             self.take_card(h, card);
+            self.redeal_stale(h);
+        }
+    }
+
+    /// Hero `h`'s waiting level-up hands dealt anew where a card no longer makes sense: a spell
+    /// just learned, a full spell bar, a spell waiting at its augment, a tome at its last rank.
+    /// Several level-ups deal their hands at once, so an earlier pick can spoil a later hand.
+    fn redeal_stale(&mut self, h: usize) {
+        let mut i = 0;
+        while i < self.heroes[h].offers.len() {
+            let source = self.heroes[h].offers[i].source;
+            if source != Source::LevelUp {
+                i += 1;
+                continue;
+            }
+            let options = self.options(h, source);
+            let stale = self.heroes[h].offers[i].cards.iter().any(|c| match c.kind {
+                CardKind::Upgrade(a, _) => !options.contains(&CardKind::Upgrade(a, [None; 3])),
+                k @ (CardKind::Learn(_) | CardKind::Tome(_)) => !options.contains(&k),
+                _ => false,
+            });
+            if !stale {
+                i += 1;
+                continue;
+            }
+            let hand = self.deal(h, source);
+            if hand.cards.is_empty() {
+                self.heroes[h].offers.remove(i);
+            } else {
+                self.heroes[h].offers[i] = hand;
+                i += 1;
+            }
         }
     }
 
@@ -2293,6 +2326,39 @@ mod tests {
         assert_eq!(mirror.hero(1).unwrap().name, "Friend");
         assert_eq!(mirror.hero(1).unwrap().race, 4);
         assert_eq!(mirror.paused(), host.paused());
+    }
+
+    #[test]
+    fn a_waiting_hand_is_dealt_anew_once_a_pick_spoils_it() {
+        let mut w = world();
+        let learn = w
+            .spells(0)
+            .into_iter()
+            .find(|k| matches!(k, CardKind::Learn(_)))
+            .expect("a spell to learn");
+        let hand = Offer {
+            cards: vec![Card {
+                kind: learn,
+                rarity: Rarity::Common,
+            }],
+            source: Source::LevelUp,
+        };
+        w.heroes[0].offers = vec![hand.clone(), hand];
+        w.queue_input(
+            0,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(
+            w.heroes[0]
+                .offers
+                .iter()
+                .all(|o| o.cards.iter().all(|c| c.kind != learn)),
+            "the second hand still offers the spell just learned"
+        );
     }
 
     #[test]
