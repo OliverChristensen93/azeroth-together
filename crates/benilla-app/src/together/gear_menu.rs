@@ -272,7 +272,7 @@ pub(super) fn build(
                         GlueText {
                             text: "Click a stash piece to wear it, a worn piece to take it off. \
                                    Worn pieces start every run dormant: spend gold in the run \
-                                   to switch them on (G, or click its icon).",
+                                   to switch them on (Y, or click its icon).",
                             size: 11.0,
                             color: DIM,
                             wrap: true,

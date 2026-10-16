@@ -12,7 +12,7 @@ hero, each rolling their own. Pieces go straight into a stash kept on disk. At t
 **Equipment** screen you wear up to eleven pieces (head, shoulders, back, chest, wrists, hands,
 waist, legs, feet, main hand, off hand; a two-hander fills both hands). Every run starts with
 them **dormant**: you see them in a gear bar under your tomes and items, dimmed, each with its
-gold price. Spend gold on one (click it, or press **G** for the best one you can pay for) and it
+gold price. Spend gold on one (click it, or press **Y** for the best one you can pay for) and it
 switches on: its stats join yours, a unique starts changing its spell, and your hero visibly
 puts it on. Gold also buys chests, so every coin is "a chest, or a piece I know".
 
@@ -28,7 +28,7 @@ puts it on. Gold also buys chests, so every coin is "a chest, or a piece I know"
 | The stash file and test hooks | `crates/benilla-app/src/together/armory.rs` |
 | Looks (display ids) and dressing the hero | `crates/benilla-app/src/together/gear_look.rs` |
 | The menu's Equipment screen | `crates/benilla-app/src/together/gear_menu.rs` |
-| The run's gear bar and the G key | `crates/benilla-app/src/together/gear_run.rs` |
+| The run's gear bar and the Y key | `crates/benilla-app/src/together/gear_run.rs` |
 | WoW-style item tooltips | `crates/benilla-app/src/together/gear_tip.rs` |
 | Co-op: gear in the pick | `crates/together-net/src/lib.rs` (`HeroPick::gear`, `PROTOCOL` 7) |
 
@@ -162,8 +162,8 @@ shared locker and the other way round). Merge them, or pick one, once you know w
   only compete for the same gold.
 - **The gear bar** sits under the tomes and items strip: one icon per brought piece, its border in
   its quality's colour, dimmed with its price in the corner (gold when you can pay, grey when not)
-  until it is on. Beside it: "G: switch on <name> (<price> gold)" when you can pay for one, else
-  what the next costs. Click an icon, or press **G** for the best piece you can pay for (highest
+  until it is on. Beside it: "Y: switch on <name> (<price> gold)" when you can pay for one, else
+  what the next costs. Click an icon, or press **Y** (G is Banish and T Freeze on the level-up screen, B and V are WoW's bags and nameplates) for the best piece you can pay for (highest
   rarity, then the most power). It works while a card screen is up, as card picks do.
 - The hero's stats, health and speed update at once; a unique's spell changes from its next
   cast. Power Word: Fortitude's glow plays on the hero, with "<name> awakens".
@@ -193,7 +193,7 @@ Each player's worn set travels in their `HeroPick` (the Hello and Pick messages,
 roster), so the host has every guest's gear when the run starts; `together_net::PROTOCOL` went
 from 6 to 7. The host's world calls `World::equip` for every roster player, which keeps only
 valid pieces (a unique in its own slot, sane item levels, one per slot, no off hand beside a
-two-hander). A guest's G or click travels as `PlayerInput::gear_on`; the host checks the price and
+two-hander). A guest's Y or click travels as `PlayerInput::gear_on`; the host checks the price and
 the purse. Snapshots carry each hero's gear, so every client dresses every hero, and a guest's
 finds reach the guest's own stash through its mirrored hero.
 

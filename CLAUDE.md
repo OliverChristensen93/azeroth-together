@@ -82,6 +82,12 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   were held). The tomes and items carried are a strip of icons under the player frame, and the
   stat sheet opens with its Stats button or Tab (`together/inventory.rs`; `TOGETHER_STATS=1`
   opens it).
+  Meta equipment (`docs/META-GEAR.md`): `together-sim` `gear.rs` (pieces, uniques, drops),
+  `armory.rs` (the stash, per class or shared), `world/gear.rs` (bring dormant, switch on with
+  gold); the client's `together/armory.rs` saves `benilla-config/together-armory.ron`,
+  `gear_menu.rs` is the menu's Equipment screen, `gear_run.rs` the run's gear bar (Y switches on),
+  `gear_look.rs` the looks. `TOGETHER_GEAR_SEED=1` uses a test stash, `TOGETHER_GEAR_SCREEN=1`
+  opens the screen, `TOGETHER_GEAR_ON=1` switches all brought gear on at the start.
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries

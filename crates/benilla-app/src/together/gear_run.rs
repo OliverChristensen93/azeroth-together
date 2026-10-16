@@ -1,6 +1,6 @@
 //! The gear bar in a run: the pieces the local hero brought, as a row of icons under its tomes
 //! and items. A dormant piece is dimmed with its price in the corner; clicking it switches it
-//! on, and G switches on the best piece the purse pays for. A line beside the row says what G
+//! on, and Y switches on the best piece the purse pays for. A line beside the row says what Y
 //! would buy. Gold is the same purse that pays for chests, so every coin is "a chest, or a piece
 //! I know" (decision 9f).
 
@@ -27,7 +27,7 @@ pub(super) struct GearBar;
 #[derive(Component)]
 pub(super) struct GearBarIcons;
 
-/// The line saying what G buys.
+/// The line saying what Y buys.
 #[derive(Component)]
 pub(super) struct GearBarHint;
 
@@ -92,14 +92,14 @@ pub(super) fn setup(
     commands.insert_resource(GearBarFont(font));
 }
 
-/// What G would switch on, and for how much.
+/// What Y would switch on, and for how much.
 fn next_buy(hero: &Hero) -> Option<(Slot, GearPiece, u32)> {
     let slot = hero.gear.next_affordable(hero.gold)?;
     let piece = hero.gear.in_slot(slot)?.piece;
     Some((slot, piece, hero.gear.price(slot)?))
 }
 
-/// The bar kept to the hero's gear, a click or G switching a piece on, and autoplay buying as
+/// The bar kept to the hero's gear, a click or Y switching a piece on, and autoplay buying as
 /// soon as it can.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn refresh(
@@ -135,7 +135,7 @@ pub(super) fn refresh(
         return;
     };
 
-    // A click on a dormant piece, G for the best one the purse pays for; autoplay buys whatever
+    // A click on a dormant piece, Y for the best one the purse pays for; autoplay buys whatever
     // it can. The world checks the price again.
     let clicked = clicks
         .iter()
@@ -143,7 +143,7 @@ pub(super) fn refresh(
         .map(|(_, s)| s.0)
         .filter(|&s| hero.gear.price(s).is_some());
     let buy = clicked.or_else(|| {
-        (keys.just_pressed(KeyCode::KeyG) || autoplay())
+        (keys.just_pressed(KeyCode::KeyY) || autoplay())
             .then(|| next_buy(hero).map(|(s, _, _)| s))
             .flatten()
     });
@@ -154,7 +154,7 @@ pub(super) fn refresh(
     }
 
     let text = match next_buy(hero) {
-        Some((_, piece, price)) => format!("G: switch on {} ({price} gold)", piece.name()),
+        Some((_, piece, price)) => format!("Y: switch on {} ({price} gold)", piece.name()),
         None => {
             let n = hero.gear.switched_on();
             let cheapest = Slot::ALL.iter().filter_map(|&s| hero.gear.price(s)).min();
