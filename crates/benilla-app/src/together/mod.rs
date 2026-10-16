@@ -25,6 +25,7 @@ mod menu;
 mod meter;
 mod party;
 mod session;
+mod talents;
 mod tooltip;
 mod ui;
 mod units;
@@ -56,7 +57,7 @@ pub(crate) fn start_map() -> u32 {
 }
 
 /// The content files' text, for the content hash a co-op client and host compare: classes,
-/// abilities, enemies, and the zones with the rules after them.
+/// abilities, enemies, and the zones with the rules and the talent web after them.
 static CONTENT_TEXTS: OnceLock<(String, String, String, String)> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static (String, String, String, String) {
@@ -111,6 +112,11 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     )?;
     let zones = read("zones.ron", include_str!("../../../../content/zones.ron"))?;
     let rules = read("rules.ron", include_str!("../../../../content/rules.ron"))?;
+    let talent_web = read(
+        "talents.ron",
+        include_str!("../../../../content/talents.ron"),
+    )?;
+    talents::set_web(together_sim::TalentWeb::from_ron(&talent_web)?);
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         abilities: &abilities,
@@ -134,7 +140,12 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     }
     START_MAP.store(content.zones[zone].map, Ordering::Relaxed);
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set((classes, abilities, enemies, format!("{zones}\n{rules}")));
+    let _ = CONTENT_TEXTS.set((
+        classes,
+        abilities,
+        enemies,
+        format!("{zones}\n{rules}\n{talent_web}"),
+    ));
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
 }
@@ -198,6 +209,9 @@ impl Sim {
                 p.hero.race,
                 p.hero.sex,
             );
+            // Each hero's own talents, as far as they connect and its points go.
+            let taken: Vec<usize> = p.hero.talents.iter().map(|&n| usize::from(n)).collect();
+            world.apply_talents(p.player, &talents::web(), &taken);
         }
         give_loadout(&mut world);
         dev.apply(&mut world);
@@ -298,6 +312,7 @@ impl Plugin for TogetherPlugin {
             .init_resource::<lobby::JoinDialog>()
             .init_resource::<dev::DevSettings>()
             .init_resource::<inventory::SheetOpen>()
+            .add_plugins(talents::TalentsPlugin)
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
@@ -422,6 +437,7 @@ fn start_run(
     mut next: ResMut<NextState<Phase>>,
     mut net: ResMut<session::Net>,
     dev: Res<dev::DevSettings>,
+    talents: Res<talents::Talents>,
 ) {
     let content = content();
     let mut begin = |commands: &mut Commands, sim: Sim| {
@@ -464,7 +480,7 @@ fn start_run(
     if !std::mem::take(&mut start.0) && !auto {
         return;
     }
-    let Some(own) = session::own_pick(&selection) else {
+    let Some(own) = session::own_pick(&selection, &talents) else {
         return;
     };
     selection.stage = selection.zone;

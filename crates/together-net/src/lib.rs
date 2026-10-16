@@ -23,7 +23,7 @@ pub use host::{ConnId, Host, HostEvent, Invite};
 pub use invite::{code_for, new_host_key, parse_code};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;
@@ -36,6 +36,10 @@ pub struct HeroPick {
     pub class: String,
     pub race: u8,
     pub sex: u8,
+    /// The talent web nodes this hero takes for its class, by index into the shared
+    /// `talents.ron` (the content hash makes sure both sides read the same web). The host keeps
+    /// only what connects to the class's start, up to the web's top number of points.
+    pub talents: Vec<u16>,
 }
 
 /// A player in the host's lobby.
