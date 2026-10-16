@@ -140,7 +140,8 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   Enemy groups in `spawns.ron` marked `measure:` still sit near the entry: move each to its place
   once measured in the game (`NIGHTFALL_TRACE_POS=1`). A group whose point has no floor is left
   out; where no path reaches, a sentry stays and retries ("no path to its post"), a patrol skips
-  that point, and a wanderer gives up ("finds no ground to walk to"). Each is named in the log as
+  that point, and a wanderer that finds no ground keeps trying each second and is named once after
+  10 failed searches in a row ("finds no ground to walk to"). Each is named in the log as
   `nightfall: spawns.ron: …`.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
