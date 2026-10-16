@@ -11,6 +11,10 @@ use crate::extraction::ExtractionDef;
 const WAKE_EVERY: u64 = 15;
 /// Yards past `wake` every living hero must be before an idle creature sleeps again.
 const SLEEP_MARGIN: f32 = 20.0;
+/// Steps between notice checks.
+const NOTICE_EVERY: u64 = 3;
+/// How near a walking creature must come to a point to have reached it.
+const ARRIVE: f32 = 1.5;
 
 /// One of the map's creatures kept for a run.
 #[derive(Clone, Debug)]
@@ -71,6 +75,10 @@ impl World {
         if self.tick % WAKE_EVERY == 0 {
             self.wake_and_sleep(def);
         }
+        if self.tick % NOTICE_EVERY == 0 {
+            self.notice(def);
+        }
+        self.give_up(def);
     }
 
     /// Idle creatures with every living hero far off sleep; sleeping ones near a living hero,
@@ -155,6 +163,172 @@ impl World {
         w.dead_until = now + respawn;
         def.wildlife.reward
     }
+
+    /// Awake creatures that are not chasing notice a living hero within their range: the map's
+    /// `notice`, more for creatures above the party's level and less below (never under
+    /// `notice_min`), and more for each skull of the party's heat. Neutral kinds never notice.
+    fn notice(&mut self, def: &ExtractionDef) {
+        let living: Vec<V2> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| h.pos)
+            .collect();
+        if living.is_empty() {
+            return;
+        }
+        let wl = &def.wildlife;
+        let skulls = def.skull_index(self.party_heat()) as f32;
+        let sharp = 1.0 + wl.notice_per_skull * skulls;
+        let party = self.level as f32;
+        let content = self.content.clone();
+        let seen: Vec<u32> = self
+            .enemies
+            .iter()
+            .filter(|e| {
+                let Some(link) = &e.wild else {
+                    return false;
+                };
+                let kind = &content.enemies[e.def];
+                if e.engaged || link.returning || kind.neutral {
+                    return false;
+                }
+                let range = (wl.notice + (kind.level as f32 - party) * wl.notice_per_level)
+                    .max(wl.notice_min)
+                    * sharp;
+                living.iter().any(|p| p.distance(e.pos) <= range)
+            })
+            .map(|e| e.id)
+            .collect();
+        for id in seen {
+            self.engage(def, id);
+        }
+    }
+
+    /// Creature `id` gives chase, and with it every idle creature of its kind within `social`,
+    /// or within `help` when its kind calls for help (it shouts). Each adds the map's notice heat.
+    fn engage(&mut self, def: &ExtractionDef, id: u32) {
+        let Some(e) = self.enemy(id).filter(|e| !e.engaged) else {
+            return;
+        };
+        let (kind, at) = (e.def, e.pos);
+        let calls = self.content.enemies[kind].calls_help;
+        let reach = if calls {
+            def.wildlife.help.max(def.wildlife.social)
+        } else {
+            def.wildlife.social
+        };
+        let pack: Vec<u32> = self
+            .enemies
+            .iter()
+            .filter(|o| {
+                o.id == id
+                    || (o.def == kind
+                        && !o.engaged
+                        && o.wild.as_ref().is_some_and(|l| !l.returning)
+                        && o.pos.distance(at) <= reach)
+            })
+            .map(|o| o.id)
+            .collect();
+        if calls {
+            self.events.push(Event::CalledHelp { id });
+        }
+        for m in pack {
+            if let Some(o) = self.enemies.iter_mut().find(|o| o.id == m) {
+                o.engaged = true;
+                if let Some(l) = &mut o.wild {
+                    l.quiet = 0.0;
+                }
+            }
+            self.events.push(Event::Engaged { id: m });
+            self.add_heat(None, def.heat.notice);
+        }
+    }
+
+    /// An engaged creature that nobody has hurt, and that has hurt nobody, for `give_up`
+    /// seconds, with every living hero further than `leash`, gives up and walks home.
+    fn give_up(&mut self, def: &ExtractionDef) {
+        let living: Vec<V2> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| h.pos)
+            .collect();
+        let wl = def.wildlife;
+        for e in &mut self.enemies {
+            if !e.engaged {
+                continue;
+            }
+            let Some(l) = &mut e.wild else {
+                continue;
+            };
+            l.quiet += DT;
+            if l.quiet >= wl.give_up && living.iter().all(|p| p.distance(e.pos) > wl.leash) {
+                l.returning = true;
+                l.quiet = 0.0;
+                l.goal = None;
+                e.engaged = false;
+            }
+        }
+    }
+
+    /// Where each enemy that is not chasing walks this step, in [`World::enemies`]' order:
+    /// home for one that gave up (healed on arrival), a patrol's next point, or a wanderer's
+    /// spot; `None` stands. Empty in the arena.
+    pub(super) fn idle_goals(&mut self) -> Vec<Option<V2>> {
+        let content = self.content.clone();
+        let Some(def) = self.map(&content) else {
+            return Vec::new();
+        };
+        let mut goals = Vec::with_capacity(self.enemies.len());
+        for i in 0..self.enemies.len() {
+            let e = &self.enemies[i];
+            let Some(link) = e.wild.clone().filter(|_| !e.engaged) else {
+                goals.push(None);
+                continue;
+            };
+            let spawn = &def.spawns[self.wild[link.slot].spawn];
+            let (home, pos) = (spawn.at(), e.pos);
+            let goal = if link.returning {
+                if pos.distance(home) <= ARRIVE {
+                    let e = &mut self.enemies[i];
+                    e.hp = e.max_hp;
+                    if let Some(l) = &mut e.wild {
+                        l.returning = false;
+                    }
+                    None
+                } else {
+                    Some(home)
+                }
+            } else if !spawn.path.is_empty() {
+                let point = |k: usize| V2::new(spawn.path[k][0], spawn.path[k][1]);
+                let mut next = link.path_at % spawn.path.len();
+                if pos.distance(point(next)) <= ARRIVE {
+                    next = (next + 1) % spawn.path.len();
+                }
+                if let Some(l) = &mut self.enemies[i].wild {
+                    l.path_at = next;
+                }
+                Some(point(next))
+            } else if spawn.wander > 0.0 {
+                match link.goal {
+                    Some(g) if pos.distance(g) > ARRIVE => Some(g),
+                    _ => {
+                        let angle = self.rng.range(0.0, std::f32::consts::TAU);
+                        let g = home + V2::from_angle(angle, self.rng.range(0.0, spawn.wander));
+                        if let Some(l) = &mut self.enemies[i].wild {
+                            l.goal = Some(g);
+                        }
+                        Some(g)
+                    }
+                }
+            } else {
+                None
+            };
+            goals.push(goal);
+        }
+        goals
+    }
 }
 
 #[cfg(test)]
@@ -162,7 +336,7 @@ mod tests {
     use super::*;
     use crate::extraction::tests::test_content;
     use crate::extraction::HotZoneDef;
-    use crate::world::extraction::tests::{at, secs};
+    use crate::world::extraction::tests::{at, secs, state_mut};
 
     /// Wolves at (150, 0), (155, 5) and (180, 0); a neutral boar at (0, 200); kobolds that
     /// call for help at (0, -150) and (0, -175); a wolf patrolling from (-200, 0) to (-200, 50).
@@ -306,5 +480,127 @@ mod tests {
         secs(&mut w, 2.0);
         assert!(!w.enemies.is_empty());
         assert!(w.enemies.iter().all(|e| e.engaged && !e.is_wild()));
+    }
+
+    #[test]
+    fn a_creature_notices_a_hero_who_comes_close_and_its_pack_comes_too() {
+        let mut w = forest(|d| d.heat.notice = 2.0);
+        at(&mut w, 0, 138.0, 0.0);
+        secs(&mut w, 0.5);
+        assert!(w.enemies.iter().all(|e| !e.engaged), "12 yd: out of notice");
+        let heat = w.heat_of(0);
+        at(&mut w, 0, 142.0, 0.0);
+        secs(&mut w, 0.2);
+        let engaged: Vec<V2> = w
+            .enemies
+            .iter()
+            .filter(|e| e.engaged)
+            .map(|e| e.pos)
+            .collect();
+        assert_eq!(
+            engaged.len(),
+            2,
+            "the wolf and the one beside it: {engaged:?}"
+        );
+        assert!(
+            w.heat_of(0) >= heat + 4.0 - 0.01,
+            "two noticed: {}",
+            w.heat_of(0)
+        );
+    }
+
+    #[test]
+    fn a_kobold_calls_its_kin_from_further_off() {
+        let mut w = forest(|_| {});
+        at(&mut w, 0, 0.0, -142.0);
+        secs(&mut w, 0.5);
+        assert_eq!(w.enemies.iter().filter(|e| e.engaged).count(), 2);
+        assert!(w
+            .drain_events()
+            .iter()
+            .any(|e| matches!(e, Event::CalledHelp { .. })));
+    }
+
+    #[test]
+    fn a_neutral_creature_never_notices_but_fights_back() {
+        let mut w = forest(|_| {});
+        at(&mut w, 0, 0.0, 195.0);
+        secs(&mut w, 2.0);
+        let boar = creature(&w, 0.0, 200.0).unwrap();
+        assert!(!boar.engaged);
+        let id = boar.id;
+        w.damage_enemy(0, 0, id, 1.0, false);
+        assert!(w.enemy(id).unwrap().engaged);
+    }
+
+    #[test]
+    fn heat_and_level_change_how_far_a_creature_notices() {
+        // At 5 skulls a level-1 wolf notices from 10 × 1.75 = 17.5 yd.
+        let mut w = forest(|_| {});
+        at(&mut w, 0, 135.0, 0.0);
+        state_mut(&mut w).heat = 1000.0;
+        secs(&mut w, 0.5);
+        assert!(w.enemies.iter().any(|e| e.engaged && e.is_wild()));
+        // A party nine levels above it: 10 − 9 = 1, held at the minimum of 5 yd.
+        let mut w = forest(|_| {});
+        w.level = 10;
+        at(&mut w, 0, 143.0, 0.0);
+        secs(&mut w, 0.5);
+        assert!(!w.enemies.iter().any(|e| e.engaged && e.is_wild()));
+    }
+
+    #[test]
+    fn an_engaged_creature_never_sleeps() {
+        let mut w = forest(|_| {});
+        at(&mut w, 0, 100.0, 0.0);
+        secs(&mut w, 0.5);
+        let id = creature(&w, 150.0, 0.0).unwrap().id;
+        w.damage_enemy(0, 0, id, 1.0, false);
+        w.heroes[0].abilities.clear();
+        at(&mut w, 0, -250.0, 0.0);
+        secs(&mut w, 1.0);
+        assert!(w.enemy(id).is_some_and(|e| e.engaged));
+    }
+
+    #[test]
+    fn a_creature_left_behind_gives_up_walks_home_and_heals() {
+        let mut w = forest(|_| {});
+        w.heroes[0].abilities.clear();
+        at(&mut w, 0, 142.0, 0.0);
+        // Creatures wake on the half second.
+        secs(&mut w, 0.5);
+        let id = creature(&w, 150.0, 0.0)
+            .filter(|e| e.engaged)
+            .expect("noticed")
+            .id;
+        w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 1.0;
+        // The hero runs off faster than a wolf can follow.
+        w.set_input(
+            0,
+            PlayerInput {
+                move_dir: V2::new(1.0, 0.0),
+                ..Default::default()
+            },
+        );
+        secs(&mut w, 40.0);
+        let wolf = w.enemy(id).expect("awake still");
+        assert!(!wolf.engaged);
+        assert!(
+            wolf.pos.distance(V2::new(150.0, 0.0)) < 2.0,
+            "{:?}",
+            wolf.pos
+        );
+        assert_eq!(wolf.hp, wolf.max_hp);
+    }
+
+    #[test]
+    fn a_patrolling_creature_walks_its_path() {
+        let mut w = forest(|_| {});
+        at(&mut w, 0, -150.0, 60.0);
+        secs(&mut w, 0.5);
+        let start = creature(&w, -200.0, 0.0).unwrap().pos;
+        secs(&mut w, 8.0);
+        let now = w.enemies.iter().find(|e| e.is_wild()).unwrap().pos;
+        assert!(now.y > start.y + 5.0, "{start:?} to {now:?}");
     }
 }

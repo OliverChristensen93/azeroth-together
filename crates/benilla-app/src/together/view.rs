@@ -394,6 +394,7 @@ pub(super) fn apply_events(
                 }
             }
             Event::Engaged { .. } => {}
+            Event::CalledHelp { .. } => {}
             Event::HeroExtracted { player, .. } => {
                 if let Some(&e) = views.heroes.get(&player) {
                     fx.cast(e, TELEPORT, &[e], None);

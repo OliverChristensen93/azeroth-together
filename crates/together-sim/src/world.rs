@@ -267,6 +267,10 @@ pub enum Event {
     Engaged {
         id: u32,
     },
+    /// Extraction: creature `id` shouted for help, bringing its kind from further off.
+    CalledHelp {
+        id: u32,
+    },
     /// Extraction: `player` left on the flight from exit `exit`.
     HeroExtracted {
         player: PlayerId,
@@ -1239,12 +1243,30 @@ impl World {
                 }
             }
         }
+        let idle = self.idle_goals();
+        let walk = self
+            .map(&self.content)
+            .map_or(1.0, |d| d.wildlife.walk);
         let mut swings = Vec::new();
         for (i, e) in self.enemies.iter_mut().enumerate() {
-            // A creature that has not noticed anyone stands (Task 6 walks it).
+            // A creature that is not chasing walks its patrol, wanders, or walks home.
             if !e.engaged {
-                e.moving = false;
-                e.pos += shove[i] * (DT * 8.0).min(0.5);
+                let returning = e.wild.as_ref().is_some_and(|l| l.returning);
+                let pace = e.speed * if returning { 1.0 } else { walk } * DT;
+                let step = idle.get(i).copied().flatten().map_or(V2::ZERO, |goal| {
+                    let to = goal - e.pos;
+                    let len = to.length();
+                    if len <= 1e-3 {
+                        V2::ZERO
+                    } else {
+                        to * (pace.min(len) / len)
+                    }
+                });
+                e.moving = step != V2::ZERO;
+                if e.moving {
+                    e.facing = step.normalize_or_zero();
+                }
+                e.pos += step + shove[i] * (DT * 8.0).min(0.5);
                 continue;
             }
             let (player, target) = living
@@ -1266,6 +1288,9 @@ impl World {
             e.attack_cd -= DT;
             if contact && e.attack_cd <= 0.0 {
                 e.attack_cd = 1.3;
+                if let Some(l) = &mut e.wild {
+                    l.quiet = 0.0;
+                }
                 swings.push((e.id, player, e.damage));
             }
         }
