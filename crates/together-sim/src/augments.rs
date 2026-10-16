@@ -672,6 +672,7 @@ pub(crate) mod tests {
             dot_mult: 1.0,
             dot_speed: 1.0,
             dot_secs: 1.0,
+            tick_rate: 1.0,
             contagion: false,
             ground: 0.0,
             follows: false,

@@ -212,7 +212,7 @@ pub enum Boost {
     Area,
     /// How long a ground area or a burn lasts.
     Duration,
-    /// How fast a burn ticks.
+    /// How often a burn or a ground area ticks.
     Ticks,
     Shield,
     Projectiles,
@@ -286,7 +286,7 @@ impl Boost {
             Boost::Reach => format!("Range +{pct}%"),
             Boost::Area => format!("Area +{pct}%"),
             Boost::Duration => format!("Duration +{pct}%"),
-            Boost::Ticks => format!("Tick speed +{pct}%"),
+            Boost::Ticks => format!("Tick rate +{pct}%"),
             Boost::Shield => format!("Shield +{pct}%"),
             Boost::Projectiles => format!("Projectiles +{}", amount.round()),
             Boost::Crit => format!("Crit chance +{pct}%"),
@@ -392,7 +392,7 @@ impl SpellMods {
         s.radius *= 1.0 + self.area;
         s.ground *= 1.0 + self.duration;
         s.dot_secs *= 1.0 + self.duration;
-        s.dot_speed *= 1.0 + self.ticks;
+        s.tick_rate *= 1.0 + self.ticks;
         s.shield *= 1.0 + self.shield;
         s.count += self.projectiles.round() as u32;
         s.crit += self.crit;

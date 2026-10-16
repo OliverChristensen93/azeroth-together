@@ -171,8 +171,9 @@ struct Burn {
     ability: usize,
     dps: f32,
     left: f32,
-    /// Seconds to its next tick.
+    /// Seconds to its next tick, and between ticks.
     tick: f32,
+    every: f32,
     contagion: bool,
 }
 
@@ -348,6 +349,7 @@ impl World {
             dot_mult: 1.0,
             dot_speed: 1.0,
             dot_secs: 1.0,
+            tick_rate: 1.0,
             contagion: false,
             ground: if def.kind == AbilityKind::Ground {
                 def.duration
@@ -1035,7 +1037,8 @@ impl World {
                 ability: spec.ability,
                 dps: damage * spec.burn * spec.dot_mult / BURN_SECS * speed,
                 left: BURN_SECS * spec.dot_secs / speed,
-                tick: 1.0,
+                tick: 1.0 / spec.tick_rate.max(0.1),
+                every: 1.0 / spec.tick_rate.max(0.1),
                 contagion: spec.contagion,
             };
             match st
@@ -1260,8 +1263,8 @@ impl World {
             for b in &mut st.burns {
                 b.tick -= DT;
                 if b.tick <= 0.0 {
-                    b.tick += 1.0;
-                    b.left -= 1.0;
+                    b.tick += b.every;
+                    b.left -= b.every;
                     ticks.push((b.by, b.ability, e.id, b.dps));
                 }
             }
@@ -1353,7 +1356,11 @@ impl World {
                 let ground = &mut self.grounds[i];
                 ground.pos = pos;
                 ground.left = left;
-                ground.tick = if ticking { tick + 1.0 } else { tick };
+                ground.tick = if ticking {
+                    tick + 1.0 / g.spec.tick_rate.max(0.1)
+                } else {
+                    tick
+                };
             }
             if ticking {
                 let hit: Vec<u32> = self
@@ -2004,6 +2011,20 @@ mod tests {
         let id = foe(&mut w, 6.0, 0.0, 1e6);
         run(&mut w, 1.0);
         assert!(w.enemy(id).unwrap().status.chill > 0.0);
+    }
+
+    #[test]
+    fn a_tick_rate_upgrade_makes_a_ground_area_hit_more_often() {
+        let dealt = |ticks: f32| {
+            let mut w = mage();
+            spells(&mut w, &[("blizzard", 1, &[])]);
+            w.heroes[0].abilities[0].mods.ticks = ticks;
+            let id = foe(&mut w, 6.0, 0.0, 1e6);
+            run(&mut w, 4.0);
+            1e6 - w.enemy(id).unwrap().hp
+        };
+        let (plain, fast) = (dealt(0.0), dealt(1.0));
+        assert!(plain > 0.0 && fast > plain * 1.5, "{plain} vs {fast}");
     }
 
     #[test]

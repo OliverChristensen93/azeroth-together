@@ -427,7 +427,12 @@ fn spell_face(
         sub,
         badge,
         bright: learn,
-        description: def.description.clone(),
+        // An upgrade shows only what it gives; the spell itself is on its icon's tooltip.
+        description: if learn {
+            def.description.clone()
+        } else {
+            String::new()
+        },
         lines,
         footer,
     }
@@ -712,13 +717,16 @@ fn build_card(
             },
             BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
         ));
-        c.spawn((
-            label(&fonts.text, face.description, 9.5, Color::WHITE),
-            TextLayout::new_with_justify(Justify::Center),
-        ));
+        let bare = face.description.is_empty();
+        if !bare {
+            c.spawn((
+                label(&fonts.text, face.description, 9.5, Color::WHITE),
+                TextLayout::new_with_justify(Justify::Center),
+            ));
+        }
         for (line, tint) in face.lines {
             c.spawn((
-                label(&fonts.text, line, 9.5, tint),
+                label(&fonts.text, line, if bare { 12.0 } else { 9.5 }, tint),
                 TextLayout::new_with_justify(Justify::Center),
                 Node {
                     margin: UiRect::top(Val::Px(3.0)),

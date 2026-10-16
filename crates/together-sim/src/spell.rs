@@ -248,6 +248,9 @@ pub struct CastSpec {
     pub dot_mult: f32,
     pub dot_speed: f32,
     pub dot_secs: f32,
+    /// Ticks a second of its burns and ground areas (1 is one a second): each tick as strong, so
+    /// a faster rate deals more.
+    pub tick_rate: f32,
     /// A Burning effect jumps to a nearby enemy when its target dies.
     pub contagion: bool,
     /// Seconds a lasting ground area stays.

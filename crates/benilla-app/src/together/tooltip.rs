@@ -163,95 +163,120 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
             GREY,
         )
     }];
-    let reach = match (def.kind, s.targeting) {
-        (AbilityKind::Shield, _) | (_, Targeting::Caster) => "On you".to_string(),
-        (_, Targeting::Around) => format!("{:.0} yd around you", s.radius),
-        (_, Targeting::Ahead) => match s.cone {
-            Cone::Ahead => format!("{:.0} yd cone ahead of you", s.radius),
-            Cone::Behind => format!("{:.0} yd cone behind you", s.radius),
-            Cone::Four => format!("{:.0} yd cones all around you", s.radius),
-        },
-        _ => format!("{:.0} yd range", s.range),
-    };
-    out.push(Line::one(reach, WHITE));
     out.push(Line::two(
         "Automatic",
         format!("{:.1} sec cooldown", s.cooldown),
         WHITE,
         WHITE,
     ));
+    out.push(Line::one(def.description.clone(), GOLD));
 
-    let dmg = s.damage.round();
+    // Every number it has, one a line.
+    let stat = |name: &str, value: String| Line::two(name, value, GREY, WHITE);
+    let shield = def.kind == AbilityKind::Shield;
     let school = school(s.tags);
-    let mut what = match def.kind {
-        AbilityKind::Bolt | AbilityKind::Strike => {
-            let who = match (s.targeting, s.count) {
-                (Targeting::ElitesFirst, 1) => "the nearest enemy".to_string(),
-                (_, 1) => "the nearest enemy".to_string(),
-                (_, n) => format!("the {n} nearest enemies"),
-            };
-            let times = if s.volley > 1 {
-                format!(" {} times", s.volley)
-            } else {
-                String::new()
-            };
-            let mut t = format!(
-                "Strikes {who} within {:.0} yd{times} for {dmg} {school} damage.",
-                s.range
-            );
-            if s.targeting == Targeting::ElitesFirst {
-                t.push_str(" Bosses and elites are targeted first.");
-            }
-            if s.radius > 0.0 {
-                t.push_str(&format!(
-                    " It bursts for half damage within {:.0} yd.",
-                    s.radius
-                ));
-            }
-            t
+    let dmg = s.damage.round();
+    let tick = 1.0 / s.tick_rate.max(0.1);
+    out.push(match def.kind {
+        AbilityKind::Shield => stat(
+            "Shield",
+            format!(
+                "{:.0} ({:.0}% of health)",
+                hero.max_hp * s.shield,
+                s.shield * 100.0
+            ),
+        ),
+        AbilityKind::Ground => stat("Damage", format!("{dmg} {school} every {tick:.1} sec")),
+        _ => stat("Damage", format!("{dmg} {school}")),
+    });
+    if s.charges > 1 {
+        out.push(stat("Charges", s.charges.to_string()));
+    }
+    let picks = matches!(
+        s.targeting,
+        Targeting::Nearest | Targeting::ElitesFirst | Targeting::Densest
+    );
+    if picks && !shield {
+        out.push(stat("Range", format!("{:.0} yd", s.range)));
+    }
+    if matches!(def.kind, AbilityKind::Bolt | AbilityKind::Strike) {
+        let who = if s.targeting == Targeting::ElitesFirst {
+            "elites and bosses first"
+        } else {
+            "the nearest"
+        };
+        out.push(stat("Targets", format!("{}, {who}", s.count)));
+        if s.volley > 1 {
+            out.push(stat("Missiles", format!("{} a target", s.volley)));
         }
-        AbilityKind::Nova => format!("Hits every enemy in its area for {dmg} {school} damage."),
-        AbilityKind::Ground => format!(
-            "Deals {dmg} {school} damage a second to everything within {:.0} yd for {:.0} sec, on the thickest crowd in range.",
-            s.radius, s.ground
-        ),
-        AbilityKind::Shield => format!(
-            "Shields you for {:.0} damage ({:.0}% of your health) for up to {:.0} sec.",
-            hero.max_hp * s.shield,
-            s.shield * 100.0,
-            def.duration
-        ),
-    };
+        if s.pierce > 0 {
+            out.push(stat("Pierces", format!("{} enemies", s.pierce)));
+        }
+        if s.radius > 0.0 {
+            out.push(stat("Splash", format!("{:.0} yd, half damage", s.radius)));
+        }
+    } else if !shield {
+        let (name, value) = match (s.targeting, s.cone) {
+            (Targeting::Ahead, Cone::Ahead) => ("Cone", format!("{:.0} yd ahead", s.radius)),
+            (Targeting::Ahead, Cone::Behind) => ("Cone", format!("{:.0} yd behind", s.radius)),
+            (Targeting::Ahead, Cone::Four) => ("Cones", format!("{:.0} yd, four ways", s.radius)),
+            _ if s.ring > 0.0 => ("Ring", format!("{:.0} to {:.0} yd", s.ring, s.radius)),
+            (Targeting::Around | Targeting::Caster, _) => {
+                ("Radius", format!("{:.0} yd around you", s.radius))
+            }
+            _ => ("Radius", format!("{:.0} yd", s.radius)),
+        };
+        out.push(stat(name, value));
+    }
+    if def.kind == AbilityKind::Ground {
+        out.push(stat("Duration", format!("{:.1} sec", s.ground)));
+    }
+    if def.kind == AbilityKind::Nova && s.ground > 0.0 {
+        out.push(stat("Burning ground", format!("{:.1} sec", s.ground)));
+    }
+    if shield {
+        out.push(stat("Duration", format!("up to {:.0} sec", def.duration)));
+    }
+    if s.burn > 0.0 {
+        let secs = BURN_SECS * s.dot_secs / s.dot_speed.max(0.1);
+        let total = s.burn * s.dot_mult * s.dot_secs * s.tick_rate * 100.0;
+        out.push(stat(
+            "Burning",
+            format!("{total:.0}% of the hit over {secs:.1} sec"),
+        ));
+        out.push(stat("Burn ticks", format!("every {tick:.1} sec")));
+    }
     if s.chill > 0.0 {
-        what.push_str(&format!(
-            " Chills ({:.0}% slower for {:.0} sec).",
-            s.slow * 100.0,
-            s.chill
+        out.push(stat(
+            "Chill",
+            format!("{:.0}% slower for {:.0} sec", s.slow * 100.0, s.chill),
         ));
     }
     if s.freeze > 0.0 {
-        what.push_str(&format!(" Freezes for {:.1} sec.", s.freeze));
+        out.push(stat("Freeze", format!("{:.1} sec", s.freeze)));
+    }
+    if s.freeze_chance > 0.0 {
+        out.push(stat(
+            "Freeze chance",
+            format!("{:.0}% a hit", s.freeze_chance * 100.0),
+        ));
     }
     if s.stun > 0.0 {
-        what.push_str(&format!(" Stuns for {:.1} sec.", s.stun));
+        out.push(stat("Stun", format!("{:.1} sec", s.stun)));
     }
     if s.knockback > 0.0 {
-        what.push_str(" Knocks enemies back.");
+        out.push(stat("Knockback", "yes".to_string()));
     }
-    if s.burn > 0.0 {
-        what.push_str(&format!(
-            " Leaves them Burning for {:.0}% more over {:.1} sec.",
-            s.burn * s.dot_mult * s.dot_secs * 100.0,
-            BURN_SECS * s.dot_secs / s.dot_speed
+    if !shield {
+        out.push(stat(
+            "Critical strike",
+            format!(
+                "{:.0}% for {:.0}% damage",
+                s.crit.min(1.0) * 100.0,
+                s.crit_mult * 100.0
+            ),
         ));
     }
-    if def.kind == AbilityKind::Nova && s.ground > 0.0 {
-        what.push_str(&format!(
-            " Leaves the ground burning for {:.0} sec.",
-            s.ground
-        ));
-    }
-    out.push(Line::one(what, GOLD));
 
     let damage = (1.0 + owned.bonus) * (1.0 + hero.stats.get(Stat::Damage)) - 1.0;
     let cooldown = hero.stats.get(Stat::Cooldown);
@@ -314,16 +339,6 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
             ));
         }
         None => {}
-    }
-    if def.kind != AbilityKind::Shield {
-        out.push(Line::one(
-            format!(
-                "{:.0}% chance to crit for {:.0}% damage",
-                s.crit.min(1.0) * 100.0,
-                s.crit_mult * 100.0
-            ),
-            WHITE,
-        ));
     }
     let tags: Vec<&str> = s.tags.iter().map(|t| t.name()).collect();
     out.push(Line::one(tags.join("  ·  "), GREY));
