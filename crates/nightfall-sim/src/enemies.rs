@@ -11,15 +11,20 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::content::Behaviour;
-use crate::heightmap::{HeightMap, Navigator, MAX_STEP};
+use crate::heightmap::{HeightMap, Navigator, PathPlan, MAX_STEP};
 use crate::{Content, DT, V2, V3};
 
 /// Floors a patrol's or sentry's path search may look at: its legs can be long, and each is
-/// searched once (the [`Navigator`] keeps them).
-pub const PATROL_BUDGET: usize = 40_000;
+/// searched once (the [`Navigator`] keeps them). A 400 yd leg through Duskwood's woods takes up
+/// to about 26 000; a search that finds nothing costs about 8 ms on the real map.
+pub const PATROL_BUDGET: usize = 30_000;
 /// Floors a wanderer's search may look at: its walks are short, and a spot it cannot reach (in a
 /// closed house) must be given up on cheaply.
 pub const WANDER_BUDGET: usize = 4_000;
+/// Floors all of a step's searches may look at together: one patrol's search and two
+/// wanderers'. A search starts only while what is left covers its whole budget, so no step
+/// spends more on paths than this (about 10 ms on the real map) however many enemies are lost.
+pub const STEP_FLOORS: usize = PATROL_BUDGET + 2 * WANDER_BUDGET;
 /// Within this many yards of a point, an enemy is there.
 const ARRIVE: f32 = 0.6;
 /// How far apart a group of sentries stands around its post.
@@ -225,9 +230,10 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
 pub(crate) struct Planner {
     /// Which enemy chooses its way first next step, so the path budget goes round.
     cursor: usize,
-    /// The (spawn, patrol point) pairs a search found no path to. The [`Navigator`] keeps no
-    /// failures, so without this every member of a patrol group would pay the full search for a
-    /// point the first already found sealed, and warn about it again.
+    /// The (spawn, patrol point) pairs a search found no path to. The [`Navigator`] remembers a
+    /// failure only for a moment and only from near where it was searched, so without this every
+    /// member of a patrol group (each walking from elsewhere on the route) would pay the full
+    /// search for a point the first already found sealed, and warn about it again.
     failed_points: HashSet<(usize, usize)>,
     /// Searches that found nothing, so far.
     failed_searches: u64,
@@ -241,8 +247,8 @@ impl Planner {
 }
 
 /// One step for every enemy: those with nowhere to go choose a way (at most `paths_per_step`
-/// searches, starting one enemy further along each step so every enemy gets its turn), then all
-/// walk.
+/// searches looking at no more than [`STEP_FLOORS`] floors in all, starting one enemy further
+/// along each step so every enemy gets its turn), then all walk.
 pub(crate) fn step(
     enemies: &mut [Enemy],
     brains: &mut [Brain],
@@ -256,6 +262,7 @@ pub(crate) fn step(
         return;
     }
     let mut budget = content.rules.world.paths_per_step;
+    nav.begin_step(STEP_FLOORS);
     let first = planner.cursor % n;
     planner.cursor = planner.cursor.wrapping_add(1);
     for i in 0..n {
@@ -317,15 +324,29 @@ fn plan(
             (V3::at(spot, z), false, WANDER_BUDGET)
         }
     };
-    *budget -= 1;
-    if let Some(path) = nav.find_path(here, goal, cache, limit) {
-        b.path = Some(path);
-        b.next = 0;
-        b.failures = 0;
-        return;
-    }
-    planner.failed_searches += 1;
+    let searched = match nav.plan_path(here, goal, cache, limit) {
+        PathPlan::Found(path) => {
+            *budget -= 1;
+            b.path = Some(path);
+            b.next = 0;
+            b.failures = 0;
+            return;
+        }
+        // The step's floors are spent; next step, with the same order, it asks again.
+        PathPlan::Later => return,
+        PathPlan::NoPath => {
+            *budget -= 1;
+            planner.failed_searches += 1;
+            true
+        }
+        PathPlan::KnownNoPath => false,
+    };
     match &mut b.order {
+        Order::Patrol { .. } if !searched => {
+            // Someone near here found no path near there a moment ago: wait and search for
+            // ourselves before skipping the point for good.
+            b.wait = 1.0;
+        }
         Order::Sentry { .. } => {
             b.wait = RETRY;
             if !b.warned {
@@ -686,5 +707,96 @@ mod tests {
         host.attach_map(town());
         let snapshot = host.snapshot();
         host.apply_snapshot(snapshot);
+    }
+
+    /// Sentries standing at `stand`, each posted at its `post`, on flat ground 400 yd across
+    /// with a closed house over [200, 210]².
+    fn lost_sentries(
+        stand_and_post: &[(V2, crate::V3)],
+    ) -> (Vec<super::Enemy>, Vec<super::Brain>, super::Navigator) {
+        use super::{Brain, Enemy, Navigator, Order, Rng};
+
+        let mut b = flat(400.0);
+        house(&mut b, V2::new(200.0, 200.0), V2::new(210.0, 210.0), None, false);
+        let mut enemies = Vec::new();
+        let mut brains = Vec::new();
+        for (i, &(at, post)) in stand_and_post.iter().enumerate() {
+            enemies.push(Enemy {
+                id: i as u32 + 1,
+                kind: 0,
+                pos: at,
+                z: 0.0,
+                facing: V2::new(1.0, 0.0),
+                hp: 900.0,
+                max_hp: 900.0,
+                speed: 0.0,
+            });
+            brains.push(Brain {
+                spawn: 0,
+                order: Order::Sentry {
+                    post,
+                    facing: V2::new(1.0, 0.0),
+                },
+                path: None,
+                next: 0,
+                wait: 0.0,
+                failures: 0,
+                warned: false,
+                rng: Rng::new(i as u64),
+            });
+        }
+        (enemies, brains, Navigator::new(Arc::new(b.finish())))
+    }
+
+    #[test]
+    fn a_step_never_spends_more_than_its_floors_on_paths() {
+        use super::{Planner, PATROL_BUDGET, STEP_FLOORS};
+        use crate::V3;
+
+        // Twelve sentries far apart, all posted inside the closed house: twelve searches that
+        // each run out of budget, which no step may take on together.
+        let ends: Vec<(V2, V3)> = (0..12)
+            .map(|k| {
+                let at = V2::new(20.0 + 30.0 * k as f32, 60.0);
+                (at, V3::new(204.0 + 0.1 * k as f32, 205.0, 0.0))
+            })
+            .collect();
+        let (mut enemies, mut brains, mut nav) = lost_sentries(&ends);
+        let content = world(GATE, 4).content().clone();
+        let (mut warnings, mut planner) = (Vec::new(), Planner::default());
+        for _ in 0..12 {
+            let before = nav.floors_looked_at();
+            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
+            let spent = nav.floors_looked_at() - before;
+            assert!(spent <= STEP_FLOORS as u64, "{spent} floors in one step");
+            assert!(spent >= PATROL_BUDGET as u64, "the budget went unused: {spent}");
+        }
+        // Each got its turn, one a step, and each failed once.
+        assert_eq!(planner.failed_searches(), 12);
+        assert_eq!(warnings.len(), 12, "{warnings:?}");
+    }
+
+    #[test]
+    fn a_sentry_group_cut_off_from_its_post_searches_once() {
+        use super::{Planner, PATROL_BUDGET};
+        use crate::V3;
+
+        // Three sentries a yard apart outside the closed house, posted a yard apart inside it.
+        let ends = [
+            (V2::new(150.25, 150.25), V3::new(204.25, 204.25, 0.0)),
+            (V2::new(150.75, 151.25), V3::new(205.25, 204.25, 0.0)),
+            (V2::new(151.25, 150.75), V3::new(204.75, 205.25, 0.0)),
+        ];
+        let (mut enemies, mut brains, mut nav) = lost_sentries(&ends);
+        let content = world(GATE, 4).content().clone();
+        let (mut warnings, mut planner) = (Vec::new(), Planner::default());
+        for _ in 0..30 {
+            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
+        }
+        assert_eq!(planner.failed_searches(), 1);
+        assert_eq!(nav.floors_looked_at(), PATROL_BUDGET as u64);
+        // All three know, and wait to try again.
+        assert!(brains.iter().all(|b| b.wait > 0.0));
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
     }
 }

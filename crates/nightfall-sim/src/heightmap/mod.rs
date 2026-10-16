@@ -16,11 +16,12 @@ mod path;
 mod sight;
 #[cfg(test)]
 pub(crate) mod testmap;
+mod walk;
 
 use std::fmt;
 
 pub use build::HeightMapBuilder;
-pub use path::Navigator;
+pub use path::{Navigator, PathPlan};
 
 use crate::V2;
 
@@ -157,6 +158,20 @@ impl Floors {
     }
 }
 
+/// The floors over a column's spans, bottom first: the tops with [`HEADROOM`] of air over them.
+fn floors_of(spans: &[Span]) -> Floors {
+    let mut floors = Floors::default();
+    for (i, s) in spans.iter().enumerate() {
+        let room = spans
+            .get(i + 1)
+            .map_or(f32::INFINITY, |above| above.lo - s.hi);
+        if room >= HEADROOM {
+            floors.push(s.hi);
+        }
+    }
+    floors
+}
+
 /// The world's solid shape over a [`Grid`].
 #[derive(PartialEq)]
 pub struct HeightMap {
@@ -228,18 +243,7 @@ impl HeightMap {
 
     /// Column `col`'s floors, bottom first.
     pub fn floors_at(&self, col: usize) -> Floors {
-        let list = self.spans_at(col);
-        let spans = list.as_slice();
-        let mut floors = Floors::default();
-        for (i, s) in spans.iter().enumerate() {
-            let room = spans
-                .get(i + 1)
-                .map_or(f32::INFINITY, |above| above.lo - s.hi);
-            if room >= HEADROOM {
-                floors.push(s.hi);
-            }
-        }
-        floors
+        floors_of(self.spans_at(col).as_slice())
     }
 
     /// Whether no unit may walk into column `col`; every column off the grid is.
