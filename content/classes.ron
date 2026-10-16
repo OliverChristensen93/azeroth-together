@@ -151,8 +151,10 @@
         start: "lightning_bolt",
         pool: [
             "lightning_bolt", "chain_lightning", "earth_shock", "flame_shock", "frost_shock",
-            "searing_totem", "magma_totem", "lightning_shield",
+            "searing_totem", "magma_totem", "earthbind_totem", "healing_stream_totem",
+            "lightning_shield", "healing_wave", "stormstrike",
         ],
+        defensive: "ghost_wolf",
     ),
     (
         key: "mage",

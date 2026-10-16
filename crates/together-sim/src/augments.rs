@@ -357,6 +357,43 @@ pub enum Augment {
     RapidKilling,
     TrueshotAura,
     QuickShots,
+    // --- Capstones: shaman ---
+    LightningOverload,
+    Stormkeeper,
+    RollingThunder,
+    ChainReaction,
+    StormNexus,
+    Electrified,
+    Fulmination,
+    EarthenGrip,
+    ShockMastery,
+    LavaBurst,
+    VolcanicFury,
+    SearingFlames,
+    FrozenPower,
+    FrostNovaShock,
+    Icefury,
+    SearingBurn,
+    SearingPact,
+    TwinFires,
+    FireNova,
+    LiquidMagma,
+    MoltenEarth,
+    Earthgrab,
+    EarthquakeTotem,
+    Stoneclaw,
+    HealingTide,
+    Cloudburst,
+    Stoneskin,
+    Thunderstorm,
+    StaticShield,
+    StaticCharge,
+    AncestralFortitude,
+    NaturesSwiftness,
+    TidalFocus,
+    Windfury,
+    Stormlash,
+    MaelstromWeapon,
 }
 
 impl Augment {
@@ -431,7 +468,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 216] = [
+    pub const CAPSTONES: [Augment; 252] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -648,6 +685,42 @@ impl Augment {
         Augment::RapidKilling,
         Augment::TrueshotAura,
         Augment::QuickShots,
+        Augment::LightningOverload,
+        Augment::Stormkeeper,
+        Augment::RollingThunder,
+        Augment::ChainReaction,
+        Augment::StormNexus,
+        Augment::Electrified,
+        Augment::Fulmination,
+        Augment::EarthenGrip,
+        Augment::ShockMastery,
+        Augment::LavaBurst,
+        Augment::VolcanicFury,
+        Augment::SearingFlames,
+        Augment::FrozenPower,
+        Augment::FrostNovaShock,
+        Augment::Icefury,
+        Augment::SearingBurn,
+        Augment::SearingPact,
+        Augment::TwinFires,
+        Augment::FireNova,
+        Augment::LiquidMagma,
+        Augment::MoltenEarth,
+        Augment::Earthgrab,
+        Augment::EarthquakeTotem,
+        Augment::Stoneclaw,
+        Augment::HealingTide,
+        Augment::Cloudburst,
+        Augment::Stoneskin,
+        Augment::Thunderstorm,
+        Augment::StaticShield,
+        Augment::StaticCharge,
+        Augment::AncestralFortitude,
+        Augment::NaturesSwiftness,
+        Augment::TidalFocus,
+        Augment::Windfury,
+        Augment::Stormlash,
+        Augment::MaelstromWeapon,
     ];
 
     pub fn name(self) -> &'static str {
@@ -934,6 +1007,42 @@ impl Augment {
             Augment::RapidKilling => "Rapid Killing",
             Augment::TrueshotAura => "Trueshot Aura",
             Augment::QuickShots => "Quick Shots",
+            Augment::LightningOverload => "Lightning Overload",
+            Augment::Stormkeeper => "Stormkeeper",
+            Augment::RollingThunder => "Rolling Thunder",
+            Augment::ChainReaction => "Chain Reaction",
+            Augment::StormNexus => "Storm Nexus",
+            Augment::Electrified => "Electrified",
+            Augment::Fulmination => "Fulmination",
+            Augment::EarthenGrip => "Earthen Grip",
+            Augment::ShockMastery => "Shock Mastery",
+            Augment::LavaBurst => "Lava Burst",
+            Augment::VolcanicFury => "Volcanic Fury",
+            Augment::SearingFlames => "Searing Flames",
+            Augment::FrozenPower => "Frozen Power",
+            Augment::FrostNovaShock => "Frost Nova Shock",
+            Augment::Icefury => "Icefury",
+            Augment::SearingBurn => "Searing Burn",
+            Augment::SearingPact => "Searing Pact",
+            Augment::TwinFires => "Twin Fires",
+            Augment::FireNova => "Fire Nova",
+            Augment::LiquidMagma => "Liquid Magma",
+            Augment::MoltenEarth => "Molten Earth",
+            Augment::Earthgrab => "Earthgrab",
+            Augment::EarthquakeTotem => "Earthquake Totem",
+            Augment::Stoneclaw => "Stoneclaw",
+            Augment::HealingTide => "Healing Tide",
+            Augment::Cloudburst => "Cloudburst",
+            Augment::Stoneskin => "Stoneskin",
+            Augment::Thunderstorm => "Thunderstorm",
+            Augment::StaticShield => "Static Shield",
+            Augment::StaticCharge => "Static Charge",
+            Augment::AncestralFortitude => "Ancestral Fortitude",
+            Augment::NaturesSwiftness => "Nature's Swiftness",
+            Augment::TidalFocus => "Tidal Focus",
+            Augment::Windfury => "Windfury",
+            Augment::Stormlash => "Stormlash",
+            Augment::MaelstromWeapon => "Maelstrom Weapon",
         }
     }
 
@@ -1222,6 +1331,42 @@ impl Augment {
             Augment::RapidKilling => "Each kill while it lasts makes it last 0.5 seconds longer.",
             Augment::TrueshotAura => "Instead, always on: you and every ally within 20 yards deal +10% damage.",
             Augment::QuickShots => "Also +20% move speed while it lasts.",
+            Augment::LightningOverload => "20% chance to strike its target a second time for 50%.",
+            Augment::Stormkeeper => "Every 5th bolt chains to 4 more enemies.",
+            Augment::RollingThunder => "Its crits bank a Lightning Shield orb (up to its cap, even without it).",
+            Augment::ChainReaction => "A kill makes it ready (at most every 4 seconds).",
+            Augment::StormNexus => "It jumps without limit between enemies within 3 yards of each other, losing little each jump.",
+            Augment::Electrified => "Everything it hits is Chilled.",
+            Augment::Fulmination => "Spends your Lightning Shield orbs for +60% damage each.",
+            Augment::EarthenGrip => "Also Roots every enemy within 6 yards of its target for 2 seconds.",
+            Augment::ShockMastery => "Each Earth Shock makes Flame Shock and Frost Shock ready.",
+            Augment::LavaBurst => "Your Lightning Bolts always crit enemies with your Flame Shock.",
+            Augment::VolcanicFury => "An enemy that dies with it erupts: burning ground (5 yards, 4 seconds) where it fell.",
+            Augment::SearingFlames => "Searing Totem's bolts renew it on their target.",
+            Augment::FrozenPower => "Roots for 2 seconds instead of Chilling; rooted enemies take +30% from your Nature spells.",
+            Augment::FrostNovaShock => "Also Chills every enemy within 5 yards of its targets.",
+            Augment::Icefury => "Its crits Freeze for 2 seconds.",
+            Augment::SearingBurn => "Its bolts leave Burning (40% over 4 seconds).",
+            Augment::SearingPact => "While you stand within 8 yards of it, your Fire spells deal +20%.",
+            Augment::TwinFires => "Its bolts hit 2 enemies.",
+            Augment::FireNova => "When it ends, it explodes for 300% within 8 yards.",
+            Augment::LiquidMagma => "Each pulse also spits a glob at 3 random enemies within 20 yards.",
+            Augment::MoltenEarth => "Its pulses leave Burning (30% over 4 seconds).",
+            Augment::Earthgrab => "An enemy entering its reach is Rooted for 2 seconds (once each).",
+            Augment::EarthquakeTotem => "Its pulses deal +300% and Stun for half a second instead of Chilling.",
+            Augment::Stoneclaw => "Enemies in its reach are Weakened.",
+            Augment::HealingTide => "Heals twice as much on heroes below 30% health.",
+            Augment::Cloudburst => "It stores everything it heals and releases it as nature damage within 10 yards when it ends.",
+            Augment::Stoneskin => "Heroes in its reach take 15% less damage.",
+            Augment::Thunderstorm => "Spending your last orb blasts everything within 8 yards for 200% and knocks it back.",
+            Augment::StaticShield => "Its zaps also Chill.",
+            Augment::StaticCharge => "Each orb spent gives +5% Nature damage for 6 seconds, up to 15%.",
+            Augment::AncestralFortitude => "A hero it heals takes 20% less damage for 6 seconds.",
+            Augment::NaturesSwiftness => "Below 25% health, every wave spends at once on you and your spells come back twice as fast for 4 seconds (at most every 30 seconds).",
+            Augment::TidalFocus => "Its waves bank 30% faster.",
+            Augment::Windfury => "20% chance a hit strikes twice more at once; each Windfury hit banks a Lightning Shield orb.",
+            Augment::Stormlash => "Its mark is +30%.",
+            Augment::MaelstromWeapon => "Every 5th Stormstrike makes your next Lightning Bolt or Chain Lightning deal double.",
         }
     }
 
@@ -1338,6 +1483,28 @@ impl Augment {
                 "hunters_mark"
             }
             Augment::RapidKilling | Augment::TrueshotAura | Augment::QuickShots => "rapid_fire",
+            Augment::LightningOverload | Augment::Stormkeeper | Augment::RollingThunder => {
+                "lightning_bolt"
+            }
+            Augment::ChainReaction | Augment::StormNexus | Augment::Electrified => {
+                "chain_lightning"
+            }
+            Augment::Fulmination | Augment::EarthenGrip | Augment::ShockMastery => "earth_shock",
+            Augment::LavaBurst | Augment::VolcanicFury | Augment::SearingFlames => "flame_shock",
+            Augment::FrozenPower | Augment::FrostNovaShock | Augment::Icefury => "frost_shock",
+            Augment::SearingBurn | Augment::SearingPact | Augment::TwinFires => "searing_totem",
+            Augment::FireNova | Augment::LiquidMagma | Augment::MoltenEarth => "magma_totem",
+            Augment::Earthgrab | Augment::EarthquakeTotem | Augment::Stoneclaw => "earthbind_totem",
+            Augment::HealingTide | Augment::Cloudburst | Augment::Stoneskin => {
+                "healing_stream_totem"
+            }
+            Augment::Thunderstorm | Augment::StaticShield | Augment::StaticCharge => {
+                "lightning_shield"
+            }
+            Augment::AncestralFortitude | Augment::NaturesSwiftness | Augment::TidalFocus => {
+                "healing_wave"
+            }
+            Augment::Windfury | Augment::Stormlash | Augment::MaelstromWeapon => "stormstrike",
             _ => return None,
         })
     }
@@ -1943,6 +2110,43 @@ impl Augment {
                 s.tags = s.tags.with(Tag::Aura);
             }
             Augment::QuickShots => s.fx.buff.haste += 0.2,
+            // Shaman capstones that change the cast's numbers.
+            Augment::StormNexus => {
+                s.fx.jumps = s.fx.jumps.max(60);
+                s.fx.jump_reach = 3.0;
+                s.fx.jump_keep = s.fx.jump_keep.max(0.95);
+            }
+            Augment::Electrified => {
+                s.chill = s.chill.max(1.0);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::FrozenPower => {
+                s.chill = 0.0;
+                s.fx.root = s.fx.root.max(2.0);
+                s.tags = s.tags.without(Tag::Slow).with(Tag::Root);
+            }
+            Augment::SearingBurn => {
+                s.burn += 0.4;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::TwinFires => s.fx.strikes = s.fx.strikes.max(2),
+            Augment::MoltenEarth => {
+                s.burn += 0.3;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::EarthquakeTotem => {
+                s.chill = 0.0;
+                s.damage *= 4.0;
+                s.stun = s.stun.max(0.5);
+                s.tags = s.tags.without(Tag::Slow).with(Tag::Stun);
+            }
+            Augment::Stoneclaw => s.fx.weaken = s.fx.weaken.max(1.5),
+            Augment::StaticShield => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::TidalFocus => s.cooldown *= 0.7,
+            Augment::Stormlash => s.fx.mark = s.fx.mark.max(0.3),
             _ => {}
         }
     }

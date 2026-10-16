@@ -17,6 +17,7 @@ mod combat;
 mod hunter;
 mod priest;
 mod rogue;
+mod shaman;
 mod warlock;
 mod warrior;
 

@@ -14,8 +14,8 @@ use super::combat::{Crit, Death, Shot};
 use super::*;
 use crate::content::WardKind;
 use crate::spell::{
-    control_secs, BuffFx, Tag, Targeting, CHAIN_REACH, COMBO_POWER, MAX_COMBO, SUNDER_EACH,
-    SUNDER_MAX, SUNDER_SECS, WEAKEN,
+    control_secs, BuffFx, Tag, Targeting, COMBO_POWER, MAX_COMBO, SUNDER_EACH, SUNDER_MAX,
+    SUNDER_SECS, WEAKEN,
 };
 
 /// How far a heal charge reaches an ally, and an Aura its allies.
@@ -59,6 +59,8 @@ pub struct StatusFx {
     pub hexed_by: Option<PlayerId>,
     /// The hunter whose Hunter's Mark is on it.
     pub marked_by: Option<PlayerId>,
+    /// An Earthbind Totem has rooted it once (Earthgrab).
+    pub grabbed: bool,
 }
 
 impl StatusFx {
@@ -272,6 +274,7 @@ impl World {
         self.priest_spec(h, owned, s);
         self.warlock_spec(h, owned, s);
         self.hunter_spec(h, owned, s);
+        self.shaman_spec(h, owned, s);
     }
 
     /// The share of each tick of `by`'s damage over time from `spec` that heals `by`, beside the
@@ -306,6 +309,7 @@ impl World {
         self.priest_before(h, owned, spec);
         self.warlock_before(h, owned, spec);
         self.hunter_before(h, owned, spec);
+        self.shaman_before(h, owned, spec);
     }
 
     /// Hero `h` fired `owned` as `spec`: a Finisher spends its combo points, a builder gives
@@ -323,6 +327,7 @@ impl World {
         self.priest_after(h, owned, spec);
         self.warlock_after(h, owned, spec);
         self.hunter_after(h, owned, spec);
+        self.shaman_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -533,6 +538,7 @@ impl World {
             * self.rogue_scale(h, ei, spec)
             * self.warlock_scale(h, ei, spec)
             * self.hunter_scale(h, ei, spec)
+            * self.shaman_scale(h, ei, spec)
     }
 
     /// A hit of `spec` by hero `h` landed on enemy `id` (index `ei`) for `damage`: lifesteal,
@@ -583,6 +589,7 @@ impl World {
         self.priest_strike(h, id, spec, damage, crit, scale);
         self.warlock_strike(h, id, spec, damage, crit, scale);
         self.hunter_strike(h, id, spec, damage, crit, scale);
+        self.shaman_strike(h, id, spec, damage, crit, scale);
     }
 
     /// The other classes' status effects one hit of `spec` leaves on enemy `ei`, struck from
@@ -633,7 +640,7 @@ impl World {
                 .enemies
                 .iter()
                 .filter(|e| {
-                    e.hp > 0.0 && !hit.contains(&e.id) && e.pos.distance(cur) <= CHAIN_REACH
+                    e.hp > 0.0 && !hit.contains(&e.id) && e.pos.distance(cur) <= spec.fx.jump_reach
                 })
                 .min_by(|a, b| a.pos.distance(cur).total_cmp(&b.pos.distance(cur)))
                 .map(|e| (e.id, e.pos));
@@ -664,7 +671,11 @@ impl World {
         if amount <= 0.0 {
             return 0.0;
         }
-        let amount = amount * self.warrior_guard(h) * self.priest_guard(h) * self.warlock_guard(h);
+        let amount = amount
+            * self.warrior_guard(h)
+            * self.priest_guard(h)
+            * self.warlock_guard(h)
+            * self.shaman_guard(h);
         let player = self.heroes[h].player;
         let pos = self.heroes[h].pos;
         let banks: Vec<(usize, WardKind)> = self.heroes[h]
@@ -699,6 +710,7 @@ impl World {
             self.spend_charge(h, ability);
             let spec = self.spell_spec(h, &self.owned_or_new(h, ability));
             self.strike(player, &spec, enemy, 1.0, pos, Crit::Roll);
+            self.shaman_charge_spent(h, ability, None);
         }
         let thorns: Vec<(usize, f32)> = self.heroes[h]
             .spell
@@ -833,12 +845,13 @@ impl World {
             if changed {
                 self.refresh(h);
             }
-            self.spend_heal_charges(h);
             self.warrior_tend(h);
             self.rogue_tend(h);
             self.priest_tend(h);
             self.warlock_tend(h);
             self.hunter_tend(h);
+            self.shaman_tend(h);
+            self.spend_heal_charges(h);
         }
     }
 
@@ -874,6 +887,7 @@ impl World {
             let amount = spec.fx.heal * self.heroes[t].max_hp;
             self.heal_hero(t, amount, Some(&spec));
             self.priest_charge_spent(h, ability, t, amount);
+            self.shaman_charge_spent(h, ability, Some(t));
             let (player, target) = (self.heroes[h].player, self.heroes[t].player);
             self.events.push(Event::Cast {
                 caster: player,
@@ -918,6 +932,7 @@ impl World {
         self.priest_deaths(deaths);
         self.warlock_deaths(deaths);
         self.hunter_deaths(deaths);
+        self.shaman_deaths(deaths);
     }
 
     /// After a nova of `spec` by hero `h` hit `hit` around `center`: the capstones that count
@@ -974,7 +989,8 @@ impl World {
                 .collect();
             let mut healed = 0.0;
             for t in inside {
-                let amount = spec.fx.heal * self.heroes[t].max_hp;
+                let amount =
+                    spec.fx.heal * self.heroes[t].max_hp * self.shaman_heal_bonus(h, spec, t);
                 let got = self.heal_hero(t, amount, Some(spec));
                 healed += got;
                 if got > 0.0 {
@@ -982,6 +998,7 @@ impl World {
                 }
             }
             self.priest_ground_healed(h, spec, healed);
+            self.shaman_ground_healed(h, spec, healed);
             if spec.fx.strikes == 0 {
                 // A healing ground that also burns what stands in it.
                 return spec.damage <= 0.0;
@@ -1086,7 +1103,9 @@ impl World {
 
     /// Extra crit chance a hit of `spec` from hero `h` has on enemy `ei`.
     pub(super) fn class_crit(&self, h: usize, ei: usize, spec: &CastSpec) -> f32 {
-        self.warlock_crit(h, ei, spec) + self.hunter_crit(h, ei, spec)
+        self.warlock_crit(h, ei, spec)
+            + self.hunter_crit(h, ei, spec)
+            + self.shaman_crit(h, ei, spec)
     }
 
     /// Where ground `g` stands this step, given where it would (a capstone may move it).
@@ -1113,6 +1132,7 @@ impl World {
     /// A ground area `g` ran out at `pos`.
     pub(super) fn ground_ended(&mut self, g: &super::combat::Ground, pos: V2) {
         self.priest_ground_ended(g, pos);
+        self.shaman_ground_ended(g, pos);
     }
 }
 

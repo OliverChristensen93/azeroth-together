@@ -429,6 +429,8 @@ pub struct SpellFx {
     pub weaken_cut: f32,
     /// A capstone gave the cast up (Demonic Sacrifice): it fires as if done, doing nothing.
     pub skip: bool,
+    /// How far a Chain spell's jumps reach.
+    pub jump_reach: f32,
 }
 
 impl Default for SpellFx {
@@ -475,6 +477,7 @@ impl Default for SpellFx {
             fresh: false,
             weaken_cut: WEAKEN,
             skip: false,
+            jump_reach: CHAIN_REACH,
         }
     }
 }
