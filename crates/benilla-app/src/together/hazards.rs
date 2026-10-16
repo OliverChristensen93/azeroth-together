@@ -12,6 +12,8 @@ use together_sim::{Event, Shape, V2};
 
 use super::{content, units, view::Views, Phase, Sim};
 
+/// An affix's announcement over the hero.
+const AFFIX_COLOR: u32 = 0xFFFF_8033;
 /// The boss bar's width, in the 768-unit canvas.
 const BAR_W: f32 = 360.0;
 /// How far above the ground a telegraph lies, so it is not lost in the grass, and its edge's
@@ -41,6 +43,8 @@ pub(super) struct Looks {
     danger_edge: Handle<StandardMaterial>,
     lure_fill: Handle<StandardMaterial>,
     lure_edge: Handle<StandardMaterial>,
+    pool_fill: Handle<StandardMaterial>,
+    pool_edge: Handle<StandardMaterial>,
 }
 
 impl Looks {
@@ -60,6 +64,8 @@ impl Looks {
             danger_edge: flat(Color::srgba(0.85, 0.35, 1.0, 0.9)),
             lure_fill: flat(Color::srgba(0.3, 1.0, 0.35, 0.25)),
             lure_edge: flat(Color::srgba(0.45, 1.0, 0.5, 0.9)),
+            pool_fill: flat(Color::srgba(0.85, 0.05, 0.08, 0.35)),
+            pool_edge: flat(Color::srgba(1.0, 0.2, 0.2, 0.85)),
         }
     }
 }
@@ -115,8 +121,12 @@ pub(super) fn show(
             } => {
                 let look = looks.get_or_insert_with(|| Looks::new(&mut materials));
                 // A thing to run to is green; a danger, purple.
-                let lure = kind.is_lure();
-                let (fill, edge) = if lure {
+                // A Sanguine pool is red and, like a lure, there from the start.
+                let pool = kind == together_sim::Mechanic::Sanguine;
+                let lure = kind.is_lure() || pool;
+                let (fill, edge) = if pool {
+                    (look.pool_fill.clone(), look.pool_edge.clone())
+                } else if lure {
                     (look.lure_fill.clone(), look.lure_edge.clone())
                 } else {
                     (look.danger_fill.clone(), look.danger_edge.clone())
@@ -194,7 +204,12 @@ pub(super) fn show(
                 targets,
                 dest,
             } => {
-                let Some(&from) = views.enemies.get(&enemy) else {
+                // An affix's blast has no enemy behind it: it plays from our hero, at its spot.
+                let Some(&from) = views
+                    .enemies
+                    .get(&enemy)
+                    .or_else(|| views.heroes.get(&sim.me))
+                else {
                     continue;
                 };
                 let hits: Vec<Entity> = targets
@@ -206,6 +221,15 @@ pub(super) fn show(
                     .collect();
                 let dest = dest.map(|p| on_ground(&world_point, p, fallback_y));
                 fx.cast(from, visual, &hits, dest);
+            }
+            Event::AffixGained { affix } => {
+                if let Some(&me) = views.heroes.get(&sim.me) {
+                    fx.text(
+                        me,
+                        format!("{}: {}", affix.name(), affix.hint()),
+                        AFFIX_COLOR,
+                    );
+                }
             }
             Event::Shoved { hero, to } => {
                 // Our own hero's place is ours to keep: a throw or pull moves it here, as a

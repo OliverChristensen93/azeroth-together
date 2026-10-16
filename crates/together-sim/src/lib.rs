@@ -44,7 +44,7 @@ pub use interact::{
 };
 pub use items::{ward_cooldown, Item};
 pub use math::V2;
-pub use mechanics::{Mechanic, Shape};
+pub use mechanics::{Affix, Mechanic, Shape};
 pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
 pub use spell::{

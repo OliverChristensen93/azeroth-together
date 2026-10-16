@@ -98,6 +98,8 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `gear_menu.rs` is the menu's Equipment screen, `gear_run.rs` the run's gear bar (Y switches on),
   `gear_look.rs` the looks. `TOGETHER_GEAR_SEED=1` uses a test stash, `TOGETHER_GEAR_SCREEN=1`
   opens the screen, `TOGETHER_GEAR_ON=1` switches all brought gear on at the start.
+  `TOGETHER_AFFIXES=sanguine,volcanic` starts a run with those affixes (`world/affixes.rs`);
+  `TOGETHER_STAND=1` keeps an autoplay hero standing, so elites and bosses come to it.
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries

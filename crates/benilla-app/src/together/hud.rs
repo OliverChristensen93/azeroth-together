@@ -328,6 +328,10 @@ pub(super) fn refresh(
                 clock((world.next_boss - world.elapsed).max(0.0))
             ));
         }
+        if !world.affixes.is_empty() {
+            let names: Vec<&str> = world.affixes.iter().map(|a| a.name()).collect();
+            s.push_str(&format!("\nAffixes: {}", names.join("  ·  ")));
+        }
         if !world.buffs.is_empty() {
             let buffs: Vec<String> = world
                 .buffs

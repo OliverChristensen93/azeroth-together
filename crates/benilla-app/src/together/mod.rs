@@ -224,6 +224,12 @@ impl Sim {
         }
         give_loadout(&mut world);
         dev.apply(&mut world);
+        // `TOGETHER_AFFIXES=sanguine,volcanic`: a test run with these affixes from the start.
+        if let Ok(list) = std::env::var("TOGETHER_AFFIXES") {
+            for affix in list.split(',').filter_map(together_sim::Affix::from_name) {
+                world.add_affix(affix);
+            }
+        }
         Self {
             world,
             me: 0,

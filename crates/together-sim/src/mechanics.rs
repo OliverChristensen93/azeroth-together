@@ -37,6 +37,55 @@ pub enum Mechanic {
     Bomb,
     /// A circle near the boss that hurts it while a hero stands in it.
     Circle,
+    /// An affix's: a dead enemy's pool that heals the enemies in it.
+    Sanguine,
+    /// An affix's: fire erupting under a hero after a short warning.
+    Volcanic,
+}
+
+/// A rule that joins a run in its later stages ([`crate::World::add_affix`]), as Mythic+'s weekly
+/// affixes do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Affix {
+    Sanguine,
+    Bolstering,
+    Volcanic,
+    Spiteful,
+}
+
+impl Affix {
+    pub const ALL: [Affix; 4] = [
+        Affix::Sanguine,
+        Affix::Bolstering,
+        Affix::Volcanic,
+        Affix::Spiteful,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Affix::Sanguine => "Sanguine",
+            Affix::Bolstering => "Bolstering",
+            Affix::Volcanic => "Volcanic",
+            Affix::Spiteful => "Spiteful",
+        }
+    }
+
+    /// One sentence on what it does and what it asks of you.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Affix::Sanguine => "Dead enemies leave pools that heal the others: pull them off.",
+            Affix::Bolstering => "Each death makes the enemies around it stronger: finish packs.",
+            Affix::Volcanic => "Fire erupts under you after a short warning: keep moving.",
+            Affix::Spiteful => "Ghosts rise from the dead and chase you for a few seconds.",
+        }
+    }
+
+    /// By name, any case.
+    pub fn from_name(name: &str) -> Option<Affix> {
+        Affix::ALL
+            .into_iter()
+            .find(|a| a.name().eq_ignore_ascii_case(name.trim()))
+    }
 }
 
 impl Mechanic {
@@ -62,6 +111,8 @@ impl Mechanic {
                 "Drops a bomb: pick it up and carry it into the horde before it blows."
             }
             Mechanic::Circle => "Marks a circle: while you stand in it, the boss takes damage.",
+            Mechanic::Sanguine => Affix::Sanguine.hint(),
+            Mechanic::Volcanic => Affix::Volcanic.hint(),
         }
     }
 
@@ -80,6 +131,8 @@ impl Mechanic {
             Mechanic::Spores => (14.0, 8.0),
             Mechanic::Bomb => (18.0, 12.0),
             Mechanic::Circle => (16.0, 5.0),
+            // An affix's, never an enemy's own.
+            Mechanic::Sanguine | Mechanic::Volcanic => (f32::MAX, f32::MAX),
         }
     }
 }

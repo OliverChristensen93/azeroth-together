@@ -16,6 +16,7 @@ mod classes;
 mod combat;
 mod druid;
 mod gear;
+mod affixes;
 mod hazards;
 mod hunter;
 mod paladin;
@@ -49,7 +50,7 @@ use crate::items::{
     SHARD_REACH, SHARD_SHARE,
 };
 use crate::math::V2;
-use crate::mechanics::{Mechanic, Shape};
+use crate::mechanics::{Affix, Mechanic, Shape};
 use crate::powerups::{Pickup, PickupKind, PotLoot, PowerUp, BERSERK, BLOODLUST, SWIFTNESS};
 use crate::rng::Rng;
 use crate::spell::CastSpec;
@@ -230,6 +231,8 @@ pub enum Event {
     },
     /// A mechanic threw or pulled hero `hero` to `to`; its own client moves it there.
     Shoved { hero: PlayerId, to: V2 },
+    /// An affix joined the run.
+    AffixGained { affix: Affix },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -558,6 +561,7 @@ pub struct Snapshot {
     pub enemies: Vec<EnemyState>,
     pub interactables: Vec<Interactable>,
     pub pickups: Vec<Pickup>,
+    pub affixes: Vec<Affix>,
 }
 
 /// An enemy as a snapshot carries it: only what a client draws, packed small, since a late run
@@ -656,6 +660,11 @@ pub struct World {
     grounds: Vec<combat::Ground>,
     /// Ground elites and bosses have marked, about to go off.
     hazards: Vec<hazards::Hazard>,
+    /// The affixes in play, how many of the run's stages have added one, and seconds to
+    /// Volcanic's next eruption.
+    pub affixes: Vec<Affix>,
+    affix_stage: usize,
+    volcano_timer: f32,
     /// Spells augments asked for, run after the cast that set them off; and echoes, by the time
     /// they are due.
     triggers: Vec<combat::Trigger>,
@@ -705,6 +714,9 @@ impl World {
             pending: Vec::new(),
             grounds: Vec::new(),
             hazards: Vec::new(),
+            affixes: Vec::new(),
+            affix_stage: 0,
+            volcano_timer: 3.0,
             triggers: Vec::new(),
             delayed: Vec::new(),
             last_target: None,
@@ -966,6 +978,7 @@ impl World {
                 .collect(),
             interactables: self.interactables.clone(),
             pickups: self.pickups.clone(),
+            affixes: self.affixes.clone(),
         }
     }
 
@@ -983,6 +996,7 @@ impl World {
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;
         self.pickups = snapshot.pickups;
+        self.affixes = snapshot.affixes;
         let center = self.center();
         let defs = &self.content.enemies;
         self.enemies = snapshot
@@ -1061,6 +1075,7 @@ impl World {
         self.spawn_bosses();
         self.move_enemies();
         self.tend_mechanics();
+        self.tend_affixes();
         self.cast_abilities();
         self.land_hits();
         self.tend_grounds();
@@ -1849,8 +1864,13 @@ impl World {
     fn reap_enemies(&mut self) {
         let mut dead = Vec::new();
         let mut deaths = Vec::new();
+        let mut for_affixes = Vec::new();
         self.enemies.retain(|e| {
             if e.hp <= 0.0 {
+                // A ghost (Spiteful) leaves nothing behind for the affixes.
+                if e.act.expires.is_none() {
+                    for_affixes.push((e.pos, e.def, e.max_hp));
+                }
                 dead.push((
                     e.id,
                     e.pos,
@@ -1897,6 +1917,7 @@ impl World {
         if !deaths.is_empty() {
             self.spell_deaths(deaths);
         }
+        self.affix_deaths(&for_affixes);
     }
 
     /// Gems within a living hero's reach ([`MAGNET`] and its [`Stat::Pickup`]) are theirs.

@@ -67,8 +67,13 @@ const CIRCLE_RADIUS: f32 = 3.0;
 const SPORE_VISUAL: u32 = 15237;
 const BOMB_VISUAL: u32 = 1449;
 const CIRCLE_VISUAL: u32 = 14914;
+/// An eruption (Volcanic): Flamestrike's pillar.
+const VOLCANO_VISUAL: u32 = 2120;
 /// A lure's pulse on the ground: Rejuvenation's green glow.
 const LURE_PULSE: u32 = 774;
+
+/// A hazard no enemy made (an affix's): it is not called off when an enemy dies.
+pub(super) const NO_OWNER: u32 = u32::MAX;
 
 /// A caster stops coming closer at this distance.
 pub(super) const CASTER_KEEP: f32 = 12.0;
@@ -95,6 +100,10 @@ pub struct Act {
     pub(super) windup: f32,
     /// A charge or leap under way: where to, and yards a second.
     pub(super) dash: Option<(V2, f32)>,
+    /// A Spiteful ghost: seconds before it fades.
+    pub(super) expires: Option<f32>,
+    /// Bolstering stacks taken.
+    pub(super) bolster: u8,
 }
 
 /// Ground marked by an elite or boss, going off when `left` runs out.
@@ -125,6 +134,7 @@ fn usable(m: Mechanic, dist: f32) -> bool {
         | Mechanic::Spores
         | Mechanic::Bomb
         | Mechanic::Circle => dist < 40.0,
+        Mechanic::Sanguine | Mechanic::Volcanic => false,
     }
 }
 
@@ -216,7 +226,7 @@ impl World {
                 };
                 self.mark(m, target, shape, CASTER_WINDUP, from, damage * CASTER_HITS);
             }
-            Mechanic::Frenzy => {}
+            Mechanic::Frenzy | Mechanic::Sanguine | Mechanic::Volcanic => {}
             Mechanic::Healer => {
                 let mut healed = Vec::new();
                 for e in self.enemies.iter_mut().filter(|e| {
@@ -301,7 +311,15 @@ impl World {
     }
 
     /// Mark ground for mechanic `kind`, going off in `secs`.
-    fn mark(&mut self, kind: Mechanic, pos: V2, shape: Shape, secs: f32, from: u32, damage: f32) {
+    pub(super) fn mark(
+        &mut self,
+        kind: Mechanic,
+        pos: V2,
+        shape: Shape,
+        secs: f32,
+        from: u32,
+        damage: f32,
+    ) {
         let id = self.id();
         self.hazards.push(Hazard {
             id,
@@ -335,7 +353,7 @@ impl World {
             let owner = self.enemies.iter().position(|e| e.id == from);
             let body = matches!(kind, Mechanic::Charge | Mechanic::Slam | Mechanic::Leap);
             let held = owner.is_some_and(|o| self.enemies[o].status.held());
-            if owner.is_none() || (body && held) {
+            if (owner.is_none() && from != NO_OWNER) || (body && held) {
                 if let Some(o) = owner {
                     self.enemies[o].act.windup = 0.0;
                 }
@@ -434,12 +452,14 @@ impl World {
                 self.events.push(cast(GRIP_VISUAL, Some(h.pos)));
             }
             // A lure that waited out its time just goes.
+            Mechanic::Volcanic => self.events.push(cast(VOLCANO_VISUAL, Some(h.pos))),
             Mechanic::Frenzy
             | Mechanic::Healer
             | Mechanic::Summoner
             | Mechanic::Spores
             | Mechanic::Bomb
-            | Mechanic::Circle => {}
+            | Mechanic::Circle
+            | Mechanic::Sanguine => {}
         }
     }
 
@@ -562,6 +582,15 @@ impl World {
                 dest: Some(at),
             });
         }
+    }
+
+    /// Where the hazards of `kind` lie, and their shapes.
+    pub(super) fn hazard_shapes(&self, kind: Mechanic) -> Vec<(V2, Shape)> {
+        self.hazards
+            .iter()
+            .filter(|h| h.kind == kind)
+            .map(|h| (h.pos, h.shape))
+            .collect()
     }
 
     /// Hero `player` thrown or pulled to `to`, within the arena: its own client moves it there.

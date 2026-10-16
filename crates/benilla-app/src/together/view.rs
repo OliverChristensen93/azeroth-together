@@ -238,7 +238,8 @@ pub(super) fn apply_events(
             e @ (Event::Telegraph { .. }
             | Event::TelegraphEnd { .. }
             | Event::EnemyCast { .. }
-            | Event::Shoved { .. }) => mechanics.0.push(e),
+            | Event::Shoved { .. }
+            | Event::AffixGained { .. }) => mechanics.0.push(e),
             Event::Cast {
                 caster,
                 visual,
