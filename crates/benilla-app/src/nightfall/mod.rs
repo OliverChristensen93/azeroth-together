@@ -15,6 +15,7 @@ mod grade;
 mod menu;
 mod run;
 mod session;
+mod ui;
 mod units;
 mod view;
 
@@ -147,6 +148,7 @@ impl Plugin for NightfallPlugin {
                     .run_if(in_state(Phase::Menu)),
             )
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
+            .add_systems(Update, ui::tune_ui.in_set(NightfallSet))
             .add_systems(OnExit(GameMode::Nightfall), atmosphere::leave)
             .add_systems(
                 Update,
