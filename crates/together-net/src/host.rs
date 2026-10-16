@@ -306,7 +306,7 @@ fn serve<Up: DeserializeOwned + Send + 'static>(
     } = link;
     let mut input = BufReader::new(reader);
     let mut out = BufWriter::new(writer);
-    let verdict = match wire::read::<Greeting>(&mut input) {
+    let verdict = match wire::read_capped::<Greeting>(&mut input, handshake::MAX_FRAME) {
         Ok(greeting) => handshake::judge(&greeting, intake.game),
         Err(_) => {
             drop(out);

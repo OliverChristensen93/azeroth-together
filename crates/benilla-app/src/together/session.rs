@@ -281,10 +281,19 @@ fn decode_hex(text: &str) -> Option<[u8; 32]> {
 pub(super) fn hero_name() -> String {
     std::env::var("TOGETHER_NAME")
         .or_else(|_| std::env::var("USERNAME"))
-        .ok()
-        .map(|n| n.chars().filter(|c| !c.is_control()).take(12).collect())
-        .filter(|n: &String| !n.is_empty())
-        .unwrap_or_else(|| "Hero".into())
+        .map_or_else(|_| "Hero".into(), |n| clean_name(&n))
+}
+
+/// A hero's name as players see it: control characters removed, spaces trimmed, at most 12
+/// characters, and "Hero" when nothing is left. Our own and every joining player's.
+fn clean_name(raw: &str) -> String {
+    let visible: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let name: String = visible.trim().chars().take(12).collect();
+    if name.is_empty() {
+        "Hero".into()
+    } else {
+        name
+    }
 }
 
 /// The local pick as the wire carries it.
@@ -337,9 +346,14 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                         ClientMsg::Hello {
                             protocol,
                             content,
-                            hero,
+                            mut hero,
                         },
                     ) => {
+                        // A second hello from a player already in is not a new player.
+                        if h.peers.iter().any(|p| p.conn == conn) {
+                            continue;
+                        }
+                        hero.name = clean_name(&hero.name);
                         let refuse = if protocol != PROTOCOL {
                             Some("a different version of the game".to_string())
                         } else if content != our_content_hash() {
@@ -366,8 +380,9 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                             pending: Vec::new(),
                         });
                     }
-                    HostEvent::Message(conn, ClientMsg::Pick(hero)) => {
+                    HostEvent::Message(conn, ClientMsg::Pick(mut hero)) => {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
+                            hero.name = clean_name(&hero.name);
                             p.hero = hero;
                         }
                     }
@@ -609,5 +624,21 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
 pub(super) fn close_on_exit(mut exits: MessageReader<AppExit>, mut net: ResMut<Net>) {
     if exits.read().next().is_some() {
         net.leave("");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_is_trimmed_to_twelve_visible_characters() {
+        assert_eq!(clean_name("Jaina"), "Jaina");
+        assert_eq!(clean_name("Bad\u{7}\nName\t"), "BadName");
+        assert_eq!(clean_name("  Thrall  "), "Thrall");
+        assert_eq!(clean_name("Abcdefghijklmnop"), "Abcdefghijkl");
+        assert_eq!(clean_name("Ünïcödé-Ñåmé-plus"), "Ünïcödé-Ñåmé");
+        assert_eq!(clean_name("\u{1b}\u{1b}"), "Hero");
+        assert_eq!(clean_name(""), "Hero");
     }
 }

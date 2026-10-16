@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 /// Bumped whenever the greeting or the verdict changes shape.
 pub(crate) const HANDSHAKE: u32 = 1;
 
+/// The largest greeting or verdict either end reads: both are a few bytes, and they come before
+/// the other end is known to play the game at all.
+pub(crate) const MAX_FRAME: usize = 256;
+
 /// The client's first frame.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Greeting {

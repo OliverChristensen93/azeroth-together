@@ -103,7 +103,7 @@ fn run<Down: DeserializeOwned>(
         close();
         return;
     }
-    match wire::read::<Verdict>(&mut input) {
+    match wire::read_capped::<Verdict>(&mut input, handshake::MAX_FRAME) {
         Ok(Verdict::Welcome) => {}
         Ok(refused) => {
             let _ = events.send(ClientEvent::Disconnected(handshake::refusal(&refused, game)));
@@ -339,6 +339,33 @@ mod tests {
         });
         assert_eq!(joined.len(), 1, "only the real client joined");
         assert_eq!(host.connections(), 1);
+    }
+
+    /// A greeting is a few bytes; one announcing a kilobyte is not read, and its connection is
+    /// closed without joining.
+    #[test]
+    fn an_oversized_greeting_is_refused() {
+        use std::io::Read;
+
+        let host = TestHost::listen(0, GAME).unwrap();
+        let mut stray = TcpStream::connect(local(&host)).unwrap();
+        stray.write_all(&1024u32.to_le_bytes()).unwrap();
+        stray.write_all(&[0u8; 1024]).unwrap();
+        stray
+            .set_read_timeout(Some(crate::LINGER + Duration::from_secs(2)))
+            .unwrap();
+        let mut reply = Vec::new();
+        let closed = stray.read_to_end(&mut reply);
+        assert!(
+            matches!(closed, Ok(_)) || closed.as_ref().is_err_and(|e| {
+                e.kind() == std::io::ErrorKind::ConnectionReset
+                    || e.kind() == std::io::ErrorKind::ConnectionAborted
+            }),
+            "the host kept the connection open: {closed:?}"
+        );
+        assert!(reply.is_empty(), "the host answered an oversized greeting");
+        assert!(host.poll().is_empty());
+        assert_eq!(host.connections(), 0);
     }
 
     #[test]

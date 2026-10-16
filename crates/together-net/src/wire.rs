@@ -24,10 +24,16 @@ pub(crate) fn write_frame(out: &mut impl Write, frame: &[u8]) -> io::Result<()> 
 
 /// The next message, blocking until it arrives; an error when the stream closes or lies.
 pub(crate) fn read<T: DeserializeOwned>(input: &mut impl Read) -> io::Result<T> {
+    read_capped(input, MAX_FRAME)
+}
+
+/// [`read`], refusing a message over `cap` bytes: for the handshake, whose frames are tiny and
+/// come before anyone is known, so a stranger cannot make a host allocate megabytes.
+pub(crate) fn read_capped<T: DeserializeOwned>(input: &mut impl Read, cap: usize) -> io::Result<T> {
     let mut len = [0u8; 4];
     input.read_exact(&mut len)?;
     let len = u32::from_le_bytes(len) as usize;
-    if len > MAX_FRAME {
+    if len > cap {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("a {len}-byte message is too large"),
@@ -58,6 +64,17 @@ mod tests {
         let frame = encode(&msg).unwrap();
         let back: Msg = read(&mut frame.as_slice()).unwrap();
         assert_eq!(back, msg);
+    }
+
+    #[test]
+    fn a_message_over_its_cap_is_refused() {
+        let msg = Msg::Pick {
+            name: "J".repeat(300),
+            class: "mage".into(),
+        };
+        let frame = encode(&msg).unwrap();
+        assert!(read_capped::<Msg>(&mut frame.as_slice(), 256).is_err());
+        assert_eq!(read_capped::<Msg>(&mut frame.as_slice(), 1024).unwrap(), msg);
     }
 
     #[test]
