@@ -1,0 +1,16 @@
+[package]
+name = "nightfall-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nightfall's game rules: a headless, fixed-tick co-op stealth extraction simulation with no engine or rendering dependencies"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+
+[dev-dependencies]
+postcard = { version = "1", features = ["use-std"] }
