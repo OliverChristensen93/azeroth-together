@@ -3,13 +3,12 @@ name = "together-net"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Azeroth Together's co-op wire: the messages a host and its clients exchange, and the TCP threads that carry them"
+description = "Azeroth Together's co-op wire: the TCP and invite-code threads that carry each game's messages between a host and its clients"
 
 [lints]
 workspace = true
 
 [dependencies]
-together-sim = { path = "../together-sim" }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 # Invite codes: QUIC connections dialed by an endpoint's key, through home routers (hole punching,

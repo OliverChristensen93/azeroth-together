@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use together_net::ServerMsg;
+use together_sim::messages::ServerMsg;
 use together_sim::{Content, ContentSources, PlayerInput, World, TICK_HZ, V2};
 
 fn shipped() -> Content {

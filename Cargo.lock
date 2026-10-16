@@ -8470,7 +8470,6 @@ dependencies = [
  "iroh",
  "postcard",
  "serde",
- "together-sim",
  "tokio",
 ]
 
@@ -8478,6 +8477,7 @@ dependencies = [
 name = "together-sim"
 version = "0.2.0"
 dependencies = [
+ "postcard",
  "ron",
  "serde",
 ]

@@ -15,10 +15,15 @@
 use std::sync::Mutex;
 
 use bevy::prelude::*;
-use together_net::{
-    content_hash, new_host_key, Client, ClientEvent, ClientMsg, ConnId, HeroPick, Host, HostEvent,
-    Invite, LobbyPlayer, ServerMsg, DEFAULT_PORT, PROTOCOL,
-};
+use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
+use together_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
+
+/// This game on the wire: a Nightfall host refuses us, and we refuse its players.
+const GAME: GameTag = "survivors";
+type Host = together_net::Host<ClientMsg, ServerMsg>;
+type Client = together_net::Client<ClientMsg, ServerMsg>;
+type HostEvent = together_net::HostEvent<ClientMsg>;
+type ClientEvent = together_net::ClientEvent<ServerMsg>;
 use together_sim::{Event, PlayerId, PlayerInput, Snapshot, World, DT};
 use web_time::Instant;
 
@@ -152,7 +157,7 @@ impl Net {
     /// Start hosting: on [`DEFAULT_PORT`] (any free port if it is taken) for the local network, and
     /// by invite code ([`host_key`]) for everyone else.
     pub fn host(&mut self) {
-        match Host::listen(DEFAULT_PORT).or_else(|_| Host::listen(0)) {
+        match Host::listen(DEFAULT_PORT, GAME).or_else(|_| Host::listen(0, GAME)) {
             Ok(host) => {
                 let port = host.local_addr().port();
                 host.open_invites(host_key());
@@ -177,7 +182,7 @@ impl Net {
     /// Start joining the host an invite code or address names.
     pub fn join(&mut self, addr: &str) {
         self.role = Role::Client(ClientSide {
-            client: Mutex::new(Client::connect(addr)),
+            client: Mutex::new(Client::connect(addr, GAME)),
             addr: addr.to_owned(),
             connected: false,
             me: None,

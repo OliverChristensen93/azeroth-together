@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, BufWriter};
+use std::marker::PhantomData;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -10,20 +11,23 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::handshake::{self, Greeting, Verdict};
 use crate::invite::{self, Link};
 use crate::wire;
-use crate::{ClientMsg, ServerMsg};
+use crate::GameTag;
 
 /// One connected client, numbered from 1 in the order they arrived.
 pub type ConnId = u32;
 
 /// What happened on the host's sockets since the last poll.
 #[derive(Debug)]
-pub enum HostEvent {
-    /// Someone connected (from this address, or by invite code); their [`ClientMsg::Hello`]
-    /// comes next.
+pub enum HostEvent<Up> {
+    /// Someone of our game joined (from this address, or by invite code).
     Joined(ConnId, String),
-    Message(ConnId, ClientMsg),
+    Message(ConnId, Up),
     /// The connection closed, or failed.
     Left(ConnId),
 }
@@ -58,38 +62,54 @@ pub enum Invite {
     Failed(String),
 }
 
-/// What the accept paths share: where events go, the writers, and the next connection's number.
-#[derive(Clone)]
-struct Intake {
-    events: Sender<HostEvent>,
+/// What the accept paths share: where events go, the writers, the next connection's number and
+/// the game this host plays.
+struct Intake<Up> {
+    events: Sender<HostEvent<Up>>,
     writers: Writers,
     next: Arc<AtomicU32>,
+    game: GameTag,
 }
 
-impl Intake {
-    /// Number a new connection, start its threads and announce it.
-    fn admit(&self, link: Link, from: String) {
-        let conn = self.next.fetch_add(1, Ordering::Relaxed);
-        if start_connection(conn, link, &self.events, &self.writers).is_ok() {
-            let _ = self.events.send(HostEvent::Joined(conn, from));
+// Written out: a derived `Clone` would ask `Up: Clone`, which a sender does not need.
+impl<Up> Clone for Intake<Up> {
+    fn clone(&self) -> Self {
+        Self {
+            events: self.events.clone(),
+            writers: self.writers.clone(),
+            next: self.next.clone(),
+            game: self.game,
         }
     }
 }
 
-/// A listening host. Dropping it stops listening and closes every connection.
-pub struct Host {
-    events: Receiver<HostEvent>,
-    intake: Intake,
+impl<Up: DeserializeOwned + Send + 'static> Intake<Up> {
+    /// Number a new connection and start its thread, which greets it and announces it.
+    fn admit(&self, link: Link, from: String) {
+        let conn = self.next.fetch_add(1, Ordering::Relaxed);
+        let intake = self.clone();
+        let _ = thread::Builder::new()
+            .name(format!("together-host-read-{conn}"))
+            .spawn(move || serve(conn, link, from, intake));
+    }
+}
+
+/// A listening host for a game whose clients send `Up` and are sent `Down`. Dropping it stops
+/// listening and closes every connection.
+pub struct Host<Up, Down> {
+    events: Receiver<HostEvent<Up>>,
+    intake: Intake<Up>,
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
     invite: Arc<Mutex<Invite>>,
     /// The invite endpoint, once open, to close with the host.
     endpoint: Arc<Mutex<Option<iroh::Endpoint>>>,
+    _down: PhantomData<fn(&Down)>,
 }
 
-impl Host {
-    /// Listen on every interface at `port` (0 picks a free one).
-    pub fn listen(port: u16) -> io::Result<Host> {
+impl<Up: DeserializeOwned + Send + 'static, Down: Serialize> Host<Up, Down> {
+    /// Listen on every interface at `port` (0 picks a free one), for clients playing `game`.
+    pub fn listen(port: u16, game: GameTag) -> io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", port))?;
         let addr = listener.local_addr()?;
         listener.set_nonblocking(true)?;
@@ -98,6 +118,7 @@ impl Host {
             events: tx,
             writers: Arc::default(),
             next: Arc::new(AtomicU32::new(1)),
+            game,
         };
         let stop = Arc::new(AtomicBool::new(false));
         {
@@ -113,6 +134,7 @@ impl Host {
             stop,
             invite: Arc::new(Mutex::new(Invite::Off)),
             endpoint: Arc::default(),
+            _down: PhantomData,
         })
     }
 
@@ -157,11 +179,11 @@ impl Host {
     }
 
     /// Everything since the last poll, oldest first.
-    pub fn poll(&self) -> Vec<HostEvent> {
+    pub fn poll(&self) -> Vec<HostEvent<Up>> {
         self.events.try_iter().collect()
     }
 
-    pub fn send(&self, to: ConnId, msg: &ServerMsg) {
+    pub fn send(&self, to: ConnId, msg: &Down) {
         if let Ok(frame) = wire::encode(msg) {
             if let Some(w) = self.intake.writers.lock().unwrap().get(&to) {
                 w.send(Arc::new(frame));
@@ -170,7 +192,7 @@ impl Host {
     }
 
     /// The same message to everyone, encoded once.
-    pub fn broadcast(&self, msg: &ServerMsg) {
+    pub fn broadcast(&self, msg: &Down) {
         if let Ok(frame) = wire::encode(msg) {
             let frame = Arc::new(frame);
             for w in self.intake.writers.lock().unwrap().values() {
@@ -201,7 +223,7 @@ impl Host {
     }
 }
 
-impl Drop for Host {
+impl<Up, Down> Drop for Host<Up, Down> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         self.intake.writers.lock().unwrap().clear();
@@ -226,7 +248,11 @@ fn tcp_link(stream: TcpStream) -> io::Result<Link> {
     })
 }
 
-fn accept_loop(listener: TcpListener, intake: Intake, stop: Arc<AtomicBool>) {
+fn accept_loop<Up: DeserializeOwned + Send + 'static>(
+    listener: TcpListener,
+    intake: Intake<Up>,
+    stop: Arc<AtomicBool>,
+) {
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, peer)) => {
@@ -242,32 +268,48 @@ fn accept_loop(listener: TcpListener, intake: Intake, stop: Arc<AtomicBool>) {
     }
 }
 
-fn start_connection(
+/// One connection's life, on its own thread: the handshake, then a writer thread and the messages
+/// in. A connection that never greets, greets wrongly or plays another game never joins: no
+/// [`HostEvent`] is sent for it and nothing is broadcast to it.
+fn serve<Up: DeserializeOwned + Send + 'static>(
     conn: ConnId,
     link: Link,
-    events: &Sender<HostEvent>,
-    writers: &Writers,
-) -> io::Result<()> {
+    from: String,
+    intake: Intake<Up>,
+) {
     let Link {
         reader,
         writer,
         close,
     } = link;
+    let mut input = BufReader::new(reader);
+    let mut out = BufWriter::new(writer);
+    let verdict = match wire::read::<Greeting>(&mut input) {
+        Ok(greeting) => handshake::judge(&greeting, intake.game),
+        Err(_) => {
+            close();
+            return;
+        }
+    };
+    let told = wire::encode(&verdict).and_then(|frame| wire::write_frame(&mut out, &frame));
+    if verdict != Verdict::Welcome || told.is_err() {
+        close();
+        return;
+    }
+
     let (tx, rx) = mpsc::channel::<Arc<Vec<u8>>>();
     let queued = Arc::new(AtomicUsize::new(0));
-    writers.lock().unwrap().insert(
+    intake.writers.lock().unwrap().insert(
         conn,
         Writer {
             tx,
             queued: queued.clone(),
         },
     );
-
     // Writer: frames out until the host drops its sender (kick, or the host goes).
-    thread::Builder::new()
+    let writer = thread::Builder::new()
         .name(format!("together-host-write-{conn}"))
         .spawn(move || {
-            let mut out = BufWriter::new(writer);
             for frame in rx {
                 let sent = wire::write_frame(&mut out, &frame);
                 queued.fetch_sub(1, Ordering::Relaxed);
@@ -276,21 +318,17 @@ fn start_connection(
                 }
             }
             close();
-        })?;
-
-    // Reader: messages in until the stream ends.
-    let (events, writers) = (events.clone(), writers.clone());
-    thread::Builder::new()
-        .name(format!("together-host-read-{conn}"))
-        .spawn(move || {
-            let mut input = BufReader::new(reader);
-            while let Ok(msg) = wire::read::<ClientMsg>(&mut input) {
-                if events.send(HostEvent::Message(conn, msg)).is_err() {
-                    break;
-                }
-            }
-            writers.lock().unwrap().remove(&conn);
-            let _ = events.send(HostEvent::Left(conn));
-        })?;
-    Ok(())
+        });
+    if writer.is_err() {
+        intake.writers.lock().unwrap().remove(&conn);
+        return;
+    }
+    let _ = intake.events.send(HostEvent::Joined(conn, from));
+    while let Ok(msg) = wire::read::<Up>(&mut input) {
+        if intake.events.send(HostEvent::Message(conn, msg)).is_err() {
+            break;
+        }
+    }
+    intake.writers.lock().unwrap().remove(&conn);
+    let _ = intake.events.send(HostEvent::Left(conn));
 }

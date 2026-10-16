@@ -15,6 +15,7 @@ mod content;
 mod interact;
 mod items;
 mod math;
+pub mod messages;
 mod powerups;
 mod rng;
 mod spell;

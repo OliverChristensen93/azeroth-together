@@ -178,7 +178,7 @@ const PLAYBACK_MAX: usize = 8;
 
 impl Sim {
     /// A run for everyone in `roster` (just us, alone), stepped here.
-    fn hosted(zone: &str, roster: &[together_net::LobbyPlayer]) -> Self {
+    fn hosted(zone: &str, roster: &[together_sim::messages::LobbyPlayer]) -> Self {
         let seed = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)

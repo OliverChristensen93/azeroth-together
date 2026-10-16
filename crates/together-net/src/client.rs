@@ -1,60 +1,78 @@
 //! The client's side: one connection to a host, by address or by invite code, read and written
-//! on its own threads.
+//! on its own threads. It greets the host with its game first; a host of another game answers
+//! with a refusal, which arrives as [`ClientEvent::Disconnected`] with the reason.
 
 use std::io::{BufReader, BufWriter};
+use std::marker::PhantomData;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::handshake::{self, Greeting, Verdict, HANDSHAKE};
 use crate::invite::{self, Link};
-use crate::wire;
-use crate::{with_default_port, ClientMsg, ServerMsg};
+use crate::{wire, with_default_port, GameTag};
 
 /// How long to try a host before giving up.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// What happened on the connection since the last poll.
 #[derive(Debug)]
-pub enum ClientEvent {
+pub enum ClientEvent<Down> {
+    /// The host plays our game and took us in.
     Connected,
-    Message(ServerMsg),
-    /// The connection could not be made, or ended; the reason is for the player.
+    Message(Down),
+    /// The connection could not be made, was refused, or ended; the reason is for the player.
     Disconnected(String),
 }
 
-/// A connection to a host, being made or made. Dropping it closes the connection.
-pub struct Client {
-    events: Receiver<ClientEvent>,
+/// A connection to a host of a game whose clients send `Up` and are sent `Down`, being made or
+/// made. Dropping it closes the connection.
+pub struct Client<Up, Down> {
+    events: Receiver<ClientEvent<Down>>,
     out: Sender<Vec<u8>>,
+    _up: PhantomData<fn(&Up)>,
 }
 
-impl Client {
-    /// Start connecting to `to`: an invite code, or an address (`host` or `host:port`).
-    /// [`ClientEvent::Connected`] or [`ClientEvent::Disconnected`] tells how it went.
-    pub fn connect(to: &str) -> Client {
+impl<Up: Serialize, Down: DeserializeOwned + Send + 'static> Client<Up, Down> {
+    /// Start connecting to `to`, an invite code or an address (`host` or `host:port`), as a
+    /// player of `game`. [`ClientEvent::Connected`] or [`ClientEvent::Disconnected`] tells how it
+    /// went.
+    pub fn connect(to: &str, game: GameTag) -> Self {
         let to = to.to_owned();
         let (tx, events) = mpsc::channel();
         let (out, outgoing) = mpsc::channel::<Vec<u8>>();
         let _ = thread::Builder::new()
             .name("together-client".into())
-            .spawn(move || run(to, tx, outgoing));
-        Client { events, out }
+            .spawn(move || run::<Down>(to, game, tx, outgoing));
+        Client {
+            events,
+            out,
+            _up: PhantomData,
+        }
     }
 
     /// Everything since the last poll, oldest first.
-    pub fn poll(&self) -> Vec<ClientEvent> {
+    pub fn poll(&self) -> Vec<ClientEvent<Down>> {
         self.events.try_iter().collect()
     }
 
-    pub fn send(&self, msg: &ClientMsg) {
+    pub fn send(&self, msg: &Up) {
         if let Ok(frame) = wire::encode(msg) {
             let _ = self.out.send(frame);
         }
     }
 }
 
-fn run(to: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
+fn run<Down: DeserializeOwned>(
+    to: String,
+    game: GameTag,
+    events: Sender<ClientEvent<Down>>,
+    outgoing: Receiver<Vec<u8>>,
+) {
     let link = match invite::parse_code(&to) {
         Some(host) => invite::dial(host),
         None => connect(&with_default_port(&to)),
@@ -70,13 +88,41 @@ fn run(to: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
             return;
         }
     };
+    let mut input = BufReader::new(reader);
+    let mut out = BufWriter::new(writer);
+    let greeting = Greeting {
+        handshake: HANDSHAKE,
+        game: game.to_owned(),
+    };
+    if wire::encode(&greeting)
+        .and_then(|frame| wire::write_frame(&mut out, &frame))
+        .is_err()
+    {
+        let _ = events.send(ClientEvent::Disconnected("could not greet the host".into()));
+        close();
+        return;
+    }
+    match wire::read::<Verdict>(&mut input) {
+        Ok(Verdict::Welcome) => {}
+        Ok(refused) => {
+            let _ = events.send(ClientEvent::Disconnected(handshake::refusal(&refused, game)));
+            close();
+            return;
+        }
+        Err(_) => {
+            let _ = events.send(ClientEvent::Disconnected(
+                "the host closed the connection".into(),
+            ));
+            close();
+            return;
+        }
+    }
     let _ = events.send(ClientEvent::Connected);
 
     // Writer: until the game drops the client.
     let _ = thread::Builder::new()
         .name("together-client-write".into())
         .spawn(move || {
-            let mut out = BufWriter::new(writer);
             for frame in outgoing {
                 if wire::write_frame(&mut out, &frame).is_err() {
                     break;
@@ -85,9 +131,8 @@ fn run(to: String, events: Sender<ClientEvent>, outgoing: Receiver<Vec<u8>>) {
             close();
         });
 
-    let mut input = BufReader::new(reader);
     loop {
-        match wire::read::<ServerMsg>(&mut input) {
+        match wire::read::<Down>(&mut input) {
             Ok(msg) => {
                 if events.send(ClientEvent::Message(msg)).is_err() {
                     return;
@@ -135,10 +180,29 @@ fn connect(addr: &str) -> Result<Link, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::time::Instant;
 
+    use serde::Deserialize;
+
     use super::*;
-    use crate::{HeroPick, Host, HostEvent, PROTOCOL};
+    use crate::{Host, HostEvent};
+
+    const GAME: GameTag = "test";
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    enum Up {
+        Hello(String),
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    enum Down {
+        Welcome(u8),
+        Start(String),
+    }
+
+    type TestHost = Host<Up, Down>;
+    type TestClient = Client<Up, Down>;
 
     /// Poll until `f` finds something, for up to two seconds.
     fn wait<T>(f: impl FnMut() -> Option<T>) -> T {
@@ -157,19 +221,14 @@ mod tests {
         }
     }
 
-    fn pick() -> HeroPick {
-        HeroPick {
-            name: "Thrall".into(),
-            class: "shaman".into(),
-            race: 2,
-            sex: 0,
-        }
+    fn local(host: &TestHost) -> String {
+        format!("127.0.0.1:{}", host.local_addr().port())
     }
 
     #[test]
     fn a_client_joins_talks_and_leaves() {
-        let host = Host::listen(0).unwrap();
-        let client = Client::connect(&format!("127.0.0.1:{}", host.local_addr().port()));
+        let host = TestHost::listen(0, GAME).unwrap();
+        let client = TestClient::connect(&local(&host), GAME);
         wait(|| {
             client
                 .poll()
@@ -183,11 +242,7 @@ mod tests {
             })
         });
 
-        let hello = ClientMsg::Hello {
-            protocol: PROTOCOL,
-            content: 42,
-            hero: pick(),
-        };
+        let hello = Up::Hello("Thrall".into());
         client.send(&hello);
         let got = wait(|| {
             host.poll().into_iter().find_map(|e| match e {
@@ -197,10 +252,8 @@ mod tests {
         });
         assert_eq!(got, hello);
 
-        host.send(conn, &ServerMsg::Welcome { you: 1 });
-        host.broadcast(&ServerMsg::Start {
-            zone: "elwynn".into(),
-        });
+        host.send(conn, &Down::Welcome(1));
+        host.broadcast(&Down::Start("duskwood".into()));
         let mut seen = Vec::new();
         wait(|| {
             for e in client.poll() {
@@ -210,7 +263,7 @@ mod tests {
             }
             (seen.len() == 2).then_some(())
         });
-        assert_eq!(seen[0], ServerMsg::Welcome { you: 1 });
+        assert_eq!(seen[0], Down::Welcome(1));
 
         drop(client);
         wait(|| {
@@ -222,6 +275,51 @@ mod tests {
     }
 
     #[test]
+    fn a_client_of_another_game_is_told_which_game_the_host_plays() {
+        let host = TestHost::listen(0, "survivors").unwrap();
+        let client = TestClient::connect(&local(&host), "nightfall");
+        let why = wait(|| {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Disconnected(why) => Some(why),
+                ClientEvent::Connected => panic!("connected to another game's host"),
+                ClientEvent::Message(_) => None,
+            })
+        });
+        assert_eq!(why, "That host is playing Survivors, not Nightfall.");
+        thread::sleep(Duration::from_millis(100));
+        assert!(host.poll().is_empty(), "the host announced a refused client");
+        assert_eq!(host.connections(), 0);
+    }
+
+    #[test]
+    fn a_connection_that_never_greets_never_joins_and_blocks_nobody() {
+        let host = TestHost::listen(0, GAME).unwrap();
+        // Not a greeting: a length prefix far over the limit, as a stray program might send.
+        let mut stray = TcpStream::connect(local(&host)).unwrap();
+        stray.write_all(&u32::MAX.to_le_bytes()).unwrap();
+        let client = TestClient::connect(&local(&host), GAME);
+        wait(|| {
+            client
+                .poll()
+                .into_iter()
+                .find(|e| matches!(e, ClientEvent::Connected))
+        });
+        let joined: Vec<crate::ConnId> = wait(|| {
+            let j: Vec<_> = host
+                .poll()
+                .into_iter()
+                .filter_map(|e| match e {
+                    HostEvent::Joined(c, _) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            (!j.is_empty()).then_some(j)
+        });
+        assert_eq!(joined.len(), 1, "only the real client joined");
+        assert_eq!(host.connections(), 1);
+    }
+
+    #[test]
     fn nobody_listening_is_a_disconnect_with_a_reason() {
         // Bind and drop, so the port is very likely closed.
         let port = std::net::TcpListener::bind("127.0.0.1:0")
@@ -229,7 +327,7 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let client = Client::connect(&format!("127.0.0.1:{port}"));
+        let client = TestClient::connect(&format!("127.0.0.1:{port}"), GAME);
         // Windows retries a refused localhost connection for a couple of seconds.
         let why = wait_for(CONNECT_TIMEOUT + Duration::from_secs(2), || {
             client.poll().into_iter().find_map(|e| match e {
@@ -240,60 +338,10 @@ mod tests {
         assert!(why.contains("cannot reach"), "{why}");
     }
 
-    /// The whole invite path over the internet: number 0's address lookup and relays. Needs a
-    /// network, so it runs only when asked: `cargo test -p together-net -- --ignored`.
-    #[test]
-    #[ignore]
-    fn a_client_joins_by_invite_code() {
-        let host = Host::listen(0).unwrap();
-        let key = crate::new_host_key();
-        host.open_invites(key);
-        let code = wait_for(Duration::from_secs(30), || match host.invite() {
-            crate::Invite::Ready(code) => Some(code),
-            crate::Invite::Failed(why) => panic!("{why}"),
-            _ => None,
-        });
-        assert_eq!(code, crate::code_for(&key));
-        let client = Client::connect(&code);
-        let mut why = None;
-        wait_for(Duration::from_secs(40), || {
-            client.poll().into_iter().find_map(|e| match e {
-                ClientEvent::Connected => Some(()),
-                ClientEvent::Disconnected(w) => {
-                    why = Some(w);
-                    Some(())
-                }
-                _ => None,
-            })
-        });
-        assert_eq!(why, None);
-        let hello = ClientMsg::Hello {
-            protocol: PROTOCOL,
-            content: 7,
-            hero: pick(),
-        };
-        client.send(&hello);
-        let (conn, got) = wait_for(Duration::from_secs(20), || {
-            host.poll().into_iter().find_map(|e| match e {
-                HostEvent::Message(c, m) => Some((c, m)),
-                _ => None,
-            })
-        });
-        assert_eq!(got, hello);
-        host.send(conn, &ServerMsg::Welcome { you: 1 });
-        let welcome = wait_for(Duration::from_secs(20), || {
-            client.poll().into_iter().find_map(|e| match e {
-                ClientEvent::Message(m) => Some(m),
-                _ => None,
-            })
-        });
-        assert_eq!(welcome, ServerMsg::Welcome { you: 1 });
-    }
-
     #[test]
     fn the_host_going_away_disconnects_the_client() {
-        let host = Host::listen(0).unwrap();
-        let client = Client::connect(&format!("127.0.0.1:{}", host.local_addr().port()));
+        let host = TestHost::listen(0, GAME).unwrap();
+        let client = TestClient::connect(&local(&host), GAME);
         wait(|| {
             client
                 .poll()
@@ -312,5 +360,51 @@ mod tests {
                 .into_iter()
                 .find(|e| matches!(e, ClientEvent::Disconnected(_)))
         });
+    }
+
+    /// The whole invite path over the internet: number 0's address lookup and relays. Needs a
+    /// network, so it runs only when asked: `cargo test -p together-net -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_client_joins_by_invite_code() {
+        let host = TestHost::listen(0, GAME).unwrap();
+        let key = crate::new_host_key();
+        host.open_invites(key);
+        let code = wait_for(Duration::from_secs(30), || match host.invite() {
+            crate::Invite::Ready(code) => Some(code),
+            crate::Invite::Failed(why) => panic!("{why}"),
+            _ => None,
+        });
+        assert_eq!(code, crate::code_for(&key));
+        let client = TestClient::connect(&code, GAME);
+        let mut why = None;
+        wait_for(Duration::from_secs(40), || {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Connected => Some(()),
+                ClientEvent::Disconnected(w) => {
+                    why = Some(w);
+                    Some(())
+                }
+                _ => None,
+            })
+        });
+        assert_eq!(why, None);
+        let hello = Up::Hello("Jaina".into());
+        client.send(&hello);
+        let (conn, got) = wait_for(Duration::from_secs(20), || {
+            host.poll().into_iter().find_map(|e| match e {
+                HostEvent::Message(c, m) => Some((c, m)),
+                _ => None,
+            })
+        });
+        assert_eq!(got, hello);
+        host.send(conn, &Down::Welcome(1));
+        let welcome = wait_for(Duration::from_secs(20), || {
+            client.poll().into_iter().find_map(|e| match e {
+                ClientEvent::Message(m) => Some(m),
+                _ => None,
+            })
+        });
+        assert_eq!(welcome, Down::Welcome(1));
     }
 }

@@ -40,25 +40,29 @@ pub(crate) fn read<T: DeserializeOwned>(input: &mut impl Read) -> io::Result<T> 
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+
     use super::*;
-    use crate::{ClientMsg, HeroPick};
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    enum Msg {
+        Pick { name: String, class: String },
+    }
 
     #[test]
     fn a_message_survives_the_round_trip() {
-        let msg = ClientMsg::Pick(HeroPick {
+        let msg = Msg::Pick {
             name: "Jaina".into(),
             class: "mage".into(),
-            race: 1,
-            sex: 1,
-        });
+        };
         let frame = encode(&msg).unwrap();
-        let back: ClientMsg = read(&mut frame.as_slice()).unwrap();
+        let back: Msg = read(&mut frame.as_slice()).unwrap();
         assert_eq!(back, msg);
     }
 
     #[test]
     fn an_oversized_length_is_refused() {
         let frame = (u32::MAX).to_le_bytes();
-        assert!(read::<ClientMsg>(&mut frame.as_slice()).is_err());
+        assert!(read::<Msg>(&mut frame.as_slice()).is_err());
     }
 }

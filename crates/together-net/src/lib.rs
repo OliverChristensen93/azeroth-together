@@ -1,92 +1,30 @@
-//! Azeroth Together's co-op wire.
+//! Azeroth Together's co-op wire, shared by every game the launcher plays.
 //!
-//! The host runs the game ([`together_sim::World`]) and every client mirrors it: after each step the
-//! host sends a [`ServerMsg::State`] (the world's [`Snapshot`] and the step's events), and each
-//! client sends its [`ClientMsg::Input`] (where its own controller put its hero, and its card
-//! choices). Before a run, the host's lobby collects who joins with which hero.
+//! A game's host runs its world and every client mirrors it. Each game brings its own messages:
+//! `Up`, what a client sends, and `Down`, what the host sends; this crate carries them and knows
+//! nothing of either game. Before any game message, the two ends exchange a handshake
+//! ([`handshake`]): a host refuses a client of another game with a reason, since Survivors and
+//! Nightfall share the port and the invite code.
 //!
 //! Messages travel over TCP, or over QUIC for a game joined by invite code ([`invite`]), as a
-//! little-endian `u32` length and a `postcard` body. [`Host`] and
-//! [`Client`] run the sockets on their own threads; the game polls them once a frame and never
-//! blocks.
+//! little-endian `u32` length and a `postcard` body. [`Host`] and [`Client`] run the sockets on
+//! their own threads; the game polls them once a frame and never blocks.
 
 mod client;
+mod handshake;
 mod host;
 mod invite;
 mod wire;
-
-use serde::{Deserialize, Serialize};
-use together_sim::{Event, PlayerId, PlayerInput, Snapshot};
 
 pub use client::{Client, ClientEvent};
 pub use host::{ConnId, Host, HostEvent, Invite};
 pub use invite::{code_for, new_host_key, parse_code};
 
-/// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 4;
+/// Which game a host or client plays, the same on both ends: `"survivors"`, `"nightfall"`.
+pub type GameTag = &'static str;
 
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;
-
-/// The hero a player brings: their name and pick.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HeroPick {
-    pub name: String,
-    /// A class key from the content.
-    pub class: String,
-    pub race: u8,
-    pub sex: u8,
-}
-
-/// A player in the host's lobby.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LobbyPlayer {
-    pub player: PlayerId,
-    pub hero: HeroPick,
-}
-
-/// What a client tells the host.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ClientMsg {
-    /// The first message: who is joining, and whether they play the same game. `content` is a
-    /// hash of the content files, which must match the host's.
-    Hello {
-        protocol: u32,
-        content: u64,
-        hero: HeroPick,
-    },
-    /// A new pick, made in the lobby.
-    Pick(HeroPick),
-    /// This frame's input, during a run.
-    Input(PlayerInput),
-    /// Asks for a [`ServerMsg::Pong`] with the same stamp, to time the round trip.
-    Ping(u32),
-}
-
-/// What the host tells a client.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ServerMsg {
-    /// Joined: the client plays as `you`.
-    Welcome { you: PlayerId },
-    /// Not joined, and why; the host closes the connection after it.
-    Refused(String),
-    /// The lobby as it stands: the zone picked and everyone in it.
-    Lobby {
-        zone: String,
-        players: Vec<LobbyPlayer>,
-    },
-    /// The run begins in `zone`.
-    Start { zone: String },
-    /// One step of the run: the world after it, and what happened in it.
-    State {
-        snapshot: Snapshot,
-        events: Vec<Event>,
-    },
-    /// The host ended the run and went back to its menu.
-    Ended,
-    /// The answer to a [`ClientMsg::Ping`].
-    Pong(u32),
-}
 
 /// A stable hash of some text (FNV-1a), for comparing content files across machines.
 pub fn content_hash(parts: &[&str]) -> u64 {
