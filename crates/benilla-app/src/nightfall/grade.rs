@@ -65,7 +65,7 @@ impl FullscreenMaterial for NightGrade {
 
 pub(super) fn plugin(app: &mut App) {
     app.add_plugins(FullscreenMaterialPlugin::<NightGrade>::default())
-        .add_systems(Update, attach.run_if(in_state(GameMode::Nightfall)))
+        .add_systems(Update, attach.in_set(super::NightfallSet))
         .add_systems(OnExit(GameMode::Nightfall), detach);
 }
 

@@ -243,3 +243,82 @@ mod tests {
         assert_eq!(initial_mode(["NIGHTFALLEN"]), GameMode::Pick);
     }
 }
+
+/// Both games share one `Update` schedule, so a game's system that is not in its game's set runs
+/// while the other game is up. Built from the real plugins and read from the schedule itself.
+#[cfg(test)]
+mod set_guard_tests {
+    use bevy::ecs::schedule::SystemSet;
+    use bevy::prelude::*;
+    use bevy::state::app::StatesPlugin;
+
+    use super::GameMode;
+    use crate::nightfall::{NightfallPlugin, NightfallSet};
+    use crate::together::{SurvivorsSet, TogetherPlugin};
+
+    /// Systems that run outside their game's set on purpose: name, reason.
+    const UNGATED: &[(&str, &str)] = &[
+        (
+            "benilla_app::together::menu::show_menu",
+            "hides Survivors' menu whenever another game is up",
+        ),
+        (
+            "benilla_app::nightfall::menu::show_roots",
+            "hides Nightfall's screens whenever another game is up",
+        ),
+    ];
+
+    #[test]
+    fn every_game_system_runs_in_its_games_set() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        crate::together::prepare(root).expect("Survivors' content");
+        crate::nightfall::prepare(root).expect("Nightfall's content");
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin)
+            .init_state::<GameMode>()
+            .add_plugins((TogetherPlugin, NightfallPlugin));
+        app.world_mut()
+            .resource_scope(|world, mut schedules: Mut<Schedules>| {
+                schedules
+                    .get_mut(Update)
+                    .expect("Update schedule")
+                    .initialize(world)
+                    .expect("the Update schedule builds");
+            });
+        let schedule = app.get_schedule(Update).expect("Update schedule");
+        let graph = schedule.graph();
+        let survivors = graph
+            .systems_in_set(SurvivorsSet.intern())
+            .expect("SurvivorsSet is in the schedule");
+        let nightfall = graph
+            .systems_in_set(NightfallSet.intern())
+            .expect("NightfallSet is in the schedule");
+
+        let (mut checked, mut offenders) = ([0usize; 2], Vec::new());
+        for (key, system) in schedule.systems().expect("initialized") {
+            let name = system.name().as_string();
+            let (game, set) = if name.starts_with("benilla_app::together::") {
+                (0, survivors)
+            } else if name.starts_with("benilla_app::nightfall::") {
+                (1, nightfall)
+            } else {
+                continue;
+            };
+            checked[game] += 1;
+            if !set.contains(&key) && !UNGATED.iter().any(|(n, _)| *n == name) {
+                offenders.push(name);
+            }
+        }
+        // Without system names (Bevy's `debug` feature) nothing would be checked at all.
+        assert!(
+            checked[0] > 10 && checked[1] > 10,
+            "too few game systems found by name: {checked:?}"
+        );
+        assert!(
+            offenders.is_empty(),
+            "these run in every game, outside their game's set: {offenders:?}\n\
+             Add them `.in_set(SurvivorsSet)` / `.in_set(NightfallSet)`, or, if they must run \
+             while the other game is up, to UNGATED here with the reason."
+        );
+    }
+}
