@@ -71,7 +71,10 @@ pub(super) struct StatusText;
 /// Which (menu, run bar) show: the menu at Nightfall's menu, the run bar during its runs.
 pub(super) fn roots_visible(mode: GameMode, phase: Phase) -> (bool, bool) {
     let ours = mode == GameMode::Nightfall;
-    (ours && phase == Phase::Menu, ours && phase == Phase::Playing)
+    (
+        ours && phase == Phase::Menu,
+        ours && phase == Phase::Playing,
+    )
 }
 
 /// The code or address in pasted text, whatever surrounds it.
@@ -117,7 +120,13 @@ pub(super) fn show_roots(
     mut bars: Query<&mut Visibility, (With<RunBar>, Without<MenuRoot>)>,
 ) {
     let (menu, bar) = roots_visible(*mode.get(), *phase.get());
-    let vis = |on: bool| if on { Visibility::Inherited } else { Visibility::Hidden };
+    let vis = |on: bool| {
+        if on {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        }
+    };
     for mut v in &mut menus {
         if *v != vis(menu) {
             *v = vis(menu);
@@ -181,7 +190,17 @@ pub(super) fn build_menu(
                 })
                 .with_children(|row| {
                     for (i, class) in content.classes.iter().enumerate() {
-                        glue_button(row, &art, &font, MenuAction::Class(i), &class.name, 150.0, 38.0, GlueBtnKind::Small, 1.0);
+                        glue_button(
+                            row,
+                            &art,
+                            &font,
+                            MenuAction::Class(i),
+                            &class.name,
+                            150.0,
+                            38.0,
+                            GlueBtnKind::Small,
+                            1.0,
+                        );
                     }
                 });
             panel.spawn((text("", 13.0, Color::WHITE), ClassLine));
@@ -199,7 +218,17 @@ pub(super) fn build_menu(
                         (MenuAction::StartRun, "Start Run"),
                         (MenuAction::Leave, "Leave"),
                     ] {
-                        glue_button(row, &art, &font, action, caption, 170.0, 38.0, GlueBtnKind::Small, 1.0);
+                        glue_button(
+                            row,
+                            &art,
+                            &font,
+                            action,
+                            caption,
+                            170.0,
+                            38.0,
+                            GlueBtnKind::Small,
+                            1.0,
+                        );
                     }
                 });
             panel.spawn((text("", 13.0, Color::srgb(0.9, 0.85, 0.7)), StatusText));
@@ -211,12 +240,32 @@ pub(super) fn build_menu(
             ..default()
         })
         .with_children(|c| {
-            glue_button(c, &art, &font, MenuAction::Back, "Back", 120.0, 32.0, GlueBtnKind::Small, 1.0);
+            glue_button(
+                c,
+                &art,
+                &font,
+                MenuAction::Back,
+                "Back",
+                120.0,
+                32.0,
+                GlueBtnKind::Small,
+                1.0,
+            );
         });
     });
     if let Ok(bar) = bars.single() {
         commands.entity(bar).with_children(|c| {
-            glue_button(c, &art, &font, LeaveRun, "Leave Run", 140.0, 32.0, GlueBtnKind::Small, 1.0);
+            glue_button(
+                c,
+                &art,
+                &font,
+                LeaveRun,
+                "Leave Run",
+                140.0,
+                32.0,
+                GlueBtnKind::Small,
+                1.0,
+            );
         });
     }
 }
@@ -231,7 +280,11 @@ pub(super) fn menu_clicks(
     mut clipboard: NonSendMut<HostClipboard>,
     window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
 ) {
-    let Some(action) = actions.iter().find(|(e, _)| clicks.hit(*e)).map(|(_, a)| *a) else {
+    let Some(action) = actions
+        .iter()
+        .find(|(e, _)| clicks.hit(*e))
+        .map(|(_, a)| *a)
+    else {
         return;
     };
     let display = || wayland_display(window.iter().next());
@@ -281,7 +334,11 @@ pub(super) fn menu_clicks(
 fn shown(role: &Role) -> &'static [MenuAction] {
     match role {
         Role::Solo => &[MenuAction::PlaySolo, MenuAction::Host, MenuAction::Join],
-        Role::Host(_) => &[MenuAction::CopyCode, MenuAction::StartRun, MenuAction::Leave],
+        Role::Host(_) => &[
+            MenuAction::CopyCode,
+            MenuAction::StartRun,
+            MenuAction::Leave,
+        ],
         Role::Client(_) => &[MenuAction::Leave],
     }
 }
@@ -310,7 +367,8 @@ pub(super) fn refresh_menu(
     }
     let visible = shown(&net.role);
     for (action, mut node) in &mut buttons {
-        let on = matches!(action, MenuAction::Class(_) | MenuAction::Back) || visible.contains(action);
+        let on =
+            matches!(action, MenuAction::Class(_) | MenuAction::Back) || visible.contains(action);
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
@@ -324,16 +382,28 @@ mod tests {
 
     #[test]
     fn nightfall_screens_show_only_in_nightfall() {
-        assert_eq!(roots_visible(GameMode::Nightfall, Phase::Menu), (true, false));
-        assert_eq!(roots_visible(GameMode::Nightfall, Phase::Playing), (false, true));
+        assert_eq!(
+            roots_visible(GameMode::Nightfall, Phase::Menu),
+            (true, false)
+        );
+        assert_eq!(
+            roots_visible(GameMode::Nightfall, Phase::Playing),
+            (false, true)
+        );
         assert_eq!(roots_visible(GameMode::Pick, Phase::Menu), (false, false));
-        assert_eq!(roots_visible(GameMode::Survivors, Phase::Playing), (false, false));
+        assert_eq!(
+            roots_visible(GameMode::Survivors, Phase::Playing),
+            (false, false)
+        );
     }
 
     #[test]
     fn a_pasted_code_is_cleaned_of_what_surrounds_it() {
         assert_eq!(clean_address("  abc123xyz\n"), Some("abc123xyz".into()));
-        assert_eq!(clean_address("192.168.1.5:7777"), Some("192.168.1.5:7777".into()));
+        assert_eq!(
+            clean_address("192.168.1.5:7777"),
+            Some("192.168.1.5:7777".into())
+        );
         assert_eq!(clean_address(" \n "), None);
     }
 }

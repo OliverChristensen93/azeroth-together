@@ -107,7 +107,10 @@ fn entry_of(kind: usize) -> u32 {
 /// query) find the name by it, and the enemy's id fills the low 24 bits.
 pub(super) fn enemy_guid_serial(entry: u32, id: u32) -> u64 {
     debug_assert!(id < 1 << 24, "enemy id {id} overflows the guid's counter");
-    debug_assert!(entry < 1 << 24, "entry {entry} overflows the guid's entry field");
+    debug_assert!(
+        entry < 1 << 24,
+        "entry {entry} overflows the guid's entry field"
+    );
     u64::from(entry) << 24 | u64::from(id)
 }
 
@@ -300,7 +303,10 @@ mod tests {
     #[test]
     fn standing_walking_and_running_have_their_gaits() {
         assert_eq!(gait_flags(0.0, 2.5), 0);
-        assert_eq!(gait_flags(2.5, 2.5), move_flags::FORWARD | move_flags::WALK_MODE);
+        assert_eq!(
+            gait_flags(2.5, 2.5),
+            move_flags::FORWARD | move_flags::WALK_MODE
+        );
         assert_eq!(gait_flags(7.0, 2.5), move_flags::FORWARD);
     }
 

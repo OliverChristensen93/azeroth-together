@@ -55,7 +55,13 @@ impl Sim {
         let mut world = World::new(content());
         for p in roster {
             // A class the content lacks (a mismatched client) is left out rather than crash.
-            let _ = world.add_hero(p.player, &p.hero.class, &p.hero.name, p.hero.race, p.hero.sex);
+            let _ = world.add_hero(
+                p.player,
+                &p.hero.class,
+                &p.hero.name,
+                p.hero.race,
+                p.hero.sex,
+            );
         }
         Self {
             world,
@@ -251,7 +257,13 @@ pub(super) fn feed_pose(
     let mut pos = at;
     if autoplay() {
         let speed = sim.world.hero(sim.me).map_or(7.0, |h| h.speed);
-        pos = autowalk(V2::new(entry[0], entry[1]), pos, sim.world.elapsed, speed, time.delta_secs());
+        pos = autowalk(
+            V2::new(entry[0], entry[1]),
+            pos,
+            sim.world.elapsed,
+            speed,
+            time.delta_secs(),
+        );
     }
     pos = map.bounds.clamp(pos);
     if pos != at {
@@ -321,7 +333,8 @@ pub(super) fn step_sim(
     sim.acc = (sim.acc + time.delta_secs()).min(0.25);
     while sim.acc >= DT {
         sim.acc -= DT;
-        sim.world.set_input(sim.me, PlayerInput { pose: Some(pose) });
+        sim.world
+            .set_input(sim.me, PlayerInput { pose: Some(pose) });
         sim.world.step();
         sim.seen = sim.world.seen_by(sim.me);
         session::host_send(&mut net, &sim.world);

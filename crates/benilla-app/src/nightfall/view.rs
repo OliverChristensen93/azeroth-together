@@ -110,7 +110,9 @@ pub(super) fn sync(
         if hero.player == sim.me {
             self_guid.0 = Some(guid);
         } else {
-            commands.entity(e).insert(SimPos::new(hero.pos, hero.facing));
+            commands
+                .entity(e)
+                .insert(SimPos::new(hero.pos, hero.facing));
         }
         views.heroes.insert(hero.player, e);
     }
@@ -189,7 +191,11 @@ pub(super) fn place(
             let target = Quat::from_rotation_y(units::yaw_of(p.facing));
             tf.rotation = tf.rotation.slerp(target, turn);
         }
-        let flags = if p.speed > 0.1 { move_flags::FORWARD } else { 0 };
+        let flags = if p.speed > 0.1 {
+            move_flags::FORWARD
+        } else {
+            0
+        };
         if mv.speed != p.speed || mv.flags != flags {
             mv.speed = p.speed;
             mv.flags = flags;

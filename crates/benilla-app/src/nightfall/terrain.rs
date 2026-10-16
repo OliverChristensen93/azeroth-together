@@ -220,8 +220,7 @@ pub(super) fn show_line(
     mut texts: Query<&mut Text>,
 ) {
     let progress = terrain.progress();
-    let said = if *mode.get() == GameMode::Nightfall && plan(net.is_client(), &progress).show_line
-    {
+    let said = if *mode.get() == GameMode::Nightfall && plan(net.is_client(), &progress).show_line {
         line(&content().map.name, &progress)
     } else {
         None

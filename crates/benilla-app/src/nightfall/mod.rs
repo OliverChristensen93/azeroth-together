@@ -103,7 +103,10 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         "classes.ron",
         include_str!("../../../../content/nightfall/classes.ron"),
     )?;
-    let map = read("map.ron", include_str!("../../../../content/nightfall/map.ron"))?;
+    let map = read(
+        "map.ron",
+        include_str!("../../../../content/nightfall/map.ron"),
+    )?;
     let rules = read(
         "rules.ron",
         include_str!("../../../../content/nightfall/rules.ron"),
@@ -126,7 +129,9 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     if let Some(key) = class_key() {
         if content.class(&key).is_none() {
-            return Err(format!("NIGHTFALL_CLASS: no class \"{key}\" in classes.ron"));
+            return Err(format!(
+                "NIGHTFALL_CLASS: no class \"{key}\" in classes.ron"
+            ));
         }
     }
     match &dir {

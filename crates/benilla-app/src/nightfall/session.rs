@@ -201,7 +201,11 @@ impl Net {
                     "Hosting  ·  {code}  ·  same network: {}:{}\nJoined: {}\n{}",
                     h.lan,
                     h.port,
-                    if names.is_empty() { "nobody yet".into() } else { names.join(", ") },
+                    if names.is_empty() {
+                        "nobody yet".into()
+                    } else {
+                        names.join(", ")
+                    },
                     self.status
                 )
             }
@@ -386,7 +390,10 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                     HostEvent::Message(_, ClientMsg::Input(_)) | HostEvent::Joined(..) => {}
                 }
             }
-            let mut players = vec![LobbyPlayer { player: 0, hero: own }];
+            let mut players = vec![LobbyPlayer {
+                player: 0,
+                hero: own,
+            }];
             players.extend(h.peers.iter().map(|p| LobbyPlayer {
                 player: p.player,
                 hero: p.hero.clone(),
@@ -590,7 +597,9 @@ mod tests {
         assert_eq!(refusal(PROTOCOL, 7, 7, 0), None);
         assert!(refusal(PROTOCOL + 1, 7, 7, 0).unwrap().contains("version"));
         assert!(refusal(PROTOCOL, 8, 7, 0).unwrap().contains("content"));
-        assert!(refusal(PROTOCOL, 7, 7, MAX_PLAYERS - 1).unwrap().contains("full"));
+        assert!(refusal(PROTOCOL, 7, 7, MAX_PLAYERS - 1)
+            .unwrap()
+            .contains("full"));
     }
 
     #[test]
@@ -604,8 +613,14 @@ mod tests {
     #[test]
     fn the_roster_marks_us() {
         let players = vec![
-            LobbyPlayer { player: 0, hero: pick("Host") },
-            LobbyPlayer { player: 1, hero: pick("Me") },
+            LobbyPlayer {
+                player: 0,
+                hero: pick("Host"),
+            },
+            LobbyPlayer {
+                player: 1,
+                hero: pick("Me"),
+            },
         ];
         let text = roster_lines(&players, Some(1));
         assert!(text.contains("Me  ·  rogue  (you)"));
