@@ -256,7 +256,8 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
             "Burning",
             format!("{total:.0}% of the hit over {secs:.1} sec"),
         ));
-        out.push(stat("Burn ticks", format!("every {tick:.1} sec")));
+        let every = tick / s.dot_speed.max(0.1);
+        out.push(stat("Burn ticks", format!("every {every:.1} sec")));
     }
     if s.chill > 0.0 {
         out.push(stat(

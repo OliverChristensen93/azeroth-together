@@ -340,7 +340,7 @@ impl Augment {
             Augment::Shatterbolt => "Always crits Frozen enemies, and those crits splash 50% within 5 yards.",
             Augment::WintersChill => "Each hit makes the target take +2% crit chance from every source, up to 10%. The whole party benefits.",
             Augment::HotStreak => "Two Fire crits in a row cast Pyroblast: yours, with its augments, if you know it.",
-            Augment::CriticalMass => "When the hit crits, the burst crits too. Your Fire crits deal 2.5× instead of 2×.",
+            Augment::CriticalMass => "When the hit crits, the burst crits too. Your Fire crits deal +50% critical damage.",
             Augment::LivingBomb => "Its target becomes a bomb that explodes after 3 seconds for 150% within 8 yards; enemies it hits become smaller bombs.",
             Augment::ArcaneCharge => "Each cast gives an Arcane Charge (up to 4, +10% Arcane damage each). At 4, your next Arcane Explosion spends them for +100% damage and area.",
             Augment::MissileStorm => "Every 10 seconds, a missile at every enemy in range.",

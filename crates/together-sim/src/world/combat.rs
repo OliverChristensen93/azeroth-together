@@ -122,7 +122,7 @@ pub mod status_bits {
 
 impl Status {
     pub fn burning(&self) -> bool {
-        !self.burns.is_empty()
+        self.burns.iter().any(|b| b.left > 0.0)
     }
 
     /// Frozen or Stunned: it neither moves nor strikes.
@@ -160,7 +160,10 @@ impl Status {
 
     /// The damage its burns would still deal.
     fn burn_left(&self) -> f32 {
-        self.burns.iter().map(|b| b.dps * b.left).sum()
+        self.burns
+            .iter()
+            .map(|b| b.dps * b.left.max(0.0) / b.every)
+            .sum()
     }
 }
 
@@ -169,6 +172,7 @@ impl Status {
 struct Burn {
     by: PlayerId,
     ability: usize,
+    /// Damage a tick, every `every` seconds while `left` lasts.
     dps: f32,
     left: f32,
     /// Seconds to its next tick, and between ticks.
@@ -714,18 +718,25 @@ impl World {
             });
         }
         if shot.primary && self.spell_has(player, spec.ability, Augment::Firestorm) {
-            let others: Vec<V2> = (0..2)
-                .filter_map(|_| {
-                    let far: Vec<V2> = self
-                        .enemies
-                        .iter()
-                        .filter(|e| e.pos.distance(center) > spec.radius * 2.0)
-                        .filter(|e| e.pos.distance(self.heroes[h].pos) <= 25.0)
-                        .map(|e| e.pos)
-                        .collect();
-                    (!far.is_empty()).then(|| far[self.rng_pick(far.len())])
-                })
-                .collect();
+            // Two other crowds: each clear of the first strike and of each other.
+            let mut others: Vec<V2> = Vec::new();
+            for _ in 0..2 {
+                let far: Vec<V2> = self
+                    .enemies
+                    .iter()
+                    .map(|e| e.pos)
+                    .filter(|p| p.distance(self.heroes[h].pos) <= 25.0)
+                    .filter(|p| {
+                        std::iter::once(center)
+                            .chain(others.iter().copied())
+                            .all(|c| p.distance(c) > spec.radius * 2.0)
+                    })
+                    .collect();
+                if far.is_empty() {
+                    break;
+                }
+                others.push(far[self.rng_pick(far.len())]);
+            }
             for at in others {
                 self.nova(
                     h,
@@ -985,14 +996,17 @@ impl World {
             st.stun = st.stun.max(control_secs(spec.stun, elite, false));
         }
         if spec.burn > 0.0 {
+            // A faster burn (Quickened) ticks sooner for the same total; a faster tick rate
+            // (an upgrade) adds ticks of the same size.
             let speed = spec.dot_speed.max(0.1);
+            let every = 1.0 / (spec.tick_rate.max(0.1) * speed);
             let burn = Burn {
                 by,
                 ability: spec.ability,
-                dps: damage * spec.burn * spec.dot_mult / BURN_SECS * speed,
+                dps: damage * spec.burn * spec.dot_mult / BURN_SECS,
                 left: BURN_SECS * spec.dot_secs / speed,
-                tick: 1.0 / spec.tick_rate.max(0.1),
-                every: 1.0 / spec.tick_rate.max(0.1),
+                tick: every,
+                every,
                 contagion: spec.contagion,
             };
             match st
@@ -1028,7 +1042,7 @@ impl World {
             .status
             .burns
             .iter()
-            .filter(|b| b.by == by)
+            .filter(|b| b.by == by && b.left > 0.0)
             .cloned()
             .collect();
         if burns.is_empty() {
@@ -1214,15 +1228,19 @@ impl World {
                     st.winters = 0;
                 }
             }
+            // A burn that ran out last step goes now: one that ends with the tick that kills
+            // its enemy is still on it when its death is seen (Contagion, Living Wave).
+            st.burns.retain(|b| b.left > 0.0);
             for b in &mut st.burns {
                 b.tick -= DT;
                 if b.tick <= 0.0 {
+                    // The last tick deals only the share of a tick it has left.
+                    let share = (b.left / b.every).min(1.0);
                     b.tick += b.every;
                     b.left -= b.every;
-                    ticks.push((b.by, b.ability, e.id, b.dps));
+                    ticks.push((b.by, b.ability, e.id, b.dps * share));
                 }
             }
-            st.burns.retain(|b| b.left > 0.0);
             if let Some(bomb) = &mut st.bomb {
                 bomb.time -= DT;
                 if bomb.time <= 0.0 {
@@ -1691,6 +1709,9 @@ pub(super) fn chilled(speed: f32, status: &Status) -> f32 {
         speed
     }
 }
+
+#[cfg(test)]
+mod augment_checks;
 
 #[cfg(test)]
 mod tests {
