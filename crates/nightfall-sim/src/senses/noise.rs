@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::Stance;
 use crate::heightmap::HeightMap;
+#[cfg(doc)]
+use crate::World;
 use crate::{LoudnessTable, PlayerId, StepNoise, CHEST_HEIGHT, V3};
 
 /// A noise a hero made.
@@ -20,7 +22,7 @@ pub(crate) struct Noise {
 }
 
 /// How loud a thing is (spec §5.2's table), for the noises later sub-projects make through
-/// `World::make_noise`.
+/// [`World::make_noise`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Loudness {
     /// Abilities, by their loudness.
@@ -67,18 +69,23 @@ pub(crate) fn step_radius(stance: Stance, s: &StepNoise) -> f32 {
 
 /// Whether ears at `ear` hear `noise`: within its radius with a clear line to it, or within
 /// `walls` of its radius through something solid. Without a map nothing is known to stand between.
-/// A place or an ear that is not a number hears nothing.
+/// A place, an ear or a radius that is not a number hears nothing, and a radius of 0 or less is
+/// silent.
 pub(crate) fn hears(ear: V3, noise: &Noise, map: Option<&HeightMap>, walls: f32) -> bool {
-    if !ear.is_finite() || !noise.at.is_finite() {
+    if !ear.is_finite() || !noise.at.is_finite() || !noise.radius.is_finite() || noise.radius <= 0.0
+    {
         return false;
     }
     let d = ear.ground().distance(noise.at.ground());
     if d > noise.radius {
         return false;
     }
+    // Heard through walls too from this near: no ray needs casting.
+    if d <= noise.radius * walls {
+        return true;
+    }
     let source = V3::at(noise.at.ground(), noise.at.z + CHEST_HEIGHT);
-    let clear = map.is_none_or(|m| m.line_of_sight(ear, source));
-    clear || d <= noise.radius * walls
+    map.is_none_or(|m| m.line_of_sight(ear, source))
 }
 
 #[cfg(test)]
@@ -161,5 +168,13 @@ mod tests {
             None,
             0.5
         ));
+    }
+
+    #[test]
+    fn a_radius_that_is_not_a_number_or_not_above_zero_is_silent() {
+        for radius in [f32::NAN, f32::INFINITY, 0.0, -3.0] {
+            let n = noise(10.0, 10.0, radius);
+            assert!(!hears(ear(10.0, 10.0), &n, None, 0.5), "{radius}");
+        }
     }
 }

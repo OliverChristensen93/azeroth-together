@@ -52,6 +52,7 @@ fn both_classes_play_in_duskwood() {
                 facing: V2::new(1.0, 0.0),
                 z: 36.5,
             }),
+            ..Default::default()
         },
     );
     w.step();

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::enemies::{self, Brain, Enemy, Planner};
 use crate::heightmap::{HeightMap, Navigator};
+use crate::senses::{self, Gait, Senses, Stance};
 use crate::{Content, V2};
 
 /// Where the host keeps a hero its client reports at height `z` over `pos` (`was` its height so
@@ -60,6 +61,11 @@ pub struct HeroPose {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayerInput {
     pub pose: Option<HeroPose>,
+    /// How the hero moves: WoW's walk toggle, and whether they move at all (spec §5.1).
+    pub gait: Gait,
+    /// How many times the player has pressed Stealth, counting round past 255: a count rather
+    /// than a flag, so a press survives an input replaced before the host steps.
+    pub stealth_presses: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -79,6 +85,15 @@ pub struct Hero {
     pub max_hp: f32,
     /// Running speed, yards a second.
     pub speed: f32,
+    /// How they stand and move (spec §5.1).
+    pub stance: Stance,
+    /// In stealth (spec §6.3).
+    pub stealthed: bool,
+    /// How visible they are, 0..100 (spec §5.1).
+    pub visibility: f32,
+    /// The loudest noise they made in the last `noise_memory` seconds, yards: the rings by the
+    /// player frame (spec §5.5).
+    pub noise: f32,
 }
 
 /// Everything a client needs to draw the world as the host has it.
@@ -113,6 +128,8 @@ pub struct World {
     warnings: Vec<String>,
     /// What the enemies share in choosing their ways (the path budget, the points found sealed).
     planner: Planner,
+    /// Each hero's senses, and later each enemy's mind: the host's alone, never sent.
+    pub(crate) senses: Senses,
 }
 
 impl World {
@@ -128,6 +145,7 @@ impl World {
             nav: None,
             warnings: Vec::new(),
             planner: Planner::default(),
+            senses: Senses::default(),
         }
     }
 
@@ -176,6 +194,10 @@ impl World {
             hp: def.base_hp,
             max_hp: def.base_hp,
             speed: def.speed,
+            stance: Stance::Still,
+            stealthed: false,
+            visibility: self.content.rules.senses.visibility.still,
+            noise: 0.0,
         });
         Ok(())
     }
@@ -183,6 +205,7 @@ impl World {
     pub fn remove_hero(&mut self, player: PlayerId) {
         self.heroes.retain(|h| h.player != player);
         self.inputs.retain(|(p, _)| *p != player);
+        self.senses.forget(player);
     }
 
     pub fn hero(&self, player: PlayerId) -> Option<&Hero> {
@@ -227,28 +250,32 @@ impl World {
         }
     }
 
-    /// One step: each hero takes its player's pose, kept inside the map (a pose that is not a
-    /// number is dropped, so a broken client cannot poison the world); then, once a map is
-    /// attached, every enemy goes about its business.
+    /// One step: each hero takes its player's input (the gait and Stealth presses first, then the
+    /// pose, kept inside the map; a pose that is not a number is dropped, so a broken client
+    /// cannot poison the world), then every hero's senses are worked out; once a map is attached,
+    /// every enemy goes about its business.
     pub fn step(&mut self) {
         let bounds = &self.content.map.bounds;
         for (player, input) in self.inputs.drain(..) {
+            let Some(hero) = self.heroes.iter_mut().find(|h| h.player == player) else {
+                continue;
+            };
+            senses::take_input(&mut self.senses, hero, &input, &self.content);
             let Some(pose) = input.pose else { continue };
             if !pose.pos.is_finite() || !pose.facing.is_finite() {
                 continue;
             }
-            if let Some(hero) = self.heroes.iter_mut().find(|h| h.player == player) {
-                hero.pos = bounds.clamp(pose.pos);
-                if pose.z.is_finite() {
-                    let map = self.nav.as_ref().map(Navigator::map);
-                    hero.z = map.map_or(pose.z, |map| hero_height(map, hero.pos, pose.z, hero.z));
-                }
-                let facing = pose.facing.normalize_or_zero();
-                if facing != V2::ZERO {
-                    hero.facing = facing;
-                }
+            hero.pos = bounds.clamp(pose.pos);
+            if pose.z.is_finite() {
+                let map = self.nav.as_ref().map(Navigator::map);
+                hero.z = map.map_or(pose.z, |map| hero_height(map, hero.pos, pose.z, hero.z));
+            }
+            let facing = pose.facing.normalize_or_zero();
+            if facing != V2::ZERO {
+                hero.facing = facing;
             }
         }
+        senses::step_heroes(&mut self.senses, &mut self.heroes, &self.content);
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
         if let Some(nav) = self
@@ -265,6 +292,8 @@ impl World {
                 &mut self.planner,
             );
         }
+        // Noises are heard the step they are made, or the next; none waits longer.
+        self.senses.noises.clear();
         self.elapsed += DT;
     }
 
@@ -322,6 +351,7 @@ mod tests {
                 facing: V2::new(0.0, 2.0),
                 z: 10.0,
             }),
+            ..Default::default()
         }
     }
 
@@ -387,6 +417,7 @@ mod tests {
                 facing: V2::new(f32::INFINITY, 0.0),
                 z: 10.0,
             }),
+            ..Default::default()
         };
         w.set_input(0, bad_facing);
         w.step();
@@ -407,6 +438,7 @@ mod tests {
                 facing: V2::new(1.0, 0.0),
                 z,
             }),
+            ..Default::default()
         };
         w.set_input(0, at(0.3));
         w.step();
@@ -434,6 +466,7 @@ mod tests {
                     facing: V2::new(1.0, 0.0),
                     z: 12.5,
                 }),
+                ..Default::default()
             },
         );
         w.step();
@@ -518,6 +551,7 @@ mod tests {
                 facing: V2::new(1.0, 0.0),
                 z,
             }),
+            ..Default::default()
         };
         for (x, z, kept) in [
             (60.0, -500.0, -2.0),

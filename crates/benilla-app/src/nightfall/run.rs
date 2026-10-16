@@ -303,7 +303,13 @@ pub(super) fn step_sim(
     sim.stepped = false;
     let sim = &mut *sim;
     if net.is_client() {
-        let heard = session::client_exchange(&mut net, PlayerInput { pose: input.pose });
+        let heard = session::client_exchange(
+            &mut net,
+            PlayerInput {
+                pose: input.pose,
+                ..Default::default()
+            },
+        );
         if session::client_left_run(&mut net, &heard) {
             end.0 = true;
         }
@@ -333,8 +339,13 @@ pub(super) fn step_sim(
     sim.acc = (sim.acc + time.delta_secs()).min(0.25);
     while sim.acc >= DT {
         sim.acc -= DT;
-        sim.world
-            .set_input(sim.me, PlayerInput { pose: Some(pose) });
+        sim.world.set_input(
+            sim.me,
+            PlayerInput {
+                pose: Some(pose),
+                ..Default::default()
+            },
+        );
         sim.world.step();
         sim.seen = sim.world.seen_by(sim.me);
         session::host_send(&mut net, &sim.world);

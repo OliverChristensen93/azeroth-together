@@ -155,6 +155,7 @@ mod tests {
                     facing: V2::new(1.0, 0.0),
                     z: 0.0,
                 }),
+                ..Default::default()
             },
         );
     }
