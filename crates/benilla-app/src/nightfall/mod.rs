@@ -9,8 +9,12 @@
 //! (`rogue` or `mage`), `NIGHTFALL_NAME`, `NIGHTFALL_CONTENT` (a folder with the RON files; default
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
+mod dress;
 mod menu;
+mod run;
 mod session;
+mod units;
+mod view;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -120,6 +124,9 @@ impl Plugin for NightfallPlugin {
             .insert_resource(menu::Selection::new(&content()))
             .init_resource::<menu::StartRequest>()
             .init_resource::<session::Net>()
+            .init_resource::<run::LocalInput>()
+            .init_resource::<run::EndRun>()
+            .init_resource::<view::Views>()
             .add_systems(Startup, menu::spawn_roots)
             // Ungated: hides Nightfall's screens whenever another game is up.
             .add_systems(Update, menu::show_roots)
@@ -128,11 +135,38 @@ impl Plugin for NightfallPlugin {
                 (
                     menu::build_menu,
                     menu::menu_clicks,
+                    session::lobby,
                     menu::refresh_menu,
+                    run::start_run,
                 )
                     .chain()
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Menu)),
+            )
+            .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
+            .add_systems(
+                Update,
+                (
+                    run::feed_pose,
+                    run::step_sim,
+                    view::sync,
+                    view::write_vitals,
+                    view::place,
+                )
+                    .chain()
+                    .in_set(benilla_world::schedule::WorldStage::Input)
+                    // The controller has moved the hero this frame before its pose is read.
+                    .after(crate::player::PlayerControlSet)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                (run::leave_run, run::back_to_menu)
+                    .chain()
+                    .after(benilla_world::schedule::WorldStage::Input)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             );
     }
 }

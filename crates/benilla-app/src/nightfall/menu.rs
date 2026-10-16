@@ -264,7 +264,11 @@ pub(super) fn menu_clicks(
                 net.status = "Invite code copied: paste it to your friends".into();
             }
         }
-        MenuAction::StartRun => start.0 = true,
+        MenuAction::StartRun => {
+            if matches!(net.role, Role::Host(_)) {
+                start.0 = true;
+            }
+        }
         MenuAction::Leave => net.leave(""),
         MenuAction::Back => {
             net.leave("");
@@ -277,6 +281,8 @@ pub(super) fn menu_clicks(
 fn shown(role: &Role) -> &'static [MenuAction] {
     match role {
         Role::Solo => &[MenuAction::PlaySolo, MenuAction::Host, MenuAction::Join],
+        Role::Host(_) => &[MenuAction::CopyCode, MenuAction::StartRun, MenuAction::Leave],
+        Role::Client(_) => &[MenuAction::Leave],
     }
 }
 

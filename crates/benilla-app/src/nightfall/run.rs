@@ -1,0 +1,362 @@
+//! A run: the world stepped here (alone or hosting) or mirrored from the host (joined), the local
+//! hero's pose fed to it, and the way back to the menu. Test hooks: `NIGHTFALL_HOST=1` hosts and
+//! `NIGHTFALL_JOIN=<code or address>` joins once the menu is up; `NIGHTFALL_AUTOPLAY=1` starts a
+//! run (hosting: once someone joined) and walks a slow circle; `NIGHTFALL_TRACE_POS=1` logs the
+//! hero's WoW position every 2 seconds, for measuring entry points.
+
+use std::collections::VecDeque;
+use std::sync::OnceLock;
+
+use benilla_world::world_point::WorldPoint;
+use bevy::prelude::*;
+use nightfall_sim::messages::LobbyPlayer;
+use nightfall_sim::{HeroPose, PlayerId, PlayerInput, Snapshot, World, DT, V2};
+
+use super::menu::{LeaveRun, Selection, StartRequest};
+use super::session::{self, Heard, Net, Role};
+use super::view::Views;
+use super::{content, units, NightfallEntity, Phase};
+use crate::glue::GlueClicks;
+
+/// Snapshots a client holds before playing them: the delay that hides a late packet.
+const PLAYBACK_DEPTH: usize = 2;
+/// More than this waiting (a burst after a stall) and the oldest are played at once.
+const PLAYBACK_MAX: usize = 8;
+
+/// The run being played. Present only during a run.
+#[derive(Resource)]
+pub(super) struct Sim {
+    pub world: World,
+    /// Our player: 0 alone or hosting, the host's pick when joined.
+    pub me: PlayerId,
+    /// Alone or hosting: real seconds not yet simulated. Joined: playback seconds since the last
+    /// snapshot was applied.
+    acc: f32,
+    /// Seconds between the states the views glide between: a step, or a host's snapshot.
+    span: f32,
+    /// Joined: the host's snapshots not yet played, oldest first.
+    inbox: VecDeque<Snapshot>,
+    /// Joined: playback has begun.
+    playing: bool,
+    /// A step was taken (or a snapshot applied) this frame.
+    pub stepped: bool,
+}
+
+impl Sim {
+    /// A run for everyone in `roster` (just us, alone), stepped here.
+    fn hosted(roster: &[LobbyPlayer]) -> Self {
+        let mut world = World::new(content());
+        for p in roster {
+            // A class the content lacks (a mismatched client) is left out rather than crash.
+            let _ = world.add_hero(p.player, &p.hero.class, &p.hero.name, p.hero.race, p.hero.sex);
+        }
+        Self {
+            world,
+            me: 0,
+            acc: 0.0,
+            span: DT,
+            inbox: VecDeque::new(),
+            playing: false,
+            stepped: false,
+        }
+    }
+
+    /// A joined run: an empty world, filled by the host's snapshots.
+    fn mirror(me: PlayerId) -> Self {
+        Self {
+            world: World::new(content()),
+            me,
+            acc: 0.0,
+            span: DT * session::SEND_EVERY as f32,
+            inbox: VecDeque::new(),
+            playing: false,
+            stepped: false,
+        }
+    }
+
+    /// How far between the last two states the present lies, 0..1.
+    pub fn alpha(&self) -> f32 {
+        (self.acc / self.span).clamp(0.0, 1.0)
+    }
+
+    /// Seconds between the states the views glide between.
+    pub fn span(&self) -> f32 {
+        self.span
+    }
+
+    /// Joined: the host's snapshots into the mirror at an even pace, a little behind (as
+    /// Survivors' `Sim::play_back` does).
+    fn play_back(&mut self, dt: f32) {
+        while self.inbox.len() > PLAYBACK_MAX {
+            self.apply_next();
+        }
+        if !self.playing {
+            if self.inbox.len() < PLAYBACK_DEPTH {
+                return;
+            }
+            self.playing = true;
+            self.acc = self.span;
+        }
+        let depth = self.inbox.len() as f32 - PLAYBACK_DEPTH as f32;
+        self.acc += dt * (1.0 + 0.1 * depth).clamp(0.85, 1.3);
+        while self.acc >= self.span {
+            if self.inbox.is_empty() {
+                self.acc = self.span;
+                break;
+            }
+            self.apply_next();
+            self.acc -= self.span;
+        }
+    }
+
+    fn apply_next(&mut self) {
+        if let Some(snapshot) = self.inbox.pop_front() {
+            self.world.apply_snapshot(snapshot);
+            self.stepped = true;
+        }
+    }
+}
+
+/// The local hero's pose for the next step.
+#[derive(Resource, Default)]
+pub(super) struct LocalInput {
+    pose: Option<HeroPose>,
+}
+
+/// The run is over (left, ended by the host, or the connection went): [`back_to_menu`] leaves it.
+#[derive(Resource, Default)]
+pub(super) struct EndRun(pub bool);
+
+fn autoplay() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NIGHTFALL_AUTOPLAY").is_some())
+}
+
+fn trace_pos() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_POS").is_some())
+}
+
+/// Bevy's position to WoW's ground plane.
+fn bevy_to_ground(p: Vec3) -> V2 {
+    V2::new(-p.z, -p.x)
+}
+
+/// `NIGHTFALL_AUTOPLAY`: a point on a slow 15-yard circle around the first entry, walked toward.
+fn autowalk(entry: V2, from: V2, elapsed: f32, speed: f32, dt: f32) -> V2 {
+    let goal = entry + V2::from_angle(elapsed * 0.15, 15.0);
+    let to = goal - from;
+    let dist = to.length();
+    from + to.normalize_or_zero() * (speed * 0.5 * dt).min(dist)
+}
+
+/// Play Solo, the host's Start Run, or (joined) the host's start: a run, the controller taking our
+/// new hero.
+pub(super) fn start_run(
+    time: Res<Time<Real>>,
+    mut commands: Commands,
+    mut start: ResMut<StartRequest>,
+    selection: Res<Selection>,
+    mut player: ResMut<crate::player::Player>,
+    mut next: ResMut<NextState<Phase>>,
+    mut net: ResMut<Net>,
+) {
+    if net.is_solo() && net.status.is_empty() && time.elapsed_secs() > 8.0 {
+        if std::env::var_os("NIGHTFALL_HOST").is_some() {
+            net.host();
+        } else if let Ok(addr) = std::env::var("NIGHTFALL_JOIN") {
+            net.join(&addr);
+        }
+    }
+    if let Role::Client(c) = &mut net.role {
+        let (true, Some(me)) = (c.start, c.me) else {
+            return;
+        };
+        c.start = false;
+        commands.insert_resource(Sim::mirror(me));
+        player.active = false;
+        next.set(Phase::Playing);
+        return;
+    }
+    let auto = autoplay()
+        && match &net.role {
+            Role::Solo => {
+                time.elapsed_secs() > 12.0 && std::env::var_os("NIGHTFALL_HOST").is_none()
+            }
+            Role::Host(h) => !h.peers.is_empty() && time.elapsed_secs() > 20.0,
+            Role::Client(_) => false,
+        };
+    if !std::mem::take(&mut start.0) && !auto {
+        return;
+    }
+    let own = session::own_pick(&selection);
+    let roster = net.roster(&own);
+    net.broadcast_start();
+    commands.insert_resource(Sim::hosted(&roster));
+    player.active = false;
+    next.set(Phase::Playing);
+}
+
+/// Where WoW's controller left the local hero, as the pose the next step takes, kept inside the
+/// map's edge (a hero past it is put back on it). Until the controller has the hero, the terrain
+/// streams around the first entry.
+pub(super) fn feed_pose(
+    time: Res<Time>,
+    real: Res<Time<Real>>,
+    world_point: WorldPoint,
+    views: Res<Views>,
+    sim: Res<Sim>,
+    mut player: ResMut<crate::player::Player>,
+    mut input: ResMut<LocalInput>,
+    mut bodies: Query<&mut Transform>,
+    mut last_trace: Local<f32>,
+) {
+    let content = content();
+    let map = &content.map;
+    let entry = map.entries[0];
+    let Some(mut tf) = views
+        .heroes
+        .get(&sim.me)
+        .and_then(|&e| bodies.get_mut(e).ok())
+        .filter(|_| player.active)
+    else {
+        if !player.active {
+            player.pos = units::wow_to_bevy(entry);
+        }
+        input.pose = None;
+        return;
+    };
+    let at = bevy_to_ground(tf.translation);
+    let mut pos = at;
+    if autoplay() {
+        let speed = sim.world.hero(sim.me).map_or(7.0, |h| h.speed);
+        pos = autowalk(V2::new(entry[0], entry[1]), pos, sim.world.elapsed, speed, time.delta_secs());
+    }
+    pos = map.bounds.clamp(pos);
+    if pos != at {
+        let mut back = units::ground_to_bevy(pos, tf.translation.y);
+        if let Some(h) = world_point.terrain_height_under(back) {
+            back.y = back.y.max(h);
+        }
+        tf.translation = back;
+        player.pos = back;
+    }
+    if trace_pos() && real.elapsed_secs() - *last_trace >= 2.0 {
+        *last_trace = real.elapsed_secs();
+        let t = tf.translation;
+        info!("nightfall: hero at ({:.1}, {:.1}, {:.1})", -t.z, -t.x, t.y);
+    }
+    let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
+    input.pose = Some(HeroPose {
+        pos,
+        facing: V2::new(yaw.cos(), yaw.sin()),
+    });
+}
+
+/// The run's clock. Alone or hosting: fixed steps for the real time that passed, each sent to the
+/// clients; it waits while the loading screen is up and until the controller has the hero. Joined:
+/// our pose to the host, and the host's snapshots into our mirror.
+pub(super) fn step_sim(
+    time: Res<Time<Real>>,
+    loading: Res<crate::loading_screen::LoadingScreen>,
+    mut sim: ResMut<Sim>,
+    input: Res<LocalInput>,
+    mut net: ResMut<Net>,
+    mut end: ResMut<EndRun>,
+) {
+    sim.stepped = false;
+    let sim = &mut *sim;
+    if net.is_client() {
+        let heard = session::client_exchange(&mut net, PlayerInput { pose: input.pose });
+        if session::client_left_run(&mut net, &heard) {
+            end.0 = true;
+        }
+        for h in heard {
+            if let Heard::State(snapshot) = h {
+                sim.inbox.push_back(snapshot);
+            }
+        }
+        sim.play_back(time.delta_secs());
+        return;
+    }
+    session::host_receive(&mut net, &mut sim.world);
+    let Some(pose) = input.pose else {
+        return;
+    };
+    if loading.covering() {
+        return;
+    }
+    // A long hitch would otherwise replay seconds of play in one frame.
+    sim.acc = (sim.acc + time.delta_secs()).min(0.25);
+    while sim.acc >= DT {
+        sim.acc -= DT;
+        sim.world.set_input(sim.me, PlayerInput { pose: Some(pose) });
+        sim.world.step();
+        session::host_send(&mut net, &sim.world);
+        sim.stepped = true;
+    }
+}
+
+/// Leave Run: alone or hosting, the run ends (a host takes its party back to the lobby); joined,
+/// we leave the session.
+pub(super) fn leave_run(
+    clicks: Res<GlueClicks>,
+    buttons: Query<Entity, With<LeaveRun>>,
+    mut net: ResMut<Net>,
+    mut end: ResMut<EndRun>,
+) {
+    if !buttons.iter().any(|e| clicks.hit(e)) {
+        return;
+    }
+    if net.is_client() {
+        net.leave("You left the run");
+    } else {
+        net.broadcast_ended();
+    }
+    end.0 = true;
+}
+
+/// Back to the menu once the run is over: everything it spawned goes, and the controller lets go.
+pub(super) fn back_to_menu(
+    mut commands: Commands,
+    mut end: ResMut<EndRun>,
+    mut views: ResMut<Views>,
+    mut index: ResMut<crate::net::GuidIndex>,
+    mut player: ResMut<crate::player::Player>,
+    mut next: ResMut<NextState<Phase>>,
+    spawned: Query<Entity, With<NightfallEntity>>,
+) {
+    if !std::mem::take(&mut end.0) {
+        return;
+    }
+    for e in &spawned {
+        commands.entity(e).despawn();
+    }
+    let gone: std::collections::HashSet<Entity> = spawned.iter().collect();
+    index.0.retain(|_, e| !gone.contains(e));
+    *views = Views::default();
+    commands.remove_resource::<Sim>();
+    player.active = false;
+    next.set(Phase::Menu);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autowalk_heads_for_the_circle_without_overshooting() {
+        let entry = V2::new(0.0, 0.0);
+        let goal = entry + V2::from_angle(0.0, 15.0);
+        let next = autowalk(entry, entry, 0.0, 7.0, 1.0);
+        assert!((next.distance(entry) - 3.5).abs() < 1e-4);
+        let near = autowalk(entry, goal - V2::new(0.1, 0.0), 0.0, 7.0, 1.0);
+        assert!(near.distance(goal) < 1e-4);
+    }
+
+    #[test]
+    fn bevy_and_wow_ground_agree() {
+        let p = V2::new(-10051.8, -792.5);
+        assert_eq!(bevy_to_ground(units::ground_to_bevy(p, 36.5)), p);
+    }
+}
