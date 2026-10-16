@@ -128,7 +128,7 @@ pub struct World {
     warnings: Vec<String>,
     /// What the enemies share in choosing their ways (the path budget, the points found sealed).
     planner: Planner,
-    /// Each hero's senses, and later each enemy's mind: the host's alone, never sent.
+    /// Each hero's senses and each enemy's mind: the host's alone, never sent.
     pub(crate) senses: Senses,
 }
 
@@ -224,6 +224,9 @@ impl World {
         self.brains = brains;
         self.warnings.extend(warnings);
         self.nav = Some(Navigator::new(map));
+        // Every enemy starts calm, with the eyes its behaviour gives it.
+        self.senses
+            .place(&self.content, self.brains.iter().map(Brain::spawn));
     }
 
     /// The height map, on the host once attached.
@@ -242,6 +245,12 @@ impl World {
         self.planner.failed_searches()
     }
 
+    /// Floors every path search has looked at so far, for the log and for tests: what path
+    /// finding costs, counted rather than timed.
+    pub fn floors_looked_at(&self) -> u64 {
+        self.nav.as_ref().map_or(0, Navigator::floors_looked_at)
+    }
+
     /// `player`'s input for the next step, replacing any earlier one since the last step.
     pub fn set_input(&mut self, player: PlayerId, input: PlayerInput) {
         match self.inputs.iter_mut().find(|(p, _)| *p == player) {
@@ -253,7 +262,7 @@ impl World {
     /// One step: each hero takes its player's input (the gait and Stealth presses first, then the
     /// pose, kept inside the map; a pose that is not a number is dropped, so a broken client
     /// cannot poison the world), then every hero's senses are worked out; once a map is attached,
-    /// every enemy goes about its business.
+    /// every enemy looks, listens, thinks and goes about its business.
     pub fn step(&mut self) {
         let bounds = &self.content.map.bounds;
         for (player, input) in self.inputs.drain(..) {
@@ -283,7 +292,18 @@ impl World {
             .as_mut()
             .filter(|_| self.brains.len() == self.enemies.len())
         {
-            enemies::step(
+            // One budget of floors for the whole step: the senses' searches (chasing, checking,
+            // searching) come first, the orders' (posts, patrols, walks) take what is left.
+            nav.begin_step(enemies::STEP_FLOORS);
+            senses::step_enemies(
+                &mut self.senses,
+                &mut self.enemies,
+                &mut self.brains,
+                &self.heroes,
+                nav,
+                &self.content,
+            );
+            enemies::step_planned(
                 &mut self.enemies,
                 &mut self.brains,
                 nav,

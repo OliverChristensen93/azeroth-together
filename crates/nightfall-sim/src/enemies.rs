@@ -1,8 +1,9 @@
 //! Nightfall's enemies as the host runs them (spec §7.1): placed from the content's spawns on the
 //! height map's floors, then each about its business. A sentry holds its post, a patrol walks its
 //! route round and round, a wanderer roams its area and rests between walks. They go where the
-//! map's paths go, so around houses rather than through them. What they notice (sub-project 3)
-//! and how they fight (sub-project 4) come later; an enemy's [`Brain`] is where both plug in.
+//! map's paths go, so around houses rather than through them. What they notice is the senses'
+//! ([`crate::senses`]): while an enemy is not calm its [`Brain`] is held, and on release it finds
+//! its way back to its order. How they fight comes with sub-project 4.
 
 use std::collections::HashSet;
 use std::f32::consts::TAU;
@@ -26,7 +27,7 @@ pub const WANDER_BUDGET: usize = 4_000;
 /// spends more on paths than this (about 10 ms on the real map) however many enemies are lost.
 pub const STEP_FLOORS: usize = PATROL_BUDGET + 2 * WANDER_BUDGET;
 /// Within this many yards of a point, an enemy is there.
-const ARRIVE: f32 = 0.6;
+pub(crate) const ARRIVE: f32 = 0.6;
 /// How far apart a group of sentries stands around its post.
 const GROUP_SPACING: f32 = 1.5;
 /// Seconds before a sentry tries again to reach a post it found no path to.
@@ -48,6 +49,8 @@ pub struct Enemy {
     pub max_hp: f32,
     /// How fast it moved this step, yards a second (0 standing).
     pub speed: f32,
+    /// A sleeper lying at its post (spec §7.1), which the client draws lying down.
+    pub asleep: bool,
 }
 
 /// A small random number generator (xorshift64*), seeded per enemy, so a run plays the same every
@@ -110,7 +113,32 @@ pub(crate) struct Brain {
     failures: u32,
     /// A warning about it has been given.
     warned: bool,
+    /// Held by its senses: its order waits while it turns, checks, chases or searches.
+    held: bool,
     rng: Rng,
+}
+
+impl Brain {
+    /// Its spawn line in the content.
+    pub(crate) fn spawn(&self) -> usize {
+        self.spawn
+    }
+
+    /// Held by its senses, or released. Taking hold drops the path it was on, so on release it
+    /// searches its way back: to its post, or to the patrol point it was going to.
+    pub(crate) fn hold(&mut self, on: bool) {
+        if on && !self.held {
+            self.path = None;
+            self.next = 0;
+            self.wait = 0.0;
+        }
+        self.held = on;
+    }
+
+    /// Whether `pos` is at its post (a sentry's or a sleeper's).
+    pub(crate) fn at_post(&self, pos: V2) -> bool {
+        matches!(&self.order, Order::Sentry { post, .. } if post.ground().distance(pos) <= ARRIVE)
+    }
 }
 
 /// How a warning names a spawn.
@@ -120,7 +148,7 @@ fn who(content: &Content, spawn: usize) -> String {
 }
 
 /// `d` as a facing; north when it is (nearly) nothing.
-fn heading(d: V2) -> V2 {
+pub(crate) fn heading(d: V2) -> V2 {
     let n = d.normalize_or_zero();
     if n == V2::ZERO {
         V2::new(1.0, 0.0)
@@ -296,6 +324,7 @@ pub(crate) fn spawn_all(
                 hp: def.hp,
                 max_hp: def.hp,
                 speed: 0.0,
+                asleep: matches!(s.behaviour, Behaviour::Sleeper { .. }),
             });
             brains.push(Brain {
                 spawn: si,
@@ -305,6 +334,7 @@ pub(crate) fn spawn_all(
                 wait: 0.0,
                 failures: 0,
                 warned: false,
+                held: false,
                 rng,
             });
             id += 1;
@@ -339,7 +369,22 @@ impl Planner {
 /// One step for every enemy: those with nowhere to go choose a way (at most `paths_per_step`
 /// searches looking at no more than [`STEP_FLOORS`] floors in all, starting one enemy further
 /// along each step so every enemy gets its turn), then all walk.
+#[cfg(test)]
 pub(crate) fn step(
+    enemies: &mut [Enemy],
+    brains: &mut [Brain],
+    nav: &mut Navigator,
+    content: &Content,
+    warnings: &mut Vec<String>,
+    planner: &mut Planner,
+) {
+    nav.begin_step(STEP_FLOORS);
+    step_planned(enemies, brains, nav, content, warnings, planner);
+}
+
+/// [`step`] within a step the caller has begun with [`Navigator::begin_step`]: the world does, so
+/// that the senses' searches and the orders' share the one [`STEP_FLOORS`].
+pub(crate) fn step_planned(
     enemies: &mut [Enemy],
     brains: &mut [Brain],
     nav: &mut Navigator,
@@ -352,7 +397,6 @@ pub(crate) fn step(
         return;
     }
     let mut budget = content.rules.world.paths_per_step;
-    nav.begin_step(STEP_FLOORS);
     let first = planner.cursor % n;
     planner.cursor = planner.cursor.wrapping_add(1);
     for i in 0..n {
@@ -383,7 +427,7 @@ fn plan(
     planner: &mut Planner,
     budget: &mut u32,
 ) {
-    if b.wait > 0.0 || b.path.is_some() || *budget == 0 {
+    if b.held || b.wait > 0.0 || b.path.is_some() || *budget == 0 {
         return;
     }
     let here = V3::at(e.pos, e.z);
@@ -492,8 +536,12 @@ fn plan(
     }
 }
 
-/// An enemy walks its path for a step at its walking speed, on the floor under it.
+/// An enemy walks its path for a step at its walking speed, on the floor under it; one its senses
+/// hold is moved by them instead.
 fn walk(e: &mut Enemy, b: &mut Brain, map: &HeightMap, content: &Content) {
+    if b.held {
+        return;
+    }
     if b.wait > 0.0 {
         b.wait = (b.wait - DT).max(0.0);
         e.speed = 0.0;
@@ -507,16 +555,31 @@ fn walk(e: &mut Enemy, b: &mut Brain, map: &HeightMap, content: &Content) {
         return;
     };
     let speed = content.enemies[e.kind].walk_speed;
+    if follow(e, &path, &mut b.next, speed, map) {
+        b.path = None;
+        arrive(e, b, content);
+    }
+}
+
+/// `e` goes a step along `path` from point `next` at `speed`, on the floor under it, turned the
+/// way it moves; whether it has reached the end.
+pub(crate) fn follow(
+    e: &mut Enemy,
+    path: &[V3],
+    next: &mut usize,
+    speed: f32,
+    map: &HeightMap,
+) -> bool {
     let from = e.pos;
     let mut left = speed * DT;
-    while left > 1e-6 && b.next < path.len() {
-        let to = path[b.next];
+    while left > 1e-6 && *next < path.len() {
+        let to = path[*next];
         let d = e.pos.distance(to.ground());
         if d <= left {
             e.pos = to.ground();
             e.z = to.z;
             left -= d;
-            b.next += 1;
+            *next += 1;
         } else {
             e.pos += (to.ground() - e.pos) * (left / d);
             left = 0.0;
@@ -530,10 +593,7 @@ fn walk(e: &mut Enemy, b: &mut Brain, map: &HeightMap, content: &Content) {
     } else {
         e.speed = 0.0;
     }
-    if b.next >= path.len() {
-        b.path = None;
-        arrive(e, b, content);
-    }
+    *next >= path.len()
 }
 
 /// At the end of a path: a sentry turns to its watch, a patrol rests and takes its next point, a
@@ -774,6 +834,7 @@ mod tests {
             hp: 900.0,
             max_hp: 900.0,
             speed: 0.0,
+            asleep: false,
         }];
         let mut brains = vec![Brain {
             spawn: 0,
@@ -786,6 +847,7 @@ mod tests {
             wait: 0.0,
             failures: 0,
             warned: false,
+            held: false,
             rng: Rng::new(1),
         }];
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
@@ -880,6 +942,7 @@ mod tests {
                 hp: 900.0,
                 max_hp: 900.0,
                 speed: 0.0,
+                asleep: false,
             });
             brains.push(Brain {
                 spawn: 0,
@@ -892,6 +955,7 @@ mod tests {
                 wait: 0.0,
                 failures: 0,
                 warned: false,
+                held: false,
                 rng: Rng::new(i as u64),
             });
         }

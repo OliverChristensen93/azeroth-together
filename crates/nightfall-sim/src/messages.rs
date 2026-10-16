@@ -116,6 +116,7 @@ mod tests {
                 hp: 900.0,
                 max_hp: 900.0,
                 speed: 2.5,
+                asleep: false,
             })
             .collect();
         let msg = ServerMsg::State {

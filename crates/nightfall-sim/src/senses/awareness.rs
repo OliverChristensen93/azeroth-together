@@ -227,7 +227,13 @@ impl Mind {
             if !fed {
                 e.level -= r.drain * dt;
             }
-            e.level = e.level.clamp(0.0, r.alert);
+            // A level that is not a number (a fill or a noise gone wrong) is none at all: a clamp
+            // would keep it.
+            e.level = if e.level.is_finite() {
+                e.level.clamp(0.0, r.alert)
+            } else {
+                0.0
+            };
         }
         if let State::Alerted {
             player,
@@ -529,5 +535,37 @@ mod tests {
         assert_eq!(m.state, State::Calm);
         assert_eq!(m.level(0), 0.0);
         assert_eq!(m.mark(0, &r), None);
+    }
+
+    #[test]
+    fn suspicion_stays_within_zero_and_alert_whatever_is_fed_it() {
+        let r = AwarenessRules::default();
+        let in_range = |m: &Mind| (0.0..=r.alert).contains(&m.level(0));
+        // A fill and a noise far past the top.
+        let mut m = Mind::new(120.0, false);
+        m.think(&[sees(0, AT, 1e9)], DT, &r);
+        assert!(in_range(&m) && m.level(0) == r.alert, "{}", m.level(0));
+        let mut m = Mind::new(120.0, false);
+        for _ in 0..5 {
+            m.think(&[hears(0, AT)], DT, &r);
+        }
+        assert!(in_range(&m), "{}", m.level(0));
+        // A drain that overshoots the bottom.
+        let mut m = Mind::new(120.0, false);
+        let tough = AwarenessRules {
+            drain: 1e9,
+            ..AwarenessRules::default()
+        };
+        m.think(&[sees(0, AT, 10.0)], DT, &tough);
+        m.think(&[nothing(0)], DT, &tough);
+        assert_eq!(m.level(0), 0.0);
+        // Numbers that are not: no level that is not a number is kept.
+        for fill in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut m = Mind::new(120.0, false);
+            m.think(&[sees(0, AT, fill)], DT, &r);
+            assert!(in_range(&m), "fill {fill} left {}", m.level(0));
+            m.think(&[nothing(0)], DT, &r);
+            assert!(in_range(&m), "fill {fill} left {}", m.level(0));
+        }
     }
 }

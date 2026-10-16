@@ -210,6 +210,7 @@ mod tests {
             hp: 900.0,
             max_hp: 900.0,
             speed: 0.0,
+            asleep: false,
         });
         w.apply_snapshot(s);
         assert_eq!(w.seen_by(0), vec![9]);
@@ -312,6 +313,7 @@ mod tests {
             hp: 900.0,
             max_hp: 900.0,
             speed: 0.0,
+            asleep: false,
         });
         w.apply_snapshot(s);
         assert!(w.seen_by(0).is_empty());

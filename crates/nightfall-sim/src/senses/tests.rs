@@ -3,10 +3,11 @@
 
 use std::sync::Arc;
 
-use crate::heightmap::testmap::flat;
+use crate::heightmap::testmap::{flat, house};
 use crate::heightmap::HeightMap;
 use crate::{
-    Content, ContentSources, Gait, HeroPose, Loudness, PlayerId, PlayerInput, Stance, World, V2, V3,
+    Alert, Content, ContentSources, Gait, HeroPose, Loudness, Mark, PlayerId, PlayerInput, Stance,
+    World, V2, V3,
 };
 
 const CLASSES: &str = r#"[
@@ -40,7 +41,6 @@ pub(super) fn world(spawns: &str) -> World {
 }
 
 /// A skeleton sentry at `(x, y)` facing `facing` degrees (0 north, 90 west), as a spawn line.
-#[allow(dead_code)] // The enemies' tests of the next tasks use it.
 pub(super) fn sentry(x: f32, y: f32, facing: f32) -> String {
     format!(
         r#"(place: "Post", kind: "skeleton", behaviour: Sentry(at: ({x:.1}, {y:.1}), facing: {facing:.1})),"#
@@ -48,7 +48,6 @@ pub(super) fn sentry(x: f32, y: f32, facing: f32) -> String {
 }
 
 /// Flat ground 50 yards across.
-#[allow(dead_code)] // The enemies' tests of the next tasks use it.
 pub(super) fn open() -> Arc<HeightMap> {
     Arc::new(flat(50.0).finish())
 }
@@ -222,4 +221,388 @@ fn a_made_noise_counts_for_its_maker() {
     w.make_noise(7, V3::new(12.0, 10.0, 0.0), Loudness::Loud);
     w.step();
     assert_eq!(w.hero(0).unwrap().noise, 40.0);
+}
+
+#[test]
+fn a_walking_hero_in_front_of_a_sentry_is_spotted_then_chased() {
+    let mut w = world(&sentry(25.0, 25.0, 0.0));
+    w.attach_map(open());
+    put(&mut w, 0, 37.0, 25.0, Gait::Walk, 0);
+    let mut was_suspicious = false;
+    for _ in 0..300 {
+        w.step();
+        was_suspicious |= w.marks_for(0)
+            == [Mark {
+                enemy: 1,
+                alert: Alert::Suspicious,
+            }];
+    }
+    assert!(was_suspicious);
+    assert_eq!(
+        w.marks_for(0),
+        vec![Mark {
+            enemy: 1,
+            alert: Alert::Alerted
+        }]
+    );
+    let e = &w.enemies[0];
+    let to_hero = V2::new(37.0, 25.0) - e.pos;
+    assert!(to_hero.length() <= 2.3, "{:?}", e.pos);
+    assert!(
+        e.facing.dot(to_hero.normalize_or_zero()) > 0.9,
+        "{:?}",
+        e.facing
+    );
+}
+
+#[test]
+fn a_sneaking_rogue_behind_a_sentry_goes_unseen_and_a_walker_does_not() {
+    let marks = |presses: u8| {
+        let mut w = world(&sentry(25.0, 25.0, 0.0));
+        w.attach_map(open());
+        put(&mut w, 0, 20.5, 25.0, Gait::Walk, 0);
+        w.step();
+        put(&mut w, 0, 20.5, 25.0, Gait::Walk, presses);
+        steps(&mut w, 300);
+        (w.marks_for(0), w.enemies[0].pos)
+    };
+    let (sneaking, at) = marks(1);
+    assert!(sneaking.is_empty(), "{sneaking:?}");
+    assert_eq!(at, V2::new(25.0, 25.0));
+    let (walking, _) = marks(0);
+    assert!(!walking.is_empty());
+}
+
+#[test]
+fn through_a_wall_running_is_heard_at_half_the_distance() {
+    let run_behind_wall = |x: f32| {
+        let mut w = world(&sentry(20.0, 25.0, 180.0));
+        let mut b = flat(50.0);
+        b.add_box(V2::new(24.0, 0.0), V2::new(24.5, 50.0), 0.0, 3.0);
+        w.attach_map(Arc::new(b.finish()));
+        put(&mut w, 0, x, 25.0, Gait::Run, 0);
+        steps(&mut w, 45);
+        (w.marks_for(0), w.enemies[0].pos)
+    };
+    let (near, at) = run_behind_wall(25.5);
+    assert!(!near.is_empty());
+    assert!(at.x < 24.0, "it never walks through the wall: {at:?}");
+    let (far, _) = run_behind_wall(29.0);
+    assert!(far.is_empty(), "{far:?}");
+}
+
+#[test]
+fn an_enemy_goes_to_check_the_noise_not_the_hero() {
+    let mut w = world(&sentry(10.0, 10.0, 0.0));
+    w.attach_map(open());
+    put(&mut w, 0, 45.0, 45.0, Gait::Still, 0);
+    w.step();
+    let at = V3::new(14.0, 14.0, 0.0);
+    w.make_noise(0, at, Loudness::Normal);
+    w.step();
+    w.make_noise(0, at, Loudness::Normal);
+    steps(&mut w, 75);
+    let e = &w.enemies[0];
+    assert!(e.pos.distance(V2::new(14.0, 14.0)) <= 1.0, "{:?}", e.pos);
+    assert_eq!(
+        w.marks_for(0),
+        vec![Mark {
+            enemy: 1,
+            alert: Alert::Suspicious
+        }]
+    );
+}
+
+#[test]
+fn a_shout_brings_allies_within_reach_and_not_beyond() {
+    // A sees the hero; B is 12 yards from A, C 22 from A but only 10 from B.
+    let spawns = format!(
+        "{}{}{}",
+        sentry(10.0, 25.0, 0.0),
+        sentry(10.0, 37.0, 180.0),
+        sentry(10.0, 47.0, 180.0)
+    );
+    let mut w = world(&spawns);
+    w.attach_map(open());
+    put(&mut w, 0, 16.0, 25.0, Gait::Walk, 0);
+    let alerted = |w: &World, enemy: u32| {
+        w.marks_for(0).contains(&Mark {
+            enemy,
+            alert: Alert::Alerted,
+        })
+    };
+    let mut a = false;
+    for _ in 0..300 {
+        w.step();
+        if alerted(&w, 1) {
+            a = true;
+            break;
+        }
+    }
+    assert!(a);
+    assert!(alerted(&w, 2), "{:?}", w.marks_for(0));
+    assert!(
+        !w.marks_for(0).iter().any(|m| m.enemy == 3),
+        "a shout does not chain: {:?}",
+        w.marks_for(0)
+    );
+    // Nor a step later, when B has had its turn.
+    steps(&mut w, 2);
+    assert!(
+        !w.marks_for(0).iter().any(|m| m.enemy == 3),
+        "{:?}",
+        w.marks_for(0)
+    );
+}
+
+#[test]
+fn a_hit_alert_shouts_through_the_world_to_calm_allies_only() {
+    // Sentries 5 yd apart at y 10, 15 and 20, one far off at 45; both heroes far from all.
+    let spawns = format!(
+        "{}{}{}{}",
+        sentry(10.0, 10.0, 0.0),
+        sentry(10.0, 15.0, 0.0),
+        sentry(10.0, 20.0, 0.0),
+        sentry(10.0, 45.0, 0.0)
+    );
+    let alerted_to = |w: &World, p: u8| -> Vec<u32> {
+        w.marks_for(p)
+            .into_iter()
+            .filter(|m| m.alert == Alert::Alerted)
+            .map(|m| m.enemy)
+            .collect()
+    };
+    let start = || {
+        let mut w = world(&spawns);
+        w.attach_map(open());
+        put(&mut w, 0, 45.0, 45.0, Gait::Still, 0);
+        put(&mut w, 1, 46.0, 46.0, Gait::Still, 0);
+        w.step();
+        w
+    };
+    // The first is hit by the first hero: it is alerted at once, its allies within 15 yd at the
+    // next step (the alert itself shouts nothing), the one beyond not at all.
+    let mut w = start();
+    w.alert(1, 0);
+    assert_eq!(alerted_to(&w, 0), vec![1]);
+    w.step();
+    assert_eq!(alerted_to(&w, 0), vec![1, 2, 3]);
+    steps(&mut w, 3);
+    assert_eq!(alerted_to(&w, 0), vec![1, 2, 3]);
+    // An ally already after the other hero stays after them, and so does the shout's maker.
+    let mut w = start();
+    w.alert(2, 1);
+    w.alert(1, 0);
+    w.step();
+    assert_eq!(alerted_to(&w, 0), vec![1]);
+    assert_eq!(alerted_to(&w, 1), vec![2, 3]);
+    // An enemy or a hero that is not there changes nothing.
+    w.alert(9, 0);
+    w.alert(1, 7);
+    steps(&mut w, 3);
+    assert_eq!(alerted_to(&w, 0), vec![1]);
+    assert_eq!(alerted_to(&w, 1), vec![2, 3]);
+}
+
+#[test]
+fn a_lost_hero_is_searched_for_then_the_sentry_goes_home() {
+    let mut w = world(&sentry(10.0, 10.0, 0.0));
+    let mut b = flat(50.0);
+    house(&mut b, V2::new(30.0, 30.0), V2::new(40.0, 40.0), None, true);
+    w.attach_map(Arc::new(b.finish()));
+    put(&mut w, 0, 20.0, 10.0, Gait::Run, 0);
+    let alerted = [Mark {
+        enemy: 1,
+        alert: Alert::Alerted,
+    }];
+    let mut was_alerted = false;
+    for _ in 0..150 {
+        w.step();
+        if w.marks_for(0) == alerted {
+            was_alerted = true;
+            break;
+        }
+    }
+    assert!(was_alerted);
+    // The hero slips into a closed, roofed house: out of every sight and every path.
+    put(&mut w, 0, 35.0, 35.0, Gait::Still, 0);
+    let searching = [Mark {
+        enemy: 1,
+        alert: Alert::Suspicious,
+    }];
+    let mut searched_there = false;
+    for _ in 0..900 {
+        w.step();
+        searched_there |=
+            w.marks_for(0) == searching && w.enemies[0].pos.distance(V2::new(20.0, 10.0)) <= 1.0;
+    }
+    assert!(searched_there);
+    assert!(w.marks_for(0).is_empty());
+    let e = &w.enemies[0];
+    assert!(e.pos.distance(V2::new(10.0, 10.0)) <= 0.6, "{:?}", e.pos);
+    assert!(e.facing.x > 0.99, "{:?}", e.facing);
+}
+
+#[test]
+fn a_place_no_path_reaches_is_searched_from_where_it_stands() {
+    let mut w = world(&sentry(20.0, 25.0, 0.0));
+    let mut b = flat(50.0);
+    b.add_box(V2::new(24.0, 0.0), V2::new(24.5, 50.0), 0.0, 3.0);
+    w.attach_map(Arc::new(b.finish()));
+    put(&mut w, 0, 30.0, 25.0, Gait::Still, 0);
+    w.step();
+    w.alert(1, 0);
+    w.step();
+    assert_eq!(
+        w.marks_for(0),
+        vec![Mark {
+            enemy: 1,
+            alert: Alert::Alerted
+        }]
+    );
+    // Five seconds unseen, fifteen looking around where it stands, then home.
+    steps(&mut w, 900);
+    assert!(w.marks_for(0).is_empty());
+    let e = &w.enemies[0];
+    assert!(e.pos.x < 24.0, "{:?}", e.pos);
+    assert!(e.pos.distance(V2::new(20.0, 25.0)) <= 0.6, "{:?}", e.pos);
+}
+
+#[test]
+fn a_sleeper_sleeps_through_a_hero_in_front_and_wakes_to_noise() {
+    let mut w = world(
+        r#"(place: "Crypt", kind: "skeleton", behaviour: Sleeper(at: (10.0, 10.0), facing: 0.0)),"#,
+    );
+    w.attach_map(open());
+    put(&mut w, 0, 13.0, 10.0, Gait::Still, 0);
+    steps(&mut w, 90);
+    assert!(w.marks_for(0).is_empty());
+    assert!(w.enemies[0].asleep);
+    for _ in 0..3 {
+        w.make_noise(0, V3::new(13.0, 10.0, 0.0), Loudness::Normal);
+        w.step();
+    }
+    assert_eq!(
+        w.marks_for(0),
+        vec![Mark {
+            enemy: 1,
+            alert: Alert::Alerted
+        }]
+    );
+    assert!(!w.enemies[0].asleep);
+}
+
+#[test]
+fn a_hero_who_leaves_mid_chase_is_forgotten() {
+    let mut w = world(&sentry(10.0, 10.0, 0.0));
+    w.attach_map(open());
+    put(&mut w, 0, 20.0, 10.0, Gait::Still, 0);
+    put(&mut w, 1, 5.0, 40.0, Gait::Still, 0);
+    w.step();
+    w.alert(1, 0);
+    steps(&mut w, 10);
+    w.remove_hero(0);
+    steps(&mut w, 300);
+    assert!(w.marks_for(0).is_empty());
+    assert!(w.marks_for(1).is_empty());
+    let e = &w.enemies[0];
+    assert!(e.pos.distance(V2::new(10.0, 10.0)) <= 0.6, "{:?}", e.pos);
+}
+
+#[test]
+fn the_same_run_twice_is_the_same_with_the_senses() {
+    let run = || {
+        let spawns = format!(
+            "{}{}",
+            sentry(25.0, 25.0, 0.0),
+            r#"(place: "Nest", kind: "skeleton", count: 3, behaviour: Wander(center: (15.0, 35.0), radius: 6.0)),"#
+        );
+        let mut w = world(&spawns);
+        w.attach_map(open());
+        for k in 0..300 {
+            put(&mut w, 0, 30.0 + (k % 60) as f32 * 0.1, 25.0, Gait::Run, 0);
+            w.step();
+        }
+        (w.snapshot(), w.marks_for(0))
+    };
+    assert_eq!(run(), run());
+}
+
+#[test]
+fn an_enemy_whose_facing_is_not_a_number_looks_from_the_side() {
+    // A still hero (visibility 35) 10 yd in front of a sentry: its notice range is 12.25 yd in
+    // front and 7.35 to the side. The sentry's facing is wrecked before every step (its post
+    // would put it right again after it).
+    let marks = |wreck: bool| {
+        let mut w = world(&sentry(25.0, 25.0, 0.0));
+        w.attach_map(open());
+        put(&mut w, 0, 35.0, 25.0, Gait::Still, 0);
+        for _ in 0..120 {
+            if wreck {
+                w.enemies[0].facing = V2::new(f32::NAN, f32::NAN);
+            }
+            w.step();
+        }
+        (w.marks_for(0), w.enemies[0].facing)
+    };
+    let (front, _) = marks(false);
+    assert!(!front.is_empty(), "the control sees the hero");
+    let (wrecked, facing) = marks(true);
+    assert!(wrecked.is_empty(), "{wrecked:?}");
+    assert!(facing.is_finite());
+}
+
+#[test]
+fn an_enemy_off_the_grid_sees_and_hears_nothing() {
+    let mut w = world(&sentry(25.0, 25.0, 0.0));
+    w.attach_map(open());
+    put(&mut w, 0, 30.0, 25.0, Gait::Run, 0);
+    w.step();
+    w.enemies[0].pos = V2::new(f32::MAX, 25.0);
+    steps(&mut w, 5);
+    assert!(w.marks_for(0).is_empty(), "{:?}", w.marks_for(0));
+}
+
+#[test]
+fn a_crowd_chasing_round_a_wall_stays_within_the_steps_floors() {
+    // Nine enemies alerted to a hero behind a long wall: every step each wants a path round it, or
+    // a fresh one when the hero has moved. The searches of the senses and of the orders share the
+    // step's floors, whatever the crowd.
+    let spawns: String = (0..9)
+        .map(|k| sentry(10.0 + k as f32 * 0.5, 25.0, 0.0))
+        .collect();
+    let mut w = world(&spawns);
+    let mut b = flat(50.0);
+    b.add_box(V2::new(24.0, 0.0), V2::new(24.5, 34.0), 0.0, 3.0);
+    w.attach_map(Arc::new(b.finish()));
+    put(&mut w, 0, 30.0, 25.0, Gait::Still, 0);
+    w.step();
+    for k in 1..=9 {
+        w.alert(k, 0);
+    }
+    let mut worst = 0;
+    for k in 0..300 {
+        // The hero paces about, so goals move and paths are asked for again.
+        put(
+            &mut w,
+            0,
+            30.0 + (k % 40) as f32 * 0.25,
+            25.0,
+            Gait::Still,
+            0,
+        );
+        let before = w.floors_looked_at();
+        w.step();
+        worst = worst.max(w.floors_looked_at() - before);
+    }
+    assert!(
+        worst <= crate::STEP_FLOORS as u64,
+        "{worst} floors in one step"
+    );
+    // They found their way round the wall's end.
+    assert!(
+        w.enemies.iter().any(|e| e.pos.x > 24.5),
+        "{:?}",
+        w.enemies.iter().map(|e| e.pos).collect::<Vec<_>>()
+    );
 }

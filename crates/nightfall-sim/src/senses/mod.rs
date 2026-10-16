@@ -3,10 +3,12 @@
 //! noise in the snapshot, and its own player's marks beside it.
 //!
 //! Each step, once the heroes have their inputs, [`step_heroes`] works out every hero's stance,
-//! visibility, speed and footsteps.
+//! visibility, speed and footsteps; then, once the map is attached, [`step_enemies`] lets every
+//! enemy look, listen, think and act.
 
 mod awareness;
 mod noise;
+mod react;
 #[cfg(test)]
 mod tests;
 mod visibility;
@@ -14,12 +16,15 @@ mod visibility;
 pub use awareness::{Alert, Mark};
 pub use noise::Loudness;
 pub(crate) use noise::Noise;
+pub(crate) use react::step_enemies;
 pub use visibility::{Gait, Stance};
 
+use awareness::{Mind, Shout};
 use noise::step_radius;
+use react::Way;
 use visibility::{visibility, Light};
 
-use crate::{Content, Hero, PlayerId, PlayerInput, World, DT, V3};
+use crate::{Behaviour, Content, Hero, PlayerId, PlayerInput, World, DT, V3};
 
 /// What the host keeps of one hero's senses: never sent.
 #[derive(Clone, Debug, Default)]
@@ -44,6 +49,12 @@ pub(crate) struct Senses {
     heroes: Vec<HeroSense>,
     /// The noises made since the enemies last listened.
     pub(crate) noises: Vec<Noise>,
+    /// Each enemy's mind, beside it in the world's enemies.
+    minds: Vec<Mind>,
+    /// Each enemy's way while its senses hold it.
+    ways: Vec<Way>,
+    /// Shouts raised between steps (an alert from a hit), given out at the next.
+    shouts: Vec<(usize, Shout)>,
 }
 
 impl Senses {
@@ -61,10 +72,30 @@ impl Senses {
         }
     }
 
-    /// A player left: nothing of their hero stays.
+    /// A player left: nothing of their hero stays, and no enemy keeps a thought of them.
     pub(crate) fn forget(&mut self, player: PlayerId) {
         self.heroes.retain(|h| h.player != player);
         self.noises.retain(|n| n.by != player);
+        self.shouts.retain(|(_, s)| s.player != player);
+        for m in &mut self.minds {
+            m.forget(player);
+        }
+    }
+
+    /// A calm mind for each enemy placed from these spawn lines: a sentry's wide front cone, a
+    /// sleeper's closed eyes, everyone else's own cone.
+    pub(crate) fn place(&mut self, content: &Content, spawns: impl IntoIterator<Item = usize>) {
+        let r = &content.rules.senses;
+        self.minds = spawns
+            .into_iter()
+            .map(|si| match content.spawns[si].behaviour {
+                Behaviour::Sentry { .. } => Mind::new(r.sentry_cone, false),
+                Behaviour::Sleeper { .. } => Mind::new(r.cone, true),
+                _ => Mind::new(r.cone, false),
+            })
+            .collect();
+        self.ways = vec![Way::default(); self.minds.len()];
+        self.shouts.clear();
     }
 }
 
@@ -137,6 +168,34 @@ pub(crate) fn step_heroes(s: &mut Senses, heroes: &mut [Hero], content: &Content
 }
 
 impl World {
+    /// What each enemy thinks of `player`'s hero, for the marks over their heads (spec §5.5). The
+    /// host's: a client's mirror has no minds and gets its own player's marks from its host.
+    pub fn marks_for(&self, player: PlayerId) -> Vec<Mark> {
+        let r = &self.content().rules.senses.awareness;
+        self.enemies
+            .iter()
+            .zip(&self.senses.minds)
+            .filter_map(|(e, m)| m.mark(player, r).map(|alert| Mark { enemy: e.id, alert }))
+            .collect()
+    }
+
+    /// Enemy `enemy` is alerted to `by`'s hero where they stand, and shouts at the next step: the
+    /// seam sub-project 4's hits use. Nothing happens for an enemy or a hero that is not there.
+    pub fn alert(&mut self, enemy: u32, by: PlayerId) {
+        let Some(at) = self.hero(by).map(|h| V3::at(h.pos, h.z)) else {
+            return;
+        };
+        let Some(i) = self.enemies.iter().position(|e| e.id == enemy) else {
+            return;
+        };
+        let content = self.content().clone();
+        let Some(mind) = self.senses.minds.get_mut(i) else {
+            return;
+        };
+        mind.alert(by, at, &content.rules.senses.awareness);
+        self.senses.shouts.push((i, Shout { player: by, at }));
+    }
+
     /// A noise `by`'s hero made at `at` (the floor it came from), as loud as `loudness` (spec
     /// §5.2): heard by the enemies at the next step and shown in the maker's rings. The seam the
     /// abilities, chests, graves and exits of later sub-projects make their noise through.
