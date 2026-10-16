@@ -30,6 +30,6 @@ pub use heightmap::{
     MAX_FLOORS, MAX_STEP, MERGE_GAP, TERRAIN_DEPTH,
 };
 pub use math::{V2, V3};
-pub use senses::{Gait, Loudness, Stance};
+pub use senses::{Alert, Gait, Loudness, Mark, Stance};
 pub use sight::{CHEST_HEIGHT, EYE_HEIGHT, KEEP_EXTRA};
 pub use world::{Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ};

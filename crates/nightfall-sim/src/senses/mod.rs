@@ -5,11 +5,13 @@
 //! Each step, once the heroes have their inputs, [`step_heroes`] works out every hero's stance,
 //! visibility, speed and footsteps.
 
+mod awareness;
 mod noise;
 #[cfg(test)]
 mod tests;
 mod visibility;
 
+pub use awareness::{Alert, Mark};
 pub use noise::Loudness;
 pub(crate) use noise::Noise;
 pub use visibility::{Gait, Stance};
