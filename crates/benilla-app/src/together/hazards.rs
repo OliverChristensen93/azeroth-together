@@ -12,8 +12,6 @@ use together_sim::{Event, Shape, V2};
 
 use super::{content, units, view::Views, Phase, Sim};
 
-/// An affix's announcement over the hero.
-const AFFIX_COLOR: u32 = 0xFFFF_8033;
 /// The boss bar's width, in the 768-unit canvas.
 const BAR_W: f32 = 360.0;
 /// How far above the ground a telegraph lies, so it is not lost in the grass, and its edge's
@@ -222,15 +220,8 @@ pub(super) fn show(
                 let dest = dest.map(|p| on_ground(&world_point, p, fallback_y));
                 fx.cast(from, visual, &hits, dest);
             }
-            Event::AffixGained { affix } => {
-                if let Some(&me) = views.heroes.get(&sim.me) {
-                    fx.text(
-                        me,
-                        format!("{}: {}", affix.name(), affix.hint()),
-                        AFFIX_COLOR,
-                    );
-                }
-            }
+            // Announced by the run panel's warning (`super::runpanel`).
+            Event::AffixGained { .. } => {}
             Event::Shoved { hero, to } => {
                 // Our own hero's place is ours to keep: a throw or pull moves it here, as a
                 // knock-back from the server would.
@@ -286,15 +277,22 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
             BossBar,
+            // Top centre, in a frame like the run panel's.
             Node {
                 position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                top: Val::Px(44.0),
+                left: Val::Percent(50.0),
+                top: Val::Px(6.0),
+                width: Val::Px(BAR_W + 32.0),
+                margin: UiRect::left(Val::Px(-(BAR_W + 32.0) / 2.0)),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: Val::Px(3.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
+            BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.88)),
+            BorderColor::all(Color::srgb(0.72, 0.6, 0.32)),
             Visibility::Hidden,
         ))
         .with_children(|b| {
@@ -323,7 +321,7 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             b.spawn((
                 text(10.0, Color::WHITE),
                 Node {
-                    max_width: Val::Px(BAR_W + 120.0),
+                    max_width: Val::Px(BAR_W + 8.0),
                     ..default()
                 },
                 BossHint,

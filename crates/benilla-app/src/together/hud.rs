@@ -12,9 +12,6 @@ use together_sim::{
 use super::Sim;
 
 #[derive(Component)]
-pub(super) struct StatusText;
-
-#[derive(Component)]
 pub(super) struct CardsText;
 
 #[derive(Component)]
@@ -42,7 +39,10 @@ const PROMPT_REACH: f32 = 8.0;
 pub(super) fn show_hud(
     phase: Res<State<super::Phase>>,
     mut top: Query<&mut Visibility, (With<HudTop>, Without<CenterPanel>, Without<PromptPanel>)>,
-    mut panel: Query<&mut Visibility, (Or<(With<CenterPanel>, With<PromptPanel>)>, Without<HudTop>)>,
+    mut panel: Query<
+        &mut Visibility,
+        (Or<(With<CenterPanel>, With<PromptPanel>)>, Without<HudTop>),
+    >,
 ) {
     let playing = *phase.get() == super::Phase::Playing;
     let want = if playing {
@@ -79,40 +79,6 @@ fn text(font: &Handle<Font>, size: f32) -> (Text, TextFont, TextColor, TextShado
 
 pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
-    // Top centre, clear of WoW's player and target frames (left) and minimap (right).
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                top: Val::Px(3.0),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            Visibility::Hidden,
-            HudTop,
-        ))
-        .with_children(|p| {
-            p.spawn((
-                text(&font, 12.0),
-                TextLayout::new_with_justify(Justify::Center),
-                StatusText,
-            ));
-            p.spawn((
-                Text::new(
-                    "WoW controls   ·   cards: 1 2 3 or click, R rerolls   ·   \
-                     Tab: stats   ·   Y: switch on gear   ·   stand in a shrine's circle to use it",
-                ),
-                TextFont {
-                    font: font.clone(),
-                    font_size: 9.0,
-                    ..default()
-                },
-                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.6)),
-                TextShadow::default(),
-            ));
-        });
     commands
         .spawn((
             Node {
@@ -291,70 +257,14 @@ fn clock(secs: f32) -> String {
 
 pub(super) fn refresh(
     sim: Res<Sim>,
-    mut status: Query<&mut Text, (With<StatusText>, Without<CardsText>)>,
-    mut cards: Query<&mut Text, (With<CardsText>, Without<StatusText>)>,
+    mut cards: Query<&mut Text, With<CardsText>>,
     mut panel: Query<&mut Visibility, With<CenterPanel>>,
     net: Res<super::session::Net>,
 ) {
     let world = &sim.world;
-    let content = world.content();
     let Some(hero) = world.hero(sim.me) else {
         return;
     };
-    if let Ok(mut t) = status.single_mut() {
-        // The spells are on the action bar, the tomes and items in their strip
-        // (`super::inventory`). Health, level and experience are in WoW's own player frame and XP bar.
-        let ping = net
-            .ping_ms()
-            .map_or(String::new(), |ms| format!("   Ping {ms} ms"));
-        let danger = world.difficulty.overall();
-        let danger = if danger > 0.0 {
-            format!("   Danger +{:.0}%", danger * 100.0)
-        } else {
-            String::new()
-        };
-        let mut s = format!(
-            "{}   Kills {}   Gold {}{danger}{ping}",
-            clock(world.elapsed),
-            world.kills,
-            hero.gold,
-        );
-        // A living boss has its bar (`super::hazards::boss_bar`); until it comes, its timer.
-        let boss_alive = world.enemies.iter().any(|e| e.boss);
-        if let Some(boss) = world.zone().boss_ix.filter(|_| !boss_alive) {
-            s.push_str(&format!(
-                "\n{} comes in {}",
-                content.enemies[boss].name,
-                clock((world.next_boss - world.elapsed).max(0.0))
-            ));
-        }
-        if !world.affixes.is_empty() {
-            let names: Vec<&str> = world.affixes.iter().map(|a| a.name()).collect();
-            s.push_str(&format!("\nAffixes: {}", names.join("  ·  ")));
-        }
-        if !world.buffs.is_empty() {
-            let buffs: Vec<String> = world
-                .buffs
-                .iter()
-                .map(|(p, left)| format!("{} {:.0}s", p.name(), left.ceil()))
-                .collect();
-            s.push('\n');
-            s.push_str(&buffs.join("   "));
-        }
-        // Friends who have fallen, while the run goes on.
-        if hero.alive && !world.game_over() {
-            for h in world.heroes.iter().filter(|h| !h.alive) {
-                s.push_str(&format!(
-                    "\n{} has fallen: stand beside them to raise them",
-                    h.name
-                ));
-            }
-        }
-        if t.0 != s {
-            t.0 = s;
-        }
-    }
-
     let center = if world.game_over() {
         let fallen = if world.heroes.len() > 1 {
             "The party has fallen."

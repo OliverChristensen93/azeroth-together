@@ -54,6 +54,11 @@ pub(super) struct TipAbility(pub usize);
 pub(super) enum TipThing {
     Tome(Stat),
     Item(Item),
+    /// The run panel's affix and power-up icons, its clock, and its help mark.
+    Affix(together_sim::Affix),
+    PowerUp(together_sim::PowerUp),
+    Run,
+    Help,
 }
 
 /// What the mouse is over.
@@ -443,6 +448,59 @@ fn thing_lines(world: &World, h: usize, thing: TipThing) -> Vec<Line> {
                 Line::one(format!("{}.", item.describe(n)), GOLD),
             ]
         }
+        TipThing::Affix(a) => vec![
+            Line {
+                size: 14.0,
+                ..Line::two(a.name(), "Affix", WHITE, GREY)
+            },
+            Line::one(a.hint(), GOLD),
+        ],
+        TipThing::PowerUp(p) => {
+            let left = world
+                .buffs
+                .iter()
+                .find(|&&(x, _)| x == p)
+                .map_or(0.0, |&(_, s)| s);
+            vec![
+                Line {
+                    size: 14.0,
+                    ..Line::two(p.name(), format!("{:.0} sec", left.ceil()), WHITE, GREY)
+                },
+                Line::one(p.description(), GOLD),
+            ]
+        }
+        TipThing::Run => {
+            let danger = world.difficulty.overall();
+            let mut lines = vec![
+                Line {
+                    size: 14.0,
+                    ..Line::two("This run", format!("Level {}", world.level), WHITE, GREY)
+                },
+                Line::two("Kills", world.kills.to_string(), GREY, WHITE),
+            ];
+            if danger > 0.0 {
+                lines.push(Line::two(
+                    "Danger",
+                    format!("+{:.0}%", danger * 100.0),
+                    GREY,
+                    WHITE,
+                ));
+            }
+            lines
+        }
+        TipThing::Help => vec![
+            Line {
+                size: 14.0,
+                ..Line::one("Controls", WHITE)
+            },
+            Line::two("Move, jump, camera", "WoW's own keys", GREY, WHITE),
+            Line::two("Pick a card", "1, 2, 3 or click", GREY, WHITE),
+            Line::two("Reroll / Freeze / Banish", "R / T / G", GREY, WHITE),
+            Line::two("Defensive spell", "F", GREY, WHITE),
+            Line::two("Stat sheet", "Tab", GREY, WHITE),
+            Line::two("Switch on gear", "Y", GREY, WHITE),
+            Line::one("Stand in a shrine's circle to use it.", GOLD),
+        ],
     }
 }
 

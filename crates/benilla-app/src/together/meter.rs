@@ -58,7 +58,7 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             Node {
                 position_type: PositionType::Absolute,
                 right: Val::Px(6.0),
-                top: Val::Px(172.0),
+                top: Val::Px(super::runpanel::METER_TOP),
                 width: Val::Px(WIDTH),
                 flex_direction: FlexDirection::Column,
                 border: UiRect::all(Val::Px(1.0)),

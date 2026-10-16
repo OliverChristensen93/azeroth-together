@@ -25,6 +25,7 @@ mod gear_tip;
 mod hazards;
 mod hud;
 mod inventory;
+mod runpanel;
 mod levelup;
 mod lobby;
 mod menu;
@@ -349,6 +350,7 @@ impl Plugin for TogetherPlugin {
                     tooltip::setup,
                     inventory::setup,
                     hazards::setup,
+                    runpanel::setup,
                     gear_tip::setup,
                     menu::spawn_root,
                 ),
@@ -372,6 +374,7 @@ impl Plugin for TogetherPlugin {
                     inventory::refresh,
                     hazards::boss_bar,
                     hazards::grow_fills,
+                    runpanel::refresh,
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
