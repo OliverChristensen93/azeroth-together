@@ -2,7 +2,8 @@
 //! (every MPQ's name, size and time, so a patched or swapped install bakes again), what it is
 //! asked (the map, the bounds, the props) and [`BAKE_VERSION`]. A file that does not read back
 //! whole (damaged, cut short, or from another codec version) is baked again and overwritten; older
-//! files for the same map are removed once a new one is written.
+//! files for the same map are removed once a new one is written. A bake that could not read some
+//! file the data has is not cached, so the next launch tries again.
 
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -14,7 +15,7 @@ use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use nightfall_sim::{HeightMap, CELL};
 
-use crate::bake::{bake, BakeRequest};
+use crate::bake::{bake, BakeOutput, BakeRequest};
 
 /// Bumped whenever the bake would make a different map from the same data.
 pub const BAKE_VERSION: u32 = 1;
@@ -23,6 +24,11 @@ pub const BAKE_VERSION: u32 = 1;
 pub struct Baked {
     pub map: HeightMap,
     pub from_cache: bool,
+    /// Files the data has that the bake could not read (see [`BakeOutput::failures`]); such a map
+    /// plays but is not cached.
+    pub failures: Vec<String>,
+    /// Why a good map could not be written to the cache, if it could not.
+    pub cache_error: Option<String>,
 }
 
 /// FNV-1a over the parts, each ended by a zero byte, as `together_net::content_hash` hashes.
@@ -47,7 +53,14 @@ fn data_fingerprint(dir: &Path) -> Result<Vec<String>> {
         if !name.ends_with(".mpq") {
             continue;
         }
-        let meta = entry.metadata()?;
+        // Through symlinks, as `Chain::open` reads them: a link pointed at another archive must
+        // change the key. A link to nothing is not an archive the chain would open either.
+        let Ok(meta) = std::fs::metadata(entry.path()) else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
         let secs = meta
             .modified()
             .ok()
@@ -100,8 +113,27 @@ pub(crate) fn read_cache(path: &Path) -> Option<HeightMap> {
     HeightMap::from_bytes(&bytes).ok()
 }
 
-/// Write the map to `path` (through a temporary file, so a crash never leaves half a map under
-/// the real name), then remove this map's older cache files in `dir`.
+/// Whether `name` is one of `key`'s cache files: `<key>-<16 hex digits>.bin`, or the temporary
+/// `<key>-<16 hex digits>.<process id>.tmp` of a write that never finished. Matched exactly, so
+/// a map whose key begins with this one's (`elwynn-forest` for `elwynn`) is left alone.
+fn is_cache_name(key: &str, name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(key).and_then(|r| r.strip_prefix('-')) else {
+        return false;
+    };
+    let Some((hash, tail)) = rest.split_at_checked(16) else {
+        return false;
+    };
+    hash.bytes().all(|b| b.is_ascii_hexdigit())
+        && (tail == ".bin"
+            || tail
+                .strip_prefix('.')
+                .and_then(|t| t.strip_suffix(".tmp"))
+                .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// Write the map to `path` (through a temporary file of this process's own, so a crash never
+/// leaves half a map under the real name and two launches never share a temporary), then remove
+/// this map's older cache files and stale temporaries in `dir`.
 pub(crate) fn write_cache(
     dir: &Path,
     key: &str,
@@ -109,21 +141,26 @@ pub(crate) fn write_cache(
     map: &HeightMap,
 ) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let tmp = path.with_extension("tmp");
-    {
-        let file = std::fs::File::create(&tmp)?;
-        let mut out = DeflateEncoder::new(BufWriter::new(file), Compression::fast());
-        out.write_all(&map.to_bytes())?;
-        out.finish()?.flush()?;
+    let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+    let written = (|| {
+        {
+            let file = std::fs::File::create(&tmp)?;
+            let mut out = DeflateEncoder::new(BufWriter::new(file), Compression::fast());
+            out.write_all(&map.to_bytes())?;
+            out.finish()?.flush()?;
+        }
+        // Windows' rename does not replace an existing file on every filesystem, and a file that
+        // failed to read back is exactly the one being replaced.
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
-    // Windows' rename does not replace an existing file on every filesystem, and a file that
-    // failed to read back is exactly the one being replaced.
-    let _ = std::fs::remove_file(path);
-    std::fs::rename(&tmp, path)?;
-    let prefix = format!("{key}-");
     for entry in std::fs::read_dir(dir)?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if entry.path() != path && name.starts_with(&prefix) && name.ends_with(".bin") {
+        if entry.path() != path && is_cache_name(key, &name) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
@@ -152,22 +189,37 @@ fn load_or_make(
     cache_dir: Option<&Path>,
     path: Option<&Path>,
     progress: &dyn Fn(f32),
-    make: impl FnOnce() -> Result<HeightMap>,
+    make: impl FnOnce() -> Result<BakeOutput>,
 ) -> Result<Baked> {
     if let Some(map) = path.and_then(read_cache) {
         progress(1.0);
         return Ok(Baked {
             map,
             from_cache: true,
+            failures: Vec::new(),
+            cache_error: None,
         });
     }
-    let map = make()?;
-    if let (Some(dir), Some(path)) = (cache_dir, path) {
-        let _ = write_cache(dir, key, path, &map);
+    let BakeOutput { map, failures } = make()?;
+    let mut cache_error = None;
+    if !failures.is_empty() {
+        eprintln!(
+            "nightfall-bake: {key}: {} files could not be read, so this map is not cached: {}",
+            failures.len(),
+            failures.join("; ")
+        );
+    } else if let (Some(dir), Some(path)) = (cache_dir, path) {
+        if let Err(e) = write_cache(dir, key, path, &map) {
+            let why = format!("writing {}: {e}", path.display());
+            eprintln!("nightfall-bake: {key}: the map is not cached: {why}");
+            cache_error = Some(why);
+        }
     }
     Ok(Baked {
         map,
         from_cache: false,
+        failures,
+        cache_error,
     })
 }
 
@@ -206,6 +258,13 @@ mod tests {
         let mut b = HeightMapBuilder::flat(grid, 1.0);
         b.add_box(V2::new(2.0, 2.0), V2::new(4.0, 4.0), 1.0, 3.0);
         b.finish()
+    }
+
+    fn output(map: HeightMap) -> BakeOutput {
+        BakeOutput {
+            map,
+            failures: Vec::new(),
+        }
     }
 
     /// Deflate `bytes` the way a cache file holds them.
@@ -253,12 +312,27 @@ mod tests {
         std::fs::write(&stale, b"old").unwrap();
         let other = dir.join("elwynn-0000000000000001.bin");
         std::fs::write(&other, b"another map").unwrap();
+        // A map whose key begins with this one's, and files that merely look alike.
+        let nested = dir.join("test-forest-0000000000000001.bin");
+        std::fs::write(&nested, b"another map").unwrap();
+        let unrelated = dir.join("test-notes.bin");
+        std::fs::write(&unrelated, b"not a cache file").unwrap();
+        let stale_tmp = dir.join("test-0000000000000002.4242.tmp");
+        std::fs::write(&stale_tmp, b"a write that never finished").unwrap();
         let path = dir.join("test-00000000000000ff.bin");
         let map = small_map();
         write_cache(&dir, "test", &path, &map).unwrap();
         assert_eq!(read_cache(&path).unwrap(), map);
         assert!(!stale.exists());
+        assert!(!stale_tmp.exists());
         assert!(other.exists());
+        assert!(nested.exists());
+        assert!(unrelated.exists());
+        // This write's own temporary is gone too.
+        assert!(std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")));
     }
 
     #[test]
@@ -295,8 +369,10 @@ mod tests {
             std::fs::write(&path, deflated(&bytes)).unwrap();
             assert!(read_cache(&path).is_none(), "{name}");
 
-            let baked =
-                load_or_make("test", Some(&dir), Some(&path), &|_| {}, || Ok(small_map())).unwrap();
+            let baked = load_or_make("test", Some(&dir), Some(&path), &|_| {}, || {
+                Ok(output(small_map()))
+            })
+            .unwrap();
             assert!(!baked.from_cache, "{name}");
             assert_eq!(baked.map, map, "{name}");
             // The bad file is gone: the next load is a cache hit on the fresh bake.
@@ -307,6 +383,89 @@ mod tests {
             .unwrap();
             assert!(again.from_cache, "{name}");
         }
+    }
+
+    #[test]
+    fn a_bake_that_could_not_read_everything_is_not_cached() {
+        let dir = scratch("failed");
+        let path = dir.join("test-00000000000000bb.bin");
+        let failed = || {
+            Ok(BakeOutput {
+                map: small_map(),
+                failures: vec!["tile test 1,2: damaged".into()],
+            })
+        };
+        let first = load_or_make("test", Some(&dir), Some(&path), &|_| {}, failed).unwrap();
+        assert!(!first.from_cache);
+        assert_eq!(first.map, small_map());
+        assert_eq!(first.failures.len(), 1);
+        assert!(!path.exists(), "a map with unread files was cached");
+        // The next launch bakes again, and a clean bake is kept.
+        let second = load_or_make("test", Some(&dir), Some(&path), &|_| {}, || {
+            Ok(output(small_map()))
+        })
+        .unwrap();
+        assert!(!second.from_cache && second.failures.is_empty());
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn a_cache_that_cannot_be_written_is_reported_and_the_map_still_plays() {
+        let dir = scratch("unwritable");
+        // A file where the cache folder should be.
+        let blocked = dir.join("not-a-folder");
+        std::fs::write(&blocked, b"x").unwrap();
+        let path = blocked.join("test-00000000000000cc.bin");
+        let baked = load_or_make("test", Some(&blocked), Some(&path), &|_| {}, || {
+            Ok(output(small_map()))
+        })
+        .unwrap();
+        assert_eq!(baked.map, small_map());
+        assert!(baked.cache_error.is_some());
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_temporary_behind() {
+        let dir = scratch("tmp");
+        // The destination is a folder, so the rename fails after the temporary was written.
+        let path = dir.join("test-00000000000000dd.bin");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), b"x").unwrap();
+        assert!(write_cache(&dir, "test", &path, &small_map()).is_err());
+        assert!(std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[test]
+    fn the_key_follows_a_symlinked_archive_to_its_target() {
+        let data = scratch("symlink");
+        let target = data.join("real.dat");
+        std::fs::write(&target, b"one").unwrap();
+        let link = data.join("patch.MPQ");
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&target, &link).is_ok();
+        if !linked {
+            eprintln!("skipping: this platform or account cannot make symlinks");
+            return;
+        }
+        let bounds = square(10.0);
+        let key = || {
+            cache_key(&BakeRequest {
+                data_dir: &data,
+                map_id: 0,
+                key: "test",
+                bounds: &bounds,
+                props: &[],
+            })
+            .unwrap()
+        };
+        let before = key();
+        std::fs::write(&target, b"another archive").unwrap();
+        assert_ne!(before, key());
     }
 
     #[test]

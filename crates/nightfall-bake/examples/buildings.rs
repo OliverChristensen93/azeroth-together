@@ -6,7 +6,10 @@ use nightfall_bake::buildings_near;
 use nightfall_sim::V2;
 
 fn main() {
-    let args: Vec<f32> = std::env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
+    let args: Vec<f32> = std::env::args()
+        .skip(1)
+        .filter_map(|a| a.parse().ok())
+        .collect();
     let (Some(&x), Some(&y)) = (args.first(), args.get(1)) else {
         eprintln!("usage: buildings <x> <y> [radius]");
         std::process::exit(2);

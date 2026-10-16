@@ -31,7 +31,7 @@ fn main() {
     };
     let started = Instant::now();
     let shown = Cell::new(-1);
-    let map = bake(&req, &|f| {
+    let made = bake(&req, &|f| {
         let tenth = (f * 10.0) as i32;
         if tenth != shown.get() {
             shown.set(tenth);
@@ -42,6 +42,10 @@ fn main() {
         eprintln!("{e:#}");
         std::process::exit(1);
     });
+    for f in &made.failures {
+        eprintln!("unreadable: {f}");
+    }
+    let map = made.map;
     println!(
         "{:?}: baked in {:.1?}; {} columns hold more than terrain; {} MB as bytes",
         map.grid(),

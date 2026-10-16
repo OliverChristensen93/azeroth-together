@@ -34,6 +34,15 @@ pub struct PropPlacement {
     pub scale: f32,
 }
 
+/// What a bake made.
+pub struct BakeOutput {
+    pub map: HeightMap,
+    /// Every file the data has but could not be read or parsed (a model a tile places is simply
+    /// absent from a trimmed install; that is not listed). A map with any of these is missing
+    /// terrain or collision a retry might find, so the cache does not keep it.
+    pub failures: Vec<String>,
+}
+
 /// What to bake.
 pub struct BakeRequest<'a> {
     /// WoW's `Data` folder.
@@ -98,13 +107,23 @@ fn map_directory(chain: &mut Chain, map_id: u32) -> Result<String> {
         .with_context(|| format!("Map.dbc has no map {map_id}"))
 }
 
-/// Every tile under the grid that the data has; a missing tile (a zone the trimmed data leaves
-/// out) is skipped, and none at all is an error.
-fn load_tiles(chain: &mut Chain, dir: &str, g: &Grid) -> Result<Vec<TileMesh>> {
+/// Every tile under the grid that the data has. A tile the data does not have (a zone the trimmed
+/// data leaves out) is skipped; one it has but cannot read is skipped too and listed in
+/// `failures`. No tile at all is an error.
+fn load_tiles(
+    chain: &mut Chain,
+    dir: &str,
+    g: &Grid,
+    failures: &mut Vec<String>,
+) -> Result<Vec<TileMesh>> {
     let mut tiles = Vec::new();
     for (tx, ty) in tiles_under(g) {
-        if let Ok(tile) = load_tile_mesh(chain, dir, tx, ty) {
-            tiles.push(tile);
+        if !chain.contains(&format!("World\\Maps\\{dir}\\{dir}_{tx}_{ty}.adt")) {
+            continue;
+        }
+        match load_tile_mesh(chain, dir, tx, ty) {
+            Ok(tile) => tiles.push(tile),
+            Err(e) => failures.push(format!("tile {dir} {tx},{ty}: {e:#}")),
         }
     }
     if tiles.is_empty() {
@@ -197,15 +216,68 @@ fn add_model(
     }
 }
 
-/// Bake the request's map from the data, telling `progress` how far it has got (0 to 1).
-pub fn bake(req: &BakeRequest, progress: &dyn Fn(f32)) -> Result<HeightMap> {
+/// A model's file name as the chain keys it: lowercase, `.mdx`/`.mdl` as `.m2` (the same
+/// normalization `benilla-formats` applies when it reads one).
+fn m2_path(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    match lower
+        .strip_suffix(".mdx")
+        .or_else(|| lower.strip_suffix(".mdl"))
+    {
+        Some(stem) => format!("{stem}.m2"),
+        None => lower,
+    }
+}
+
+/// What reading one model's collision gave.
+enum Loaded {
+    /// The data has no such file: a trimmed install, not an error for the map's own models.
+    Absent,
+    /// The file is there and could not be read (the failure is in the bake's list).
+    Failed,
+    /// The model has no collision geometry.
+    Bare,
+    Mesh(CollisionMesh),
+}
+
+/// Read one model once: `path` is its file in the chain, `load` the `benilla-formats` reader. A
+/// file that is there but unreadable is added to `failures`.
+fn read_model(
+    chain: &mut Chain,
+    path: &str,
+    failures: &mut Vec<String>,
+    load: impl FnOnce(&mut Chain) -> Result<CollisionMesh>,
+) -> Loaded {
+    if !chain.contains(path) {
+        return Loaded::Absent;
+    }
+    match load(chain) {
+        Ok(mesh) if mesh.is_empty() => Loaded::Bare,
+        Ok(mesh) => Loaded::Mesh(mesh),
+        Err(e) => {
+            failures.push(format!("model {path}: {e:#}"));
+            Loaded::Failed
+        }
+    }
+}
+
+/// Bake the request's map from the data, telling `progress` how far it has got (0 to 1). A
+/// prop whose model the data lacks is an error; any other file the data has but cannot be read
+/// is listed in the output's `failures`.
+pub fn bake(req: &BakeRequest, progress: &dyn Fn(f32)) -> Result<BakeOutput> {
     progress(0.0);
     let mut chain = Chain::open(req.data_dir)
         .with_context(|| format!("opening WoW data at {}", req.data_dir.display()))?;
+    for p in req.props {
+        if !chain.contains(&m2_path(&p.model)) {
+            bail!("prop model {} is not in the WoW data", p.model);
+        }
+    }
     let dir = map_directory(&mut chain, req.map_id)?;
     let grid = grid_for(req.bounds);
     let mut b = HeightMapBuilder::new(grid);
-    let tiles = load_tiles(&mut chain, &dir, &grid)?;
+    let mut failures = Vec::new();
+    let tiles = load_tiles(&mut chain, &dir, &grid, &mut failures)?;
     progress(0.1);
     for t in &tiles {
         add_terrain(&mut b, t);
@@ -215,23 +287,23 @@ pub fn bake(req: &BakeRequest, progress: &dyn Fn(f32)) -> Result<HeightMap> {
     drop(tiles);
 
     let mut fp = Footprint::new(grid);
-    let mut buildings: HashMap<String, Option<CollisionMesh>> = HashMap::new();
+    let mut buildings: HashMap<String, Loaded> = HashMap::new();
     for (k, w) in wmos.iter().enumerate() {
-        let mesh = buildings
-            .entry(w.model.to_ascii_lowercase())
-            .or_insert_with(|| {
-                load_wmo_collision_tris(&mut chain, &w.model)
-                    .ok()
-                    .filter(|m| !m.is_empty())
+        let path = w.model.to_ascii_lowercase();
+        if !buildings.contains_key(&path) {
+            let loaded = read_model(&mut chain, &path, &mut failures, |c| {
+                load_wmo_collision_tris(c, &path)
             });
-        if let Some(mesh) = mesh {
+            buildings.insert(path.clone(), loaded);
+        }
+        if let Loaded::Mesh(mesh) = &buildings[&path] {
             add_model(&mut fp, mesh, w.position, w.rotation, 1.0);
             fp.flush_into(&mut b, false);
         }
         progress(0.25 + 0.3 * (k + 1) as f32 / wmos.len().max(1) as f32);
     }
 
-    let mut hulls: HashMap<String, Option<CollisionMesh>> = HashMap::new();
+    let mut hulls: HashMap<String, Loaded> = HashMap::new();
     let total = (doodads.len() + req.props.len()).max(1);
     let models = doodads
         .iter()
@@ -242,12 +314,14 @@ pub fn bake(req: &BakeRequest, progress: &dyn Fn(f32)) -> Result<HeightMap> {
                 .map(|p| (&p.model, p.position, p.rotation, p.scale)),
         );
     for (k, (model, position, rotation, scale)) in models.enumerate() {
-        let hull = hulls.entry(model.to_ascii_lowercase()).or_insert_with(|| {
-            load_m2_collision_hull(&mut chain, model)
-                .ok()
-                .filter(|m| !m.is_empty())
-        });
-        if let Some(hull) = hull {
+        let path = m2_path(model);
+        if !hulls.contains_key(&path) {
+            let loaded = read_model(&mut chain, &path, &mut failures, |c| {
+                load_m2_collision_hull(c, model)
+            });
+            hulls.insert(path.clone(), loaded);
+        }
+        if let Loaded::Mesh(hull) = &hulls[&path] {
             add_model(&mut fp, hull, position, rotation, scale);
             fp.flush_into(&mut b, true);
         }
@@ -266,7 +340,7 @@ pub fn bake(req: &BakeRequest, progress: &dyn Fn(f32)) -> Result<HeightMap> {
     progress(0.95);
     let map = b.finish();
     progress(1.0);
-    Ok(map)
+    Ok(BakeOutput { map, failures })
 }
 
 /// Every building (WMO) whose origin stands within `radius` yards of `at`, nearest first, with
@@ -288,7 +362,15 @@ pub fn buildings_near(
         nx: side,
         ny: side,
     };
-    let tiles = load_tiles(&mut chain, &dir, &grid)?;
+    let mut failures = Vec::new();
+    let tiles = load_tiles(&mut chain, &dir, &grid, &mut failures)?;
+    if !failures.is_empty() {
+        bail!(
+            "{} tiles unreadable: {}",
+            failures.len(),
+            failures.join("; ")
+        );
+    }
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for t in &tiles {
