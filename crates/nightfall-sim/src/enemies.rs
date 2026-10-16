@@ -286,6 +286,8 @@ pub(crate) struct Planner {
     failed_points: HashSet<(usize, usize)>,
     /// Searches that found nothing, so far.
     failed_searches: u64,
+    /// Paths asked of the [`Navigator`] so far, kept ones included.
+    asked: u64,
 }
 
 impl Planner {
@@ -380,6 +382,7 @@ fn plan(
             (goal, false, WANDER_BUDGET)
         }
     };
+    planner.asked += 1;
     let searched = match nav.plan_path(here, goal, cache, limit) {
         PathPlan::Found(path) => {
             *budget -= 1;
@@ -482,9 +485,17 @@ fn walk(e: &mut Enemy, b: &mut Brain, map: &HeightMap, content: &Content) {
 
 /// At the end of a path: a sentry turns to its watch, a patrol rests and takes its next point, a
 /// wanderer rests a while.
+///
+/// A sentry also takes where its path ended as its post from now on. The search ends a path on
+/// the walkable floor nearest the goal, which for a post against a wall or on a ledge is up to
+/// 2 yd from it; held to the post as given, the sentry would never be there and would ask for
+/// its path again every step.
 fn arrive(e: &mut Enemy, b: &mut Brain, content: &Content) {
     match &mut b.order {
-        Order::Sentry { facing, .. } => e.facing = *facing,
+        Order::Sentry { post, facing } => {
+            e.facing = *facing;
+            *post = V3::at(e.pos, e.z);
+        }
         Order::Patrol { route, target, pause } => {
             *target = next_target(route, *target);
             b.wait = *pause;
@@ -925,5 +936,44 @@ mod tests {
         w.attach_map(rock());
         assert_eq!(w.enemies[0].z, 3.0);
         assert!(w.warnings().is_empty(), "{:?}", w.warnings());
+    }
+
+    #[test]
+    fn a_sentry_posted_against_a_wall_settles_there_and_stops_asking() {
+        use super::Planner;
+        use crate::V3;
+
+        // The post is on the wall's face, where no unit can stand; the search ends its path on
+        // the nearest floor a unit can stand on, a yard out. Walked away and back, the sentry
+        // settles there.
+        let post = V3::new(20.1, 10.0, 0.0);
+        let (mut enemies, mut brains, _) = lost_sentries(&[(V2::new(10.0, 10.0), post)]);
+        let mut b = flat(50.0);
+        b.add_box(V2::new(20.0, 0.0), V2::new(20.5, 50.0), 0.0, 3.0);
+        let mut nav = super::Navigator::new(Arc::new(b.finish()));
+        assert!(nav.map().stand_near(post).is_some_and(|p| p.ground() != post.ground()));
+        let content = world(GATE, 4).content().clone();
+        let (mut warnings, mut planner) = (Vec::new(), Planner::default());
+        let mut run = |steps: usize, enemies: &mut Vec<super::Enemy>, planner: &mut Planner| {
+            for _ in 0..steps {
+                super::step(enemies, &mut brains, &mut nav, &content, &mut warnings, planner);
+            }
+        };
+        run(300, &mut enemies, &mut planner);
+        let settled = enemies[0].pos;
+        assert!(settled.distance(post.ground()) < 2.0, "{settled:?}");
+        let asked = planner.asked;
+        run(300, &mut enemies, &mut planner);
+        assert_eq!(planner.asked, asked, "it kept asking for its path");
+        assert_eq!(enemies[0].pos, settled);
+        // Pushed away (as a chase will), it walks back to the same spot and settles again.
+        enemies[0].pos = V2::new(5.0, 30.0);
+        run(600, &mut enemies, &mut planner);
+        assert_eq!(enemies[0].pos, settled);
+        let asked = planner.asked;
+        run(300, &mut enemies, &mut planner);
+        assert_eq!(planner.asked, asked);
+        assert_eq!(planner.failed_searches(), 0);
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 }
