@@ -112,6 +112,8 @@ mod survivors;
 mod game_pick;
 /// Azeroth Together: the co-op survivors mode the `azeroth-together` launcher boots.
 mod together;
+/// Nightfall: the co-op stealth extraction game, picked on the launcher's first screen.
+mod nightfall;
 /// The melee swing refusal's latch + 4 s repeat (`SMSG_ATTACKSWING_*`).
 mod swing_refusal;
 mod target;
@@ -241,6 +243,10 @@ pub fn run_survivors(build: BuildId) -> AppExit {
 /// launcher.
 pub fn run_together(build: BuildId) -> AppExit {
     if let Err(e) = together::prepare(build.project_dir) {
+        eprintln!("azeroth-together: {e}");
+        return AppExit::error();
+    }
+    if let Err(e) = nightfall::prepare(build.project_dir) {
         eprintln!("azeroth-together: {e}");
         return AppExit::error();
     }
@@ -468,6 +474,7 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     if together {
         app.add_plugins(game_pick::GamePickPlugin);
         app.add_plugins(together::TogetherPlugin);
+        app.add_plugins(nightfall::NightfallPlugin);
     }
 
     app.add_plugins(webbridge::WebBridgePlugin);

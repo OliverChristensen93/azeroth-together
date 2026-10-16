@@ -57,6 +57,8 @@ benilla-world = { path = "../benilla-world", default-features = false }
 # Azeroth Together's game rules, which the `together` mode draws.
 together-sim = { path = "../together-sim" }
 together-net = { path = "../together-net" }
+# Nightfall's game rules, which the `nightfall` game draws.
+nightfall-sim = { path = "../nightfall-sim" }
 # The CVar diff persisted in `benilla-config/config.toml`.
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
