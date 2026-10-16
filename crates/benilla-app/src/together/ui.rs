@@ -55,20 +55,21 @@ pub(super) fn tune_ui(
     script: Option<NonSend<UiScript>>,
     loading: Option<Res<PendingEntryUiLoad>>,
     phase: Res<State<super::Phase>>,
-    mut done: Local<Option<u64>>,
+    mut tuned: Local<crate::ui_script::VmMemo<bool>>,
     mut shown: ResMut<UiShown>,
 ) {
     let Some(script) = script else { return };
     if loading.is_some() {
         return;
     }
-    let session = script.session();
-    if *done != Some(session) && script.run(TUNE_UI).is_ok() {
-        *done = Some(session);
+    let tuned = tuned.get(&script);
+    if !*tuned && script.run(TUNE_UI).is_ok() {
+        *tuned = true;
     }
-    if *done != Some(session) {
+    if !*tuned {
         return;
     }
+    let session = script.session();
     let phase = *phase.get();
     if let Some(chunk) = ui_chunk(session, phase, shown.0) {
         if script.run(chunk).is_ok() {
