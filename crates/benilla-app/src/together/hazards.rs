@@ -1,30 +1,68 @@
-//! Elites' and bosses' mechanics on screen: each telegraph a purple rune on the ground (a row of
-//! them along a charge's line) until it goes off, their spell visuals, the local hero thrown or
+//! Elites' and bosses' mechanics on screen: each telegraph a flat shape on the ground until it
+//! goes off (a purple circle that fills in as the blow winds up, a purple strip along a charge's
+//! path, a green circle for a thing to run to), their spell visuals, the local hero thrown or
 //! pulled where a mechanic sent it, and the boss bar across the top: name, health and one
 //! sentence about what the boss does.
+//!
+//! The shapes are plain meshes rather than WoW's ground runes: a rune's model takes longer to
+//! appear than a telegraph lasts.
 
 use bevy::prelude::*;
 use together_sim::{Event, Shape, V2};
 
 use super::{content, units, view::Views, Phase, Sim};
 
-/// `G_RuneGroundPurple01.mdx`, and its radius at scale 1 in yards.
-const RUNE: u32 = 465;
-const RUNE_RADIUS: f32 = 2.8;
-/// Object serials for telegraph runes: this plus the telegraph's id times 32, plus its rune.
-const TELEGRAPH_SERIAL_BASE: u64 = 0x6000_0000;
-/// Yards between the runes along a charge's line.
-const LINE_STEP: f32 = 2.0;
 /// The boss bar's width, in the 768-unit canvas.
 const BAR_W: f32 = 360.0;
+/// How far above the ground a telegraph lies, so it is not lost in the grass, and its edge's
+/// width in yards.
+const LIFT: f32 = 0.12;
+const EDGE: f32 = 0.3;
 
 /// The step's mechanic events, passed on by [`super::view::apply_events`].
 #[derive(Resource, Default)]
 pub(super) struct Pending(pub Vec<Event>);
 
-/// The runes of each telegraph on screen, by its id.
+/// The shapes of each telegraph on screen, by its id.
 #[derive(Resource, Default)]
 pub(super) struct Telegraphs(std::collections::HashMap<u32, Vec<Entity>>);
+
+/// A danger's fill, growing from its centre to its edge as the blow winds up.
+#[derive(Component)]
+pub(super) struct Filling {
+    born: f32,
+    secs: f32,
+}
+
+/// The telegraphs' materials: a danger's purple and a lure's green, each a faint fill and a
+/// stronger edge. Unlit and blended, drawn over the ground.
+pub(super) struct Looks {
+    danger_fill: Handle<StandardMaterial>,
+    danger_edge: Handle<StandardMaterial>,
+    lure_fill: Handle<StandardMaterial>,
+    lure_edge: Handle<StandardMaterial>,
+}
+
+impl Looks {
+    fn new(materials: &mut Assets<StandardMaterial>) -> Self {
+        let mut flat = |color: Color| {
+            materials.add(StandardMaterial {
+                base_color: color,
+                unlit: true,
+                alpha_mode: AlphaMode::Blend,
+                cull_mode: None,
+                depth_bias: 50.0,
+                ..default()
+            })
+        };
+        Self {
+            danger_fill: flat(Color::srgba(0.72, 0.18, 0.95, 0.32)),
+            danger_edge: flat(Color::srgba(0.85, 0.35, 1.0, 0.9)),
+            lure_fill: flat(Color::srgba(0.3, 1.0, 0.35, 0.25)),
+            lure_edge: flat(Color::srgba(0.45, 1.0, 0.5, 0.9)),
+        }
+    }
+}
 
 #[derive(Component)]
 pub(super) struct BossBar;
@@ -60,36 +98,90 @@ pub(super) fn show(
     mut bodies: Query<&mut Transform>,
     world_point: benilla_world::world_point::WorldPoint,
     mut fx: units::Fx,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    time: Res<Time<Real>>,
+    mut looks: Local<Option<Looks>>,
 ) {
     let fallback_y = sim.world.zone().center[2];
     for event in pending.0.drain(..) {
         match event {
-            Event::Telegraph { id, pos, shape, .. } => {
-                let (spots, scale): (Vec<V2>, f32) = match shape {
-                    Shape::Circle { radius } => (vec![pos], radius / RUNE_RADIUS),
-                    Shape::Line { to, width } => {
-                        let len = pos.distance(to);
-                        let n = ((len / LINE_STEP) as usize).clamp(1, 30);
-                        let spots = (0..=n)
-                            .map(|k| pos + (to - pos) * (k as f32 / n as f32))
-                            .collect();
-                        (spots, width * 0.5 / RUNE_RADIUS)
-                    }
+            Event::Telegraph {
+                id,
+                pos,
+                shape,
+                kind,
+                secs,
+            } => {
+                let look = looks.get_or_insert_with(|| Looks::new(&mut materials));
+                // A thing to run to is green; a danger, purple.
+                let lure = kind.is_lure();
+                let (fill, edge) = if lure {
+                    (look.lure_fill.clone(), look.lure_edge.clone())
+                } else {
+                    (look.danger_fill.clone(), look.danger_edge.clone())
                 };
-                let runes = spots
-                    .into_iter()
-                    .enumerate()
-                    .map(|(k, at)| {
-                        units::spawn_object(
-                            &mut commands,
-                            TELEGRAPH_SERIAL_BASE + u64::from(id) * 32 + k as u64,
-                            RUNE,
-                            scale,
-                            on_ground(&world_point, at, fallback_y) + Vec3::Y * 0.06,
-                        )
-                    })
-                    .collect();
-                shown.0.insert(id, runes);
+                let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                let mut parts = Vec::new();
+                match shape {
+                    Shape::Circle { radius } => {
+                        let at = on_ground(&world_point, pos, fallback_y) + Vec3::Y * LIFT;
+                        let ring = Annulus::new((radius - EDGE).max(0.05), radius);
+                        parts.push(
+                            commands
+                                .spawn((
+                                    Mesh3d(meshes.add(ring)),
+                                    MeshMaterial3d(edge),
+                                    Transform::from_translation(at).with_rotation(flat),
+                                ))
+                                .id(),
+                        );
+                        let start = if lure { 1.0 } else { 0.05 };
+                        let mut disc = commands.spawn((
+                            Mesh3d(meshes.add(Circle::new(radius))),
+                            MeshMaterial3d(fill),
+                            Transform::from_translation(at - Vec3::Y * 0.01)
+                                .with_rotation(flat)
+                                .with_scale(Vec3::splat(start)),
+                        ));
+                        if !lure {
+                            disc.insert(Filling {
+                                born: time.elapsed_secs(),
+                                secs: secs.max(0.1),
+                            });
+                        }
+                        parts.push(disc.id());
+                    }
+                    Shape::Line { to, width } => {
+                        let a = on_ground(&world_point, pos, fallback_y) + Vec3::Y * LIFT;
+                        let b = on_ground(&world_point, to, fallback_y) + Vec3::Y * LIFT;
+                        let d = b - a;
+                        let len = Vec2::new(d.x, d.z).length().max(0.1);
+                        let yaw = (-d.z).atan2(d.x);
+                        let turn = Quat::from_rotation_y(yaw) * flat;
+                        let mid = (a + b) * 0.5;
+                        parts.push(
+                            commands
+                                .spawn((
+                                    Mesh3d(meshes.add(Rectangle::new(len, width))),
+                                    MeshMaterial3d(fill),
+                                    Transform::from_translation(mid).with_rotation(turn),
+                                ))
+                                .id(),
+                        );
+                        parts.push(
+                            commands
+                                .spawn((
+                                    Mesh3d(meshes.add(Rectangle::new(len, EDGE))),
+                                    MeshMaterial3d(edge),
+                                    Transform::from_translation(mid + Vec3::Y * 0.01)
+                                        .with_rotation(turn),
+                                ))
+                                .id(),
+                        );
+                    }
+                }
+                shown.0.insert(id, parts);
             }
             Event::TelegraphEnd { id } => {
                 for e in shown.0.remove(&id).into_iter().flatten() {
@@ -135,10 +227,19 @@ pub(super) fn show(
     }
 }
 
-/// Every telegraph's runes gone, at the end of a run.
+/// Every telegraph's shapes gone, at the end of a run.
 pub(super) fn clear(mut commands: Commands, mut shown: ResMut<Telegraphs>) {
-    for e in shown.0.drain().flat_map(|(_, runes)| runes) {
+    for e in shown.0.drain().flat_map(|(_, parts)| parts) {
         commands.entity(e).despawn();
+    }
+}
+
+/// Each danger's fill grows to its edge over its wind-up, so the moment it goes off is plain.
+pub(super) fn grow_fills(time: Res<Time<Real>>, mut fills: Query<(&Filling, &mut Transform)>) {
+    let now = time.elapsed_secs();
+    for (fill, mut tf) in &mut fills {
+        let t = ((now - fill.born) / fill.secs).clamp(0.0, 1.0);
+        tf.scale = Vec3::splat(0.05 + 0.95 * t);
     }
 }
 
@@ -261,13 +362,20 @@ pub(super) fn boss_bar(
 }
 
 /// The spells whose WoW state kits show an enemy's statuses, as its aura slots carry them:
-/// Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Immolate's flames (Burning) and
-/// Hammer of Justice's daze (Stunned).
-const STATUS_AURAS: [(u8, u32); 4] = [
+/// Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Immolate's flames (Burning), Hammer
+/// of Justice's daze (Stunned), Fear, Entangling Roots, Hunter's Mark, Rend's bleeding, Deadly
+/// Poison and Corruption.
+const STATUS_AURAS: [(u16, u32); 10] = [
     (together_sim::status_bits::FROZEN, 122),
     (together_sim::status_bits::CHILLED, 116),
     (together_sim::status_bits::BURNING, 348),
     (together_sim::status_bits::STUNNED, 853),
+    (together_sim::status_bits::FEARED, 5782),
+    (together_sim::status_bits::ROOTED, 339),
+    (together_sim::status_bits::MARKED, 1130),
+    (together_sim::status_bits::BLEEDING, 772),
+    (together_sim::status_bits::POISONED, 2818),
+    (together_sim::status_bits::AFFLICTED, 172),
 ];
 /// `UNIT_FIELD_AURA` and `UNIT_FIELD_AURAFLAGS`, and the first of the harmful auras' slots.
 const FIELD_AURA: u16 = 47;
@@ -282,7 +390,7 @@ pub(super) fn status_auras(
     sim: Res<Sim>,
     views: Res<Views>,
     mut stores: Query<&mut crate::net::ObjectStore>,
-    mut shown: Local<std::collections::HashMap<u32, u8>>,
+    mut shown: Local<std::collections::HashMap<u32, u16>>,
 ) {
     shown.retain(|id, _| views.enemies.contains_key(id));
     for enemy in &sim.world.enemies {
@@ -298,7 +406,8 @@ pub(super) fn status_auras(
             continue;
         };
         let mut pairs = Vec::new();
-        let mut flags = 0;
+        // Each flags field holds eight slots, a nibble each: 32 to 39, then 40 to 47.
+        let mut flags = [0u32; 2];
         for (k, &(bit, spell)) in STATUS_AURAS.iter().enumerate() {
             let on = bits & bit != 0;
             pairs.push((
@@ -306,11 +415,12 @@ pub(super) fn status_auras(
                 if on { spell } else { 0 },
             ));
             if on {
-                flags |= AURA_ON << (4 * k);
+                flags[k / 8] |= AURA_ON << (4 * (k % 8));
             }
         }
-        // Slots 32 to 39 share one flags field, a nibble each.
-        pairs.push((FIELD_AURAFLAGS + FIRST_DEBUFF_SLOT / 8, flags));
+        for (i, f) in flags.into_iter().enumerate() {
+            pairs.push((FIELD_AURAFLAGS + FIRST_DEBUFF_SLOT / 8 + i as u16, f));
+        }
         store
             .0
             .merge(benilla_protocol::messages::ObjectFields::from_pairs(&pairs));

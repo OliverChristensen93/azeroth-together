@@ -94,6 +94,8 @@ pub(super) struct Trigger {
 /// A spell's state on an enemy: control effects, burns, Winter's Chill, a Living Bomb.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
+    /// On a client: the flags its snapshot carried, shown as they are.
+    pub(super) mirrored: u16,
     pub chill: f32,
     /// How much the Chill slows (the strongest that hit it).
     pub slow: f32,
@@ -118,10 +120,19 @@ pub struct Status {
 
 /// A status's flags as a snapshot carries them, for a client to show.
 pub mod status_bits {
-    pub const FROZEN: u8 = 1;
-    pub const CHILLED: u8 = 2;
-    pub const BURNING: u8 = 4;
-    pub const STUNNED: u8 = 8;
+    pub const FROZEN: u16 = 1;
+    pub const CHILLED: u16 = 2;
+    /// Fire (or any other school's) damage over time.
+    pub const BURNING: u16 = 4;
+    pub const STUNNED: u16 = 8;
+    pub const FEARED: u16 = 16;
+    pub const ROOTED: u16 = 32;
+    /// Marked to take more (Hunter's Mark, Faerie Fire and the like).
+    pub const MARKED: u16 = 64;
+    pub const BLEEDING: u16 = 128;
+    pub const POISONED: u16 = 256;
+    /// Shadow damage over time: Corruption, Shadow Word: Pain.
+    pub const AFFLICTED: u16 = 512;
 }
 
 impl Status {
@@ -134,30 +145,49 @@ impl Status {
         self.freeze > 0.0 || self.stun > 0.0
     }
 
-    pub fn bits(&self) -> u8 {
-        let mut b = 0;
+    pub fn bits(&self) -> u16 {
+        // A client's mirrored status has no burns or effects of its own: its flags came as they are.
+        let mut b = self.mirrored;
         if self.freeze > 0.0 {
             b |= status_bits::FROZEN;
         }
         if self.chill > 0.0 {
             b |= status_bits::CHILLED;
         }
-        if self.burning() {
-            b |= status_bits::BURNING;
-        }
         if self.stun > 0.0 {
             b |= status_bits::STUNNED;
+        }
+        if self.fx.fear > 0.0 {
+            b |= status_bits::FEARED;
+        }
+        if self.fx.root > 0.0 {
+            b |= status_bits::ROOTED;
+        }
+        if self.fx.mark_secs > 0.0 || self.fx.marked_by.is_some() {
+            b |= status_bits::MARKED;
+        }
+        for burn in self.burns.iter().filter(|x| x.left > 0.0) {
+            b |= if burn.tags.has(Tag::Bleed) {
+                status_bits::BLEEDING
+            } else if burn.tags.has(Tag::Poison) {
+                status_bits::POISONED
+            } else if burn.tags.has(Tag::Shadow) {
+                status_bits::AFFLICTED
+            } else {
+                status_bits::BURNING
+            };
         }
         b
     }
 
     /// A status from a snapshot's flags: enough for a client to draw.
-    pub fn from_bits(bits: u8) -> Status {
-        let on = |flag: u8| if bits & flag != 0 { 1.0 } else { 0.0 };
+    pub fn from_bits(bits: u16) -> Status {
+        let on = |flag: u16| if bits & flag != 0 { 1.0 } else { 0.0 };
         Status {
             freeze: on(status_bits::FROZEN),
             chill: on(status_bits::CHILLED),
             stun: on(status_bits::STUNNED),
+            mirrored: bits,
             ..Status::default()
         }
     }
@@ -250,6 +280,11 @@ pub struct HeroSpells {
     pub phoenix: f32,
     /// Internal cooldowns of augments that cast spells.
     pub icds: Vec<(Augment, f32)>,
+    /// Seconds left of a boss's spore's crit bonus, and of a carried bomb's fuse.
+    #[serde(default)]
+    pub spore: f32,
+    #[serde(default)]
+    pub bomb: f32,
     /// The other classes' state: wards, buffs, combo points, the defensive button.
     #[serde(default)]
     pub fx: super::classes::HeroFx,
@@ -342,6 +377,9 @@ impl World {
         s.range = st.range;
         s.radius = st.radius;
         s.crit = CRIT_CHANCE + hero.stats.get(Stat::Crit);
+        if hero.spell.spore > 0.0 {
+            s.crit += super::hazards::SPORE_CRIT;
+        }
         s.crit_mult += hero.stats.get(Stat::CritDamage);
         s.shield = shield_size(def.shield, owned.bonus);
         owned.mods.apply(&mut s);

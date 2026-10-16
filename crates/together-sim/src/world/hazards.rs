@@ -43,6 +43,33 @@ const SUMMONS: usize = 2;
 /// The share of an enemy's health a boss's patch burns from it: kiting trash through the fire
 /// is a tactic.
 const PATCH_BURNS_ENEMIES: f32 = 0.2;
+/// Things to run to: how long a spore's bonus lasts and how much crit it gives; a bomb's fuse once
+/// picked up, its reach, what it deals (a share of each enemy's health, more for ordinary ones)
+/// and the share of the carrier's health it costs (never the last point); and a held circle's
+/// share of the boss's health each second.
+pub(super) const SPORE_CRIT: f32 = 0.5;
+const SPORE_SECS: f32 = 10.0;
+const BOMB_FUSE: f32 = 4.0;
+const BOMB_REACH: f32 = 8.0;
+const BOMB_BOSS_SHARE: f32 = 0.06;
+const BOMB_SHARE: f32 = 0.5;
+const BOMB_SELF: f32 = 0.1;
+const CIRCLE_SHARE: f32 = 0.02;
+/// How long each waits on the ground, and its size.
+const SPORE_LIFE: f32 = 12.0;
+const BOMB_LIFE: f32 = 15.0;
+const CIRCLE_LIFE: f32 = 15.0;
+const SPORE_RADIUS: f32 = 2.5;
+const BOMB_RADIUS: f32 = 1.5;
+const CIRCLE_RADIUS: f32 = 3.0;
+/// Visuals: the spore taken (Holy Nova's glow), the bomb's blast (Arcane Explosion's), the
+/// circle's bite on the boss (Holy Fire).
+const SPORE_VISUAL: u32 = 15237;
+const BOMB_VISUAL: u32 = 1449;
+const CIRCLE_VISUAL: u32 = 14914;
+/// A lure's pulse on the ground: Rejuvenation's green glow.
+const LURE_PULSE: u32 = 774;
+
 /// A caster stops coming closer at this distance.
 pub(super) const CASTER_KEEP: f32 = 12.0;
 /// A frenzied enemy's speed, and its swings' cooldown.
@@ -92,7 +119,12 @@ fn usable(m: Mechanic, dist: f32) -> bool {
         Mechanic::Leap => (9.0..25.0).contains(&dist),
         Mechanic::Frenzy => false,
         Mechanic::Healer => true,
-        Mechanic::Summoner | Mechanic::Patches | Mechanic::DeathGrip => dist < 40.0,
+        Mechanic::Summoner
+        | Mechanic::Patches
+        | Mechanic::DeathGrip
+        | Mechanic::Spores
+        | Mechanic::Bomb
+        | Mechanic::Circle => dist < 40.0,
     }
 }
 
@@ -101,6 +133,7 @@ impl World {
     /// its mechanics allow.
     pub(super) fn tend_mechanics(&mut self) {
         self.tend_hazards();
+        self.tend_lures();
         let living: Vec<(PlayerId, V2)> = self
             .heroes
             .iter()
@@ -237,6 +270,25 @@ impl World {
                         self.mark(m, spot, shape, PATCH_WINDUP, from, damage * PATCH_HITS);
                     }
                 }
+            }
+            Mechanic::Spores | Mechanic::Bomb => {
+                let (_, near) = living[self.rng.index(living.len())];
+                let angle = self.rng.range(0.0, std::f32::consts::TAU);
+                let at = near + V2::from_angle(angle, self.rng.range(6.0, 12.0));
+                let (radius, life) = if m == Mechanic::Spores {
+                    (SPORE_RADIUS, SPORE_LIFE)
+                } else {
+                    (BOMB_RADIUS, BOMB_LIFE)
+                };
+                self.mark(m, at, Shape::Circle { radius }, life, from, 0.0);
+            }
+            Mechanic::Circle => {
+                let angle = self.rng.range(0.0, std::f32::consts::TAU);
+                let at = pos + V2::from_angle(angle, self.rng.range(8.0, 14.0));
+                let shape = Shape::Circle {
+                    radius: CIRCLE_RADIUS,
+                };
+                self.mark(m, at, shape, CIRCLE_LIFE, from, 0.0);
             }
             Mechanic::DeathGrip => {
                 let (_, at) = living[self.rng.index(living.len())];
@@ -381,7 +433,134 @@ impl World {
                 }
                 self.events.push(cast(GRIP_VISUAL, Some(h.pos)));
             }
-            Mechanic::Frenzy | Mechanic::Healer | Mechanic::Summoner => {}
+            // A lure that waited out its time just goes.
+            Mechanic::Frenzy
+            | Mechanic::Healer
+            | Mechanic::Summoner
+            | Mechanic::Spores
+            | Mechanic::Bomb
+            | Mechanic::Circle => {}
+        }
+    }
+
+    /// Things to run to: a spore or a bomb a hero walks into is taken, a held circle bites its
+    /// boss, and a carried bomb's fuse runs down to its blast.
+    fn tend_lures(&mut self) {
+        let mut taken = Vec::new();
+        let mut bites = Vec::new();
+        for (i, h) in self.hazards.iter().enumerate() {
+            if !h.kind.is_lure() {
+                continue;
+            }
+            let inside = self
+                .heroes
+                .iter()
+                .position(|x| x.alive && h.shape.contains(h.pos, x.pos, HERO_RADIUS));
+            match (h.kind, inside) {
+                (Mechanic::Circle, Some(_)) => bites.push(h.from),
+                (Mechanic::Spores | Mechanic::Bomb, Some(hero)) => taken.push((i, hero)),
+                _ => {}
+            }
+        }
+        // Things to run to pulse, so they stand out from the shrines' runes.
+        if self.tick % u64::from(TICK_HZ * 3 / 2) == 0 {
+            let pulses: Vec<Event> = self
+                .hazards
+                .iter()
+                .filter(|h| h.kind.is_lure())
+                .map(|h| Event::EnemyCast {
+                    enemy: h.from,
+                    visual: LURE_PULSE,
+                    targets: Vec::new(),
+                    dest: Some(h.pos),
+                })
+                .collect();
+            self.events.extend(pulses);
+        }
+        for from in bites {
+            if let Some(boss) = self.enemies.iter_mut().find(|e| e.id == from) {
+                let amount = boss.max_hp * CIRCLE_SHARE * DT;
+                boss.hp -= amount;
+                // A bite a second is enough to see.
+                if (self.tick % u64::from(TICK_HZ)) == 0 {
+                    self.events.push(Event::EnemyCast {
+                        enemy: from,
+                        visual: CIRCLE_VISUAL,
+                        targets: vec![Target::Enemy(from)],
+                        dest: None,
+                    });
+                }
+            }
+        }
+        // Taken last first, so the indices still hold.
+        for &(i, hero) in taken.iter().rev() {
+            let lure = self.hazards.remove(i);
+            self.events.push(Event::TelegraphEnd { id: lure.id });
+            let spells = &mut self.heroes[hero].spell;
+            if lure.kind == Mechanic::Spores {
+                spells.spore = SPORE_SECS;
+            } else {
+                spells.bomb = BOMB_FUSE;
+            }
+            self.events.push(Event::EnemyCast {
+                enemy: lure.from,
+                visual: SPORE_VISUAL,
+                targets: vec![Target::Hero(self.heroes[hero].player)],
+                dest: None,
+            });
+        }
+        for h in 0..self.heroes.len() {
+            let spells = &mut self.heroes[h].spell;
+            spells.spore = (spells.spore - DT).max(0.0);
+            if spells.bomb <= 0.0 {
+                continue;
+            }
+            spells.bomb -= DT;
+            if spells.bomb <= 0.0 {
+                spells.bomb = 0.0;
+                self.bomb_blast(h);
+            }
+        }
+    }
+
+    /// A carried bomb goes off around hero `h`: a share of every enemy's health within reach (a
+    /// boss's smaller share of its larger health), and a little of the carrier's own, never its
+    /// last point.
+    fn bomb_blast(&mut self, h: usize) {
+        let (player, at) = (self.heroes[h].player, self.heroes[h].pos);
+        let mut hit = Vec::new();
+        for e in self
+            .enemies
+            .iter_mut()
+            .filter(|e| e.pos.distance(at) <= BOMB_REACH + e.radius)
+        {
+            let share = if e.boss || e.elite {
+                BOMB_BOSS_SHARE
+            } else {
+                BOMB_SHARE
+            };
+            let amount = e.max_hp * share;
+            e.hp -= amount;
+            e.last_hit = Some(player);
+            hit.push((e.id, amount));
+        }
+        for (id, amount) in hit {
+            self.events.push(Event::Damage {
+                target: Target::Enemy(id),
+                amount,
+                crit: false,
+            });
+        }
+        let hero = &mut self.heroes[h];
+        let cost = (hero.max_hp * BOMB_SELF).min(hero.hp - 1.0).max(0.0);
+        hero.hp -= cost;
+        if let Some(boss) = self.enemies.iter().find(|e| e.boss).map(|e| e.id) {
+            self.events.push(Event::EnemyCast {
+                enemy: boss,
+                visual: BOMB_VISUAL,
+                targets: Vec::new(),
+                dest: Some(at),
+            });
         }
     }
 
@@ -589,6 +768,74 @@ mod tests {
                 assert!(a.distance(*b) > PATCH_RADIUS * 2.0);
             }
         }
+    }
+
+    /// A lure of `kind` from the boss `id`, laid at `at`.
+    fn lure(w: &mut World, kind: Mechanic, id: u32, at: V2) {
+        let radius = match kind {
+            Mechanic::Spores => SPORE_RADIUS,
+            Mechanic::Bomb => BOMB_RADIUS,
+            _ => CIRCLE_RADIUS,
+        };
+        w.mark(kind, at, Shape::Circle { radius }, 10.0, id, 0.0);
+    }
+
+    #[test]
+    fn walking_into_a_spore_gives_crit() {
+        let (mut w, id) = duel("hogger", 30.0, true);
+        let at = w.heroes[0].pos + V2::new(0.0, 6.0);
+        lure(&mut w, Mechanic::Spores, id, at);
+        run(&mut w, 0.2);
+        assert_eq!(w.heroes[0].spell.spore, 0.0, "not taken from afar");
+        w.heroes[0].pos = at;
+        run(&mut w, 0.2);
+        assert!(w.heroes[0].spell.spore > 0.0);
+        assert!(w.hazards.is_empty(), "the spore is taken");
+    }
+
+    #[test]
+    fn a_carried_bomb_blasts_the_horde_and_spares_the_carrier() {
+        let (mut w, id) = duel("hogger", 5.0, true);
+        let near = w.heroes[0].pos + V2::new(-3.0, 0.0);
+        let def = w.zone().enemy_ix[0];
+        let grunt = w.spawn_enemy(def, near, near, false);
+        // No mechanics of its own: only the bomb acts here.
+        w.enemies.iter_mut().for_each(|e| {
+            e.speed = 0.0;
+            e.elite = false;
+            e.boss = false;
+        });
+        w.heroes[0].hp = 5.0;
+        let at = w.heroes[0].pos;
+        lure(&mut w, Mechanic::Bomb, id, at);
+        run(&mut w, 0.2);
+        assert!(w.heroes[0].spell.bomb > 0.0, "picked up");
+        let boss_hp = w.enemy(id).unwrap().hp;
+        run(&mut w, BOMB_FUSE + 0.2);
+        assert!(
+            w.enemy(id).is_none_or(|e| e.hp < boss_hp),
+            "the big one is hit"
+        );
+        assert!(
+            w.enemy(grunt).is_none_or(|e| e.hp < e.max_hp),
+            "the horde is hit"
+        );
+        assert!(
+            w.heroes[0].alive && w.heroes[0].hp >= 1.0,
+            "never the carrier's last point"
+        );
+    }
+
+    #[test]
+    fn standing_in_the_circle_hurts_the_boss() {
+        let (mut w, id) = duel("fenros", 30.0, true);
+        let at = w.heroes[0].pos;
+        lure(&mut w, Mechanic::Circle, id, at);
+        let before = w.enemy(id).unwrap().hp;
+        run(&mut w, 2.0);
+        let bitten = before - w.enemy(id).unwrap().hp;
+        let max = w.enemy(id).unwrap().max_hp;
+        assert!(bitten > max * CIRCLE_SHARE, "{bitten}");
     }
 
     #[test]

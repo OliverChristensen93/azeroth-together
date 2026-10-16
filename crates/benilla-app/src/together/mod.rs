@@ -365,6 +365,7 @@ impl Plugin for TogetherPlugin {
                     tooltip::show_tip,
                     inventory::refresh,
                     hazards::boss_bar,
+                    hazards::grow_fills,
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )

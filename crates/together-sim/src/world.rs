@@ -577,7 +577,7 @@ pub struct EnemyState {
     pub hp: u32,
     pub max_hp: u32,
     /// Frozen, Chilled, Burning, Stunned ([`status_bits`]).
-    pub status: u8,
+    pub status: u16,
 }
 
 /// Yards to sixteenths, held to `i16`.

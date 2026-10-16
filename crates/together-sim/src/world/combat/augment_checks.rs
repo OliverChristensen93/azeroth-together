@@ -924,3 +924,26 @@ fn frost_armor_chills_and_hurts_who_strikes_the_shield() {
     assert!(e.status.chill > 0.0);
     assert!(e.max_hp - e.hp > 0.0);
 }
+
+#[test]
+fn status_flags_name_each_effect_and_survive_a_snapshot() {
+    let mut st = Status::default();
+    st.burns.push(Burn {
+        by: 0,
+        ability: 0,
+        dps: 1.0,
+        left: 3.0,
+        tick: 1.0,
+        every: 1.0,
+        contagion: false,
+        tags: Tags::of(&[Tag::Physical, Tag::Bleed]),
+        leech: 0.0,
+    });
+    st.fx.root = 2.0;
+    let bits = st.bits();
+    assert_ne!(bits & status_bits::BLEEDING, 0);
+    assert_ne!(bits & status_bits::ROOTED, 0);
+    assert_eq!(bits & status_bits::BURNING, 0, "a bleed is not a burn");
+    // A co-op guest rebuilds the status from its flags and shows the same.
+    assert_eq!(Status::from_bits(bits).bits(), bits);
+}

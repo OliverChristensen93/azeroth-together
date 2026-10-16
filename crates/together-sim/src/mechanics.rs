@@ -30,10 +30,22 @@ pub enum Mechanic {
     Patches,
     /// A boss marks the ground under a hero; whoever is still inside is pulled to it.
     DeathGrip,
+    /// Things to run to: a spore blooms near a hero, and walking into it gives a crit bonus.
+    Spores,
+    /// A bomb on the ground: the hero who picks it up carries it, and it goes off around them a
+    /// few seconds later, hard on the enemies and the boss, a little on the carrier.
+    Bomb,
+    /// A circle near the boss that hurts it while a hero stands in it.
+    Circle,
 }
 
 impl Mechanic {
     /// One sentence for the boss bar or an elite's target frame.
+    /// Whether it is a thing to run to (a good marking), not a danger.
+    pub fn is_lure(self) -> bool {
+        matches!(self, Mechanic::Spores | Mechanic::Bomb | Mechanic::Circle)
+    }
+
     pub fn hint(self) -> &'static str {
         match self {
             Mechanic::Charge => "Charges along a marked line: step aside.",
@@ -45,6 +57,11 @@ impl Mechanic {
             Mechanic::Summoner => "Calls more enemies to its side.",
             Mechanic::Patches => "Fire bursts around you: move through the gaps.",
             Mechanic::DeathGrip => "Marks the ground: anyone still inside is pulled to it.",
+            Mechanic::Spores => "Spores bloom nearby: walk into one for +50% crit chance.",
+            Mechanic::Bomb => {
+                "Drops a bomb: pick it up and carry it into the horde before it blows."
+            }
+            Mechanic::Circle => "Marks a circle: while you stand in it, the boss takes damage.",
         }
     }
 
@@ -60,6 +77,9 @@ impl Mechanic {
             Mechanic::Summoner => (9.0, 4.0),
             Mechanic::Patches => (10.0, 6.0),
             Mechanic::DeathGrip => (15.0, 10.0),
+            Mechanic::Spores => (14.0, 8.0),
+            Mechanic::Bomb => (18.0, 12.0),
+            Mechanic::Circle => (16.0, 5.0),
         }
     }
 }
