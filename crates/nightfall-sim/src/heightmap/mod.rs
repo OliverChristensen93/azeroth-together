@@ -11,6 +11,7 @@
 //! the player's WoW data; tests build small ones by hand with [`HeightMapBuilder`].
 
 mod build;
+mod codec;
 mod path;
 mod sight;
 #[cfg(test)]
