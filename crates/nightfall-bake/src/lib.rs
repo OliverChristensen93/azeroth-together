@@ -4,8 +4,12 @@
 //! host needs the map; it is baked once and kept in a cache keyed by the data files, the bounds
 //! and the props, so nothing Blizzard-derived ever ships.
 
+mod bake;
+mod cache;
 mod place;
 mod raster;
 
+pub use bake::{bake, buildings_near, BakeRequest, PropPlacement};
+pub use cache::{cache_file, cache_key, load_or_bake, Baked, BAKE_VERSION};
 pub use place::placement_point;
 pub use raster::Footprint;
