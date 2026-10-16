@@ -697,8 +697,11 @@ fn bevy_to_ground(p: Vec3) -> V2 {
 /// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: with a banner, to its
 /// destination; else toward the nearest interactable it could use (a chest only once it can
 /// pay), until it stands well inside the circle. `None` when there is nothing to walk to, or
-/// cards are up.
+/// cards are up, or when `TOGETHER_STAND` keeps the hero standing for a test shot.
 fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
+    if std::env::var_os("TOGETHER_STAND").is_some() {
+        return None;
+    }
     use together_sim::{InteractState, InteractableKind};
     let hero = world.hero(me).filter(|h| h.alive && h.offers.is_empty())?;
     let carrying = world.interactables.iter().find_map(|i| match i.state {
