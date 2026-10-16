@@ -50,6 +50,9 @@ pub struct StatusFx {
     pub sunder_secs: f32,
     /// Seconds a hero's Smoke Bomb hides the heroes from it (it mills about).
     pub lost: f32,
+    /// Improved Shadow Bolt's stacks (+4% Shadow damage taken each), and seconds they last.
+    pub shadow_vuln: u8,
+    pub shadow_vuln_secs: f32,
     /// A rogue's Blind left it open: that hero's next hit on it deals double (Sap).
     pub sapped_by: Option<PlayerId>,
     /// The priest whose Hex of Weakness is on it.
@@ -265,6 +268,7 @@ impl World {
         self.warrior_spec(h, owned, s);
         self.rogue_spec(h, owned, s);
         self.priest_spec(h, owned, s);
+        self.warlock_spec(h, owned, s);
     }
 
     /// The share of each tick of `by`'s damage over time from `spec` that heals `by`, beside the
@@ -281,6 +285,7 @@ impl World {
         let fx = &self.heroes[h].spell.fx;
         let mut rate = 1.0 + fx.cd_rate();
         rate *= self.rogue_rate(h, owned);
+        rate *= self.warlock_rate(h, owned);
         rate
     }
 
@@ -296,6 +301,7 @@ impl World {
         self.warrior_before(h, owned, spec);
         self.rogue_before(h, owned, spec);
         self.priest_before(h, owned, spec);
+        self.warlock_before(h, owned, spec);
     }
 
     /// Hero `h` fired `owned` as `spec`: a Finisher spends its combo points, a builder gives
@@ -311,6 +317,7 @@ impl World {
         self.warrior_after(h, owned, spec);
         self.rogue_after(h, owned, spec);
         self.priest_after(h, owned, spec);
+        self.warlock_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -517,7 +524,9 @@ impl World {
         {
             m *= 1.2;
         }
-        m * self.warrior_scale(h, ei, spec) * self.rogue_scale(h, ei, spec)
+        m * self.warrior_scale(h, ei, spec)
+            * self.rogue_scale(h, ei, spec)
+            * self.warlock_scale(h, ei, spec)
     }
 
     /// A hit of `spec` by hero `h` landed on enemy `id` (index `ei`) for `damage`: lifesteal,
@@ -533,7 +542,8 @@ impl World {
         crit: bool,
         scale: f32,
     ) {
-        if spec.fx.leech > 0.0 {
+        let direct = spec.tags.has(Tag::Direct) || spec.burn <= 0.0;
+        if spec.fx.leech > 0.0 && direct {
             self.leech(h, damage * spec.fx.leech, spec.fx.sanguine);
         }
         let at = self.enemies[ei].pos;
@@ -565,6 +575,7 @@ impl World {
         self.warrior_strike(h, id, spec, damage, crit, scale);
         self.rogue_strike(h, id, spec, damage, crit, scale);
         self.priest_strike(h, id, spec, damage, crit, scale);
+        self.warlock_strike(h, id, spec, damage, crit, scale);
     }
 
     /// The other classes' status effects one hit of `spec` leaves on enemy `ei`, struck from
@@ -646,7 +657,7 @@ impl World {
         if amount <= 0.0 {
             return 0.0;
         }
-        let amount = amount * self.warrior_guard(h) * self.priest_guard(h);
+        let amount = amount * self.warrior_guard(h) * self.priest_guard(h) * self.warlock_guard(h);
         let player = self.heroes[h].player;
         let pos = self.heroes[h].pos;
         let banks: Vec<(usize, WardKind)> = self.heroes[h]
@@ -819,6 +830,7 @@ impl World {
             self.warrior_tend(h);
             self.rogue_tend(h);
             self.priest_tend(h);
+            self.warlock_tend(h);
         }
     }
 
@@ -874,6 +886,10 @@ impl World {
             st.root = (st.root - DT).max(0.0);
             st.weaken = (st.weaken - DT).max(0.0);
             st.lost = (st.lost - DT).max(0.0);
+            st.shadow_vuln_secs = (st.shadow_vuln_secs - DT).max(0.0);
+            if st.shadow_vuln_secs == 0.0 {
+                st.shadow_vuln = 0;
+            }
             st.mark_secs = (st.mark_secs - DT).max(0.0);
             if st.mark_secs == 0.0 {
                 st.mark = 0.0;
@@ -892,6 +908,7 @@ impl World {
         self.warrior_deaths(deaths);
         self.rogue_deaths(deaths);
         self.priest_deaths(deaths);
+        self.warlock_deaths(deaths);
     }
 
     /// After a nova of `spec` by hero `h` hit `hit` around `center`: the capstones that count
@@ -1041,11 +1058,31 @@ impl World {
     }
 
     /// A tick of `by`'s damage over time from `ability` on enemy `id`, for `dps`.
-    pub(super) fn class_tick(&mut self, by: PlayerId, ability: usize, id: u32, dps: f32) {
+    /// A tick of `by`'s damage over time from `ability` on enemy `id`, for `dps`, with `left`
+    /// seconds of it after this tick (0 or less: it was the last).
+    pub(super) fn class_tick(
+        &mut self,
+        by: PlayerId,
+        ability: usize,
+        id: u32,
+        dps: f32,
+        left: f32,
+    ) {
         let Some(h) = self.hero_ix(by) else {
             return;
         };
         self.priest_tick(h, ability, id, dps);
+        self.warlock_tick(h, ability, id, dps, left);
+    }
+
+    /// Extra crit chance a hit of `spec` from hero `h` has on enemy `ei`.
+    pub(super) fn class_crit(&self, h: usize, ei: usize, spec: &CastSpec) -> f32 {
+        self.warlock_crit(h, ei, spec)
+    }
+
+    /// Where ground `g` stands this step, given where it would (a capstone may move it).
+    pub(super) fn ground_pos(&self, g: &super::combat::Ground, pos: V2) -> V2 {
+        self.warlock_ground_pos(g, pos)
     }
 
     /// A blow of `amount` from enemy `from` reached hero `h`'s health, and it still stands.

@@ -283,6 +283,43 @@ pub enum Augment {
     TouchOfWeakness,
     HexOfDomination,
     SpreadingHex,
+    // --- Capstones: warlock ---
+    Nightfall,
+    ShadowBoltVolley,
+    ImprovedShadowBolt,
+    SiphonLife,
+    SeedOfCorruption,
+    EverlastingAffliction,
+    CurseOfDoom,
+    AmplifyCurse,
+    CurseOfExhaustion,
+    FireAndBrimstone,
+    Backdraft,
+    Emberstorm,
+    FirestormRain,
+    Aftermath,
+    Pyroclasm,
+    InfernalPact,
+    RitualOfFire,
+    HellfireWard,
+    Horrify,
+    DeathsEmbrace,
+    DarkBargain,
+    SoulHarvest,
+    DrainAura,
+    ImprovedDrain,
+    Nightmare,
+    Shadowfury,
+    DemonicPresence,
+    BurningImp,
+    DemonicSacrifice,
+    ImprovedImp,
+    Sacrifice,
+    Torment,
+    ConsumeShadows,
+    ImprovedSearingPain,
+    SoulFire,
+    FelFlame,
 }
 
 impl Augment {
@@ -357,7 +394,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 144] = [
+    pub const CAPSTONES: [Augment; 180] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -502,6 +539,42 @@ impl Augment {
         Augment::TouchOfWeakness,
         Augment::HexOfDomination,
         Augment::SpreadingHex,
+        Augment::Nightfall,
+        Augment::ShadowBoltVolley,
+        Augment::ImprovedShadowBolt,
+        Augment::SiphonLife,
+        Augment::SeedOfCorruption,
+        Augment::EverlastingAffliction,
+        Augment::CurseOfDoom,
+        Augment::AmplifyCurse,
+        Augment::CurseOfExhaustion,
+        Augment::FireAndBrimstone,
+        Augment::Backdraft,
+        Augment::Emberstorm,
+        Augment::FirestormRain,
+        Augment::Aftermath,
+        Augment::Pyroclasm,
+        Augment::InfernalPact,
+        Augment::RitualOfFire,
+        Augment::HellfireWard,
+        Augment::Horrify,
+        Augment::DeathsEmbrace,
+        Augment::DarkBargain,
+        Augment::SoulHarvest,
+        Augment::DrainAura,
+        Augment::ImprovedDrain,
+        Augment::Nightmare,
+        Augment::Shadowfury,
+        Augment::DemonicPresence,
+        Augment::BurningImp,
+        Augment::DemonicSacrifice,
+        Augment::ImprovedImp,
+        Augment::Sacrifice,
+        Augment::Torment,
+        Augment::ConsumeShadows,
+        Augment::ImprovedSearingPain,
+        Augment::SoulFire,
+        Augment::FelFlame,
     ];
 
     pub fn name(self) -> &'static str {
@@ -716,6 +789,42 @@ impl Augment {
             Augment::TouchOfWeakness => "Touch of Weakness",
             Augment::HexOfDomination => "Hex of Domination",
             Augment::SpreadingHex => "Spreading Hex",
+            Augment::Nightfall => "Nightfall",
+            Augment::ShadowBoltVolley => "Shadow Bolt Volley",
+            Augment::ImprovedShadowBolt => "Improved Shadow Bolt",
+            Augment::SiphonLife => "Siphon Life",
+            Augment::SeedOfCorruption => "Seed of Corruption",
+            Augment::EverlastingAffliction => "Everlasting Affliction",
+            Augment::CurseOfDoom => "Curse of Doom",
+            Augment::AmplifyCurse => "Amplify Curse",
+            Augment::CurseOfExhaustion => "Curse of Exhaustion",
+            Augment::FireAndBrimstone => "Fire and Brimstone",
+            Augment::Backdraft => "Backdraft",
+            Augment::Emberstorm => "Emberstorm",
+            Augment::FirestormRain => "Firestorm Rain",
+            Augment::Aftermath => "Aftermath",
+            Augment::Pyroclasm => "Pyroclasm",
+            Augment::InfernalPact => "Infernal Pact",
+            Augment::RitualOfFire => "Ritual of Fire",
+            Augment::HellfireWard => "Hellfire Ward",
+            Augment::Horrify => "Horrify",
+            Augment::DeathsEmbrace => "Death's Embrace",
+            Augment::DarkBargain => "Dark Bargain",
+            Augment::SoulHarvest => "Soul Harvest",
+            Augment::DrainAura => "Drain Aura",
+            Augment::ImprovedDrain => "Improved Drain",
+            Augment::Nightmare => "Nightmare",
+            Augment::Shadowfury => "Shadowfury",
+            Augment::DemonicPresence => "Demonic Presence",
+            Augment::BurningImp => "Burning Imp",
+            Augment::DemonicSacrifice => "Demonic Sacrifice",
+            Augment::ImprovedImp => "Improved Imp",
+            Augment::Sacrifice => "Sacrifice",
+            Augment::Torment => "Torment",
+            Augment::ConsumeShadows => "Consume Shadows",
+            Augment::ImprovedSearingPain => "Improved Searing Pain",
+            Augment::SoulFire => "Soul Fire",
+            Augment::FelFlame => "Fel Flame",
         }
     }
 
@@ -932,6 +1041,42 @@ impl Augment {
             Augment::TouchOfWeakness => "A hexed enemy that strikes you takes Hex's damage back, tripled.",
             Augment::HexOfDomination => "Its targets also take +30% from everyone and deal 50% less instead of 25%.",
             Augment::SpreadingHex => "When a hexed enemy dies, the hex jumps to the closest enemy.",
+            Augment::Nightfall => "Your damage over time ticks have a 5% chance to make your next Shadow Bolt deal triple.",
+            Augment::ShadowBoltVolley => "It hits the 5 closest enemies instead, for 60%.",
+            Augment::ImprovedShadowBolt => "Each hit makes its target take +4% Shadow damage, up to 20%, from every source.",
+            Augment::SiphonLife => "Its ticks heal you for 20% of their damage.",
+            Augment::SeedOfCorruption => "A Corrupted enemy that dies bursts for the corruption's full damage within 6 yards and corrupts what it hits.",
+            Augment::EverlastingAffliction => "Your Shadow Bolts renew Corruption on their target.",
+            Augment::CurseOfDoom => "When the curse ends on a target still alive, it deals twice its total at once.",
+            Augment::AmplifyCurse => "+50% damage, and cursed enemies are Weakened.",
+            Augment::CurseOfExhaustion => "Cursed enemies are Chilled while it lasts.",
+            Augment::FireAndBrimstone => "Also hits every enemy within 5 yards of its targets for half, all of them Burning.",
+            Augment::Backdraft => "Its crits make your Fire spells come back 30% faster for 4 seconds.",
+            Augment::Emberstorm => "Its burn deals +50% to bosses and elites.",
+            Augment::FirestormRain => "It follows the thickest crowd near you.",
+            Augment::Aftermath => "Its ticks Chill.",
+            Augment::Pyroclasm => "Each tick has a 15% chance to Stun what it hits for 1 second.",
+            Augment::InfernalPact => "It burns you for 1% of your health a second, but deals +100%, and every enemy that dies inside it heals you 3%.",
+            Augment::RitualOfFire => "Everything it touches Burns for 40% of the hit over 4 seconds.",
+            Augment::HellfireWard => "While it burns, you take 20% less damage.",
+            Augment::Horrify => "Its Fear spreads to every enemy within 5 yards of its target.",
+            Augment::DeathsEmbrace => "Below 35% health, it comes back three times as fast.",
+            Augment::DarkBargain => "Its heal also heals every ally within 10 yards.",
+            Augment::SoulHarvest => "When a drained enemy dies, +5% damage for 20 seconds, up to 25%.",
+            Augment::DrainAura => "Drains every enemy within 6 yards of you at once.",
+            Augment::ImprovedDrain => "Heals twice as much from bosses and elites.",
+            Augment::Nightmare => "Feared enemies also take shadow damage over time (300% of the hit over 4 seconds).",
+            Augment::Shadowfury => "Instead of Fear, it Stuns everything in reach for 2 seconds and deals +200%.",
+            Augment::DemonicPresence => "Feared enemies are Marked +15%.",
+            Augment::BurningImp => "Its firebolts leave Burning (50% over 4 seconds).",
+            Augment::DemonicSacrifice => "The imp never comes: instead your Fire spells deal +25%.",
+            Augment::ImprovedImp => "Its firebolts hit 2 enemies.",
+            Augment::Sacrifice => "When you drop below 30% health, the voidwalker gives itself up: a shield worth 40% of your health.",
+            Augment::Torment => "Enemies it hits are Weakened.",
+            Augment::ConsumeShadows => "While it is out, you heal 1% of your health a second.",
+            Augment::ImprovedSearingPain => "+50% critical strike chance against enemies within 5 yards.",
+            Augment::SoulFire => "Every 5th Searing Pain is a Soul Fire: +300% damage, and it Stuns for 1 second.",
+            Augment::FelFlame => "Each hit makes your damage over time on its target last 2 seconds longer.",
         }
     }
 
@@ -1010,6 +1155,24 @@ impl Augment {
             Augment::TouchOfWeakness | Augment::HexOfDomination | Augment::SpreadingHex => {
                 "hex_of_weakness"
             }
+            Augment::Nightfall | Augment::ShadowBoltVolley | Augment::ImprovedShadowBolt => {
+                "shadow_bolt"
+            }
+            Augment::SiphonLife | Augment::SeedOfCorruption | Augment::EverlastingAffliction => {
+                "corruption"
+            }
+            Augment::CurseOfDoom | Augment::AmplifyCurse | Augment::CurseOfExhaustion => {
+                "curse_of_agony"
+            }
+            Augment::FireAndBrimstone | Augment::Backdraft | Augment::Emberstorm => "immolate",
+            Augment::FirestormRain | Augment::Aftermath | Augment::Pyroclasm => "rain_of_fire",
+            Augment::InfernalPact | Augment::RitualOfFire | Augment::HellfireWard => "hellfire",
+            Augment::Horrify | Augment::DeathsEmbrace | Augment::DarkBargain => "death_coil",
+            Augment::SoulHarvest | Augment::DrainAura | Augment::ImprovedDrain => "drain_life",
+            Augment::Nightmare | Augment::Shadowfury | Augment::DemonicPresence => "howl_of_terror",
+            Augment::BurningImp | Augment::DemonicSacrifice | Augment::ImprovedImp => "summon_imp",
+            Augment::Sacrifice | Augment::Torment | Augment::ConsumeShadows => "summon_voidwalker",
+            Augment::ImprovedSearingPain | Augment::SoulFire | Augment::FelFlame => "searing_pain",
             _ => return None,
         })
     }
@@ -1501,6 +1664,60 @@ impl Augment {
                 s.fx.mark_secs = s.fx.mark_secs.max(s.fx.weaken);
                 s.fx.weaken_cut = s.fx.weaken_cut.max(0.5);
             }
+            // Warlock capstones that change the cast's numbers.
+            Augment::ShadowBoltVolley => {
+                s.targeting = Targeting::Nearest;
+                s.count = s.count.max(5);
+                s.damage *= 0.6;
+            }
+            Augment::SiphonLife => {
+                s.fx.leech += 0.2;
+                s.tags = s.tags.with(Tag::Leech);
+            }
+            Augment::AmplifyCurse => {
+                s.damage *= 1.5;
+                s.fx.weaken = s.fx.weaken.max(s.fx.dot_time);
+            }
+            Augment::CurseOfExhaustion => {
+                s.chill = s.chill.max(s.fx.dot_time);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::FireAndBrimstone => s.radius = s.radius.max(5.0),
+            Augment::Aftermath => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::InfernalPact => s.damage *= 2.0,
+            Augment::RitualOfFire => {
+                s.burn += 0.4;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::DrainAura => {
+                s.targeting = Targeting::Nearest;
+                s.count = 99;
+                s.range = 6.0;
+            }
+            Augment::Nightmare => {
+                s.burn += 3.0;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::Shadowfury => {
+                s.fx.fear = 0.0;
+                s.stun = s.stun.max(2.0);
+                s.damage *= 3.0;
+                s.tags = s.tags.without(Tag::Fear).with(Tag::Stun);
+            }
+            Augment::DemonicPresence => {
+                s.fx.mark = s.fx.mark.max(0.15);
+                s.fx.mark_secs = s.fx.mark_secs.max(s.fx.fear);
+            }
+            Augment::BurningImp => {
+                s.burn += 0.5;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::DemonicSacrifice => s.fx.skip = true,
+            Augment::ImprovedImp => s.fx.strikes = s.fx.strikes.max(2),
+            Augment::Torment => s.fx.weaken = s.fx.weaken.max(3.0),
             _ => {}
         }
     }

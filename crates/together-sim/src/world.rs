@@ -16,6 +16,7 @@ mod classes;
 mod combat;
 mod priest;
 mod rogue;
+mod warlock;
 mod warrior;
 
 pub use classes::{ActiveBuff, Bank, Boon, HeroFx, StatusFx};

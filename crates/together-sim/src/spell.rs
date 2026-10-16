@@ -427,6 +427,8 @@ pub struct SpellFx {
     pub fresh: bool,
     /// How much less its Weakened enemies deal.
     pub weaken_cut: f32,
+    /// A capstone gave the cast up (Demonic Sacrifice): it fires as if done, doing nothing.
+    pub skip: bool,
 }
 
 impl Default for SpellFx {
@@ -472,6 +474,7 @@ impl Default for SpellFx {
             lost: 0.0,
             fresh: false,
             weaken_cut: WEAKEN,
+            skip: false,
         }
     }
 }

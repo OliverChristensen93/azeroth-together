@@ -442,6 +442,10 @@ impl World {
         let facing = shot.facing.unwrap_or(hero.facing);
         let def = &self.content.abilities[spec.ability];
         let kind = def.kind;
+        if spec.fx.skip {
+            // A capstone gave the cast up for something else (Demonic Sacrifice).
+            return true;
+        }
         let mut spec = spec.clone();
         spec.damage *= shot.scale;
         let potent = spec.tags.has(Tag::Arcane) && hero.spell.potency;
@@ -960,7 +964,7 @@ impl World {
         if st.exposed > 0.0 {
             damage *= 1.2;
         }
-        let mut chance = spec.crit + 0.02 * f32::from(st.winters);
+        let mut chance = spec.crit + 0.02 * f32::from(st.winters) + self.class_crit(h, ei, spec);
         if frozen {
             chance += spec.shatter;
             if shatterbolt {
@@ -1281,7 +1285,7 @@ impl World {
     /// Living Bombs going off, Winter's Chill fading.
     pub(super) fn tend_statuses(&mut self) {
         self.tend_status_fx();
-        let mut ticks: Vec<(PlayerId, usize, u32, f32, f32)> = Vec::new();
+        let mut ticks: Vec<(PlayerId, usize, u32, f32, f32, f32)> = Vec::new();
         let mut blasts: Vec<(V2, u32, Bomb)> = Vec::new();
         for e in &mut self.enemies {
             let st = &mut e.status;
@@ -1311,7 +1315,7 @@ impl World {
                 if b.tick <= 0.0 {
                     b.tick += b.every;
                     b.left -= b.every;
-                    ticks.push((b.by, b.ability, e.id, b.dps, b.leech));
+                    ticks.push((b.by, b.ability, e.id, b.dps, b.leech, b.left));
                 }
             }
             st.burns.retain(|b| b.left > 0.0);
@@ -1323,14 +1327,14 @@ impl World {
                 }
             }
         }
-        for (by, ability, id, dps, leech) in ticks {
+        for (by, ability, id, dps, leech, left) in ticks {
             self.damage_enemy(by, ability, id, dps, false);
             if leech > 0.0 {
                 if let Some(h) = self.hero_index(by) {
                     self.leech(h, dps * leech, 0.0);
                 }
             }
-            self.class_tick(by, ability, id, dps);
+            self.class_tick(by, ability, id, dps, left);
         }
         for (pos, source, bomb) in blasts {
             self.detonate(pos, source, bomb);
@@ -1386,6 +1390,7 @@ impl World {
             if g.spec.follows {
                 pos = self.heroes[h].pos;
             }
+            let pos = self.ground_pos(&g, pos);
             if g.armed {
                 // A trap waits for an enemy to step in, then goes off and starts its own clock.
                 if self.trap_sprung(&g.spec, pos) {

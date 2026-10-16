@@ -198,8 +198,10 @@
         start: "shadow_bolt",
         pool: [
             "shadow_bolt", "corruption", "curse_of_agony", "immolate", "rain_of_fire", "hellfire",
-            "death_coil", "searing_pain", "shadowburn",
+            "death_coil", "drain_life", "howl_of_terror", "summon_imp", "summon_voidwalker",
+            "searing_pain",
         ],
+        defensive: "soulstone",
     ),
     (
         key: "druid",
