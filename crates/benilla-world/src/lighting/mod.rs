@@ -124,6 +124,31 @@ impl WowLighting {
     }
 }
 
+/// A game's own fog over the `Light.dbc` one (Nightfall's night): `start` and `end` in yards,
+/// `color` sRGB 0..1 as [`WowLighting::fog_color`]. Absent, the world's own fog stands. It sets the
+/// interior fog too, so a building is as murky as the woods outside.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct FogOverride {
+    pub start: f32,
+    pub end: f32,
+    pub color: [f32; 3],
+}
+
+/// [`FogOverride`] onto this frame's resolved lighting, right after the resolve writes it.
+pub(crate) fn apply_fog_override(fog: Option<Res<FogOverride>>, mut lighting: ResMut<WowLighting>) {
+    let Some(fog) = fog else { return };
+    let mut l = *lighting;
+    l.fog_start = fog.start;
+    l.fog_end = fog.end;
+    l.fog_color = fog.color;
+    l.wmo_fog_start = fog.start;
+    l.wmo_fog_end = fog.end;
+    l.wmo_fog_color = fog.color;
+    if l != *lighting {
+        *lighting = l;
+    }
+}
+
 /// The water material's Phong power for the sun sheen: 6 at the reference's water draw, where
 /// terrain uses 20.
 pub(crate) const WATER_SHININESS: f32 = 6.0;
@@ -218,7 +243,7 @@ impl Plugin for LightingPlugin {
             .add_systems(Startup, setup_lighting.after(AssetSet::Open))
             .add_systems(
                 Update,
-                (update_time_lighting, apply_sky_backdrop)
+                (update_time_lighting, apply_fog_override, apply_sky_backdrop)
                     .chain()
                     .in_set(LightingResolveSet)
                     // The storm blend reads this frame's weather densities.
@@ -345,5 +370,52 @@ mod ordering_tests {
              runs after the resolve by schedule (PostUpdate, or chained onto it) — add it to \
              ALLOWED here with the reason."
         );
+    }
+}
+
+#[cfg(test)]
+mod fog_override_tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::prelude::*;
+
+    use super::*;
+
+    #[test]
+    fn a_fog_override_replaces_the_scene_and_interior_fog() {
+        let mut world = World::new();
+        world.insert_resource(WowLighting {
+            fog_start: 125.0,
+            fog_end: 500.0,
+            fog_color: [0.5, 0.5, 0.5],
+            wmo_fog_start: 60.0,
+            wmo_fog_end: 200.0,
+            wmo_fog_color: [0.4, 0.4, 0.4],
+            ..default()
+        });
+        world.insert_resource(FogOverride {
+            start: 10.0,
+            end: 40.0,
+            color: [0.04, 0.07, 0.08],
+        });
+        world.run_system_once(apply_fog_override).unwrap();
+        let l = world.resource::<WowLighting>();
+        assert_eq!((l.fog_start, l.fog_end, l.fog_color), (10.0, 40.0, [0.04, 0.07, 0.08]));
+        assert_eq!(
+            (l.wmo_fog_start, l.wmo_fog_end, l.wmo_fog_color),
+            (10.0, 40.0, [0.04, 0.07, 0.08])
+        );
+    }
+
+    #[test]
+    fn without_an_override_the_fog_is_untouched() {
+        let mut world = World::new();
+        world.insert_resource(WowLighting {
+            fog_start: 125.0,
+            fog_end: 500.0,
+            ..default()
+        });
+        world.run_system_once(apply_fog_override).unwrap();
+        let l = world.resource::<WowLighting>();
+        assert_eq!((l.fog_start, l.fog_end), (125.0, 500.0));
     }
 }
