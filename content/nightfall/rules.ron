@@ -1,0 +1,18 @@
+// Nightfall's rules. Sub-project 1 has the atmosphere (spec §10, §11); later sub-projects add their
+// own settings here.
+(
+    // Every hero's level, matching Duskwood's creatures.
+    hero_level: 30,
+    atmosphere: (
+        // Midnight.
+        night_minute: 0,
+        // Yards; the colour is sRGB 0..1, a dark blue-green.
+        fog_start: 10.0,
+        fog_end: 40.0,
+        fog_color: (0.04, 0.07, 0.08),
+        // How far the world is drawn, yards: past the fog, short of the stock 350.
+        view_distance: 120.0,
+        // A warm glow at each hero, linear RGB.
+        hero_light: (color: (1.0, 0.82, 0.6), intensity: 0.6, range: 9.0),
+    ),
+)

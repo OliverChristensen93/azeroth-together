@@ -1,0 +1,19 @@
+// Duskwood at night. `map` is the Map.dbc id (0, the Eastern Kingdoms). `bounds` is the run's edge
+// in WoW yards (x north, y west): for now a rectangle around the zone, traced along its real edge
+// in sub-project 2. `entries` are where a party starts, (x, y, z); the first is the zone centre the
+// survivors content already plays in. More entries (the north bridge, the west and east roads) go
+// here once measured in the game with NIGHTFALL_TRACE_POS=1.
+(
+    key: "duskwood",
+    name: "Duskwood",
+    map: 0,
+    bounds: [
+        (-9880.0, 800.0),
+        (-9880.0, -1850.0),
+        (-11500.0, -1850.0),
+        (-11500.0, 800.0),
+    ],
+    entries: [
+        (-10051.8, -792.5, 36.5),
+    ],
+)

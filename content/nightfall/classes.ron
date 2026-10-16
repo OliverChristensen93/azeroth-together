@@ -1,0 +1,39 @@
+// Nightfall's classes. `race` and `sex` are the body every hero of the class wears for now
+// (ChrRaces ids: 1 human; sex 0 male, 1 female). `weapons` are the virtual item slots (slot 0 main
+// hand, 1 off hand, 2 ranged), the same looks the survivors classes use. Abilities come in
+// sub-project 4.
+[
+    (
+        key: "rogue",
+        name: "Rogue",
+        description: "A blade in the dark: slips past what it cannot kill, and kills what it reaches unseen.",
+        color: 0xFFF569,
+        class_id: 4,
+        power: 3,
+        race: 1,
+        sex: 0,
+        weapons: [
+            (slot: 0, display: 7492, class: 2, subclass: 7, material: 1, inventory_type: 13, sheath: 3),
+            (slot: 1, display: 6443, class: 2, subclass: 15, material: 1, inventory_type: 13, sheath: 3),
+        ],
+        sheath: 1,
+        base_hp: 135.0,
+        speed: 7.0,
+    ),
+    (
+        key: "mage",
+        name: "Mage",
+        description: "A scholar of frost and fire: deadly at range, and loud about it.",
+        color: 0x69CCF0,
+        class_id: 8,
+        power: 0,
+        race: 1,
+        sex: 1,
+        weapons: [
+            (slot: 0, display: 1927, class: 2, subclass: 10, material: 2, inventory_type: 17, sheath: 2),
+        ],
+        sheath: 1,
+        base_hp: 120.0,
+        speed: 7.0,
+    ),
+]

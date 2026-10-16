@@ -8,7 +8,12 @@
 //! senses, combat and loot come in later sub-projects (`docs/superpowers/specs/2026-10-16-nightfall-design.md`).
 
 mod bounds;
+mod content;
 mod math;
 
 pub use bounds::Bounds;
+pub use content::{
+    Atmosphere, ClassDef, Content, ContentError, ContentSources, HeroLight, MapDef, Rules,
+    WeaponDef,
+};
 pub use math::V2;
