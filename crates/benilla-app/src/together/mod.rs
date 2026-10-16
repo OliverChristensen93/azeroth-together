@@ -311,7 +311,6 @@ impl Plugin for TogetherPlugin {
                 (
                     daylight,
                     follow_map,
-                    menu::apply_ui_scale,
                     menu::fill_icons,
                     levelup::fill_texture_icons,
                     hud::show_hud,

@@ -3,7 +3,7 @@
 //! 1, 2 and 3 (or a click) pick a card, R rerolls. A level-up deals spells and tomes; a shrine,
 //! an altar or a chest deals its own hand under its own name.
 //!
-//! Laid out on the 768-unit canvas (`UiScale`, set by [`super::menu::apply_ui_scale`]).
+//! Laid out on the 768-unit canvas (`UiScale`, set by [`crate::game_pick`]).
 
 use bevy::prelude::*;
 use together_sim::{

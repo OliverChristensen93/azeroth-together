@@ -3,7 +3,7 @@
 //! `total (per second, share)`. In co-op, a row per player comes first, in class colours, then our
 //! own abilities. Under the minimap, during a run.
 //!
-//! Laid out on the 768-unit canvas (`UiScale`, set by [`super::menu::apply_ui_scale`]).
+//! Laid out on the 768-unit canvas (`UiScale`, set by [`crate::game_pick`]).
 
 use bevy::prelude::*;
 

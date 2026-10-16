@@ -207,8 +207,8 @@ fn show_screen(mode: Res<State<GameMode>>, mut roots: Query<&mut Visibility, Wit
     }
 }
 
-/// Glue screens lay out on a screen 768 units tall at any resolution (as `together::menu` does);
-/// this one runs in every game so each menu has it.
+/// The one owner of `UiScale`: glue screens, the HUD and the level-up screen lay out on a screen
+/// 768 units tall at any resolution, in every game, so it runs ungated.
 fn apply_ui_scale(windows: Query<&Window, With<PrimaryWindow>>, mut scale: ResMut<UiScale>) {
     let want = windows.single().map(|w| w.height() / 768.0).unwrap_or(1.0);
     if want > 0.0 && (scale.0 - want).abs() > 1e-4 {

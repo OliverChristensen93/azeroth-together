@@ -4,8 +4,8 @@
 //! bottom, and Play Solo (with Host and Join Co-op beside it) under the hero, who stands in the
 //! picked zone while the camera circles them.
 //!
-//! The screen lays out on the reference's 768-unit canvas through `UiScale`, which is set only
-//! while the menu is up ([`apply_ui_scale`]).
+//! The screen lays out on the reference's 768-unit canvas through `UiScale`, which
+//! [`crate::game_pick`] sets for every game's glue screens.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,6 @@ use benilla_world::view::WorldCamera;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use bevy::ui_render::ui_material::MaterialNode;
-use bevy::window::PrimaryWindow;
 use together_sim::Content;
 
 use super::{content, Phase};
@@ -1340,19 +1339,6 @@ pub(super) fn menu_camera(
     let placed = Transform::from_translation(eye).looking_at(focus + Vec3::Y * 0.2, Vec3::Y);
     for mut cam in &mut cams {
         *cam = placed;
-    }
-}
-
-/// The reference lays its glue screens out on a screen 768 units tall at any resolution, and so
-/// does all of ours: the menu, the HUD and the level-up screen. (WoW's own frames are drawn by
-/// the UI engine, not Bevy's UI, and keep their own scale.)
-pub(super) fn apply_ui_scale(
-    windows: Query<&Window, With<PrimaryWindow>>,
-    mut scale: ResMut<UiScale>,
-) {
-    let want = windows.single().map(|w| w.height() / 768.0).unwrap_or(1.0);
-    if want > 0.0 && (scale.0 - want).abs() > 1e-4 {
-        scale.0 = want;
     }
 }
 
