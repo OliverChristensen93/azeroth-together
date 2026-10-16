@@ -17,6 +17,7 @@
 mod actions;
 mod dev;
 mod dress;
+mod hazards;
 mod hud;
 mod inventory;
 mod levelup;
@@ -298,6 +299,8 @@ impl Plugin for TogetherPlugin {
             .init_resource::<lobby::JoinDialog>()
             .init_resource::<dev::DevSettings>()
             .init_resource::<inventory::SheetOpen>()
+            .init_resource::<hazards::Pending>()
+            .init_resource::<hazards::Telegraphs>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
@@ -308,6 +311,7 @@ impl Plugin for TogetherPlugin {
                     meter::setup,
                     tooltip::setup,
                     inventory::setup,
+                    hazards::setup,
                     menu::spawn_root,
                 ),
             )
@@ -328,6 +332,7 @@ impl Plugin for TogetherPlugin {
                     session::close_on_exit,
                     tooltip::show_tip,
                     inventory::refresh,
+                    hazards::boss_bar,
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
@@ -359,6 +364,7 @@ impl Plugin for TogetherPlugin {
                     .run_if(in_state(Phase::Menu)),
             )
             .add_systems(OnExit(Phase::Menu), menu::clear_preview)
+            .add_systems(OnEnter(Phase::Menu), hazards::clear)
             // The run.
             .add_systems(
                 Update,
@@ -369,6 +375,7 @@ impl Plugin for TogetherPlugin {
                     step_sim,
                     view::settle_shrines,
                     view::apply_events,
+                    hazards::show,
                     view::sync,
                     view::write_vitals,
                     view::place,

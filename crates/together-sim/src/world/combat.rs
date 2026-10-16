@@ -1784,6 +1784,7 @@ mod tests {
             last_hit: None,
             home: None,
             status: Status::default(),
+            act: Default::default(),
         });
         id
     }

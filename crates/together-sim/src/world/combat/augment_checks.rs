@@ -72,6 +72,7 @@ fn foe(w: &mut World, dx: f32, dy: f32, hp: f32) -> u32 {
         last_hit: None,
         home: None,
         status: Status::default(),
+        act: Default::default(),
     });
     id
 }

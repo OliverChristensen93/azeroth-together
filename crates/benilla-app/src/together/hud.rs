@@ -319,18 +319,9 @@ pub(super) fn refresh(
             world.kills,
             hero.gold,
         );
-        let bosses: Vec<String> = world
-            .enemies
-            .iter()
-            .filter(|e| e.boss)
-            .map(|e| {
-                let name = &content.enemies[e.def].name;
-                format!("{name} {:.0}%", e.hp / e.max_hp.max(1.0) * 100.0)
-            })
-            .collect();
-        if !bosses.is_empty() {
-            s.push_str(&format!("\nBOSS  {}", bosses.join("   ")));
-        } else if let Some(boss) = world.zone().boss_ix {
+        // A living boss has its bar (`super::hazards::boss_bar`); until it comes, its timer.
+        let boss_alive = world.enemies.iter().any(|e| e.boss);
+        if let Some(boss) = world.zone().boss_ix.filter(|_| !boss_alive) {
             s.push_str(&format!(
                 "\n{} comes in {}",
                 content.enemies[boss].name,

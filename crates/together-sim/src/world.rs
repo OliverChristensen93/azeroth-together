@@ -13,6 +13,7 @@
 
 mod arena;
 mod combat;
+mod hazards;
 
 pub use combat::{shield_size, status_bits, HeroSpells, Status};
 
@@ -36,6 +37,7 @@ use crate::items::{
     SHARD_REACH, SHARD_SHARE,
 };
 use crate::math::V2;
+use crate::mechanics::{Mechanic, Shape};
 use crate::powerups::{Pickup, PickupKind, PotLoot, PowerUp, BERSERK, BLOODLUST, SWIFTNESS};
 use crate::rng::Rng;
 use crate::spell::CastSpec;
@@ -184,6 +186,26 @@ pub enum Event {
         amount: f32,
         crit: bool,
     },
+    /// An elite or boss marked the ground (`shape` laid at `pos`) for `kind`, going off in
+    /// `secs`.
+    Telegraph {
+        id: u32,
+        kind: Mechanic,
+        pos: V2,
+        shape: Shape,
+        secs: f32,
+    },
+    /// A marking went off, or was called off: it goes.
+    TelegraphEnd { id: u32 },
+    /// An elite or boss cast `visual` at `targets`, or at the ground at `dest`.
+    EnemyCast {
+        enemy: u32,
+        visual: u32,
+        targets: Vec<Target>,
+        dest: Option<V2>,
+    },
+    /// A mechanic threw or pulled hero `hero` to `to`; its own client moves it there.
+    Shoved { hero: PlayerId, to: V2 },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -444,6 +466,9 @@ pub struct Enemy {
     /// Chilled, Frozen, Stunned, Burning and the rest.
     #[serde(skip)]
     pub status: Status,
+    /// An elite's or boss's mechanics: their cooldowns, a wind-up, a charge under way.
+    #[serde(skip)]
+    act: hazards::Act,
 }
 
 /// A spot an elite guards. While its elite lives, `elite` is its id; once it dies, a new one
@@ -577,6 +602,8 @@ pub struct World {
     pending: Vec<PendingHit>,
     /// Blizzards, burning ground and Frozen Orbs.
     grounds: Vec<combat::Ground>,
+    /// Ground elites and bosses have marked, about to go off.
+    hazards: Vec<hazards::Hazard>,
     /// Spells augments asked for, run after the cast that set them off; and echoes, by the time
     /// they are due.
     triggers: Vec<combat::Trigger>,
@@ -625,6 +652,7 @@ impl World {
             pot_timer: arena::POT_EVERY,
             pending: Vec::new(),
             grounds: Vec::new(),
+            hazards: Vec::new(),
             triggers: Vec::new(),
             delayed: Vec::new(),
             last_target: None,
@@ -919,6 +947,7 @@ impl World {
                     last_hit: None,
                     home: None,
                     status: Status::from_bits(s.status),
+                    act: Default::default(),
                 })
             })
             .collect();
@@ -969,6 +998,7 @@ impl World {
         self.spawn_enemies();
         self.spawn_bosses();
         self.move_enemies();
+        self.tend_mechanics();
         self.cast_abilities();
         self.land_hits();
         self.tend_grounds();
@@ -1358,6 +1388,7 @@ impl World {
             last_hit: None,
             home: None,
             status: Status::default(),
+            act: Default::default(),
         });
         id
     }
@@ -1392,6 +1423,7 @@ impl World {
             }
         }
         let mut swings = Vec::new();
+        let content = self.content.clone();
         for (i, e) in self.enemies.iter_mut().enumerate() {
             let (player, target) = living
                 .iter()
@@ -1417,17 +1449,36 @@ impl World {
                 e.pos += shove[i] * (DT * 8.0).min(0.5);
                 continue;
             }
-            e.facing = to.normalize_or_zero();
-            e.moving = !contact;
-            let step = if contact {
-                V2::ZERO
+            // A charge or leap under way, or a wind-up while its telegraph is up.
+            if World::dash_step(e) {
+                continue;
+            }
+            if e.act.windup > 0.0 {
+                e.act.windup -= DT;
+                e.moving = false;
+                continue;
+            }
+            let mechanics = &content.enemies[e.def].mechanics;
+            let acts = e.elite || e.boss;
+            let frenzied = acts && e.hp < e.max_hp * 0.5 && mechanics.contains(&Mechanic::Frenzy);
+            // A caster keeps its distance and only casts.
+            let keep = if acts && mechanics.contains(&Mechanic::Caster) {
+                hazards::CASTER_KEEP
             } else {
-                e.facing * (combat::chilled(e.speed, &e.status) * DT)
+                0.0
+            };
+            let speed = e.speed * if frenzied { hazards::FRENZY_SPEED } else { 1.0 };
+            e.facing = to.normalize_or_zero();
+            e.moving = !contact && dist > keep;
+            let step = if e.moving {
+                e.facing * (combat::chilled(speed, &e.status) * DT)
+            } else {
+                V2::ZERO
             };
             e.pos += step + shove[i] * (DT * 8.0).min(0.5);
             e.attack_cd -= DT;
             if contact && e.attack_cd <= 0.0 {
-                e.attack_cd = 1.3;
+                e.attack_cd = if frenzied { hazards::FRENZY_SWING } else { 1.3 };
                 swings.push((e.id, player, e.damage));
             }
         }
@@ -2093,6 +2144,7 @@ mod tests {
             last_hit: None,
             home: None,
             status: Status::default(),
+            act: Default::default(),
         });
     }
 

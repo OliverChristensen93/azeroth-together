@@ -15,6 +15,7 @@ mod content;
 mod interact;
 mod items;
 mod math;
+mod mechanics;
 mod powerups;
 mod rng;
 mod spell;
@@ -35,6 +36,7 @@ pub use interact::{
 };
 pub use items::{ward_cooldown, Item};
 pub use math::V2;
+pub use mechanics::{Mechanic, Shape};
 pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
 pub use spell::{

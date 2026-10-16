@@ -149,6 +149,12 @@ pub struct EnemyDef {
     /// Body radius in yards, before `scale`.
     #[serde(default = "default_enemy_radius")]
     pub radius: f32,
+    /// What its elites and bosses do beyond walking up and swinging; ordinary ones never do.
+    #[serde(default)]
+    pub mechanics: Vec<crate::mechanics::Mechanic>,
+    /// A boss's sentence for the boss bar; without one, its mechanics' hints are used.
+    #[serde(default)]
+    pub hint: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
