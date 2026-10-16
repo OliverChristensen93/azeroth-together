@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
-use nightfall_sim::{V2, V3};
+use nightfall_sim::{KEEP_EXTRA, V2, V3};
 
 use super::content;
 use super::run::Sim;
@@ -17,9 +17,6 @@ use crate::creature_anim::{move_flags, MovementState};
 use crate::names::{CreatureRecord, NameCache};
 use crate::net::{GuidIndex, ObjectStore};
 
-/// Yards past the view distance an enemy already drawn stays drawn, so one at the edge does not
-/// blink in and out.
-const KEEP_EXTRA: f32 = 15.0;
 /// Within this many yards of the client's own terrain height the host's floor is taken to be the
 /// terrain: the client's is exact, the bake's columns are not.
 const ON_TERRAIN: f32 = 1.0;

@@ -10,6 +10,10 @@ use crate::{Enemy, Hero, PlayerId, Snapshot, World, V3};
 pub const EYE_HEIGHT: f32 = 1.7;
 /// How high the point seen of a unit is over its floor: its chest.
 pub const CHEST_HEIGHT: f32 = 1.2;
+/// Yards past the view distance an enemy a client already draws stays drawn, so one at the edge
+/// does not blink in and out. The host sends each player the enemies this far past the view, or
+/// a joined client would have nothing to keep.
+pub const KEEP_EXTRA: f32 = 15.0;
 
 impl World {
     /// The ids of the enemies `player`'s hero sees, in the world's order; none for a player
@@ -34,10 +38,11 @@ impl World {
     }
 
     /// `player`'s snapshot: every hero, and the enemies within the view distance of their hero
-    /// (all of them for a player without one), so a big map's enemies never crowd a line.
+    /// and [`KEEP_EXTRA`] past it (all of them for a player without one), so a big map's enemies
+    /// never crowd a line and the client's margin for those it draws has them.
     pub fn snapshot_for(&self, player: PlayerId) -> Snapshot {
         let near = self.hero(player).map(|h| h.pos);
-        let reach = self.content().rules.atmosphere.view_distance;
+        let reach = self.content().rules.atmosphere.view_distance + KEEP_EXTRA;
         Snapshot {
             elapsed: self.elapsed,
             heroes: self.heroes.clone(),
@@ -210,15 +215,17 @@ mod tests {
     }
 
     #[test]
-    fn a_players_snapshot_leaves_out_enemies_past_the_view() {
-        // The view cannot be shorter than the fog (40 yd): the second post is 60 yd away.
-        let mut w = world(&[(12.0, 10.0), (48.0, 48.0)], 40.0, true);
+    fn a_players_snapshot_leaves_out_enemies_past_the_view_and_its_margin() {
+        // The view cannot be shorter than the fog (40 yd): the second post is 60 yd away, past
+        // the view and the 15 yd margin; the third 47 yd, past the view but inside the margin,
+        // where a client keeps drawing an enemy it already draws.
+        let mut w = world(&[(12.0, 10.0), (48.0, 48.0), (48.0, 25.0)], 40.0, true);
         put(&mut w, 0, 5.0, 5.0);
         w.step();
         let ids: Vec<u32> = w.snapshot_for(0).enemies.iter().map(|e| e.id).collect();
-        assert_eq!(ids, vec![1]);
-        assert_eq!(w.snapshot().enemies.len(), 2);
-        assert_eq!(w.snapshot_for(7).enemies.len(), 2);
+        assert_eq!(ids, vec![1, 3]);
+        assert_eq!(w.snapshot().enemies.len(), 3);
+        assert_eq!(w.snapshot_for(7).enemies.len(), 3);
         assert_eq!(w.snapshot_for(0).heroes, w.snapshot().heroes);
         assert_eq!(w.snapshot_for(0).elapsed, w.snapshot().elapsed);
     }
