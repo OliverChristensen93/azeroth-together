@@ -96,6 +96,23 @@ impl Sim {
         }
     }
 
+    /// A hosted run around `world`, for tests of the systems that read it: nothing seen, no marks.
+    #[cfg(test)]
+    pub(super) fn for_test(world: World) -> Self {
+        Self {
+            world,
+            me: 0,
+            acc: 0.0,
+            span: DT,
+            inbox: VecDeque::new(),
+            playing: false,
+            stepped: false,
+            seen: Vec::new(),
+            marks: Vec::new(),
+            warned: 0,
+        }
+    }
+
     /// Hosting: the world's warnings not yet in the log, once each.
     fn log_new_warnings(&mut self) {
         let all = self.world.warnings();

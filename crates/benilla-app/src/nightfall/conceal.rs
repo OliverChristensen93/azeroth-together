@@ -56,14 +56,13 @@ pub(super) fn stealth_aura(on: bool) -> [(u16, u32); 2] {
     }
 }
 
-/// A hidden enemy can no longer be the hero's target: if it is the selection, the selection is
-/// dropped, so the target frame lets go of it. Nightfall has no server to tell and no melee to
-/// stop, so the selection is cleared in place (the last-target pair stays, as in a teardown).
-fn drop_if_selected(selection: &mut Selection, hidden: Entity) {
-    if selection.target == Some(hidden) {
-        selection.target = None;
-        selection.guid = None;
-    }
+/// A hidden enemy can no longer be the hero's target, so the selection is dropped, and the target
+/// frame lets go of it. Nightfall has no server to tell and no melee to stop, so it is cleared in
+/// place (the last-target pair stays, as in a teardown). Callers write to the resource only for a
+/// real clear: a mutable touch marks `Selection` changed, which the target frame's gate reads.
+fn clear_selection(selection: &mut Selection) {
+    selection.target = None;
+    selection.guid = None;
 }
 
 /// Every drawn enemy our hero does not see is concealed and untrackable; one they see is neither.
@@ -90,8 +89,9 @@ pub(super) fn enemies(
                 commands.entity(e).remove::<Concealed>();
             }
         }
-        if hide {
-            drop_if_selected(&mut selection, e);
+        // Read through the shared reference: only a real clear may mark the resource changed.
+        if hide && selection.target == Some(e) {
+            clear_selection(&mut selection);
         }
         let stand = if enemy.asleep { STAND_SLEEP } else { STAND };
         let now = bytes_1(
@@ -181,19 +181,96 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_hidden_enemy_leaves_the_selection_and_another_stays() {
+    const ENEMY: u32 = 5;
+
+    /// A world with one drawn enemy (id [`ENEMY`]) and nothing seen, for [`enemies`] to run on.
+    fn world_with_an_enemy() -> (World, Entity) {
+        use std::sync::Arc;
+
+        use nightfall_sim::{Content, ContentSources, Enemy, V2};
+
+        let content = Content::from_ron(ContentSources {
+            classes: include_str!("../../../../content/nightfall/classes.ron"),
+            map: include_str!("../../../../content/nightfall/map.ron"),
+            rules: include_str!("../../../../content/nightfall/rules.ron"),
+            enemies: include_str!("../../../../content/nightfall/enemies.ron"),
+            spawns: include_str!("../../../../content/nightfall/spawns.ron"),
+        })
+        .expect("the shipped content parses");
+        let mut sim = Sim::for_test(nightfall_sim::World::new(Arc::new(content)));
+        sim.world.enemies.push(Enemy {
+            id: ENEMY,
+            kind: 0,
+            pos: V2::new(0.0, 0.0),
+            z: 0.0,
+            facing: V2::new(1.0, 0.0),
+            hp: 1.0,
+            max_hp: 1.0,
+            speed: 0.0,
+            asleep: false,
+        });
         let mut world = World::new();
-        let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
-        let mut sel = Selection {
-            target: Some(a),
+        let body = world
+            .spawn(ObjectStore(ObjectFields::from_pairs(&[])))
+            .id();
+        let mut views = EnemyViews::default();
+        views.drawn.insert(ENEMY, body);
+        world.insert_resource(views);
+        world.insert_resource(sim);
+        world.init_resource::<Selection>();
+        (world, body)
+    }
+
+    #[test]
+    fn an_unseen_enemy_is_concealed_and_seen_again_is_not() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (mut world, body) = world_with_an_enemy();
+        world.run_system_once(enemies).unwrap();
+        assert!(world.get::<Concealed>(body).is_some(), "unseen: concealed");
+        let store = world.get::<ObjectStore>(body).unwrap();
+        assert!(!store.0.unit_is_stealthed());
+        assert!(store.0.unit_is_untrackable(), "and off the minimap");
+
+        world.resource_mut::<Sim>().seen = vec![ENEMY];
+        world.run_system_once(enemies).unwrap();
+        assert!(world.get::<Concealed>(body).is_none(), "seen: no stuck marker");
+        assert!(!world.get::<ObjectStore>(body).unwrap().0.unit_is_untrackable());
+    }
+
+    #[test]
+    fn an_enemy_that_drops_out_of_sight_leaves_the_selection() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (mut world, body) = world_with_an_enemy();
+        *world.resource_mut::<Selection>() = Selection {
+            target: Some(body),
             guid: Some(7),
             last: Some(3),
         };
-        drop_if_selected(&mut sel, b);
-        assert_eq!((sel.target, sel.guid), (Some(a), Some(7)));
-        drop_if_selected(&mut sel, a);
+        world.run_system_once(enemies).unwrap();
+        let sel = world.resource::<Selection>();
         assert_eq!((sel.target, sel.guid), (None, None));
-        assert_eq!(sel.last, Some(3));
+        assert_eq!(sel.last, Some(3), "the last-target pair stays");
+    }
+
+    /// The target frame redraws only when `Selection` changed, so a frame that clears nothing must
+    /// not mark it changed (the engine's own click tests pin the same property).
+    #[test]
+    fn a_frame_that_clears_nothing_leaves_the_selection_unchanged() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (mut world, _body) = world_with_an_enemy();
+        let other = world.spawn_empty().id();
+        *world.resource_mut::<Selection>() = Selection {
+            target: Some(other),
+            guid: Some(9),
+            last: None,
+        };
+        world.clear_trackers();
+        // The enemy is hidden but is not the selection.
+        world.run_system_once(enemies).unwrap();
+        assert!(!world.is_resource_changed::<Selection>());
+        assert_eq!(world.resource::<Selection>().target, Some(other));
     }
 }

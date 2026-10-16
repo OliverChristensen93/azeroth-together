@@ -759,4 +759,49 @@ mod tests {
         assert!(!exact(4.0).beats(exact(4.0)));
         assert!(!prefix(3, f32::NAN).beats(prefix(3, 4.0)));
     }
+
+    /// `/assist` selects the basis unit's target, unless a game mode hides that target.
+    #[test]
+    fn assist_does_not_select_a_concealed_unit() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        use crate::net::{ClientCommand, NetCommands};
+
+        const ME: u64 = 1;
+        const MOB: u64 = 0xF00D;
+        // `UNIT_FIELD_TARGET` is the guid in fields 16 and 17.
+        let target_of = |guid: u64| {
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (16, guid as u32),
+                (17, (guid >> 32) as u32),
+            ]))
+        };
+        let (tx, _rx) = crossbeam_channel::unbounded::<ClientCommand>();
+        let mut world = World::new();
+        world.insert_resource(NetCommands(tx));
+        world.init_resource::<Selection>();
+        world.init_resource::<crate::spell::QueuedMeleeSpell>();
+        world.init_resource::<crate::spell::AutoRepeatActive>();
+        world.init_resource::<Messages<crate::creature_anim::SheathRequest>>();
+        world.init_resource::<crate::ui_loot::LootState>();
+        world.init_resource::<crate::ui_loot::LootLatch>();
+        world.init_resource::<GuidIndex>();
+        world.init_resource::<crate::net::Reputations>();
+        world.init_resource::<crate::target::AssistAttack>();
+        world.spawn((SelfPlayer, Guid(ME)));
+        let mob = world.spawn(Guid(MOB)).id();
+        let basis = world.spawn((Guid(2), target_of(MOB))).id();
+        world.resource_mut::<GuidIndex>().0.insert(MOB, mob);
+        let assist = |world: &mut World| {
+            world
+                .run_system_once(move |mut commit: SelectCommit| commit.assist(basis, "test"))
+                .expect("the assist runs");
+            world.resource::<Selection>().target
+        };
+
+        world.entity_mut(mob).insert(crate::target::Concealed);
+        assert_eq!(assist(&mut world), None, "a concealed target is not selected");
+        world.entity_mut(mob).remove::<crate::target::Concealed>();
+        assert_eq!(assist(&mut world), Some(mob), "control: a seen one is");
+    }
 }
