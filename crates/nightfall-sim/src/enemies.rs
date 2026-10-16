@@ -77,7 +77,10 @@ impl Rng {
 
 /// What an enemy is set to do.
 pub(crate) enum Order {
-    Sentry { post: V3, facing: V2 },
+    Sentry {
+        post: V3,
+        facing: V2,
+    },
     /// `None` marks a point with no floor, or one no path reaches: it is skipped.
     Patrol {
         route: Vec<Option<V3>>,
@@ -167,7 +170,10 @@ fn stand_or_warn(
 
 /// Every enemy the content's spawns place, on the map's floors, with a warning for each that
 /// could not be placed. Ids count from 1 in the content's order.
-pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<Brain>, Vec<String>) {
+pub(crate) fn spawn_all(
+    content: &Content,
+    map: &HeightMap,
+) -> (Vec<Enemy>, Vec<Brain>, Vec<String>) {
     let mut enemies = Vec::new();
     let mut brains = Vec::new();
     let mut warnings = Vec::new();
@@ -184,7 +190,8 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
         let stand = |p: V2| map.stand_near(V3::at(p, hint(p)));
         let floor = |p: V2| map.floor_near(p, hint(p)).map(|z| V3::at(p, z));
         for k in 0..s.count as usize {
-            let mut rng = Rng::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+            let mut rng =
+                Rng::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9));
             let placed = match &s.behaviour {
                 Behaviour::Sentry { at, facing } => {
                     let post = V2::new(at.0, at.1);
@@ -194,8 +201,25 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
                         post + V2::from_angle(k as f32 * TAU / s.count as f32, GROUP_SPACING)
                     };
                     let face = V2::from_angle(facing.to_radians(), 1.0);
-                    let at = stand_or_warn(content, si, k, spot, stand(spot), floor(spot), &mut warnings);
-                    at.map(|p| (p, Order::Sentry { post: p, facing: face }, face))
+                    let at = stand_or_warn(
+                        content,
+                        si,
+                        k,
+                        spot,
+                        stand(spot),
+                        floor(spot),
+                        &mut warnings,
+                    );
+                    at.map(|p| {
+                        (
+                            p,
+                            Order::Sentry {
+                                post: p,
+                                facing: face,
+                            },
+                            face,
+                        )
+                    })
                 }
                 Behaviour::Patrol { route, pause } => {
                     let points: Vec<Option<V3>> =
@@ -245,7 +269,10 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
                 }
             };
             let Some((at, order, facing)) = placed else {
-                warnings.push(format!("{}: no floor to stand on; left out", who(content, si)));
+                warnings.push(format!(
+                    "{}: no floor to stand on; left out",
+                    who(content, si)
+                ));
                 continue;
             };
             enemies.push(Enemy {
@@ -318,7 +345,15 @@ pub(crate) fn step(
     planner.cursor = planner.cursor.wrapping_add(1);
     for i in 0..n {
         let k = (first + i) % n;
-        plan(&enemies[k], &mut brains[k], nav, content, warnings, planner, &mut budget);
+        plan(
+            &enemies[k],
+            &mut brains[k],
+            nav,
+            content,
+            warnings,
+            planner,
+            &mut budget,
+        );
     }
     let map = nav.map();
     for (e, b) in enemies.iter_mut().zip(brains.iter_mut()) {
@@ -347,7 +382,11 @@ fn plan(
             }
             (*post, true, PATROL_BUDGET)
         }
-        Order::Patrol { route, target, pause } => {
+        Order::Patrol {
+            route,
+            target,
+            pause,
+        } => {
             let Some(goal) = route[*target] else {
                 *target = next_target(route, *target);
                 return;
@@ -372,7 +411,9 @@ fn plan(
         } => {
             let spot = center.ground()
                 + V2::from_angle(b.rng.next_f32() * TAU, *radius * b.rng.next_f32().sqrt());
-            let hint = height.or_else(|| nav.map().ground_at(spot)).unwrap_or(center.z);
+            let hint = height
+                .or_else(|| nav.map().ground_at(spot))
+                .unwrap_or(center.z);
             // A spot with no floor to walk on (a trunk's top, a hole) is no walk: rest and pick
             // another.
             let Some(goal) = nav.stand_near(V3::at(spot, hint)) else {
@@ -496,7 +537,11 @@ fn arrive(e: &mut Enemy, b: &mut Brain, content: &Content) {
             e.facing = *facing;
             *post = V3::at(e.pos, e.z);
         }
-        Order::Patrol { route, target, pause } => {
+        Order::Patrol {
+            route,
+            target,
+            pause,
+        } => {
             *target = next_target(route, *target);
             b.wait = *pause;
         }
@@ -545,7 +590,13 @@ mod tests {
     /// Flat ground 50 yd across with a closed house (no door, no roof) over [20, 30]².
     fn town() -> Arc<HeightMap> {
         let mut b = flat(50.0);
-        house(&mut b, V2::new(20.0, 20.0), V2::new(30.0, 30.0), None, false);
+        house(
+            &mut b,
+            V2::new(20.0, 20.0),
+            V2::new(30.0, 30.0),
+            None,
+            false,
+        );
         Arc::new(b.finish())
     }
 
@@ -726,7 +777,14 @@ mod tests {
             rng: Rng::new(1),
         }];
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
-        super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
+        super::step(
+            &mut enemies,
+            &mut brains,
+            &mut nav,
+            &content,
+            &mut warnings,
+            &mut planner,
+        );
         // The search failed once: the sentry now rests instead of searching again next step.
         assert!(brains[0].wait > RETRY - 2.0 * DT, "{}", brains[0].wait);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -734,7 +792,14 @@ mod tests {
         assert_eq!(planner.failed_searches(), 1);
         // Over 12 s it retries twice more, and the warning is not repeated.
         for _ in 0..360 {
-            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
+            super::step(
+                &mut enemies,
+                &mut brains,
+                &mut nav,
+                &content,
+                &mut warnings,
+                &mut planner,
+            );
         }
         // The retries do happen (each 5 s), and no more often than that.
         assert_eq!(planner.failed_searches(), 3);
@@ -784,7 +849,13 @@ mod tests {
         use super::{Brain, Enemy, Navigator, Order, Rng};
 
         let mut b = flat(400.0);
-        house(&mut b, V2::new(200.0, 200.0), V2::new(210.0, 210.0), None, false);
+        house(
+            &mut b,
+            V2::new(200.0, 200.0),
+            V2::new(210.0, 210.0),
+            None,
+            false,
+        );
         let mut enemies = Vec::new();
         let mut brains = Vec::new();
         for (i, &(at, post)) in stand_and_post.iter().enumerate() {
@@ -833,10 +904,20 @@ mod tests {
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
         for _ in 0..12 {
             let before = nav.floors_looked_at();
-            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
+            super::step(
+                &mut enemies,
+                &mut brains,
+                &mut nav,
+                &content,
+                &mut warnings,
+                &mut planner,
+            );
             let spent = nav.floors_looked_at() - before;
             assert!(spent <= STEP_FLOORS as u64, "{spent} floors in one step");
-            assert!(spent >= PATROL_BUDGET as u64, "the budget went unused: {spent}");
+            assert!(
+                spent >= PATROL_BUDGET as u64,
+                "the budget went unused: {spent}"
+            );
         }
         // Each got its turn, one a step, and each failed once.
         assert_eq!(planner.failed_searches(), 12);
@@ -858,7 +939,14 @@ mod tests {
         let content = world(GATE, 4).content().clone();
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
         for _ in 0..30 {
-            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
+            super::step(
+                &mut enemies,
+                &mut brains,
+                &mut nav,
+                &content,
+                &mut warnings,
+                &mut planner,
+            );
         }
         assert_eq!(planner.failed_searches(), 1);
         assert_eq!(nav.floors_looked_at(), PATROL_BUDGET as u64);
@@ -873,7 +961,12 @@ mod tests {
     fn woods() -> Arc<HeightMap> {
         let mut b = flat(50.0);
         let mut trunk = |x: f32, y: f32| {
-            b.add_box(V2::new(x - 0.5, y - 0.5), V2::new(x + 0.5, y + 0.5), 0.0, 8.0);
+            b.add_box(
+                V2::new(x - 0.5, y - 0.5),
+                V2::new(x + 0.5, y + 0.5),
+                0.0,
+                8.0,
+            );
         };
         trunk(10.2, 10.2);
         trunk(30.0, 10.0);
@@ -900,12 +993,22 @@ mod tests {
         assert!(w.warnings().is_empty(), "{:?}", w.warnings());
         let gate = &w.enemies[0];
         assert_eq!(gate.z, 0.0);
-        assert!(gate.pos.distance(V2::new(10.2, 10.2)) <= 2.0, "{:?}", gate.pos);
+        assert!(
+            gate.pos.distance(V2::new(10.2, 10.2)) <= 2.0,
+            "{:?}",
+            gate.pos
+        );
         let mut reached = false;
         for _ in 0..1800 {
             w.step();
             for e in &w.enemies {
-                assert!(e.z.abs() < 0.01, "enemy {} at {:?} stands at {}", e.id, e.pos, e.z);
+                assert!(
+                    e.z.abs() < 0.01,
+                    "enemy {} at {:?} stands at {}",
+                    e.id,
+                    e.pos,
+                    e.z
+                );
                 assert!(map.stand_near(crate::V3::at(e.pos, e.z)).is_some());
             }
             reached |= w.enemies[1].pos.distance(V2::new(30.0, 10.0)) <= 2.0;
@@ -951,12 +1054,22 @@ mod tests {
         let mut b = flat(50.0);
         b.add_box(V2::new(20.0, 0.0), V2::new(20.5, 50.0), 0.0, 3.0);
         let mut nav = super::Navigator::new(Arc::new(b.finish()));
-        assert!(nav.map().stand_near(post).is_some_and(|p| p.ground() != post.ground()));
+        assert!(nav
+            .map()
+            .stand_near(post)
+            .is_some_and(|p| p.ground() != post.ground()));
         let content = world(GATE, 4).content().clone();
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
         let mut run = |steps: usize, enemies: &mut Vec<super::Enemy>, planner: &mut Planner| {
             for _ in 0..steps {
-                super::step(enemies, &mut brains, &mut nav, &content, &mut warnings, planner);
+                super::step(
+                    enemies,
+                    &mut brains,
+                    &mut nav,
+                    &content,
+                    &mut warnings,
+                    planner,
+                );
             }
         };
         run(300, &mut enemies, &mut planner);

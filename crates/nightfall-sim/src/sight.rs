@@ -57,6 +57,8 @@ impl World {
     /// A ray is only cast between two points on the map's grid, and only once they are within
     /// `range` of each other, so no ray is ever long; a unit off the grid (or not at a number) is
     /// unseen rather than walked towards across millions of columns that hold nothing.
+    // The distance check is a negated comparison on purpose, so a NaN fails it.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     fn sees(&self, hero: &Hero, enemy: &Enemy, range: f32) -> bool {
         // Written so that a distance that is not a number fails it.
         if !(hero.pos.distance(enemy.pos) <= range) {
@@ -123,7 +125,13 @@ mod tests {
         let mut w = World::new(Arc::new(content));
         if map {
             let mut b = flat(50.0);
-            house(&mut b, V2::new(20.0, 20.0), V2::new(30.0, 30.0), None, false);
+            house(
+                &mut b,
+                V2::new(20.0, 20.0),
+                V2::new(30.0, 30.0),
+                None,
+                false,
+            );
             w.attach_map(Arc::new(b.finish()));
         }
         w

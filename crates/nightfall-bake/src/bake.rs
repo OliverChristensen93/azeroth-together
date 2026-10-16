@@ -203,7 +203,7 @@ fn add_model(
     rotation: [f32; 3],
     scale: f32,
 ) {
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let v = |i: u32| {
             mesh.positions
                 .get(i as usize)

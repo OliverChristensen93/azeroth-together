@@ -12,7 +12,10 @@ impl Bounds {
     /// A polygon through `points` in order (either winding); at least three.
     pub fn new(points: Vec<V2>) -> Result<Self, String> {
         if points.len() < 3 {
-            return Err(format!("bounds need 3 points or more, got {}", points.len()));
+            return Err(format!(
+                "bounds need 3 points or more, got {}",
+                points.len()
+            ));
         }
         if points.iter().any(|p| !p.is_finite()) {
             return Err("bounds have a point that is not a number".into());

@@ -71,7 +71,7 @@ fn darkshire_bakes_with_walls_that_block_sight_and_streets_that_join() {
     let mesh =
         load_wmo_collision_tris(&mut chain, &building.model).expect("the building's collision");
     let mut fp = Footprint::new(g);
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let at = |i: u32| {
             placement_point(
                 building.position,

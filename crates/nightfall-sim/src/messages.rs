@@ -96,8 +96,14 @@ mod tests {
         );
         let mut w = World::new(content);
         for p in 0..4 {
-            w.add_hero(p, if p % 2 == 0 { "rogue" } else { "mage" }, "Twelve chars", 1, 0)
-                .unwrap();
+            w.add_hero(
+                p,
+                if p % 2 == 0 { "rogue" } else { "mage" },
+                "Twelve chars",
+                1,
+                0,
+            )
+            .unwrap();
         }
         let mut snapshot = w.snapshot();
         snapshot.enemies = (1..=20)

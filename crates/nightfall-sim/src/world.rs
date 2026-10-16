@@ -160,7 +160,8 @@ impl World {
             entry
         } else {
             let angle = (k - 1) as f32 * std::f32::consts::TAU / 4.0;
-            map.bounds.clamp(entry + V2::from_angle(angle, SPAWN_SPACING))
+            map.bounds
+                .clamp(entry + V2::from_angle(angle, SPAWN_SPACING))
         };
         let def = &self.content.classes[class];
         self.heroes.push(Hero {
@@ -250,7 +251,11 @@ impl World {
         }
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
-        if let Some(nav) = self.nav.as_mut().filter(|_| self.brains.len() == self.enemies.len()) {
+        if let Some(nav) = self
+            .nav
+            .as_mut()
+            .filter(|_| self.brains.len() == self.enemies.len())
+        {
             enemies::step(
                 &mut self.enemies,
                 &mut self.brains,
@@ -275,7 +280,10 @@ impl World {
     /// A client's mirror takes the host's world. A mirror must not have a map attached: the
     /// snapshot's enemies would have no brains beside them.
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) {
-        debug_assert!(self.nav.is_none(), "a world with a map is a host; it takes no snapshots");
+        debug_assert!(
+            self.nav.is_none(),
+            "a world with a map is a host; it takes no snapshots"
+        );
         self.elapsed = snapshot.elapsed;
         self.heroes = snapshot.heroes;
         self.enemies = snapshot.enemies;
