@@ -166,7 +166,8 @@ impl World {
 
     /// Awake creatures that are not chasing notice a living hero within their range: the map's
     /// `notice`, more for creatures above the party's level and less below (never under
-    /// `notice_min`), and more for each skull of the party's heat. Neutral kinds never notice.
+    /// `notice_min`), and more for each skull of the party's heat. Neutral kinds notice only a
+    /// hero who walks into them.
     fn notice(&mut self, def: &ExtractionDef) {
         let living: Vec<V2> = self
             .heroes
@@ -190,12 +191,16 @@ impl World {
                     return false;
                 };
                 let kind = &content.enemies[e.def];
-                if e.engaged || link.returning || kind.neutral {
+                if e.engaged || link.returning {
                     return false;
                 }
-                let range = (wl.notice + (kind.level as f32 - party) * wl.notice_per_level)
-                    .max(wl.notice_min)
-                    * sharp;
+                let range = if kind.neutral {
+                    HERO_RADIUS + e.radius + 0.5
+                } else {
+                    (wl.notice + (kind.level as f32 - party) * wl.notice_per_level)
+                        .max(wl.notice_min)
+                        * sharp
+                };
                 living.iter().any(|p| p.distance(e.pos) <= range)
             })
             .map(|e| e.id)
@@ -531,6 +536,15 @@ mod tests {
         let id = boar.id;
         w.damage_enemy(0, 0, id, 1.0, false);
         assert!(w.enemy(id).unwrap().engaged);
+    }
+
+    #[test]
+    fn a_hero_who_walks_into_a_neutral_creature_starts_the_fight() {
+        let mut w = forest(|_| {});
+        at(&mut w, 0, 0.0, 199.2);
+        secs(&mut w, 0.5);
+        let boar = creature(&w, 0.0, 200.0).unwrap();
+        assert!(boar.engaged);
     }
 
     #[test]
