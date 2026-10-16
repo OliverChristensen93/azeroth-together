@@ -9,6 +9,7 @@
 
 mod bounds;
 mod content;
+mod heightmap;
 mod math;
 pub mod messages;
 mod world;
@@ -18,7 +19,11 @@ pub use content::{
     Atmosphere, ClassDef, Content, ContentError, ContentSources, HeroLight, MapDef, Rules,
     WeaponDef,
 };
-pub use math::V2;
+pub use heightmap::{
+    Floors, Grid, HeightMap, HeightMapBuilder, Span, SpanList, CELL, HEADROOM, MAX_FLOORS,
+    MAX_STEP, MERGE_GAP, TERRAIN_DEPTH,
+};
+pub use math::{V2, V3};
 pub use world::{
     Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ,
 };

@@ -78,9 +78,46 @@ impl Mul<f32> for V2 {
     }
 }
 
+/// A point in WoW's world: `x` north, `y` west, `z` up, in yards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct V3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl V3 {
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    /// The point `z` yards up over the ground point `p`.
+    pub const fn at(p: V2, z: f32) -> Self {
+        Self { x: p.x, y: p.y, z }
+    }
+
+    /// Where it stands on the ground plane.
+    pub const fn ground(self) -> V2 {
+        V2::new(self.x, self.y)
+    }
+
+    pub fn is_finite(self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_point_stands_on_its_ground_point() {
+        let p = V3::at(V2::new(1.0, 2.0), 3.0);
+        assert_eq!(p, V3::new(1.0, 2.0, 3.0));
+        assert_eq!(p.ground(), V2::new(1.0, 2.0));
+        assert!(p.is_finite());
+        assert!(!V3::new(0.0, 0.0, f32::NAN).is_finite());
+    }
 
     #[test]
     fn normalize_has_unit_length_and_zero_stays_zero() {
