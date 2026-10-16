@@ -15,14 +15,18 @@
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
 mod actions;
+mod dev;
 mod dress;
+mod hazards;
 mod hud;
+mod inventory;
 mod levelup;
 mod lobby;
 mod menu;
 mod meter;
 mod party;
 mod session;
+mod tooltip;
 mod ui;
 mod units;
 mod view;
@@ -177,8 +181,13 @@ const PLAYBACK_DEPTH: usize = 2;
 const PLAYBACK_MAX: usize = 8;
 
 impl Sim {
-    /// A run for everyone in `roster` (just us, alone), stepped here.
-    fn hosted(zone: &str, roster: &[together_sim::messages::LobbyPlayer]) -> Self {
+    /// A run for everyone in `roster` (just us, alone), stepped here, with the dev panel's test
+    /// settings applied.
+    fn hosted(
+        zone: &str,
+        roster: &[together_sim::messages::LobbyPlayer],
+        dev: &dev::DevTuning,
+    ) -> Self {
         let seed = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -196,6 +205,7 @@ impl Sim {
             );
         }
         give_loadout(&mut world);
+        dev.apply(&mut world);
         Self {
             world,
             me: 0,
@@ -279,6 +289,9 @@ pub(super) struct LocalInput {
     pub(super) skip: bool,
     /// The movement ability was used this frame ([`blink`]).
     pub(super) dash: bool,
+    /// Freeze or unfreeze the level-up hand; banish the spell on a card.
+    pub(super) freeze: bool,
+    pub(super) banish: Option<u8>,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -300,11 +313,24 @@ impl Plugin for TogetherPlugin {
             .init_resource::<EndRun>()
             .init_resource::<session::Net>()
             .init_resource::<lobby::JoinDialog>()
+            .init_resource::<dev::DevSettings>()
+            .init_resource::<inventory::SheetOpen>()
+            .init_resource::<hazards::Pending>()
+            .init_resource::<levelup::BanishMode>()
+            .init_resource::<hazards::Telegraphs>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
                 Startup,
-                (hud::setup, levelup::setup, meter::setup, menu::spawn_root),
+                (
+                    hud::setup,
+                    levelup::setup,
+                    meter::setup,
+                    tooltip::setup,
+                    inventory::setup,
+                    hazards::setup,
+                    menu::spawn_root,
+                ),
             )
             .add_systems(
                 Update,
@@ -319,6 +345,9 @@ impl Plugin for TogetherPlugin {
                     meter::refresh,
                     ui::tune_ui,
                     session::close_on_exit,
+                    tooltip::show_tip,
+                    inventory::refresh,
+                    hazards::boss_bar,
                     party::feed.before(crate::ui_script::UiFeed),
                 )
                     .in_set(SurvivorsSet),
@@ -334,6 +363,8 @@ impl Plugin for TogetherPlugin {
                     lobby::type_address,
                     lobby::clicks,
                     lobby::refresh.before(crate::glue::GlueVisuals),
+                    dev::clicks,
+                    dev::refresh.before(crate::glue::GlueVisuals),
                     session::lobby,
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     menu::preview_hero,
@@ -356,6 +387,7 @@ impl Plugin for TogetherPlugin {
                 OnExit(crate::game_pick::GameMode::Survivors),
                 menu::clear_preview,
             )
+            .add_systems(OnEnter(Phase::Menu), hazards::clear)
             // The run.
             .add_systems(
                 Update,
@@ -366,8 +398,10 @@ impl Plugin for TogetherPlugin {
                     step_sim,
                     view::settle_shrines,
                     view::apply_events,
+                    hazards::show,
                     view::sync,
                     view::write_vitals,
+                    hazards::status_auras,
                     view::place,
                 )
                     .chain()
@@ -420,6 +454,7 @@ fn start_run(
     mut player: ResMut<crate::player::Player>,
     mut next: ResMut<NextState<Phase>>,
     mut net: ResMut<session::Net>,
+    dev: Res<dev::DevSettings>,
 ) {
     let content = content();
     let mut begin = |commands: &mut Commands, sim: Sim| {
@@ -469,7 +504,7 @@ fn start_run(
     let zone = content.zones[selection.zone].key.clone();
     let roster = net.roster(&own);
     net.broadcast_start(&zone);
-    let mut sim = Sim::hosted(&zone, &roster);
+    let mut sim = Sim::hosted(&zone, &roster, &dev.tuning);
     showcase_for_tests(&mut sim.world);
     begin(&mut commands, sim);
 }
@@ -546,6 +581,7 @@ fn read_keys(
     real: Res<Time<Real>>,
     sim: Res<Sim>,
     mut input: ResMut<LocalInput>,
+    mut banishing: ResMut<levelup::BanishMode>,
     mut up_since: Local<Option<f32>>,
 ) {
     let choosing = sim
@@ -570,11 +606,22 @@ fn read_keys(
         .enumerate()
     {
         if keys.just_pressed(key) {
-            input.pick = Some(i as u8);
+            // In banish mode a card's key banishes its spell instead.
+            if std::mem::take(&mut banishing.0) {
+                input.banish = Some(i as u8);
+            } else {
+                input.pick = Some(i as u8);
+            }
         }
     }
     if keys.just_pressed(KeyCode::KeyR) {
         input.reroll = true;
+    }
+    if keys.just_pressed(KeyCode::KeyT) {
+        input.freeze = true;
+    }
+    if keys.just_pressed(KeyCode::KeyG) {
+        banishing.0 = !banishing.0;
     }
 }
 
@@ -671,8 +718,11 @@ fn bevy_to_ground(p: Vec3) -> V2 {
 /// `TOGETHER_AUTOPLAY`: where the local hero at `from` walks this frame: with a banner, to its
 /// destination; else toward the nearest interactable it could use (a chest only once it can
 /// pay), until it stands well inside the circle. `None` when there is nothing to walk to, or
-/// cards are up.
+/// cards are up, or when `TOGETHER_STAND` keeps the hero standing for a test shot.
 fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
+    if std::env::var_os("TOGETHER_STAND").is_some() {
+        return None;
+    }
     use together_sim::{InteractState, InteractableKind};
     let hero = world.hero(me).filter(|h| h.alive && h.offers.is_empty())?;
     let carrying = world.interactables.iter().find_map(|i| match i.state {
@@ -779,6 +829,8 @@ fn step_sim(
             reroll: std::mem::take(&mut input.reroll),
             skip: std::mem::take(&mut input.skip),
             dash: std::mem::take(&mut input.dash),
+            freeze: std::mem::take(&mut input.freeze),
+            banish: input.banish.take(),
             pose: input.pose,
             ..Default::default()
         };
@@ -811,6 +863,8 @@ fn step_sim(
                 reroll: std::mem::take(&mut input.reroll),
                 skip: std::mem::take(&mut input.skip),
                 dash: std::mem::take(&mut input.dash),
+                freeze: std::mem::take(&mut input.freeze),
+                banish: input.banish.take(),
                 pose: Some(pose),
                 ..Default::default()
             };

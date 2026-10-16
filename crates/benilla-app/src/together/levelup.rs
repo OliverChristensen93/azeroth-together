@@ -1,14 +1,16 @@
 //! The card screen: the run dims, a title over the hand of cards, each card in its rarity's
 //! colour with exactly what it would do; under them the spells the hero has, Skip and Reroll.
-//! 1, 2 and 3 (or a click) pick a card, R rerolls. A level-up deals spells and tomes; a shrine,
+//! 1, 2 and 3 (or a click) pick a card, R rerolls, T freezes the hand (it comes back at the next
+//! level-up, less the card taken), G then a card banishes its spell for the run. A level-up
+//! deals spells and tomes; a shrine,
 //! an altar or a chest deals its own hand under its own name.
 //!
 //! Laid out on the 768-unit canvas (`UiScale`, set by [`crate::game_pick`]).
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, fallback_gold, shield_size, AbilityKind, Augment, Card, CardKind, Hero,
-    InteractableKind, Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
+    ability_stats, describe, fallback_gold, shield_size, AbilityKind, Augment, Boost, Card,
+    CardKind, CastSpec, Hero, InteractableKind, Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
 };
 
 use super::menu::SpellIcon;
@@ -52,7 +54,19 @@ pub(super) struct CardButton(u8);
 pub(super) enum HandButton {
     Skip,
     Reroll,
+    Freeze,
+    Banish,
 }
+
+/// The next card clicked (or its key pressed) banishes its spell instead of taking it.
+#[derive(Resource, Default)]
+pub(super) struct BanishMode(pub bool);
+
+#[derive(Component)]
+pub(super) struct FreezeText;
+
+#[derive(Component)]
+pub(super) struct BanishText;
 
 #[derive(Component)]
 pub(super) struct RerollText;
@@ -176,7 +190,12 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                             ..default()
                         },
                     ));
-                    for (button, text) in [(HandButton::Skip, "Skip"), (HandButton::Reroll, "")] {
+                    for (button, text) in [
+                        (HandButton::Skip, "Skip"),
+                        (HandButton::Reroll, ""),
+                        (HandButton::Freeze, ""),
+                        (HandButton::Banish, ""),
+                    ] {
                         bar.spawn((
                             button,
                             Button,
@@ -191,11 +210,12 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ))
                         .with_children(|b| {
                             let mut t = b.spawn(label(&fonts.text, text, 12.0, GOLD));
-                            if button == HandButton::Reroll {
-                                t.insert(RerollText);
-                            } else {
-                                t.insert(SkipText);
-                            }
+                            match button {
+                                HandButton::Reroll => t.insert(RerollText),
+                                HandButton::Skip => t.insert(SkipText),
+                                HandButton::Freeze => t.insert(FreezeText),
+                                HandButton::Banish => t.insert(BanishText),
+                            };
                         });
                     }
                 });
@@ -221,10 +241,10 @@ enum Icon {
 
 /// An icon slot filled from a texture under `Interface\Icons`, by name.
 #[derive(Component)]
-pub(super) struct TextureIcon(&'static str);
+pub(super) struct TextureIcon(pub &'static str);
 
 /// The book a tome of `stat` wears.
-fn tome_icon(stat: Stat) -> &'static str {
+pub(super) fn tome_icon(stat: Stat) -> &'static str {
     match stat {
         Stat::Damage => "INV_Misc_Book_07",
         Stat::Cooldown => "INV_Misc_Book_08",
@@ -238,12 +258,13 @@ fn tome_icon(stat: Stat) -> &'static str {
         Stat::XpGain => "INV_Misc_Book_12",
         Stat::GoldGain => "INV_Misc_Book_02",
         Stat::Crit => "INV_Misc_Book_01",
+        Stat::CritDamage => "Ability_Racial_BloodRage",
         Stat::Projectiles => "INV_Misc_Book_13",
     }
 }
 
 /// The icon an item wears: a gem, a fang, a key, a charm, a ring, a bag.
-fn item_icon(item: Item) -> &'static str {
+pub(super) fn item_icon(item: Item) -> &'static str {
     match item {
         Item::StaticShard => "INV_Misc_Gem_Sapphire_02",
         Item::EmberCore => "INV_Misc_Gem_Ruby_02",
@@ -343,42 +364,27 @@ struct Face {
     footer: String,
 }
 
-/// The face of a spell card: what the spell does, and what this card changes.
-fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face {
+/// The face of a spell card: a new spell's numbers, or just what an upgrade's `boosts` give.
+fn spell_face(
+    hero: &Hero,
+    ability: usize,
+    upgrade: Option<[Option<Boost>; 3]>,
+    rarity: Rarity,
+) -> Face {
+    let learn = upgrade.is_none();
     let content = content();
     let def = &content.abilities[ability];
-    let reach = |count: u32| match def.kind {
-        AbilityKind::Nova => format!("{:.0} yd around you", def.radius),
-        _ if count > 1 => format!("{count} targets within {:.0} yd", def.range),
-        _ => format!("{:.0} yd range", def.range),
-    };
     let text = |s: String| (s, Color::srgb(1.0, 0.9, 0.6));
-    let shield = def.kind == AbilityKind::Shield;
     let mut lines = Vec::new();
     let (badge, sub, bonus, footer) = if learn {
-        let s = ability_stats(def, 1, rarity.learn_bonus()).with(&hero.stats);
-        if shield {
-            let size = shield_size(def.shield, 1, rarity.learn_bonus());
+        // The description has every other number; a shield's gives its cooldown too.
+        if def.kind != AbilityKind::Shield {
             lines.push(text(format!(
-                "A shield of {:.0}% of your health every {:.1} sec",
-                size * 100.0,
-                s.cooldown
+                "Every {:.1} sec",
+                ability_stats(def, rarity.learn_bonus())
+                    .with(&hero.stats)
+                    .cooldown
             )));
-        } else if def.kind == AbilityKind::Ground {
-            lines.push(text(format!(
-                "{:.0} damage a second for {:.0} sec, every {:.1} sec",
-                s.damage.round(),
-                def.duration,
-                s.cooldown
-            )));
-            lines.push(text(reach(s.count)));
-        } else {
-            lines.push(text(format!(
-                "{:.0} damage every {:.1} sec",
-                s.damage.round(),
-                s.cooldown
-            )));
-            lines.push(text(reach(s.count)));
         }
         (
             "NEW".to_string(),
@@ -391,28 +397,9 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
         )
     } else {
         let owned = hero.abilities.iter().find(|o| o.ability == ability);
-        let (rank, bonus) = owned.map_or((1, 0.0), |o| (o.level, o.bonus));
-        let now = ability_stats(def, rank, bonus).with(&hero.stats);
-        let next = ability_stats(def, rank + 1, bonus + rarity.upgrade_bonus()).with(&hero.stats);
-        if shield {
-            lines.push(text(format!(
-                "Shield {:.0}% » {:.0}% of health",
-                shield_size(def.shield, rank, bonus) * 100.0,
-                shield_size(def.shield, rank + 1, bonus + rarity.upgrade_bonus()) * 100.0
-            )));
-        } else {
-            lines.push(text(format!(
-                "Damage {:.0} » {:.0}",
-                now.damage.round(),
-                next.damage.round()
-            )));
-        }
-        lines.push(text(format!(
-            "Cooldown {:.1} » {:.1} sec",
-            now.cooldown, next.cooldown
-        )));
-        if next.count != now.count {
-            lines.push(text(format!("Targets {} » {}", now.count, next.count)));
+        let rank = owned.map_or(1, |o| o.level);
+        for boost in upgrade.into_iter().flatten().flatten() {
+            lines.push((boost.describe(boost.amount(rarity)), GREEN));
         }
         let milestone = match rank + 1 {
             5 | 15 => Some("an augment"),
@@ -421,13 +408,13 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
             _ => None,
         };
         if let Some(what) = milestone {
-            lines.push((format!("Rank {} brings {what}", rank + 1), GREEN));
+            lines.push((format!("Rank {} brings {what}", rank + 1), GOLD));
         }
         (
             format!("RANK {}", rank + 1),
             format!("Rank {rank} » {}", rank + 1),
-            rarity.upgrade_bonus(),
-            "Improves a spell you know".to_string(),
+            0.0,
+            "Hover the icon for the spell".to_string(),
         )
     };
     if bonus > 0.0 {
@@ -440,10 +427,30 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
         sub,
         badge,
         bright: learn,
-        description: def.description.clone(),
+        // An upgrade shows only what it gives; the spell itself is on its icon's tooltip.
+        description: if learn {
+            learn_text(hero, ability, rarity)
+        } else {
+            String::new()
+        },
         lines,
         footer,
     }
+}
+
+/// A new spell's description with its numbers as it would be learned now: the card's bonus and
+/// the hero's stats on it.
+fn learn_text(hero: &Hero, ability: usize, rarity: Rarity) -> String {
+    let def = &content().abilities[ability];
+    let st = ability_stats(def, rarity.learn_bonus()).with(&hero.stats);
+    let mut s = CastSpec::base(ability, def);
+    s.damage = st.damage;
+    s.cooldown = st.cooldown;
+    s.count = st.count;
+    s.range = st.range;
+    s.radius = st.radius;
+    s.shield = shield_size(def.shield, rarity.learn_bonus());
+    describe(def, &s, hero.max_hp)
 }
 
 /// A stat as it stands on the hero, for "now » after" lines.
@@ -454,8 +461,8 @@ fn stat_now(hero: &Hero, stat: Stat) -> String {
 /// The face of any card, at the party's `level`.
 fn face(hero: &Hero, level: u32, card: &Card) -> Face {
     match card.kind {
-        CardKind::Learn(a) => spell_face(hero, a, true, card.rarity),
-        CardKind::Upgrade(a) => spell_face(hero, a, false, card.rarity),
+        CardKind::Learn(a) => spell_face(hero, a, None, card.rarity),
+        CardKind::Upgrade(a, boosts) => spell_face(hero, a, Some(boosts), card.rarity),
         CardKind::Tome(stat) => {
             let rules = &content().rules;
             let rank = hero.tome_rank(stat);
@@ -691,6 +698,10 @@ fn build_card(
             Icon::Spell(visual) => icon.insert(SpellIcon(visual)),
             Icon::Texture(name) => icon.insert(TextureIcon(name)),
         };
+        // A spell card's icon shows the spell's tooltip, as it stands now, under the mouse.
+        if let Some(ability) = card.ability() {
+            icon.insert((super::tooltip::TipAbility(ability), Interaction::default()));
+        }
         c.spawn((
             label(
                 &fonts.text,
@@ -721,13 +732,16 @@ fn build_card(
             },
             BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
         ));
-        c.spawn((
-            label(&fonts.text, face.description, 9.5, Color::WHITE),
-            TextLayout::new_with_justify(Justify::Center),
-        ));
+        let bare = face.description.is_empty();
+        if !bare {
+            c.spawn((
+                label(&fonts.text, face.description, 9.5, Color::WHITE),
+                TextLayout::new_with_justify(Justify::Center),
+            ));
+        }
         for (line, tint) in face.lines {
             c.spawn((
-                label(&fonts.text, line, 9.5, tint),
+                label(&fonts.text, line, if bare { 12.0 } else { 9.5 }, tint),
                 TextLayout::new_with_justify(Justify::Center),
                 Node {
                     margin: UiRect::top(Val::Px(3.0)),
@@ -756,6 +770,9 @@ pub(super) struct Shown {
 
     rerolls: u32,
     more: usize,
+    frozen: bool,
+    banishes: u8,
+    banishing: bool,
 }
 
 /// The screen's title and the line under it, for `offer`.
@@ -816,7 +833,10 @@ pub(super) fn refresh(
         Query<&mut Text, With<TitleText>>,
         Query<&mut Text, With<HintText>>,
         Query<&mut Text, With<SkipText>>,
+        Query<&mut Text, With<FreezeText>>,
+        Query<&mut Text, With<BanishText>>,
     )>,
+    banishing: Res<BanishMode>,
     mut shown: Local<Option<Shown>>,
 ) {
     // A fallen hero chooses once raised.
@@ -852,6 +872,9 @@ pub(super) fn refresh(
 
         rerolls: hero.rerolls,
         more: hero.offers.len() - 1,
+        frozen: hero.frozen,
+        banishes: hero.banishes,
+        banishing: banishing.0,
     };
     if shown.as_ref() == Some(&now) {
         return;
@@ -880,6 +903,21 @@ pub(super) fn refresh(
     }
     if let Ok(mut t) = texts.p5().single_mut() {
         t.0 = if augmenting { "Hold" } else { "Skip" }.to_string();
+    }
+    let levelling = offer.source == Source::LevelUp;
+    if let Ok(mut t) = texts.p6().single_mut() {
+        t.0 = match (levelling, now.frozen) {
+            (false, _) => "No freeze".to_string(),
+            (true, false) => "Freeze   (T)".to_string(),
+            (true, true) => "Frozen: unfreeze   (T)".to_string(),
+        };
+    }
+    if let Ok(mut t) = texts.p7().single_mut() {
+        t.0 = match (now.banishes, now.banishing) {
+            (0, _) => "No banish".to_string(),
+            (_, true) => "Banish: choose a new spell".to_string(),
+            (n, false) => format!("Banish {n}   (G)"),
+        };
     }
     if let Ok(mut t) = texts.p2().single_mut() {
         t.0 = if now.more > 0 {
@@ -914,6 +952,8 @@ pub(super) fn refresh(
                 ));
                 if let Some(&(visual, rank)) = now.spells.get(i) {
                     slot.insert((
+                        super::tooltip::SpellSlot(i),
+                        Interaction::default(),
                         SpellIcon(visual),
                         ImageNode {
                             color: Color::srgba(0.2, 0.2, 0.2, 1.0),
@@ -935,6 +975,7 @@ pub(super) fn refresh(
 #[allow(clippy::type_complexity)]
 pub(super) fn clicks(
     mut input: ResMut<LocalInput>,
+    mut banishing: ResMut<BanishMode>,
     mut cards: Query<
         (&CardButton, &CardTint, &Interaction, &mut BackgroundColor),
         (Changed<Interaction>, Without<HandButton>),
@@ -943,7 +984,13 @@ pub(super) fn clicks(
 ) {
     for (card, tint, interaction, mut bg) in &mut cards {
         match interaction {
-            Interaction::Pressed => input.pick = Some(card.0),
+            Interaction::Pressed => {
+                if std::mem::take(&mut banishing.0) {
+                    input.banish = Some(card.0);
+                } else {
+                    input.pick = Some(card.0);
+                }
+            }
             Interaction::Hovered => bg.0 = tint.0.lighter(0.06),
             Interaction::None => bg.0 = tint.0,
         }
@@ -953,6 +1000,8 @@ pub(super) fn clicks(
             Interaction::Pressed => match button {
                 HandButton::Skip => input.skip = true,
                 HandButton::Reroll => input.reroll = true,
+                HandButton::Freeze => input.freeze = true,
+                HandButton::Banish => banishing.0 = !banishing.0,
             },
             Interaction::Hovered => bg.0 = Color::srgb(0.3, 0.17, 0.08),
             Interaction::None => bg.0 = Color::srgb(0.18, 0.1, 0.05),

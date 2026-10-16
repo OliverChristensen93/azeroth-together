@@ -297,6 +297,8 @@ pub(super) fn build_menu(
         zone_frame(ui, &art, f, &content);
         class_panel(ui, &art, f);
         lobby_panel(ui, &art, f);
+        super::dev::dev_panel(ui, &art, f);
+        super::dev::dev_button(ui, &art, f);
 
         // The hero's name line, GlueFontNormalHuge at BOTTOM (0,100).
         ui.spawn(Node {
@@ -415,7 +417,7 @@ pub(super) fn build_menu(
 }
 
 /// A character-select style frame: the tooltip fill and the name border.
-fn framed(
+pub(super) fn framed(
     ui: &mut ChildSpawnerCommands,
     art: &GlueArt,
     node: Node,
@@ -1189,7 +1191,9 @@ pub(super) fn refresh_menu_ui(
             if a.description.is_empty() {
                 a.name.clone()
             } else {
-                format!("{}: {}", a.name, a.description)
+                let spec = together_sim::CastSpec::base(s.0, a);
+                let text = together_sim::describe(a, &spec, class.base_hp);
+                format!("{}: {text}", a.name)
             }
         })
         .unwrap_or_else(|| "Spells: point at one to read it".into());

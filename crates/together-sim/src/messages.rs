@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Event, PlayerId, PlayerInput, Snapshot};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 8;
 
 /// The hero a player brings: their name and pick.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

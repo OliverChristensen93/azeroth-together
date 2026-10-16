@@ -548,7 +548,12 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
         return Vec::new();
     };
     let client = c.client.lock().unwrap();
-    let choice = input.pick.is_some() || input.reroll || input.skip || input.dash;
+    let choice = input.pick.is_some()
+        || input.reroll
+        || input.skip
+        || input.dash
+        || input.freeze
+        || input.banish.is_some();
     let pose_due =
         input.pose.is_some() && c.last_pose.is_none_or(|t| t.elapsed().as_secs_f32() >= DT);
     if choice || pose_due {

@@ -13,6 +13,11 @@ if not (PlayerFrame and ChatFrame1 and FCF_SetWindowColor and FCF_SetWindowAlpha
 end
 -- The chat windows' stock look: black, see-through until the mouse is over them. Their colour
 -- and alpha come from the saved chat settings, which would otherwise leave a solid white box.
+-- The action bar's spells have our own tooltip (together::tooltip); WoW's would describe the real
+-- 1.12 spell behind each icon.
+if ActionButton_SetTooltip then
+    ActionButton_SetTooltip = function() GameTooltip:Hide() end
+end
 for i = 1, NUM_CHAT_WINDOWS do
     local frame = getglobal("ChatFrame" .. i)
     if frame then

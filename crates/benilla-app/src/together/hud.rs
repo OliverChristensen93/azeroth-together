@@ -1,4 +1,4 @@
-//! A plain text HUD: the clock, the kills, the gold and the hero's spells (and, joined, the ping
+//! A plain text HUD: the clock, the kills, the gold (and, joined, the ping
 //! to the host), the party's power-ups and the boss; fallen friends and how to raise them; a
 //! carried banner's way to go, and what a shrine or chest nearby does and how
 //! full its circle is; and the end of the run.
@@ -102,7 +102,7 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             p.spawn((
                 Text::new(
                     "WoW controls   ·   cards: 1 2 3 or click, R rerolls   ·   \
-                     stand in a shrine's circle to use it",
+                     Tab: stats   ·   stand in a shrine's circle to use it",
                 ),
                 TextFont {
                     font: font.clone(),
@@ -302,12 +302,8 @@ pub(super) fn refresh(
         return;
     };
     if let Ok(mut t) = status.single_mut() {
-        let owned: Vec<String> = hero
-            .abilities
-            .iter()
-            .map(|o| format!("{} {}", content.abilities[o.ability].name, o.level))
-            .collect();
-        // Health, level and experience are in WoW's own player frame and XP bar.
+        // The spells are on the action bar, the tomes and items in their strip
+        // (`super::inventory`). Health, level and experience are in WoW's own player frame and XP bar.
         let ping = net
             .ping_ms()
             .map_or(String::new(), |ms| format!("   Ping {ms} ms"));
@@ -318,24 +314,14 @@ pub(super) fn refresh(
             String::new()
         };
         let mut s = format!(
-            "{}   Kills {}   Gold {}{danger}{ping}\n{}",
+            "{}   Kills {}   Gold {}{danger}{ping}",
             clock(world.elapsed),
             world.kills,
             hero.gold,
-            owned.join("   "),
         );
-        let bosses: Vec<String> = world
-            .enemies
-            .iter()
-            .filter(|e| e.boss)
-            .map(|e| {
-                let name = &content.enemies[e.def].name;
-                format!("{name} {:.0}%", e.hp / e.max_hp.max(1.0) * 100.0)
-            })
-            .collect();
-        if !bosses.is_empty() {
-            s.push_str(&format!("\nBOSS  {}", bosses.join("   ")));
-        } else if let Some(boss) = world.zone().boss_ix {
+        // A living boss has its bar (`super::hazards::boss_bar`); until it comes, its timer.
+        let boss_alive = world.enemies.iter().any(|e| e.boss);
+        if let Some(boss) = world.zone().boss_ix.filter(|_| !boss_alive) {
             s.push_str(&format!(
                 "\n{} comes in {}",
                 content.enemies[boss].name,
@@ -350,35 +336,6 @@ pub(super) fn refresh(
                 .collect();
             s.push('\n');
             s.push_str(&buffs.join("   "));
-        }
-        let rules = &content.rules;
-        if !hero.tomes.is_empty() {
-            let tomes: Vec<String> = hero
-                .tomes
-                .iter()
-                .map(|&(stat, rank)| {
-                    let short = stat.tome().trim_start_matches("Tome of ");
-                    let short = short.trim_start_matches("the ");
-                    format!("{short} {rank}/{}", rules.tome_max_rank)
-                })
-                .collect();
-            s.push_str(&format!(
-                "\nTomes {}/{}:  {}",
-                hero.tomes.len(),
-                rules.tome_slots,
-                tomes.join("   ")
-            ));
-        }
-        if !hero.items.is_empty() {
-            let held: Vec<String> = hero
-                .items
-                .iter()
-                .map(|&(item, n)| {
-                    format!("{} {n}/{}", item.name(), item.max_copies(rules.item_max_copies))
-                })
-                .collect();
-            s.push('\n');
-            s.push_str(&held.join("   "));
         }
         // Friends who have fallen, while the run goes on.
         if hero.alive && !world.game_over() {

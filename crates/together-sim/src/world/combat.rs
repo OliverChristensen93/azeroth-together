@@ -15,8 +15,9 @@
 
 use super::*;
 use crate::augments::{Augment, Milestone};
+use crate::cards::{boost_lines, Boost};
 use crate::spell::{
-    control_secs, CastSpec, Tag, Tags, Targeting, BURN_SECS, CHILL_SECS, CHILL_SLOW,
+    control_secs, CastSpec, Cone, Tag, Tags, Targeting, BURN_SECS, CHILL_SECS, CHILL_SLOW,
     CONE_HALF_ANGLE, FREEZE_SECS,
 };
 
@@ -92,6 +93,8 @@ pub(super) struct Trigger {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
     pub chill: f32,
+    /// How much the Chill slows (the strongest that hit it).
+    pub slow: f32,
     pub freeze: f32,
     pub stun: f32,
     /// Who froze it, for Frostbite.
@@ -119,7 +122,7 @@ pub mod status_bits {
 
 impl Status {
     pub fn burning(&self) -> bool {
-        !self.burns.is_empty()
+        self.burns.iter().any(|b| b.left > 0.0)
     }
 
     /// Frozen or Stunned: it neither moves nor strikes.
@@ -157,7 +160,10 @@ impl Status {
 
     /// The damage its burns would still deal.
     fn burn_left(&self) -> f32 {
-        self.burns.iter().map(|b| b.dps * b.left).sum()
+        self.burns
+            .iter()
+            .map(|b| b.dps * b.left.max(0.0) / b.every)
+            .sum()
     }
 }
 
@@ -166,10 +172,12 @@ impl Status {
 struct Burn {
     by: PlayerId,
     ability: usize,
+    /// Damage a tick, every `every` seconds while `left` lasts.
     dps: f32,
     left: f32,
-    /// Seconds to its next tick.
+    /// Seconds to its next tick, and between ticks.
     tick: f32,
+    every: f32,
     contagion: bool,
 }
 
@@ -242,9 +250,10 @@ impl HeroSpells {
     }
 }
 
-/// A shield's size at `rank` with a card `bonus`, as a share of max health: 10% more per rank.
-pub fn shield_size(base: f32, rank: u8, bonus: f32) -> f32 {
-    base * (1.0 + 0.1 * f32::from(rank.max(1) - 1)) * (1.0 + bonus)
+/// A shield's size with its learning card's `bonus`, as a share of max health; upgrades' Shield
+/// boosts come on top.
+pub fn shield_size(base: f32, bonus: f32) -> f32 {
+    base * (1.0 + bonus)
 }
 
 /// Whether `pos` lies in an area of `spec` around `center`, pointing `facing` for a cone.
@@ -258,8 +267,15 @@ fn in_area(spec: &CastSpec, center: V2, facing: V2, pos: V2) -> bool {
         return true;
     }
     let f = facing.normalize_or_zero();
-    let cos = (off.x * f.x + off.y * f.y) / d;
-    cos >= CONE_HALF_ANGLE.cos()
+    let side = V2::new(-f.y, f.x);
+    let (dirs, half): (&[V2], f32) = match spec.cone {
+        Cone::Ahead => (&[f], CONE_HALF_ANGLE),
+        Cone::Behind => (&[f * -1.0], CONE_HALF_ANGLE),
+        // Four cones half as wide, so together they cover half the circle.
+        Cone::Four => (&[f, side, f * -1.0, side * -1.0], CONE_HALF_ANGLE * 0.5),
+    };
+    dirs.iter()
+        .any(|dir| (off.x * dir.x + off.y * dir.y) / d >= half.cos())
 }
 
 /// The distance from `p` to the line through `a` toward `b`, and how far along it `p` lies (in
@@ -297,61 +313,20 @@ impl World {
     /// A cast of `owned` by hero `h`: its rank, the hero's stats, the party's power-ups and its
     /// augments, with the hero-wide capstones' bonuses (Critical Mass, Arcane Charge, Channelled
     /// Focus, Phoenix Ground, Fortified) on top.
-    pub(crate) fn spell_spec(&self, h: usize, owned: &Owned) -> CastSpec {
+    pub fn spell_spec(&self, h: usize, owned: &Owned) -> CastSpec {
         let hero = &self.heroes[h];
         let def = &self.content.abilities[owned.ability];
         let st = self.sharpen(owned.stats(def).with(&hero.stats));
-        let tags = def.tag_set;
-        let mut s = CastSpec {
-            ability: owned.ability,
-            tags,
-            targeting: def.targeting(),
-            damage: st.damage,
-            cooldown: st.cooldown,
-            count: st.count,
-            volley: def.volley.max(1),
-            pierce: 0,
-            range: st.range,
-            radius: st.radius,
-            ring: 0.0,
-            missile_speed: def.missile_speed,
-            crit: CRIT_CHANCE + hero.stats.get(Stat::Crit),
-            crit_mult: 2.0,
-            chill: if tags.has(Tag::Slow) { CHILL_SECS } else { 0.0 },
-            freeze: if tags.has(Tag::Freeze) {
-                def.freeze
-            } else {
-                0.0
-            },
-            freeze_chance: 0.0,
-            permafrost: false,
-            stun: if tags.has(Tag::Stun) { 1.0 } else { 0.0 },
-            knockback: if tags.has(Tag::Knockback) {
-                def.knockback
-            } else {
-                0.0
-            },
-            burn: def.burn,
-            dot_mult: 1.0,
-            dot_speed: 1.0,
-            contagion: false,
-            ground: if def.kind == AbilityKind::Ground {
-                def.duration
-            } else {
-                def.leaves_ground
-            },
-            follows: false,
-            targeted: false,
-            echo: false,
-            twin: false,
-            returning: false,
-            vs_chilled: 0.0,
-            vs_frozen: 0.0,
-            execute: 0.0,
-            shatter: 0.0,
-            shield: shield_size(def.shield, owned.level, owned.bonus),
-            charges: 1,
-        };
+        let mut s = CastSpec::base(owned.ability, def);
+        s.damage = st.damage;
+        s.cooldown = st.cooldown;
+        s.count = st.count;
+        s.range = st.range;
+        s.radius = st.radius;
+        s.crit = CRIT_CHANCE + hero.stats.get(Stat::Crit);
+        s.crit_mult += hero.stats.get(Stat::CritDamage);
+        s.shield = shield_size(def.shield, owned.bonus);
+        owned.mods.apply(&mut s);
         for &a in &owned.augments {
             a.shape(&mut s);
         }
@@ -360,7 +335,7 @@ impl World {
             s.vs_frozen += 1.0;
         }
         if s.tags.has(Tag::Fire) && self.knows(h, Augment::CriticalMass) {
-            s.crit_mult = 2.5;
+            s.crit_mult += 0.5;
         }
         if s.tags.has(Tag::Arcane) && self.knows(h, Augment::ArcaneCharge) {
             s.damage *= 1.0 + 0.1 * f32::from(sp.arcane);
@@ -743,18 +718,25 @@ impl World {
             });
         }
         if shot.primary && self.spell_has(player, spec.ability, Augment::Firestorm) {
-            let others: Vec<V2> = (0..2)
-                .filter_map(|_| {
-                    let far: Vec<V2> = self
-                        .enemies
-                        .iter()
-                        .filter(|e| e.pos.distance(center) > spec.radius * 2.0)
-                        .filter(|e| e.pos.distance(self.heroes[h].pos) <= 25.0)
-                        .map(|e| e.pos)
-                        .collect();
-                    (!far.is_empty()).then(|| far[self.rng_pick(far.len())])
-                })
-                .collect();
+            // Two other crowds: each clear of the first strike and of each other.
+            let mut others: Vec<V2> = Vec::new();
+            for _ in 0..2 {
+                let far: Vec<V2> = self
+                    .enemies
+                    .iter()
+                    .map(|e| e.pos)
+                    .filter(|p| p.distance(self.heroes[h].pos) <= 25.0)
+                    .filter(|p| {
+                        std::iter::once(center)
+                            .chain(others.iter().copied())
+                            .all(|c| p.distance(c) > spec.radius * 2.0)
+                    })
+                    .collect();
+                if far.is_empty() {
+                    break;
+                }
+                others.push(far[self.rng_pick(far.len())]);
+            }
             for at in others {
                 self.nova(
                     h,
@@ -998,6 +980,7 @@ impl World {
             st.chill = st
                 .chill
                 .max(control_secs(spec.chill, elite, boss).max(spec.chill * 0.5));
+            st.slow = st.slow.max(spec.slow);
         }
         let freeze = if freeze_roll {
             spec.freeze.max(FREEZE_SECS * 0.5)
@@ -1013,13 +996,17 @@ impl World {
             st.stun = st.stun.max(control_secs(spec.stun, elite, false));
         }
         if spec.burn > 0.0 {
+            // A faster burn (Quickened) ticks sooner for the same total; a faster tick rate
+            // (an upgrade) adds ticks of the same size.
             let speed = spec.dot_speed.max(0.1);
+            let every = 1.0 / (spec.tick_rate.max(0.1) * speed);
             let burn = Burn {
                 by,
                 ability: spec.ability,
-                dps: damage * spec.burn * spec.dot_mult / BURN_SECS * speed,
-                left: BURN_SECS / speed,
-                tick: 1.0,
+                dps: damage * spec.burn * spec.dot_mult / BURN_SECS,
+                left: BURN_SECS * spec.dot_secs / speed,
+                tick: every,
+                every,
                 contagion: spec.contagion,
             };
             match st
@@ -1055,7 +1042,7 @@ impl World {
             .status
             .burns
             .iter()
-            .filter(|b| b.by == by)
+            .filter(|b| b.by == by && b.left > 0.0)
             .cloned()
             .collect();
         if burns.is_empty() {
@@ -1221,6 +1208,9 @@ impl World {
         for e in &mut self.enemies {
             let st = &mut e.status;
             st.chill = (st.chill - DT).max(0.0);
+            if st.chill == 0.0 {
+                st.slow = 0.0;
+            }
             st.stun = (st.stun - DT).max(0.0);
             st.exposed = (st.exposed - DT).max(0.0);
             if st.freeze > 0.0 {
@@ -1238,15 +1228,19 @@ impl World {
                     st.winters = 0;
                 }
             }
+            // A burn that ran out last step goes now: one that ends with the tick that kills
+            // its enemy is still on it when its death is seen (Contagion, Living Wave).
+            st.burns.retain(|b| b.left > 0.0);
             for b in &mut st.burns {
                 b.tick -= DT;
                 if b.tick <= 0.0 {
-                    b.tick += 1.0;
-                    b.left -= 1.0;
-                    ticks.push((b.by, b.ability, e.id, b.dps));
+                    // The last tick deals only the share of a tick it has left.
+                    let share = (b.left / b.every).min(1.0);
+                    b.tick += b.every;
+                    b.left -= b.every;
+                    ticks.push((b.by, b.ability, e.id, b.dps * share));
                 }
             }
-            st.burns.retain(|b| b.left > 0.0);
             if let Some(bomb) = &mut st.bomb {
                 bomb.time -= DT;
                 if bomb.time <= 0.0 {
@@ -1334,7 +1328,11 @@ impl World {
                 let ground = &mut self.grounds[i];
                 ground.pos = pos;
                 ground.left = left;
-                ground.tick = if ticking { tick + 1.0 } else { tick };
+                ground.tick = if ticking {
+                    tick + 1.0 / g.spec.tick_rate.max(0.1)
+                } else {
+                    tick
+                };
             }
             if ticking {
                 let hit: Vec<u32> = self
@@ -1573,6 +1571,39 @@ impl World {
         }
     }
 
+    /// The boosts an upgrade card of `rarity` for hero `h`'s spell `ability` gives: as many as the
+    /// rarity allows, different, each one the spell's tags make sense of.
+    pub(super) fn roll_boosts(
+        &mut self,
+        h: usize,
+        ability: usize,
+        rarity: Rarity,
+    ) -> [Option<Boost>; 3] {
+        let mut out = [None; 3];
+        let Some(owned) = self.heroes[h]
+            .abilities
+            .iter()
+            .find(|o| o.ability == ability)
+            .cloned()
+        else {
+            return out;
+        };
+        let spec = self.spell_spec(h, &owned);
+        let kind = self.content.abilities[ability].kind;
+        let mut pool: Vec<Boost> = Boost::ALL
+            .into_iter()
+            .filter(|b| b.fits(&spec, kind, rarity))
+            .collect();
+        for slot in out.iter_mut().take(boost_lines(rarity)) {
+            if pool.is_empty() {
+                break;
+            }
+            let i = self.rng.index(pool.len());
+            *slot = Some(pool.swap_remove(i));
+        }
+        out
+    }
+
     /// The augment screen for hero `h`'s spell `ability`, if it waits at a milestone: its three
     /// capstones, or three general augments that fit it, leaning toward the tags the hero's other
     /// spells share.
@@ -1673,11 +1704,14 @@ pub(super) struct Death {
 /// The slowed speed of a Chilled enemy.
 pub(super) fn chilled(speed: f32, status: &Status) -> f32 {
     if status.chill > 0.0 {
-        speed * (1.0 - CHILL_SLOW)
+        speed * (1.0 - status.slow.max(CHILL_SLOW))
     } else {
         speed
     }
 }
+
+#[cfg(test)]
+mod augment_checks;
 
 #[cfg(test)]
 mod tests {
@@ -1750,6 +1784,7 @@ mod tests {
             last_hit: None,
             home: None,
             status: Status::default(),
+            act: Default::default(),
         });
         id
     }
@@ -1787,11 +1822,15 @@ mod tests {
         w.take_card(
             0,
             Card {
-                kind: CardKind::Upgrade(bolt),
+                kind: CardKind::Upgrade(bolt, [Some(Boost::Damage), None, None]),
                 rarity: Rarity::Common,
             },
         );
         assert_eq!(w.heroes[0].abilities[0].level, 5);
+        assert!(
+            w.heroes[0].abilities[0].mods.damage > 0.0,
+            "the boost was not applied"
+        );
         let offer = w.heroes[0].offers[0].clone();
         assert_eq!(offer.source, Source::Augment(bolt));
         assert_eq!(offer.cards.len(), 3);
@@ -1803,7 +1842,10 @@ mod tests {
         w.set_input(0, input(None, false, true));
         w.step();
         assert!(w.heroes[0].offers.is_empty());
-        assert!(!w.spells(0).contains(&CardKind::Upgrade(bolt)));
+        assert!(!w
+            .spells(0)
+            .iter()
+            .any(|k| matches!(k, CardKind::Upgrade(a, _) if *a == bolt)));
         // The next level-up brings it back, after the level-up's own hand.
         w.xp = xp_to_next(w.level);
         w.set_input(0, PlayerInput::default());
@@ -1820,7 +1862,7 @@ mod tests {
         w.take_card(
             0,
             Card {
-                kind: CardKind::Upgrade(bolt),
+                kind: CardKind::Upgrade(bolt, [None; 3]),
                 rarity: Rarity::Common,
             },
         );
@@ -1860,6 +1902,28 @@ mod tests {
             w.enemy(id).unwrap().pos.distance(at) < 0.05,
             "a frozen enemy moved"
         );
+    }
+
+    #[test]
+    fn cone_shapes_point_where_their_augment_says() {
+        // The hero faces +x. (augments, enemy offset, hit?)
+        let cases: [(&[Augment], f32, f32, bool); 6] = [
+            (&[], 4.0, 0.0, true),
+            (&[], -4.0, 0.0, false),
+            (&[Augment::Reversed], -4.0, 0.0, true),
+            (&[Augment::Reversed], 4.0, 0.0, false),
+            (&[Augment::FourWinds], 0.0, 4.0, true),
+            (&[Augment::FullCircle], 0.0, -4.0, true),
+        ];
+        for (augments, dx, dy, hit) in cases {
+            let mut w = mage();
+            spells(&mut w, &[("cone_of_cold", 5, augments)]);
+            w.heroes[0].facing = V2::new(1.0, 0.0);
+            let id = foe(&mut w, dx, dy, 1e6);
+            w.step();
+            let struck = w.enemy(id).unwrap().hp < 1e6;
+            assert_eq!(struck, hit, "{augments:?} at ({dx}, {dy})");
+        }
     }
 
     #[test]
@@ -1923,6 +1987,20 @@ mod tests {
         let id = foe(&mut w, 6.0, 0.0, 1e6);
         run(&mut w, 1.0);
         assert!(w.enemy(id).unwrap().status.chill > 0.0);
+    }
+
+    #[test]
+    fn a_tick_rate_upgrade_makes_a_ground_area_hit_more_often() {
+        let dealt = |ticks: f32| {
+            let mut w = mage();
+            spells(&mut w, &[("blizzard", 1, &[])]);
+            w.heroes[0].abilities[0].mods.ticks = ticks;
+            let id = foe(&mut w, 6.0, 0.0, 1e6);
+            run(&mut w, 4.0);
+            1e6 - w.enemy(id).unwrap().hp
+        };
+        let (plain, fast) = (dealt(0.0), dealt(1.0));
+        assert!(plain > 0.0 && fast > plain * 1.5, "{plain} vs {fast}");
     }
 
     #[test]

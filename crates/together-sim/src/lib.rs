@@ -15,6 +15,7 @@ mod content;
 mod interact;
 mod items;
 mod math;
+mod mechanics;
 pub mod messages;
 mod powerups;
 mod rng;
@@ -23,7 +24,10 @@ mod stats;
 mod world;
 
 pub use augments::{milestone_rank, Augment, Milestone, Requires};
-pub use cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
+pub use cards::{
+    ability_stats, boost_lines, fallback_gold, AbilityStats, Boost, Card, CardKind, Rarity,
+    SpellMods, MAX_RANK,
+};
 pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
     WeaponDef, ZoneDef,
@@ -33,9 +37,12 @@ pub use interact::{
 };
 pub use items::{ward_cooldown, Item};
 pub use math::V2;
+pub use mechanics::{Mechanic, Shape};
 pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
-pub use spell::{CastSpec, Tag, Tags, Targeting};
+pub use spell::{
+    describe, CastSpec, Cone, Tag, Tags, Targeting, BASE_CRIT, BURN_SECS, PLACEHOLDERS,
+};
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
 pub use world::{
     shield_size, status_bits, xp_to_next, Enemy, EnemyState, Event, Gem, Hero, HeroPose,

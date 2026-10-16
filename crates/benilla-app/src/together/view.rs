@@ -229,10 +229,16 @@ pub(super) fn apply_events(
     mut fx: Fx,
     mut cooldowns: ResMut<crate::spell::Cooldowns>,
     world_point: WorldPoint,
+    mut mechanics: ResMut<super::hazards::Pending>,
 ) {
     let fallback_y = sim.world.zone().center[2];
     for event in sim.world.drain_events() {
         match event {
+            // Elites' and bosses' mechanics are drawn by `super::hazards`.
+            e @ (Event::Telegraph { .. }
+            | Event::TelegraphEnd { .. }
+            | Event::EnemyCast { .. }
+            | Event::Shoved { .. }) => mechanics.0.push(e),
             Event::Cast {
                 caster,
                 visual,

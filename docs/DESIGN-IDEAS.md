@@ -40,9 +40,9 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 3 | Gold, chests (price rises per open), a goblin merchant | Megabonk, Azeroth Survivors | 🟢 Greenlit · 🧪 | Gold, Treasure Chests and the Goblin Merchant built on the Megabonk branch. Gold also switches on dormant gear (9f). |
 | 4 | Elites (drop chests) and a stage boss on a timer | Azeroth Survivors, VS, Megabonk | 🟢 Greenlit · 🧪 | Elites and a boss per zone (every 4 minutes) built on the Megabonk branch. Bosses are also where meta equipment drops (9a). |
 | 5 | Risk for reward: greed shrine, cursed altar pacts (boon + bane), cursed tome, boss curse | Megabonk | 🟢 Greenlit · 🧪 | Shrine of Greed, Cursed Altar pacts and the Blood Shrine (boss curse) built on the Megabonk branch; the cursed tome is not. |
-| 6 | Ground pickups: food (heal), magnet (all XP), bomb (clear screen) | Vampire Survivors | 🟢 Greenlit · 🧪 | The magnet exists on the Megabonk branch as a Moonwell shrine; food and bomb do not. WoW flavour: Conjured bread, a Seaforium charge. |
-| 7a | **Freeze** the card screen | Your idea | 🟢 Greenlit | Freeze as often as you like. The card you pick from a frozen hand is not replaced, so the next level-up offers one card fewer; unfreezing deals a fresh hand. See [G](#g-the-card-screen-freeze-and-banish). |
-| 7b | **Banish** a spell from the pool, once per run | Vampire Survivors | 🟢 Greenlit | |
+| 6 | Ground pickups: food (heal), magnet (all XP), bomb (clear screen) | Vampire Survivors | ✅ Done | Food is the health shard (a turkey leg from pots), the bomb is the Arcane Detonation power-up, the magnet the Magnet power-up. WoW flavour: Conjured bread, a Seaforium charge. |
+| 7a | **Freeze** the card screen | Your idea | ✅ Built (Freeze button or T) | Freeze as often as you like. The card you pick from a frozen hand is not replaced, so the next level-up offers one card fewer; unfreezing deals a fresh hand. See [G](#g-the-card-screen-freeze-and-banish). |
+| 7b | **Banish** a spell from the pool, once per run | Vampire Survivors | ✅ Built (Banish button or G, then a new-spell card) | |
 | 8 | Map events: challenge shrines, swarm waves, statues with choice events | Megabonk, VS | 🟢 Greenlit · 🧪 | Titan Shrines (tome choice), Golden Titan Shrine and Challenge Idol (elite pack, then a cache) built on the Megabonk branch; swarm waves are not. |
 | 9a | **Meta equipment**: armor and weapons, boss drops, rarities, item level by zone, Unique effects | Azeroth Survivors, Battleborn, Diablo | 🟢 Greenlit | Head, shoulders, cape, chest, bracers, hands, legs, waist, boots, weapons. Brought into the run dormant (9f). See [D](#d-progression-between-runs). |
 | 9b | **Talent web** between runs (one shared Path of Exile-style web) | Path of Exile | 🟢 Start here | Try the web first, revisit spec trees if it does not work. It must support the frostfire benchmark build ([D](#d-progression-between-runs)). |
@@ -59,9 +59,9 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 | 11a | **Every build needs a survival answer**, not a tank or healer: distance, control, mitigation, sustain, escape, kill speed | Your idea | 🟢 Greenlit | Each archetype is softly countered by some elite or boss, so none is always right. See [I](#i-surviving-solo-without-a-tank-or-healer). |
 | 11b | **Charges**: heals and blocks cast on cooldown bank charges that spend themselves when needed | Your idea; WoW's Prayer of Mending, Earth Shield, Holy Shield | 🟢 Greenlit | Removes the "want to get hit" incentive; stacks show on the WoW buff frame. Open: every heal and block spell, or only some. |
 | 11c | **Baseline damage for heal and tank builds**: overflow and retaliation | — | 🟢 Agreed | A full heal bank turns further heals into Holy damage; blocked, dodged or absorbed hits deal damage back. No item needed. A per-enemy attack limit was considered and dropped. |
-| 11d | **Knockback and death grip**: player spells push enemies; some elites and bosses push or pull you, always telegraphed | Megabonk, WoW bosses | 🟢 Greenlit | Never from ordinary enemies. |
-| 11e | **Elite and boss mechanics**: charges, casters, slams, leaps, ground zones, marked areas, summoners and healers, things to run to | WoW raids, Mythic+ | 🟢 Greenlit | **Every mechanic can be dodged by moving** (agreed). Crowd control on elites has diminishing returns. See [I](#i-surviving-solo-without-a-tank-or-healer). |
-| 11f | **Boss bar** at the top of the screen: name, health, and one sentence explaining the mechanic | WoW boss mods, Megabonk | 🟢 Agreed | Elites get a sentence on their target frame too. |
+| 11d | **Knockback and death grip**: player spells push enemies; some elites and bosses push or pull you, always telegraphed | Megabonk, WoW bosses | ✅ Built (first pass) | Never from ordinary enemies. Slams throw heroes out of their circle; bosses death grip. |
+| 11e | **Elite and boss mechanics**: charges, casters, slams, leaps, ground zones, marked areas, summoners and healers, things to run to | WoW raids, Mythic+ | ✅ Built (first pass) | Charge, Caster, Slam, Leap, Frenzy, Healer, Summoner on elites (by creature, in `content/enemies.ron`); bosses add fire Patches and Death Grip. Freezing or stunning an elite while it winds up calls the mechanic off. Not yet: diminishing returns, things to run to. **Every mechanic can be dodged by moving** (agreed). Crowd control on elites has diminishing returns. See [I](#i-surviving-solo-without-a-tank-or-healer). |
+| 11f | **Boss bar** at the top of the screen: name, health, and one sentence explaining the mechanic | WoW boss mods, Megabonk | ✅ Built | Elites still to get a sentence on their target frame. |
 | 11g | **Affixes** from Mythic+ and Project Ascension's Manastorm: vortex, slowing field, sanguine, bolstering, volcanic, storming, spiteful, explosive | Mythic+, Ascension | 🟢 Greenlit | Open: chosen before the run, owned by certain bosses, or added in a run's later stages. See [I](#i-surviving-solo-without-a-tank-or-healer). |
 | 12 | Co-op synergies across players (one player's root enables another's Shatter) | — | 💡 New idea | Falls out of tags for free. See [H](#h-co-op-only-ideas). |
 | — | Talent trees that lock a run into one spec before it starts | Azeroth Survivors | ⛔ Not doing | Takes away in-run choice: frost talents make every non-frost spell a trap pick. |
@@ -79,6 +79,14 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 > **Agreed: upgrades scale with rarity, as in Megabonk.** A duplicate or upgrade raises the existing
 > tome or item, by how much depending on the card's rarity: "+5% damage" upgraded by a Common card
 > goes to 10%, by a Legendary card to 21%.
+>
+> **Built: spell upgrades work the Megabonk way.** An upgrade card shows only what it gives
+> ("Cooldown -9%"), rolled from what the spell's tags allow: damage and cooldown always, range for
+> single-target spells, area for Area/Cone/Ground, duration for Ground and DoT, tick speed for DoT,
+> shield size for Shield, projectiles for Projectile (Rare and up), crit chance and crit damage for
+> Direct, slow for Slow, freeze length for Freeze. Common and Uncommon cards give one line, Rare and
+> Epic two, Legendary three, each bigger the rarer. Hovering a card's spell icon shows the spell's
+> tooltip with its upgrades so far; holding Shift over any spell adds its augments' descriptions.
 
 **Tomes** are numbers and stack freely; **items** are effects and compete for slots.
 
@@ -104,7 +112,7 @@ single spell's name. Tags appear as chips on the card, like Path of Exile's gem 
 | Family | Tags |
 |---|---|
 | School | Physical, Fire, Frost, Arcane, Nature, Shadow, Holy (and pairs from conversion: Frostfire, Shadowflame…) |
-| Delivery | Projectile, Melee, Chain, Area (nova), Ground (lasting zone), Beam, Summon, Aura, Totem, Shield |
+| Delivery | Projectile, Melee, Chain, Area (nova), Cone, Ground (lasting zone), Beam, Summon, Aura, Totem, Shield |
 | Effect | Direct, Damage over time, Slow, Root, Freeze, Stun, Fear, Knockback, Heal |
 
 Examples:

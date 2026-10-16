@@ -40,12 +40,14 @@ pub enum Stat {
     GoldGain,
     /// A better chance of a critical strike, which hits twice as hard.
     Crit,
+    /// Harder critical strikes: 0.1 makes them 210% instead of 200%.
+    CritDamage,
     /// More targets for every missile and strike.
     Projectiles,
 }
 
 impl Stat {
-    pub const COUNT: usize = 13;
+    pub const COUNT: usize = 14;
 
     pub const ALL: [Stat; Stat::COUNT] = [
         Stat::Damage,
@@ -60,6 +62,7 @@ impl Stat {
         Stat::XpGain,
         Stat::GoldGain,
         Stat::Crit,
+        Stat::CritDamage,
         Stat::Projectiles,
     ];
 
@@ -78,6 +81,7 @@ impl Stat {
         Stat::XpGain,
         Stat::GoldGain,
         Stat::Crit,
+        Stat::CritDamage,
     ];
 
     pub fn name(self) -> &'static str {
@@ -94,6 +98,7 @@ impl Stat {
             Stat::XpGain => "Experience",
             Stat::GoldGain => "Gold",
             Stat::Crit => "Critical Strike",
+            Stat::CritDamage => "Critical Damage",
             Stat::Projectiles => "Projectiles",
         }
     }
@@ -113,6 +118,7 @@ impl Stat {
             Stat::XpGain => "Tome of Wisdom",
             Stat::GoldGain => "Tome of Commerce",
             Stat::Crit => "Tome of Precision",
+            Stat::CritDamage => "Tome of Ferocity",
             Stat::Projectiles => "Tome of Multitudes",
         }
     }
@@ -132,6 +138,7 @@ impl Stat {
             Stat::XpGain => 0.08,
             Stat::GoldGain => 0.12,
             Stat::Crit => 0.03,
+            Stat::CritDamage => 0.10,
             Stat::Projectiles => 1.0,
         }
     }
@@ -181,6 +188,7 @@ impl Stat {
             Stat::XpGain => "experience",
             Stat::GoldGain => "gold",
             Stat::Crit => "critical strike chance",
+            Stat::CritDamage => "critical strike damage",
         };
         format!("{sign}{:.0}% {noun}", a * 100.0)
     }

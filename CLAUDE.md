@@ -14,7 +14,11 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
     circle, placement), `items.rs` (passive items and their copy limits), `powerups.rs` (party
     power-ups, health shards, pot loot), `world/arena.rs` (the arena's upkeep: shrines and pots
     coming back, elite camps, pickups, power-ups running out). Cards (`cards.rs`) are spells,
-    tomes (4 slots, rank 5), pacts, items or the gold/heal/reroll fallback. Gold: every coin goes
+    tomes (4 slots, rank 5), pacts, items or the gold/heal/reroll fallback. A spell's upgrade card
+    carries 1-3 rolled `Boost`s (damage, cooldown, range, area, duration, tick speed, shield,
+    projectiles, crit, crit damage, slow, freeze), only those its tags allow, more and bigger the
+    rarer; they add up in `Owned::mods` (`SpellMods`), applied in `spell_spec` before augments.
+    Rank only counts upgrades toward the augment milestones (5, 10, 15). Gold: every coin goes
     into every hero's own purse; each hero pays for their own chests.
 - `crates/nightfall-sim/` — Nightfall's rules: a second game, a co-op stealth extraction game in
   Duskwood at night (`docs/superpowers/specs/2026-10-16-nightfall-design.md`). Headless, 30 Hz, no
@@ -29,7 +33,9 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
 - `content/*.ron` — classes, abilities, enemies, zones, and `rules.ron` (tome slots and ranks, item
   copies, shrine and elite-camp timers: what a game mode may set its own way). Read from disk at
   startup, so edits need no rebuild. `crates/together-sim/tests/shipped_content.rs` checks they
-  parse and play.
+  parse and play. An ability's description holds placeholders (`{damage}`, `{range}`, `{area}`,
+  `{targets}`, `{duration}`, ...; `together_sim::PLACEHOLDERS`) that `describe` fills from the
+  spell's cast, so cards and tooltips always give its real numbers.
 - `crates/benilla-app/src/together/` — the client: steps the sim and draws it with the engine's
   unit, spell-visual and combat-text systems. It decides nothing about the game.
   - The real WoW 1.12 UI (FrameXML from the MPQ) and character controller are ON (no `CaptureMode`):
@@ -78,6 +84,14 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `TOGETHER_XP_RATE=<n>` multiplies experience; `TOGETHER_LOADOUT=frostbolt@4,fireball@9+frostfire`
   starts the host's hero with those spells, ranks and augments (names as on the cards, any case);
   `TOGETHER_CLASS` beats the menu's saved pick. The mage's movement ability is Blink on F (30 s).
+  The menu's Dev panel (`together/dev.rs`, saved in `benilla-config/together-dev-run.txt`) sets
+  experience, hero and enemy health, enemy damage, horde size and the rank new spells start at, for
+  runs this player starts or hosts; `TOGETHER_DEV_PANEL=1` opens it. Spell tooltips are
+  `together/tooltip.rs` (WoW's own action-button tooltip is turned off in `ui.rs`);
+  `TOGETHER_TIP_SLOT=<n>` shows button n's for a test shot (`TOGETHER_TIP_SHIFT=1` as if Shift
+  were held). The tomes and items carried are a strip of icons under the player frame, and the
+  stat sheet opens with its Stats button or Tab (`together/inventory.rs`; `TOGETHER_STATS=1`
+  opens it).
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries

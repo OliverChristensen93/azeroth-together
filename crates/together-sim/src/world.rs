@@ -13,6 +13,7 @@
 
 mod arena;
 mod combat;
+mod hazards;
 
 pub use combat::{shield_size, status_bits, HeroSpells, Status};
 
@@ -23,7 +24,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::augments::{milestone_rank, Augment, Milestone};
-use crate::cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
+use crate::cards::{
+    ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, SpellMods, MAX_RANK,
+};
 use crate::content::{AbilityKind, Content};
 use crate::interact::{
     chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
@@ -34,6 +37,7 @@ use crate::items::{
     SHARD_REACH, SHARD_SHARE,
 };
 use crate::math::V2;
+use crate::mechanics::{Mechanic, Shape};
 use crate::powerups::{Pickup, PickupKind, PotLoot, PowerUp, BERSERK, BLOODLUST, SWIFTNESS};
 use crate::rng::Rng;
 use crate::spell::CastSpec;
@@ -55,12 +59,14 @@ pub const MAX_ABILITIES: usize = 6;
 const HAND: usize = 3;
 /// Free re-deals of a hand, per run.
 const REROLLS: u32 = 3;
+/// Spells a hero can banish from the card pool in a run.
+const BANISHES: u8 = 1;
 /// A hero's body radius, which enemies stop at.
 const HERO_RADIUS: f32 = 0.7;
 /// Within this many yards of a hero an experience gem is collected, before [`Stat::Pickup`].
 const MAGNET: f32 = 4.5;
 /// The chance of a critical strike, before [`Stat::Crit`].
-const CRIT_CHANCE: f32 = 0.05;
+const CRIT_CHANCE: f32 = crate::spell::BASE_CRIT;
 /// The chance an enemy's gem also carries gold.
 const GOLD_CHANCE: f32 = 0.3;
 /// A gem's gold, per point of the enemy's experience.
@@ -139,6 +145,12 @@ pub struct PlayerInput {
     /// landed (augments act on where it left and where it landed).
     #[serde(default)]
     pub dash: bool,
+    /// Freeze the level-up hand in front, or unfreeze it.
+    #[serde(default)]
+    pub freeze: bool,
+    /// Banish the spell on this card of the hand in front, for the rest of the run.
+    #[serde(default)]
+    pub banish: Option<u8>,
     /// Where the player's own client put the hero, overriding `move_dir` and `jump`. A client
     /// running WoW's character controller moves its hero itself, as WoW clients do, and reports
     /// the pose; the world only keeps it inside the arena.
@@ -182,6 +194,26 @@ pub enum Event {
         amount: f32,
         crit: bool,
     },
+    /// An elite or boss marked the ground (`shape` laid at `pos`) for `kind`, going off in
+    /// `secs`.
+    Telegraph {
+        id: u32,
+        kind: Mechanic,
+        pos: V2,
+        shape: Shape,
+        secs: f32,
+    },
+    /// A marking went off, or was called off: it goes.
+    TelegraphEnd { id: u32 },
+    /// An elite or boss cast `visual` at `targets`, or at the ground at `dest`.
+    EnemyCast {
+        enemy: u32,
+        visual: u32,
+        targets: Vec<Target>,
+        dest: Option<V2>,
+    },
+    /// A mechanic threw or pulled hero `hero` to `to`; its own client moves it there.
+    Shoved { hero: PlayerId, to: V2 },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -293,6 +325,9 @@ pub struct Owned {
     /// Casts made in the current burst of its charges.
     #[serde(default)]
     pub burst: u32,
+    /// What its upgrade cards have added up to.
+    #[serde(default)]
+    pub mods: SpellMods,
 }
 
 impl Owned {
@@ -306,6 +341,7 @@ impl Owned {
             augments: Vec::new(),
             casts: 0,
             burst: 0,
+            mods: SpellMods::default(),
         }
     }
 
@@ -331,7 +367,7 @@ impl Owned {
     /// Its numbers now, from its rank and bonus alone; [`AbilityStats::with`] adds the hero's
     /// stats.
     pub fn stats(&self, def: &crate::content::AbilityDef) -> AbilityStats {
-        ability_stats(def, self.level, self.bonus)
+        ability_stats(def, self.bonus)
     }
 }
 
@@ -378,6 +414,18 @@ pub struct Hero {
     pub offers: Vec<Offer>,
     /// Re-deals of a hand left this run.
     pub rerolls: u32,
+    /// Its level-up hand is frozen: what is left of it once a card is taken comes back at the
+    /// next level-up, instead of a new hand.
+    #[serde(default)]
+    pub frozen: bool,
+    /// A frozen hand's cards, waiting for the next level-up.
+    #[serde(default)]
+    pub frozen_hand: Vec<Card>,
+    /// Banishes left this run, and the spells banished: they never come up again.
+    #[serde(default)]
+    pub banishes: u8,
+    #[serde(default)]
+    pub banished: Vec<usize>,
     pub alive: bool,
     /// Fallen: how far a friend standing by has raised it, 0 to 1.
     pub revive: f32,
@@ -438,6 +486,9 @@ pub struct Enemy {
     /// Chilled, Frozen, Stunned, Burning and the rest.
     #[serde(skip)]
     pub status: Status,
+    /// An elite's or boss's mechanics: their cooldowns, a wind-up, a charge under way.
+    #[serde(skip)]
+    act: hazards::Act,
 }
 
 /// A spot an elite guards. While its elite lives, `elite` is its id; once it dies, a new one
@@ -571,6 +622,8 @@ pub struct World {
     pending: Vec<PendingHit>,
     /// Blizzards, burning ground and Frozen Orbs.
     grounds: Vec<combat::Ground>,
+    /// Ground elites and bosses have marked, about to go off.
+    hazards: Vec<hazards::Hazard>,
     /// Spells augments asked for, run after the cast that set them off; and echoes, by the time
     /// they are due.
     triggers: Vec<combat::Trigger>,
@@ -591,6 +644,8 @@ pub struct World {
     pub next_boss: f32,
     /// Experience earned per experience picked up: 1 in a normal run.
     pub xp_rate: f32,
+    /// The rank a newly learned spell starts at: 1 in a normal run.
+    pub learn_rank: u8,
 }
 
 impl World {
@@ -617,6 +672,7 @@ impl World {
             pot_timer: arena::POT_EVERY,
             pending: Vec::new(),
             grounds: Vec::new(),
+            hazards: Vec::new(),
             triggers: Vec::new(),
             delayed: Vec::new(),
             last_target: None,
@@ -630,6 +686,7 @@ impl World {
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
             xp_rate: 1.0,
+            learn_rank: 1,
         };
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
@@ -717,6 +774,10 @@ impl World {
             }],
             offers: Vec::new(),
             rerolls: REROLLS,
+            frozen: false,
+            frozen_hand: Vec::new(),
+            banishes: BANISHES,
+            banished: Vec::new(),
             alive: true,
             revive: 0.0,
             ward: 0.0,
@@ -825,6 +886,8 @@ impl World {
         held.skip |= input.skip;
         held.jump |= input.jump;
         held.dash |= input.dash;
+        held.freeze |= input.freeze;
+        held.banish = input.banish.or(held.banish);
     }
 
     /// `player` left: their hero goes, and the run no longer waits on them.
@@ -910,6 +973,7 @@ impl World {
                     last_hit: None,
                     home: None,
                     status: Status::from_bits(s.status),
+                    act: Default::default(),
                 })
             })
             .collect();
@@ -960,6 +1024,7 @@ impl World {
         self.spawn_enemies();
         self.spawn_bosses();
         self.move_enemies();
+        self.tend_mechanics();
         self.cast_abilities();
         self.land_hits();
         self.tend_grounds();
@@ -989,7 +1054,19 @@ impl World {
                 std::mem::take(&mut input.reroll),
                 std::mem::take(&mut input.skip),
             );
+            let (freeze, banish) = (std::mem::take(&mut input.freeze), input.banish.take());
             if self.heroes[h].offers.is_empty() {
+                continue;
+            }
+            let levelling = self.heroes[h].offers[0].source == Source::LevelUp;
+            if freeze && levelling {
+                let hero = &mut self.heroes[h];
+                hero.frozen = !hero.frozen;
+                hero.frozen_hand.clear();
+                continue;
+            }
+            if let Some(i) = banish {
+                self.banish(h, usize::from(i));
                 continue;
             }
             let capstones = matches!(
@@ -998,21 +1075,135 @@ impl World {
             );
             if reroll && self.heroes[h].rerolls > 0 && !capstones {
                 self.heroes[h].rerolls -= 1;
+                // A fresh hand is no longer the frozen one.
+                if levelling {
+                    self.heroes[h].frozen = false;
+                }
                 let source = self.heroes[h].offers[0].source;
                 let hand = self.deal(h, source);
                 self.heroes[h].offers[0] = hand;
                 continue;
             }
             if skip {
-                self.heroes[h].offers.remove(0);
+                let hand = self.heroes[h].offers.remove(0);
+                if levelling && self.heroes[h].frozen {
+                    self.carry_frozen(h, hand.cards);
+                }
+                self.redeal_stale(h);
                 continue;
             }
             let hand = &self.heroes[h].offers[0];
             let Some(&card) = pick.and_then(|p| hand.cards.get(usize::from(p))) else {
                 continue;
             };
-            self.heroes[h].offers.remove(0);
+            let hand = self.heroes[h].offers.remove(0);
+            if levelling && self.heroes[h].frozen {
+                // The card taken is not replaced: the next hand is one card smaller.
+                let mut rest = hand.cards;
+                if let Some(i) = pick.map(usize::from).filter(|&i| i < rest.len()) {
+                    rest.remove(i);
+                }
+                self.carry_frozen(h, rest);
+            }
             self.take_card(h, card);
+            self.redeal_stale(h);
+        }
+    }
+
+    /// A frozen hand's `rest` held for hero `h`'s next level-up: the next level-up hand already
+    /// waiting takes it, else it waits for one. Nothing left unfreezes.
+    fn carry_frozen(&mut self, h: usize, rest: Vec<Card>) {
+        let hero = &mut self.heroes[h];
+        if rest.is_empty() {
+            hero.frozen = false;
+            hero.frozen_hand.clear();
+            return;
+        }
+        match hero
+            .offers
+            .iter_mut()
+            .find(|o| o.source == Source::LevelUp)
+        {
+            Some(next) => next.cards = rest,
+            None => hero.frozen_hand = rest,
+        }
+    }
+
+    /// Hero `h` banishes the spell on card `i` of the hand in front, if it has a banish left
+    /// and the card offers a spell to learn: it never comes up again, and the card is replaced
+    /// (a frozen hand just loses it).
+    fn banish(&mut self, h: usize, i: usize) {
+        let hero = &self.heroes[h];
+        let Some(CardKind::Learn(ability)) = hero.offers[0].cards.get(i).map(|c| c.kind) else {
+            return;
+        };
+        if hero.banishes == 0 {
+            return;
+        }
+        let source = hero.offers[0].source;
+        let hero = &mut self.heroes[h];
+        hero.banishes -= 1;
+        hero.banished.push(ability);
+        if hero.frozen && source == Source::LevelUp {
+            hero.offers[0].cards.remove(i);
+            if !hero.offers[0].cards.is_empty() {
+                return;
+            }
+            hero.frozen = false;
+        }
+        let hand = self.deal(h, source);
+        self.heroes[h].offers[0] = hand;
+    }
+
+    /// Hero `h`'s waiting level-up hands dealt anew where a card no longer makes sense: a spell
+    /// just learned, a full spell bar, a spell waiting at its augment, a tome at its last rank.
+    /// Several level-ups deal their hands at once, so an earlier pick can spoil a later hand.
+    fn redeal_stale(&mut self, h: usize) {
+        let mut i = 0;
+        while i < self.heroes[h].offers.len() {
+            let source = self.heroes[h].offers[i].source;
+            if source != Source::LevelUp {
+                i += 1;
+                continue;
+            }
+            let valid: Vec<bool> = self.heroes[h].offers[i]
+                .cards
+                .iter()
+                .map(|c| self.still_valid(h, c.kind))
+                .collect();
+            if valid.iter().all(|&v| v) {
+                i += 1;
+                continue;
+            }
+            // A frozen hand keeps what still makes sense.
+            if self.heroes[h].frozen {
+                let mut keep = valid.into_iter();
+                let offer = &mut self.heroes[h].offers[i];
+                offer.cards.retain(|_| keep.next().unwrap_or(true));
+                if !offer.cards.is_empty() {
+                    i += 1;
+                    continue;
+                }
+                self.heroes[h].frozen = false;
+            }
+            let hand = self.deal(h, source);
+            if hand.cards.is_empty() {
+                self.heroes[h].offers.remove(i);
+            } else {
+                self.heroes[h].offers[i] = hand;
+                i += 1;
+            }
+        }
+    }
+
+    /// Whether a card dealt earlier still makes sense for hero `h`: a spell it can still learn
+    /// or raise, a tome it can still take.
+    fn still_valid(&self, h: usize, kind: CardKind) -> bool {
+        match kind {
+            CardKind::Learn(_) => self.spells(h).contains(&kind),
+            CardKind::Upgrade(a, _) => self.spells(h).contains(&CardKind::Upgrade(a, [None; 3])),
+            CardKind::Tome(_) => self.tomes(h, true).contains(&kind),
+            _ => true,
         }
     }
 
@@ -1020,13 +1211,20 @@ impl World {
     fn take_card(&mut self, h: usize, card: Card) {
         let hero = &mut self.heroes[h];
         match card.kind {
-            CardKind::Learn(ability) => hero
-                .abilities
-                .push(Owned::new(ability, card.rarity.learn_bonus())),
-            CardKind::Upgrade(ability) => {
+            CardKind::Learn(ability) => {
+                hero.abilities.push(Owned {
+                    level: self.learn_rank.clamp(1, MAX_RANK),
+                    ..Owned::new(ability, card.rarity.learn_bonus())
+                });
+                // A spell learned at a milestone's rank (a test run's) shows its screen next.
+                self.queue_augments(h, true);
+            }
+            CardKind::Upgrade(ability, boosts) => {
                 if let Some(owned) = hero.abilities.iter_mut().find(|o| o.ability == ability) {
                     owned.level = (owned.level + 1).min(MAX_RANK);
-                    owned.bonus += card.rarity.upgrade_bonus();
+                    for boost in boosts.into_iter().flatten() {
+                        owned.mods.add(boost, boost.amount(card.rarity));
+                    }
                 }
                 // A milestone reached: its augment screen comes next.
                 self.queue_augments(h, true);
@@ -1309,6 +1507,7 @@ impl World {
             last_hit: None,
             home: None,
             status: Status::default(),
+            act: Default::default(),
         });
         id
     }
@@ -1343,6 +1542,7 @@ impl World {
             }
         }
         let mut swings = Vec::new();
+        let content = self.content.clone();
         for (i, e) in self.enemies.iter_mut().enumerate() {
             let (player, target) = living
                 .iter()
@@ -1368,17 +1568,36 @@ impl World {
                 e.pos += shove[i] * (DT * 8.0).min(0.5);
                 continue;
             }
-            e.facing = to.normalize_or_zero();
-            e.moving = !contact;
-            let step = if contact {
-                V2::ZERO
+            // A charge or leap under way, or a wind-up while its telegraph is up.
+            if World::dash_step(e) {
+                continue;
+            }
+            if e.act.windup > 0.0 {
+                e.act.windup -= DT;
+                e.moving = false;
+                continue;
+            }
+            let mechanics = &content.enemies[e.def].mechanics;
+            let acts = e.elite || e.boss;
+            let frenzied = acts && e.hp < e.max_hp * 0.5 && mechanics.contains(&Mechanic::Frenzy);
+            // A caster keeps its distance and only casts.
+            let keep = if acts && mechanics.contains(&Mechanic::Caster) {
+                hazards::CASTER_KEEP
             } else {
-                e.facing * (combat::chilled(e.speed, &e.status) * DT)
+                0.0
+            };
+            let speed = e.speed * if frenzied { hazards::FRENZY_SPEED } else { 1.0 };
+            e.facing = to.normalize_or_zero();
+            e.moving = !contact && dist > keep;
+            let step = if e.moving {
+                e.facing * (combat::chilled(speed, &e.status) * DT)
+            } else {
+                V2::ZERO
             };
             e.pos += step + shove[i] * (DT * 8.0).min(0.5);
             e.attack_cd -= DT;
             if contact && e.attack_cd <= 0.0 {
-                e.attack_cd = 1.3;
+                e.attack_cd = if frenzied { hazards::FRENZY_SWING } else { 1.3 };
                 swings.push((e.id, player, e.damage));
             }
         }
@@ -1688,6 +1907,14 @@ impl World {
 
     /// A new hand from `source` for hero `h`, if there is anything to deal.
     fn offer(&mut self, h: usize, source: Source) {
+        let hero = &mut self.heroes[h];
+        if source == Source::LevelUp && hero.frozen && !hero.frozen_hand.is_empty() {
+            let cards = std::mem::take(&mut hero.frozen_hand);
+            hero.offers.push(Offer { cards, source });
+            // Anything it held that no longer makes sense goes.
+            self.redeal_stale(h);
+            return;
+        }
         let offer = self.deal(h, source);
         if !offer.cards.is_empty() {
             self.heroes[h].offers.push(offer);
@@ -1718,7 +1945,7 @@ impl World {
             } else {
                 self.rng.index(options.len())
             };
-            let kind = options.swap_remove(i);
+            let mut kind = options.swap_remove(i);
             let rolled = Rarity::roll(&mut self.rng, luck);
             let rarity = match (kind, source) {
                 (CardKind::Item(item), _) => item.rarity(),
@@ -1728,6 +1955,9 @@ impl World {
                 }
                 _ => rolled,
             };
+            if let CardKind::Upgrade(ability, _) = kind {
+                kind = CardKind::Upgrade(ability, self.roll_boosts(h, ability, rarity));
+            }
             cards.push(Card { kind, rarity });
         }
         // Nothing left worth dealing: something useful rather than a short hand.
@@ -1841,11 +2071,13 @@ impl World {
                 let key = &self.content.abilities[o.ability].key;
                 o.awaiting(!Augment::capstones_of(key).is_empty()).is_none()
             })
-            .map(|o| CardKind::Upgrade(o.ability))
+            .map(|o| CardKind::Upgrade(o.ability, [None; 3]))
             .collect();
         if hero.abilities.len() < MAX_ABILITIES {
             for &ability in &class.pool_ix {
-                if !hero.abilities.iter().any(|o| o.ability == ability) {
+                if !hero.abilities.iter().any(|o| o.ability == ability)
+                    && !hero.banished.contains(&ability)
+                {
                     options.push(CardKind::Learn(ability));
                 }
             }
@@ -2041,6 +2273,7 @@ mod tests {
             last_hit: None,
             home: None,
             status: Status::default(),
+            act: Default::default(),
         });
     }
 
@@ -2235,7 +2468,7 @@ mod tests {
         let card = offer.cards[0];
         let (want_level, want_bonus) = match card.kind {
             CardKind::Learn(_) => (1, card.rarity.learn_bonus()),
-            CardKind::Upgrade(_) => (2, card.rarity.upgrade_bonus()),
+            CardKind::Upgrade(..) => (2, 0.0),
             CardKind::Tome(stat) => {
                 assert!((hero.stats.get(stat) - stat.tome_amount(card.rarity)).abs() < 1e-6);
                 return;
@@ -2274,6 +2507,116 @@ mod tests {
         assert_eq!(mirror.hero(1).unwrap().name, "Friend");
         assert_eq!(mirror.hero(1).unwrap().race, 4);
         assert_eq!(mirror.paused(), host.paused());
+    }
+
+    /// A level-up hand of tomes for hero 0, so taking one spoils nothing.
+    fn tome_hand() -> Offer {
+        Offer {
+            cards: [Stat::Damage, Stat::Area, Stat::Luck]
+                .into_iter()
+                .map(|s| Card {
+                    kind: CardKind::Tome(s),
+                    rarity: Rarity::Common,
+                })
+                .collect(),
+            source: Source::LevelUp,
+        }
+    }
+
+    fn press(w: &mut World, input: PlayerInput) {
+        w.queue_input(0, input);
+        w.step();
+    }
+
+    #[test]
+    fn a_frozen_hand_comes_back_one_card_smaller() {
+        let mut w = world();
+        w.heroes[0].offers = vec![tome_hand()];
+        press(&mut w, PlayerInput { freeze: true, ..Default::default() });
+        assert!(w.heroes[0].frozen);
+        press(&mut w, PlayerInput { pick: Some(0), ..Default::default() });
+        assert!(w.heroes[0].offers.is_empty());
+        w.offer(0, Source::LevelUp);
+        let kinds: Vec<CardKind> = w.heroes[0].offers[0].cards.iter().map(|c| c.kind).collect();
+        assert_eq!(
+            kinds,
+            [CardKind::Tome(Stat::Area), CardKind::Tome(Stat::Luck)]
+        );
+    }
+
+    #[test]
+    fn unfreezing_deals_a_fresh_hand_next_time() {
+        let mut w = world();
+        w.heroes[0].offers = vec![tome_hand()];
+        press(&mut w, PlayerInput { freeze: true, ..Default::default() });
+        press(&mut w, PlayerInput { freeze: true, ..Default::default() });
+        assert!(!w.heroes[0].frozen);
+        press(&mut w, PlayerInput { pick: Some(0), ..Default::default() });
+        assert!(w.heroes[0].frozen_hand.is_empty());
+    }
+
+    #[test]
+    fn a_banished_spell_never_comes_up_again() {
+        let mut w = world();
+        let learn = w
+            .spells(0)
+            .into_iter()
+            .find(|k| matches!(k, CardKind::Learn(_)))
+            .expect("a spell to learn");
+        let CardKind::Learn(ability) = learn else {
+            unreachable!()
+        };
+        w.heroes[0].offers = vec![Offer {
+            cards: vec![Card {
+                kind: learn,
+                rarity: Rarity::Common,
+            }],
+            source: Source::LevelUp,
+        }];
+        press(&mut w, PlayerInput { banish: Some(0), ..Default::default() });
+        assert_eq!(w.heroes[0].banishes, 0);
+        assert!(!w.spells(0).contains(&learn));
+        assert!(w.heroes[0]
+            .offers
+            .iter()
+            .all(|o| o.cards.iter().all(|c| c.kind != CardKind::Learn(ability))));
+        // None left: a second banish does nothing.
+        let before = w.heroes[0].offers.clone();
+        press(&mut w, PlayerInput { banish: Some(0), ..Default::default() });
+        assert_eq!(w.heroes[0].offers, before);
+    }
+
+    #[test]
+    fn a_waiting_hand_is_dealt_anew_once_a_pick_spoils_it() {
+        let mut w = world();
+        let learn = w
+            .spells(0)
+            .into_iter()
+            .find(|k| matches!(k, CardKind::Learn(_)))
+            .expect("a spell to learn");
+        let hand = Offer {
+            cards: vec![Card {
+                kind: learn,
+                rarity: Rarity::Common,
+            }],
+            source: Source::LevelUp,
+        };
+        w.heroes[0].offers = vec![hand.clone(), hand];
+        w.queue_input(
+            0,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(
+            w.heroes[0]
+                .offers
+                .iter()
+                .all(|o| o.cards.iter().all(|c| c.kind != learn)),
+            "the second hand still offers the spell just learned"
+        );
     }
 
     #[test]
@@ -3215,10 +3558,10 @@ mod tests {
     fn berserk_bloodlust_shield_and_fortune_do_their_work() {
         let mut w = world();
         let def = w.content().abilities[0].clone();
-        let plain = w.sharpen(ability_stats(&def, 1, 0.0));
+        let plain = w.sharpen(ability_stats(&def, 0.0));
         grab(&mut w, PickupKind::PowerUp(PowerUp::Berserk));
         grab(&mut w, PickupKind::PowerUp(PowerUp::Bloodlust));
-        let sharp = w.sharpen(ability_stats(&def, 1, 0.0));
+        let sharp = w.sharpen(ability_stats(&def, 0.0));
         assert!((sharp.damage - plain.damage * 2.0).abs() < 1e-3);
         assert!((sharp.cooldown - plain.cooldown * BLOODLUST).abs() < 1e-3);
         grab(&mut w, PickupKind::PowerUp(PowerUp::DivineShield));

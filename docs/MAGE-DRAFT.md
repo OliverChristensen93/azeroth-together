@@ -56,7 +56,7 @@ else the nearest enemy.
 | 6 | **Blizzard** | Frost · Ground · Area · Damage over time · Slow | Densest group within 20 yd | Ice falls for 6 s, Chilling. | Zone control |
 | 7 | **Flamestrike** | Fire · Ground · Area · Damage over time | Around you | A pillar of fire; leaves burning ground for 4 s. | Burst clear |
 | 8 | **Fire Blast** | Fire · Direct | **The enemy closest to you** | Instant, 12 yd, short cooldown. | The "get off me" spell |
-| 9 | **Cone of Cold** | Frost · Area · Direct · Slow | Ahead of you | A wide cone; Chills. | Close control |
+| 9 | **Cone of Cold** | Frost · Area · Cone · Direct · Slow | Ahead of you | A wide cone; Chills. | Close control |
 | 10 | **Blast Wave** | Fire · Area · Direct · Slow · Knockback | Around you | A ring of fire; knocks back and Chills. | Breathing room |
 | 11 | **Pyroblast** | Fire · Projectile · Direct · Damage over time | Elites first | A huge, slow bolt that leaves Burning. Long cooldown. | Boss killer |
 | 12 | **Ice Barrier** (new) | Frost · Shield | You | Every 20 s, a shield worth 25% of your max health. | Defense, trigger hub |
@@ -146,7 +146,10 @@ spells is too many: Fireball aims at the densest group instead.)
 - **Ice Floes:** while the shield holds, your Frost spells' cooldowns are 25% shorter.
 - **Frost Armor:** enemies that strike the shield are Chilled and take 20% of the hit as Frost damage.
 
-## Shared augments (the library for ranks 5 and 15, first 32)
+## Shared augments (the library for ranks 5 and 15, first 35)
+
+A spell takes at most one cone shape (Reversed, Four Winds, Full Circle), as it takes at most one
+conversion. Dragon's Breath (a Blast Wave capstone) makes Blast Wave a cone too.
 
 Open to any spell with the tag, any class.
 
@@ -162,6 +165,9 @@ Open to any spell with the tag, any class.
 | Area | **Concentrated** | −30% area, +40% damage. |
 | Area | **Echo** | Repeats at half strength 1 s later. |
 | Area | **Ring** | Hits a ring from 5 to 12 yd instead of a circle; +50% damage. |
+| Cone | **Reversed** | The cone points behind you instead of ahead. |
+| Cone | **Four Winds** | Four narrower cones (half as wide), one in each direction. |
+| Cone | **Full Circle** | All around you instead of a cone, with 30% less reach. Still an Area spell, so Wide stacks on it. |
 | Ground | **Lingering** | Lasts 50% longer. |
 | Ground | **Mobile** | Follows you. |
 | Ground | **Targeted** | Lands on the densest group within 25 yd instead of around you. |
