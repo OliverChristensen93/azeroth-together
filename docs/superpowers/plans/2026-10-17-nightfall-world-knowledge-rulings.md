@@ -21,7 +21,7 @@ for `2026-10-17-nightfall-world-knowledge.md`. One line each: what; why; cost if
 - Sight range is the fog's end (40 yd) for heroes too, as §5.1 says for enemies; why: §4.3 says "in the fog distance"; cost if wrong: one line.
 - Without a map (a client's mirror, a bake that failed) sight is distance only; why: nothing is known to stand between; cost if wrong: a failed bake shows enemies through walls, which the failure line already explains.
 - The client does not get the `Concealed` marker now: the seen set is computed on the host, sent per player in `State`, and kept in `Sim::seen` (with `NIGHTFALL_TRACE_SEEN` to see it); why: spec §2 puts "hidden enemies kept out of the UI" in sub-project 3, and the marker touches targeting, nameplates and the minimap; cost if wrong: one client task in sub-project 3 (the data is ready).
-- The host takes the hero's height from the client's pose (`HeroPose::z`), snapped to a floor within 1 yd, kept as reported mid-jump; why: only the client knows which storey its hero is on; cost if wrong: a cheating client could lie about its height (friends' co-op, spec §8.3).
+- The host takes the hero's height from the client's pose (`HeroPose::z`), snapped to a floor within 1 yd, kept as reported mid-jump but only from 2 yd under the column's lowest floor to 10 yd over its highest (a column with none keeps the last height); why: only the client knows which storey its hero is on; cost if wrong: a cheating client could lie about its height (friends' co-op, spec §8.3).
 
 ## Paths
 

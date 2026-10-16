@@ -12,6 +12,22 @@ use crate::enemies::{self, Brain, Enemy, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::{Content, V2};
 
+/// Where the host keeps a hero its client reports at height `z` over `pos` (`was` its height so
+/// far): on the floor nearest `z` if one is within [`HERO_FLOOR_REACH`], so a hero on a stair
+/// sees from where they stand; else `z` itself (a jump, a fall), kept between [`BELOW_FLOORS`]
+/// under the column's lowest floor and [`ABOVE_FLOORS`] over its highest. A column with no floor
+/// at all (off every tile) keeps `was`.
+fn hero_height(map: &HeightMap, pos: V2, z: f32, was: f32) -> f32 {
+    if let Some(f) = map.floor_within(pos, z, HERO_FLOOR_REACH) {
+        return f;
+    }
+    let floors = map.floors_under(pos);
+    match (floors.as_slice().first(), floors.as_slice().last()) {
+        (Some(&lo), Some(&hi)) => z.clamp(lo - BELOW_FLOORS, hi + ABOVE_FLOORS),
+        _ => was,
+    }
+}
+
 /// A player, numbered from 0 (the host).
 pub type PlayerId = u8;
 
@@ -24,6 +40,11 @@ pub const DT: f32 = 1.0 / TICK_HZ as f32;
 const SPAWN_SPACING: f32 = 2.0;
 /// How far (yards) a reported height may be from a floor and still stand on it.
 const HERO_FLOOR_REACH: f32 = 1.0;
+/// How far under its column's lowest floor and over its highest a hero's height is kept, yards:
+/// room for a fall and a jump, never a height sight could be fooled with (a client reporting
+/// a hero far under the ground or over the clouds).
+const BELOW_FLOORS: f32 = 2.0;
+const ABOVE_FLOORS: f32 = 10.0;
 
 /// Where a player's client put its hero, and the way it faces.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -50,7 +71,8 @@ pub struct Hero {
     pub race: u8,
     pub sex: u8,
     pub pos: V2,
-    /// The floor it stands on (the reported height while no floor is near it: a jump).
+    /// The floor it stands on (the reported height while no floor is near it, a jump, kept within
+    /// 2 yd under and 10 yd over its column's floors).
     pub z: f32,
     pub facing: V2,
     pub hp: f32,
@@ -217,15 +239,8 @@ impl World {
             if let Some(hero) = self.heroes.iter_mut().find(|h| h.player == player) {
                 hero.pos = bounds.clamp(pose.pos);
                 if pose.z.is_finite() {
-                    // On the host, the floor nearest the reported height, so a hero on a stair
-                    // sees from where they stand; a height with no floor near it (a jump) is
-                    // kept as it is.
-                    let pos = hero.pos;
-                    hero.z = self
-                        .nav
-                        .as_ref()
-                        .and_then(|nav| nav.map().floor_within(pos, pose.z, HERO_FLOOR_REACH))
-                        .unwrap_or(pose.z);
+                    let map = self.nav.as_ref().map(Navigator::map);
+                    hero.z = map.map_or(pose.z, |map| hero_height(map, hero.pos, pose.z, hero.z));
                 }
                 let facing = pose.facing.normalize_or_zero();
                 if facing != V2::ZERO {
@@ -479,5 +494,35 @@ mod tests {
         w.remove_hero(1);
         assert!(w.hero(1).is_none());
         assert!(w.hero(0).is_some());
+    }
+
+    #[test]
+    fn a_hero_reported_far_under_or_over_the_ground_is_kept_near_its_floors() {
+        let mut b = crate::heightmap::testmap::flat(100.0);
+        // A second storey over part of the map: floors at 0 and 3.2.
+        b.add_box(V2::new(70.0, 30.0), V2::new(80.0, 50.0), 3.0, 3.2);
+        let mut w = World::new(content());
+        w.attach_map(Arc::new(b.finish()));
+        w.add_hero(0, "rogue", "A", 1, 0).unwrap();
+        let at = |x: f32, z: f32| PlayerInput {
+            pose: Some(HeroPose {
+                pos: V2::new(x, 40.0),
+                facing: V2::new(1.0, 0.0),
+                z,
+            }),
+        };
+        for (x, z, kept) in [
+            (60.0, -500.0, -2.0),
+            (60.0, 1e30, 10.0),
+            (60.0, f32::MAX, 10.0),
+            (60.0, 6.0, 6.0),
+            (75.0, -500.0, -2.0),
+            (75.0, 1e30, 13.2),
+            (75.0, 12.0, 12.0),
+        ] {
+            w.set_input(0, at(x, z));
+            w.step();
+            assert_eq!(w.hero(0).unwrap().z, kept, "reported {z} at x {x}");
+        }
     }
 }

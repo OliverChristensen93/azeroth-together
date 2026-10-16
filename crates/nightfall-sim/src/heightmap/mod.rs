@@ -246,6 +246,12 @@ impl HeightMap {
         floors_of(self.spans_at(col).as_slice())
     }
 
+    /// The floors of the column under `p`, bottom first; none off the map.
+    pub fn floors_under(&self, p: V2) -> Floors {
+        self.col_at(p)
+            .map_or_else(Floors::default, |col| self.floors_at(col))
+    }
+
     /// Whether no unit may walk into column `col`; every column off the grid is.
     pub fn is_blocked(&self, col: usize) -> bool {
         col >= self.grid.columns() || self.blocked[col / 64] >> (col % 64) & 1 == 1
