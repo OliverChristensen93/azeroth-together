@@ -4,6 +4,7 @@
 //! map's paths go, so around houses rather than through them. What they notice (sub-project 3)
 //! and how they fight (sub-project 4) come later; an enemy's [`Brain`] is where both plug in.
 
+use std::collections::HashSet;
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
@@ -219,6 +220,26 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
     (enemies, brains, warnings)
 }
 
+/// What the enemies share in choosing their ways: the host's alone, never sent.
+#[derive(Default)]
+pub(crate) struct Planner {
+    /// Which enemy chooses its way first next step, so the path budget goes round.
+    cursor: usize,
+    /// The (spawn, patrol point) pairs a search found no path to. The [`Navigator`] keeps no
+    /// failures, so without this every member of a patrol group would pay the full search for a
+    /// point the first already found sealed, and warn about it again.
+    failed_points: HashSet<(usize, usize)>,
+    /// Searches that found nothing, so far.
+    failed_searches: u64,
+}
+
+impl Planner {
+    /// How many path searches have found nothing so far.
+    pub(crate) fn failed_searches(&self) -> u64 {
+        self.failed_searches
+    }
+}
+
 /// One step for every enemy: those with nowhere to go choose a way (at most `paths_per_step`
 /// searches, starting one enemy further along each step so every enemy gets its turn), then all
 /// walk.
@@ -228,18 +249,18 @@ pub(crate) fn step(
     nav: &mut Navigator,
     content: &Content,
     warnings: &mut Vec<String>,
-    cursor: &mut usize,
+    planner: &mut Planner,
 ) {
     let n = enemies.len();
     if n == 0 {
         return;
     }
     let mut budget = content.rules.world.paths_per_step;
-    let first = *cursor % n;
-    *cursor = cursor.wrapping_add(1);
+    let first = planner.cursor % n;
+    planner.cursor = planner.cursor.wrapping_add(1);
     for i in 0..n {
         let k = (first + i) % n;
-        plan(&enemies[k], &mut brains[k], nav, content, warnings, &mut budget);
+        plan(&enemies[k], &mut brains[k], nav, content, warnings, planner, &mut budget);
     }
     let map = nav.map();
     for (e, b) in enemies.iter_mut().zip(brains.iter_mut()) {
@@ -254,6 +275,7 @@ fn plan(
     nav: &mut Navigator,
     content: &Content,
     warnings: &mut Vec<String>,
+    planner: &mut Planner,
     budget: &mut u32,
 ) {
     if b.wait > 0.0 || b.path.is_some() || *budget == 0 {
@@ -272,6 +294,12 @@ fn plan(
                 *target = next_target(route, *target);
                 return;
             };
+            if planner.failed_points.contains(&(b.spawn, *target)) {
+                // A groupmate found no path to it: skip it without a search or a warning.
+                route[*target] = None;
+                *target = next_target(route, *target);
+                return;
+            }
             if here.ground().distance(goal.ground()) <= ARRIVE {
                 *target = next_target(route, *target);
                 b.wait = *pause;
@@ -296,6 +324,7 @@ fn plan(
         b.failures = 0;
         return;
     }
+    planner.failed_searches += 1;
     match &mut b.order {
         Order::Sentry { .. } => {
             b.wait = RETRY;
@@ -305,6 +334,7 @@ fn plan(
             }
         }
         Order::Patrol { route, target, .. } => {
+            planner.failed_points.insert((b.spawn, *target));
             warnings.push(format!(
                 "{}: no path to patrol point {} ({:.1}, {:.1}); it is skipped",
                 who(content, b.spawn),
@@ -576,7 +606,7 @@ mod tests {
 
     #[test]
     fn a_sentry_cut_off_from_its_post_waits_to_try_again_and_names_it_once() {
-        use super::{Brain, Enemy, Navigator, Order, Rng, RETRY};
+        use super::{Brain, Enemy, Navigator, Order, Planner, Rng, RETRY};
         use crate::{DT, V3};
 
         let w = world(GATE, 4);
@@ -607,17 +637,54 @@ mod tests {
             warned: false,
             rng: Rng::new(1),
         }];
-        let (mut warnings, mut cursor) = (Vec::new(), 0);
-        super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut cursor);
+        let (mut warnings, mut planner) = (Vec::new(), Planner::default());
+        super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
         // The search failed once: the sentry now rests instead of searching again next step.
         assert!(brains[0].wait > RETRY - 2.0 * DT, "{}", brains[0].wait);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("\"Gate\""));
+        assert_eq!(planner.failed_searches(), 1);
         // Over 12 s it retries twice more, and the warning is not repeated.
         for _ in 0..360 {
-            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut cursor);
+            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut planner);
         }
+        // The retries do happen (each 5 s), and no more often than that.
+        assert_eq!(planner.failed_searches(), 3);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert_eq!(enemies[0].pos, V2::new(10.0, 10.0));
+    }
+
+    #[test]
+    fn a_patrol_group_finds_a_sealed_point_sealed_once() {
+        // Three patrollers start on the first three points; the fourth is inside the closed house.
+        let mut w = world(
+            r#"[(place: "Road", kind: "skeleton", count: 3, behaviour: Patrol(
+                route: [(10.0, 10.0), (40.0, 10.0), (40.0, 40.0), (25.0, 25.0)], pause: 0.0))]"#,
+            4,
+        );
+        w.attach_map(town());
+        assert_eq!(w.enemies.len(), 3);
+        for _ in 0..2400 {
+            w.step();
+        }
+        let named = w
+            .warnings()
+            .iter()
+            .filter(|m| m.contains("\"Road\"") && m.contains("patrol point 4"))
+            .count();
+        assert_eq!(named, 1, "{:?}", w.warnings());
+        assert_eq!(w.failed_searches(), 1);
+        // Everyone kept walking the rest of the route meanwhile.
+        assert!(w.enemies.iter().all(|e| !in_house(e.pos)));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "takes no snapshots")]
+    fn a_world_with_a_map_refuses_a_snapshot() {
+        let mut host = world(GATE, 4);
+        host.attach_map(town());
+        let snapshot = host.snapshot();
+        host.apply_snapshot(snapshot);
     }
 }

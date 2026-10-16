@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::enemies::{self, Brain, Enemy};
+use crate::enemies::{self, Brain, Enemy, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::{Content, V2};
 
@@ -82,8 +82,8 @@ pub struct World {
     nav: Option<Navigator>,
     /// What the content asked that the map could not give (a patrol point no path reaches).
     warnings: Vec<String>,
-    /// Which enemy chooses its way first next step, so the path budget goes round.
-    plan_cursor: usize,
+    /// What the enemies share in choosing their ways (the path budget, the points found sealed).
+    planner: Planner,
 }
 
 impl World {
@@ -98,7 +98,7 @@ impl World {
             brains: Vec::new(),
             nav: None,
             warnings: Vec::new(),
-            plan_cursor: 0,
+            planner: Planner::default(),
         }
     }
 
@@ -181,6 +181,12 @@ impl World {
         &self.warnings
     }
 
+    /// How many path searches have found nothing so far (a sealed patrol point or post), for the
+    /// log and for tests: a content mistake must cost a few searches, not one a step.
+    pub fn failed_searches(&self) -> u64 {
+        self.planner.failed_searches()
+    }
+
     /// `player`'s input for the next step, replacing any earlier one since the last step.
     pub fn set_input(&mut self, player: PlayerId, input: PlayerInput) {
         match self.inputs.iter_mut().find(|(p, _)| *p == player) {
@@ -207,14 +213,16 @@ impl World {
                 }
             }
         }
-        if let Some(nav) = &mut self.nav {
+        // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
+        // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
+        if let Some(nav) = self.nav.as_mut().filter(|_| self.brains.len() == self.enemies.len()) {
             enemies::step(
                 &mut self.enemies,
                 &mut self.brains,
                 nav,
                 &self.content,
                 &mut self.warnings,
-                &mut self.plan_cursor,
+                &mut self.planner,
             );
         }
         self.elapsed += DT;
@@ -229,8 +237,10 @@ impl World {
         }
     }
 
-    /// A client's mirror takes the host's world.
+    /// A client's mirror takes the host's world. A mirror must not have a map attached: the
+    /// snapshot's enemies would have no brains beside them.
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) {
+        debug_assert!(self.nav.is_none(), "a world with a map is a host; it takes no snapshots");
         self.elapsed = snapshot.elapsed;
         self.heroes = snapshot.heroes;
         self.enemies = snapshot.enemies;
