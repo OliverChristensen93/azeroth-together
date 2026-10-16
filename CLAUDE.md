@@ -106,9 +106,10 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   humanoid NPCs are composited live instead of rendering bodiless.
   Never launch a normal (fullscreen) run without asking the user first.
 - Nightfall: `NIGHTFALL=1` skips the pick screen into Nightfall (any `TOGETHER_*` variable skips it
-  into Survivors). `NIGHTFALL_CLASS` (`rogue`, `mage`), `NIGHTFALL_NAME`, `NIGHTFALL_CONTENT`,
-  `NIGHTFALL_AUTOPLAY=1` (starts a run and walks a circle), `NIGHTFALL_TRACE_POS=1` (logs the
-  hero's WoW position every 2 s, for measuring entry points), and co-op with `NIGHTFALL_HOST=1` /
-  `NIGHTFALL_JOIN=<code or address>`. `cargo test -p nightfall-sim` runs its rules.
+  into Survivors). `NIGHTFALL_CLASS` (`rogue`, `mage`), `NIGHTFALL_NAME`, `NIGHTFALL_CONTENT` (a
+  folder without `map.ron` is an error, not a fallback), `NIGHTFALL_AUTOPLAY=1` (starts a run and
+  walks a circle), `NIGHTFALL_TRACE_POS=1` (logs the hero's WoW position every 2 s, for measuring
+  entry points), and co-op with `NIGHTFALL_HOST=1` / `NIGHTFALL_JOIN=<code or address>`.
+  `cargo test -p nightfall-sim` runs its rules.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).

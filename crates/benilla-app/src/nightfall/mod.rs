@@ -49,25 +49,46 @@ fn class_key() -> Option<String> {
     std::env::var("NIGHTFALL_CLASS").ok()
 }
 
-/// The folder the RON files are read from, if one exists on disk.
-fn content_dir(project_dir: &str) -> Option<PathBuf> {
-    let candidates = [
-        std::env::var_os("NIGHTFALL_CONTENT").map(PathBuf::from),
+/// The folder the RON files are read from, if one exists on disk ([`pick_content_dir`]).
+fn content_dir(project_dir: &str) -> Result<Option<PathBuf>, String> {
+    let fallbacks = [
         Some(Path::new(project_dir).join("content").join("nightfall")),
         std::env::current_exe()
             .ok()
             .and_then(|e| e.parent().map(|p| p.join("content").join("nightfall"))),
     ];
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|d| d.join("map.ron").is_file())
+    pick_content_dir(
+        std::env::var_os("NIGHTFALL_CONTENT").map(PathBuf::from),
+        fallbacks.into_iter().flatten(),
+        |d| d.join("map.ron").is_file(),
+    )
+}
+
+/// `NIGHTFALL_CONTENT`'s folder (`chosen`), which must hold the content (`has_content`): a
+/// folder asked for by name and not there is an error, not a quiet fallback to other content.
+/// Unset, the first fallback that holds it, else none (the compiled-in content).
+fn pick_content_dir(
+    chosen: Option<PathBuf>,
+    fallbacks: impl IntoIterator<Item = PathBuf>,
+    has_content: impl Fn(&Path) -> bool,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(dir) = chosen {
+        return if has_content(&dir) {
+            Ok(Some(dir))
+        } else {
+            Err(format!(
+                "NIGHTFALL_CONTENT: no map.ron in {}",
+                dir.display()
+            ))
+        };
+    }
+    Ok(fallbacks.into_iter().find(|d| has_content(d)))
 }
 
 /// Read the content (from disk when there, so it can be edited without a rebuild); called once
 /// by [`crate::run_together`] beside Survivors' own. Bad content is reported and exits.
 pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
-    let dir = content_dir(project_dir);
+    let dir = content_dir(project_dir)?;
     let read = |name: &str, built_in: &'static str| -> Result<String, String> {
         match &dir {
             Some(d) => std::fs::read_to_string(d.join(name))
@@ -200,5 +221,45 @@ impl Plugin for NightfallPlugin {
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pick(chosen: Option<&str>, there: &[&str]) -> Result<Option<PathBuf>, String> {
+        pick_content_dir(
+            chosen.map(PathBuf::from),
+            ["project", "beside-exe"].map(PathBuf::from),
+            |d| there.iter().any(|t| Path::new(t) == d),
+        )
+    }
+
+    #[test]
+    fn a_chosen_folder_with_the_content_is_used() {
+        assert_eq!(
+            pick(Some("mine"), &["mine", "project"]),
+            Ok(Some(PathBuf::from("mine")))
+        );
+    }
+
+    #[test]
+    fn a_chosen_folder_without_the_content_is_an_error_naming_it() {
+        let why = pick(Some("typo"), &["project"]).unwrap_err();
+        assert!(why.contains("typo") && why.contains("map.ron"), "{why}");
+    }
+
+    #[test]
+    fn unset_takes_the_first_fallback_with_the_content_else_none() {
+        assert_eq!(
+            pick(None, &["beside-exe"]),
+            Ok(Some(PathBuf::from("beside-exe")))
+        );
+        assert_eq!(
+            pick(None, &["project", "beside-exe"]),
+            Ok(Some(PathBuf::from("project")))
+        );
+        assert_eq!(pick(None, &[]), Ok(None));
     }
 }
