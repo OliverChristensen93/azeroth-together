@@ -17,3 +17,10 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 1. **The pick screen** is a 92% black veil over the live world, so WoW's own frames (player frame,
    minimap, action bars) show faintly under it. A fully opaque backdrop or hiding the WoW UI on that
    screen would be cleaner. (`crates/benilla-app/src/game_pick.rs`, `spawn_root`.)
+2. **The hero's light** was barely visible at the planned strength; raised in
+   `content/nightfall/rules.ron` (`hero_light`). Tune to taste: it is a content number.
+3. **Nightfall's chat window** rendered as a white box (Survivors fixes this with a bit of Lua in
+   `together/ui.rs`); the same fix is copied into Nightfall.
+4. **The Nightfall menu is a plain panel** at the bottom of the screen over the dark woods, with the
+   class buttons, Play Solo, Host, Join (paste an invite code) and Back. The inn (sub-project 5b)
+   replaces it. The picked class has no highlight yet, only its line of text.

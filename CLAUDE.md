@@ -16,6 +16,16 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
     coming back, elite camps, pickups, power-ups running out). Cards (`cards.rs`) are spells,
     tomes (4 slots, rank 5), pacts, items or the gold/heal/reroll fallback. Gold: every coin goes
     into every hero's own purse; each hero pays for their own chests.
+- `crates/nightfall-sim/` — Nightfall's rules: a second game, a co-op stealth extraction game in
+  Duskwood at night (`docs/superpowers/specs/2026-10-16-nightfall-design.md`). Headless, 30 Hz, no
+  Bevy and no `together-sim`: heroes, poses kept inside the map's bounds, content
+  (`content/nightfall/*.ron`), its wire messages. Its client is `crates/benilla-app/src/nightfall/`,
+  which copies what it needs from `together/` instead of sharing it.
+- The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
+  Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
+- `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
+  starts every connection with a handshake naming the game; Survivors' messages live in
+  `together_sim::messages`.
 - `content/*.ron` — classes, abilities, enemies, zones, and `rules.ron` (tome slots and ranks, item
   copies, shrine and elite-camp timers: what a game mode may set its own way). Read from disk at
   startup, so edits need no rebuild. `crates/together-sim/tests/shipped_content.rs` checks they
@@ -81,5 +91,10 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
   humanoid NPCs are composited live instead of rendering bodiless.
   Never launch a normal (fullscreen) run without asking the user first.
+- Nightfall: `NIGHTFALL=1` skips the pick screen into Nightfall (any `TOGETHER_*` variable skips it
+  into Survivors). `NIGHTFALL_CLASS` (`rogue`, `mage`), `NIGHTFALL_NAME`, `NIGHTFALL_CONTENT`,
+  `NIGHTFALL_AUTOPLAY=1` (starts a run and walks a circle), `NIGHTFALL_TRACE_POS=1` (logs the
+  hero's WoW position every 2 s, for measuring entry points), and co-op with `NIGHTFALL_HOST=1` /
+  `NIGHTFALL_JOIN=<code or address>`. `cargo test -p nightfall-sim` runs its rules.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
