@@ -376,7 +376,6 @@ mod ordering_tests {
 #[cfg(test)]
 mod fog_override_tests {
     use bevy::ecs::system::RunSystemOnce;
-    use bevy::prelude::*;
 
     use super::*;
 
