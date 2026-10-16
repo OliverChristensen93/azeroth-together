@@ -164,6 +164,7 @@ mod tests {
             race: 2,
             sex: 0,
             talents: Vec::new(),
+            gear: Vec::new(),
         }
     }
 

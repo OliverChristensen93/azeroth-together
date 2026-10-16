@@ -15,8 +15,13 @@
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
 mod actions;
+mod armory;
 mod dev;
 mod dress;
+mod gear_look;
+mod gear_menu;
+mod gear_run;
+mod gear_tip;
 mod hazards;
 mod hud;
 mod inventory;
@@ -214,6 +219,8 @@ impl Sim {
             let taken: Vec<usize> = p.hero.talents.iter().map(|&n| usize::from(n)).collect();
             let took = world.apply_talents(p.player, &talents::web(), &taken);
             println!("together: {} takes {took} talent node(s)", p.hero.name);
+            // The gear each player brings, dormant until they pay for it.
+            world.equip(p.player, &p.hero.gear);
         }
         give_loadout(&mut world);
         dev.apply(&mut world);
@@ -298,6 +305,8 @@ pub(super) struct LocalInput {
     /// Freeze or unfreeze the level-up hand; banish the spell on a card.
     pub(super) freeze: bool,
     pub(super) banish: Option<u8>,
+    /// Switch on the dormant gear piece in this slot ([`gear_run`]).
+    pub(super) gear_on: Option<u8>,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -321,6 +330,8 @@ impl Plugin for TogetherPlugin {
             .init_resource::<levelup::BanishMode>()
             .init_resource::<hazards::Telegraphs>()
             .add_plugins(talents::TalentsPlugin)
+            .init_resource::<armory::GearStore>()
+            .init_resource::<gear_menu::GearScreen>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
@@ -332,6 +343,7 @@ impl Plugin for TogetherPlugin {
                     tooltip::setup,
                     inventory::setup,
                     hazards::setup,
+                    gear_tip::setup,
                     menu::spawn_root,
                 ),
             )
@@ -356,6 +368,17 @@ impl Plugin for TogetherPlugin {
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
+            // Equipment: the stash on disk, icons, tooltips and the run's gear bar.
+            .add_systems(
+                Update,
+                (
+                    armory::collect_found,
+                    gear_run::setup,
+                    gear_run::refresh,
+                    gear_look::fill_gear_icons,
+                    gear_tip::show,
+                ),
+            )
             // The menu.
             .add_systems(
                 Update,
@@ -368,9 +391,13 @@ impl Plugin for TogetherPlugin {
                     lobby::refresh.before(crate::glue::GlueVisuals),
                     dev::clicks,
                     dev::refresh.before(crate::glue::GlueVisuals),
+                    gear_menu::build,
+                    gear_menu::clicks,
+                    gear_menu::refresh.before(crate::glue::GlueVisuals),
                     session::lobby,
                     menu::refresh_menu_ui.before(crate::glue::GlueVisuals),
                     menu::preview_hero,
+                    gear_look::dress_preview,
                     start_run,
                 )
                     .chain()
@@ -399,6 +426,7 @@ impl Plugin for TogetherPlugin {
                     view::sync,
                     view::write_vitals,
                     hazards::status_auras,
+                    gear_look::dress_heroes,
                     view::place,
                 )
                     .chain()
@@ -451,6 +479,7 @@ fn start_run(
     mut net: ResMut<session::Net>,
     dev: Res<dev::DevSettings>,
     talents: Res<talents::Talents>,
+    gear: Res<armory::GearStore>,
 ) {
     let content = content();
     let mut begin = |commands: &mut Commands, sim: Sim| {
@@ -493,7 +522,7 @@ fn start_run(
     if !std::mem::take(&mut start.0) && !auto {
         return;
     }
-    let Some(own) = session::own_pick(&selection, &talents) else {
+    let Some(own) = session::own_pick(&selection, &talents, &gear) else {
         return;
     };
     selection.stage = selection.zone;
@@ -502,6 +531,7 @@ fn start_run(
     net.broadcast_start(&zone);
     let mut sim = Sim::hosted(&zone, &roster, &dev.tuning);
     showcase_for_tests(&mut sim.world);
+    armory::gear_on_for_tests(&mut sim.world);
     begin(&mut commands, sim);
 }
 
@@ -833,6 +863,7 @@ fn step_sim(
             dash: std::mem::take(&mut input.dash),
             freeze: std::mem::take(&mut input.freeze),
             banish: input.banish.take(),
+            gear_on: input.gear_on.take(),
             pose: input.pose,
             ..Default::default()
         };
@@ -867,6 +898,7 @@ fn step_sim(
                 dash: std::mem::take(&mut input.dash),
                 freeze: std::mem::take(&mut input.freeze),
                 banish: input.banish.take(),
+                gear_on: input.gear_on.take(),
                 pose: Some(pose),
                 ..Default::default()
             };

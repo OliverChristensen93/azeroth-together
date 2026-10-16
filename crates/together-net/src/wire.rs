@@ -51,6 +51,26 @@ mod tests {
             race: 1,
             sex: 1,
             talents: vec![3, 4],
+            gear: Vec::new(),
+        });
+        let frame = encode(&msg).unwrap();
+        let back: ClientMsg = read(&mut frame.as_slice()).unwrap();
+        assert_eq!(back, msg);
+    }
+
+    #[test]
+    fn a_pick_carries_its_gear_to_the_host() {
+        use together_sim::{Armor, GearPiece, Rarity, Slot, Unique};
+        let msg = ClientMsg::Pick(HeroPick {
+            name: "Jaina".into(),
+            class: "mage".into(),
+            race: 1,
+            sex: 1,
+            talents: Vec::new(),
+            gear: vec![
+                GearPiece::unique(Unique::Atiesh, 33, 9),
+                GearPiece::new(Slot::Feet, Rarity::Rare, 30, Armor::Cloth, 4),
+            ],
         });
         let frame = encode(&msg).unwrap();
         let back: ClientMsg = read(&mut frame.as_slice()).unwrap();

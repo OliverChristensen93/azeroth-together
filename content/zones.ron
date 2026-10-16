@@ -1,9 +1,10 @@
 // Arenas, ported from benilla-app's survivors/data.rs. `map` is the Map.dbc id (0 Eastern Kingdoms,
 // 1 Kalimdor); `center` is in WoW coordinates (x, y, z); `leash` is how far heroes may roam;
 // `enemies` are weakest first; `boss` is the enemy key of the boss who comes every four minutes.
-// `shrines_at_once` is how many shrines, chests and banners stand at once (new ones come as old
-// ones are used); `pots` how many pots stand scattered over the arena; `elite_camps` how many
-// camps an elite guards (a new one comes some minutes after it dies); `interactables` are the
+// `item_level` is the item level of the equipment its bosses and elites drop (a boss's three
+// higher). `shrines_at_once` is how many shrines, chests and banners stand at once (new ones come
+// as old ones are used); `pots` how many pots stand scattered over the arena; `elite_camps` how
+// many camps an elite guards (a new one comes some minutes after it dies); `interactables` are the
 // kinds that can come, each with how many may stand at once and how often it comes up (`weight`).
 // Only zones whose terrain is in the game data can be played. The "boss candidates" comments
 // are the original game's bosses (display, level, speed, scale), not all in the data.
@@ -26,6 +27,7 @@
             "young_forest_bear", "defias_rogue_wizard",
         ],
         boss: "hogger",
+        item_level: 10,
         shrines_at_once: 2,
         pots: 10,
         elite_camps: 3,
@@ -57,6 +59,7 @@
             "riverpaw_mystic",
         ],
         boss: "sergeant_brashclaw",
+        item_level: 20,
         shrines_at_once: 2,
         pots: 10,
         elite_camps: 3,
@@ -87,6 +90,7 @@
             "nightbane_dark_runner", "nightbane_vile_fang", "fetid_corpse", "nightbane_tainted_one",
         ],
         boss: "fenros",
+        item_level: 30,
         shrines_at_once: 2,
         pots: 10,
         elite_camps: 3,
@@ -117,6 +121,7 @@
             "gurubashi_champion", "gurubashi_bat_rider",
         ],
         boss: "gurubashi_warlord",
+        item_level: 45,
         shrines_at_once: 2,
         pots: 3,
         elite_camps: 1,
@@ -148,6 +153,7 @@
             "anubisath_sentinel",
         ],
         boss: "anubisath_guardian",
+        item_level: 62,
         shrines_at_once: 2,
         pots: 6,
         elite_camps: 2,

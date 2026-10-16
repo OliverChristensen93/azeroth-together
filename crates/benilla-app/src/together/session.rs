@@ -282,16 +282,19 @@ pub(super) fn hero_name() -> String {
         .unwrap_or_else(|| "Hero".into())
 }
 
-/// The local pick as the wire carries it, with the talents taken for its class.
+/// The local pick as the wire carries it, with the talents taken and the gear worn for
+/// its class.
 pub(super) fn own_pick(
     selection: &Selection,
     talents: &super::talents::Talents,
+    gear: &super::armory::GearStore,
 ) -> Option<HeroPick> {
     let (_, race, sex) = selection.hero_look()?;
     let class = content().classes[selection.class].key.clone();
     Some(HeroPick {
         name: hero_name(),
         talents: talents.pick(&class),
+        gear: gear.equipped(&class),
         class,
         race,
         sex,
@@ -318,8 +321,9 @@ pub(super) fn lobby(
     mut net: ResMut<Net>,
     selection: Res<Selection>,
     talents: Res<super::talents::Talents>,
+    gear: Res<super::armory::GearStore>,
 ) {
-    let own = own_pick(&selection, &talents);
+    let own = own_pick(&selection, &talents, &gear);
     let content = content();
     let zone_key = content.zones[selection.zone].key.clone();
     let net = &mut *net;

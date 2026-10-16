@@ -102,7 +102,7 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             p.spawn((
                 Text::new(
                     "WoW controls   ·   cards: 1 2 3 or click, R rerolls   ·   \
-                     Tab: stats   ·   stand in a shrine's circle to use it",
+                     Tab: stats   ·   Y: switch on gear   ·   stand in a shrine's circle to use it",
                 ),
                 TextFont {
                     font: font.clone(),
