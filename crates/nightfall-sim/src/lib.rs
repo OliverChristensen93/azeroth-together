@@ -20,7 +20,7 @@ pub use content::{
     WeaponDef,
 };
 pub use heightmap::{
-    Floors, Grid, HeightMap, HeightMapBuilder, Span, SpanList, CELL, HEADROOM, MAX_FLOORS,
+    Floors, Grid, HeightMap, HeightMapBuilder, Navigator, Span, SpanList, CELL, HEADROOM, MAX_FLOORS,
     MAX_STEP, MERGE_GAP, TERRAIN_DEPTH,
 };
 pub use math::{V2, V3};

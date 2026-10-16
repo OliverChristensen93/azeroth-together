@@ -11,6 +11,7 @@
 //! the player's WoW data; tests build small ones by hand with [`HeightMapBuilder`].
 
 mod build;
+mod path;
 mod sight;
 #[cfg(test)]
 pub(crate) mod testmap;
@@ -18,6 +19,7 @@ pub(crate) mod testmap;
 use std::fmt;
 
 pub use build::HeightMapBuilder;
+pub use path::Navigator;
 
 use crate::V2;
 
