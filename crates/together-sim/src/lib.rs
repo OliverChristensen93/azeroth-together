@@ -9,9 +9,11 @@
 //! Every hero belongs to a [`PlayerId`] from the start, so a second player is one more
 //! [`World::add_hero`], not a rewrite.
 
+mod armory;
 mod augments;
 mod cards;
 mod content;
+mod gear;
 mod interact;
 mod items;
 mod math;
@@ -21,6 +23,7 @@ mod spell;
 mod stats;
 mod world;
 
+pub use armory::{Armory, Locker, STASH_MAX};
 pub use augments::{milestone_rank, Augment, Milestone, Requires};
 pub use cards::{
     ability_stats, boost_lines, fallback_gold, AbilityStats, Boost, Card, CardKind, Rarity,
@@ -29,6 +32,10 @@ pub use cards::{
 pub use content::{
     AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
     WeaponDef, ZoneDef,
+};
+pub use gear::{
+    describe_line, item_level, level_share, loadout, Armor, GearPiece, HeroGear, Slot, Unique,
+    WeaponKind, Worn, BOSS_DROP, ELITE_DROP, FULL_SET_TOMES, MAX_ITEM_LEVEL,
 };
 pub use interact::{
     chest_price, escort_time, InteractState, Interactable, InteractableKind, Placement, ESCORT_GOAL,
