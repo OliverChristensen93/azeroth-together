@@ -11,6 +11,7 @@
 
 mod atmosphere;
 mod dress;
+mod grade;
 mod menu;
 mod run;
 mod session;
@@ -128,6 +129,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
+            .add_plugins(grade::plugin)
             .add_systems(Startup, menu::spawn_roots)
             // Ungated: hides Nightfall's screens whenever another game is up.
             .add_systems(Update, menu::show_roots)

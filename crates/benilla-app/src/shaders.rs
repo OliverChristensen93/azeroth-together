@@ -1,10 +1,10 @@
-//! The game's five WGSL shaders, embedded in the binary. Registered from the root of `src/`: the
+//! The game's eight WGSL shaders, embedded in the binary. Registered from the root of `src/`: the
 //! macro does not normalize paths, so a call from a submodule would bake its directory into the
 //! served path.
 
 use bevy::prelude::*;
 
-/// Register the five shaders under `embedded://benilla_app/shaders/…`; added after `DefaultPlugins`
+/// Register the eight shaders under `embedded://benilla_app/shaders/…`; added after `DefaultPlugins`
 /// creates the registry it fills.
 pub(crate) fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/ui_quad.wgsl");
@@ -14,6 +14,7 @@ pub(crate) fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/ui_slice_gamma.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/ui_sweep.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/survivors_grade.wgsl");
+    bevy::asset::embedded_asset!(app, "shaders/nightfall_grade.wgsl");
 }
 
 #[cfg(test)]
@@ -48,6 +49,6 @@ mod tests {
                  `shaders::plugin`, or was registered from a file that is not directly under src/"
             );
         }
-        assert_eq!(found, 7, "the game's shader set changed size");
+        assert_eq!(found, 8, "the game's shader set changed size");
     }
 }
