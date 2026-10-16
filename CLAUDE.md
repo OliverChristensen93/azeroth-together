@@ -25,6 +25,25 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   Bevy and no `together-sim`: heroes, poses kept inside the map's bounds, content
   (`content/nightfall/*.ron`), its wire messages. Its client is `crates/benilla-app/src/nightfall/`,
   which copies what it needs from `together/` instead of sharing it.
+- Nightfall's world knowledge (sub-project 2): `nightfall-sim/src/heightmap/` is the layered
+  height map (half-yard columns of solid spans; floors, indoors, line of sight, A* paths with a
+  cache, a byte codec), tested on hand-made maps (`heightmap/testmap.rs`). `crates/nightfall-bake/`
+  bakes it from the player's own WoW data (terrain, WMO walking collision, M2 collision hulls;
+  impassable chunks and everything outside the bounds blocked) and caches it, deflated, in
+  `<home>/nightfall/<map>-<16 hex digits>.bin` (`benilla-config/nightfall/` by default; the hash
+  covers the data files, bounds and props, so a change bakes anew). The client
+  (`nightfall/terrain.rs`) does the bake: the first frame Nightfall is up as a solo player or host
+  it reads the cache or bakes on a thread of its own, with a progress line at the bottom of the
+  screen, then hands the map to the host's world (`World::attach_map`); a joined client never
+  bakes and shows no line. Unreadable files and a failed cache write are logged (a map with
+  unreadable files plays but is not cached), and a failed bake means no enemies this run. Enemies
+  (`nightfall-sim/src/enemies.rs`, placed by `content/nightfall/spawns.ron` from the kinds in
+  `enemies.ron`) stand, patrol and wander on its paths; the world's warnings (content the map
+  could not give, paths that found no way) are logged as `nightfall: …` as they arise. Each
+  player's snapshot carries the enemies near their hero and which they see (`World::seen_by`),
+  kept in the client's `Sim::seen`. The client (`nightfall/enemies.rs`) draws each enemy near the
+  hero as a WoW creature whose guid carries its kind's template entry (`enemy_guid_serial`), on
+  the floor the host says it stands on.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
@@ -112,5 +131,13 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   circle), `NIGHTFALL_TRACE_POS=1` (logs the hero's WoW position every 2 s, for measuring entry
   points), and co-op with `NIGHTFALL_HOST=1` / `NIGHTFALL_JOIN=<code or address>`.
   `cargo test -p nightfall-sim` runs its rules.
+- Nightfall's bake: `cargo test -p nightfall-bake` (its Darkshire test needs
+  `WOW_DATA=D:/Games/azeroth-together/WoW/Data` in a worktree without `WoW/Data`, and skips without
+  it); `cargo run --release -p nightfall-bake --example bake_duskwood` times the whole bake;
+  `cargo run -p nightfall-bake --example buildings -- <x> <y> [radius]` lists the buildings around
+  a point, for placing enemies. `NIGHTFALL_TRACE_SEEN=1` logs how many enemies the hero sees.
+  Enemy groups in `spawns.ron` marked `measure:` still sit near the entry: move each to its place
+  once measured in the game (`NIGHTFALL_TRACE_POS=1`); a group whose point no path reaches is left
+  out and named in the log as `nightfall: spawns.ron: …`.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
