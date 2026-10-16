@@ -363,6 +363,31 @@ pub(super) fn apply_events(
                     }
                 }
             }
+            // Loot is each player's own: only ours is announced over our hero.
+            Event::GearFound { player, piece } => {
+                if player == sim.me {
+                    if let Some(&e) = views.heroes.get(&player) {
+                        let color = 0xFF00_0000 | piece.rarity.color();
+                        fx.text(e, format!("Loot: {}", piece.name()), color);
+                    }
+                }
+            }
+            // A piece switched on: Power Word: Fortitude's glow over the hero, and its name.
+            Event::GearOn { player, slot } => {
+                let Some(&e) = views.heroes.get(&player) else {
+                    continue;
+                };
+                fx.cast(e, 1243, &[e], None);
+                let piece = sim
+                    .world
+                    .hero(player)
+                    .and_then(|h| h.gear.in_slot(slot))
+                    .map(|w| w.piece);
+                if let (Some(p), true) = (piece, player == sim.me) {
+                    let color = 0xFF00_0000 | p.rarity.color();
+                    fx.text(e, format!("{} awakens", p.name()), color);
+                }
+            }
         }
     }
 }
