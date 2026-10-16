@@ -603,4 +603,21 @@ mod tests {
         let now = w.enemies.iter().find(|e| e.is_wild()).unwrap().pos;
         assert!(now.y > start.y + 5.0, "{start:?} to {now:?}");
     }
+
+    #[test]
+    fn a_mirror_draws_the_awake_forest() {
+        let mut host = forest(|_| {});
+        at(&mut host, 0, 100.0, 0.0);
+        secs(&mut host, 0.5);
+        let mut mirror = forest(|_| {});
+        mirror.apply_snapshot(host.snapshot(), host.drain_events());
+        let awake = host.enemies.iter().filter(|e| e.is_wild()).count();
+        assert!(awake > 0);
+        assert_eq!(mirror.enemies.len(), host.enemies.len());
+        // What sleeps on the host goes from the mirror too.
+        at(&mut host, 0, -100.0, 0.0);
+        secs(&mut host, 0.5);
+        mirror.apply_snapshot(host.snapshot(), host.drain_events());
+        assert_eq!(mirror.enemies.len(), host.enemies.len());
+    }
 }

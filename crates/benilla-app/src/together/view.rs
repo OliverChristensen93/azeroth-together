@@ -393,8 +393,16 @@ pub(super) fn apply_events(
                     fx.text(e, text, COLOR_HEAT);
                 }
             }
-            Event::Engaged { .. } => {}
-            Event::CalledHelp { .. } => {}
+            Event::Engaged { id } => {
+                if let Some(&e) = views.enemies.get(&id) {
+                    fx.text(e, "!".into(), COLOR_HEAT);
+                }
+            }
+            Event::CalledHelp { id } => {
+                if let Some(&e) = views.enemies.get(&id) {
+                    fx.text(e, "calls for help!".into(), COLOR_HEAT);
+                }
+            }
             Event::HeroExtracted { player, .. } => {
                 if let Some(&e) = views.heroes.get(&player) {
                     fx.cast(e, TELEPORT, &[e], None);

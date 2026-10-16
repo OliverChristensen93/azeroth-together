@@ -13,6 +13,7 @@ fn shipped() -> Content {
         zones: include_str!("../../../content/zones.ron"),
     })
     .and_then(|c| c.with_extractions(include_str!("../../../content/extraction.ron")))
+    .and_then(|c| c.with_spawns(include_str!("../../../content/spawns.ron")))
     .unwrap()
 }
 
@@ -97,7 +98,11 @@ fn a_hot_extraction_snapshot_keeps_to_the_horde_cap() {
         }
         w.step();
         w.drain_events();
-        let horde = w.enemies.iter().filter(|e| !e.elite && !e.boss).count();
+        let horde = w
+            .enemies
+            .iter()
+            .filter(|e| !e.elite && !e.boss && !e.is_wild())
+            .count();
         // Hunter packs come on top of the cap, a few at a time.
         assert!(horde <= cap + 40, "step {step}: {horde} enemies, cap {cap}");
     }
@@ -106,7 +111,11 @@ fn a_hot_extraction_snapshot_keeps_to_the_horde_cap() {
         events: Vec::new(),
     };
     let bytes = postcard::to_stdvec(&msg).unwrap().len();
-    eprintln!("extraction at 5 skulls: {} enemies: {bytes} bytes", w.enemies.len());
+    eprintln!(
+        "extraction at 5 skulls: {} enemies ({} creatures): {bytes} bytes",
+        w.enemies.len(),
+        w.enemies.iter().filter(|e| e.is_wild()).count()
+    );
     assert!(w.enemies.len() > cap / 2, "the horde filled up: {}", w.enemies.len());
     assert!(
         bytes < 30 * w.enemies.len() + 2000,

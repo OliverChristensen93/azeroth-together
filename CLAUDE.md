@@ -13,7 +13,9 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   rebuild. `crates/together-sim/tests/shipped_content.rs` checks they parse and play.
 - Extraction mode: `content/extraction.ron` (maps: outline, safe ring, heat, exits) played in a
   zone that points at it (`elwynn_extraction`). Rules in `together-sim/src/world/extraction.rs`,
-  data and state in `together-sim/src/extraction.rs`. Spec and plans under `docs/superpowers/`.
+  data and state in `together-sim/src/extraction.rs`. Spec and plans under `docs/superpowers/`. Elwynn's
+  creatures are `content/spawns.ron`, baked by `tools/spawns/bake_spawns.py` from the CMaNGOS Classic
+  DB (GPL-3.0; see `tools/spawns/README.md`).
 - `crates/benilla-app/src/together/` — the client: steps the sim and draws it with the engine's
   unit, spell-visual and combat-text systems. It decides nothing about the game.
   - The real WoW 1.12 UI (FrameXML from the MPQ) and character controller are ON (no `CaptureMode`):

@@ -56,7 +56,7 @@ pub(crate) fn start_map() -> u32 {
 }
 
 /// The content files' text, for the content hash a co-op client and host compare: classes,
-/// abilities, enemies, and the zones with the rules and extraction maps after them.
+/// abilities, enemies, and the zones with the rules, extraction maps and spawns after them.
 static CONTENT_TEXTS: OnceLock<(String, String, String, String)> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static (String, String, String, String) {
@@ -115,6 +115,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         "extraction.ron",
         include_str!("../../../../content/extraction.ron"),
     )?;
+    let spawns = read("spawns.ron", include_str!("../../../../content/spawns.ron"))?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         abilities: &abilities,
@@ -123,6 +124,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     })
     .and_then(|c| c.with_rules(&rules))
     .and_then(|c| c.with_extractions(&extraction))
+    .and_then(|c| c.with_spawns(&spawns))
     .map_err(|e| e.to_string())?;
     let zone = content
         .zone(&zone_key())
@@ -143,7 +145,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         classes,
         abilities,
         enemies,
-        format!("{zones}\n{rules}\n{extraction}"),
+        format!("{zones}\n{rules}\n{extraction}\n{spawns}"),
     ));
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
@@ -635,17 +637,20 @@ fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
 }
 
 /// `TOGETHER_AUTOPLAY` in an extraction run: to the exit of the soonest flight it can still
-/// reach; home to the safe ring at three skulls; else `None`, to roam to shrines as in the arena.
+/// reach, once it is time to set off; home to the safe ring at three skulls; else `None`, to roam to shrines as in the arena.
 fn extraction_goal(world: &World, me: PlayerId, from: V2) -> Option<V2> {
     let together_sim::Mode::Extraction(x) = &world.mode else {
         return None;
     };
     let def = &world.content().extractions[x.def];
     let speed = world.hero(me).map_or(7.0, |h| h.speed).max(1.0);
-    // The soonest flight this hero can still reach before it leaves.
+    // The soonest flight this hero can still reach before it leaves, once it is time to set off
+    // for it (until then, roam).
     let exit = (0..def.exits.len())
         .filter(|&i| {
-            from.distance(def.exit_pos(i)) / speed + 5.0 < x.exits[i].departs - world.elapsed
+            let walk = from.distance(def.exit_pos(i)) / speed + 5.0;
+            let left = x.exits[i].departs - world.elapsed;
+            walk < left && left < walk + 45.0
         })
         .min_by(|&a, &b| x.exits[a].departs.total_cmp(&x.exits[b].departs))
         .map(|i| def.exit_pos(i));

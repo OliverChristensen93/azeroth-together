@@ -319,6 +319,9 @@ fn extraction_status(world: &together_sim::World, hero: &together_sim::Hero) -> 
     if def.in_safe(hero.pos) {
         s.push_str("\nGoldshire: safe. Nothing new comes; heat cools while everyone is home.");
     }
+    if let Some(zone) = def.hot_zone_at(hero.pos) {
+        s.push_str(&format!("\n{}: dense, and the heat climbs faster here.", zone.name));
+    }
     for (i, (exit, state)) in def.exits.iter().zip(&x.exits).enumerate() {
         let to = def.exit_pos(i) - hero.pos;
         let way = format!("{:.0} yd {}", to.length(), compass(to));
