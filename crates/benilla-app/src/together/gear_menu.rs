@@ -125,11 +125,11 @@ pub(super) fn build(
     let f = &font;
     let px = Val::Px;
     commands.entity(root).insert(GearBuilt).with_children(|ui| {
-        // The Equipment button, bottom left under the race and class tower.
+        // The Equipment button, bottom left under the race and class tower, above Talents.
         ui.spawn(Node {
             position_type: PositionType::Absolute,
-            left: px(40.0),
-            bottom: px(30.0),
+            left: px(56.0),
+            bottom: px(76.0),
             align_items: AlignItems::Center,
             column_gap: px(8.0),
             ..default()
