@@ -180,28 +180,45 @@ impl World {
     /// shared) is outside the safe ring, and cools while everyone (shared) or the hero is home.
     fn tend_heat(&mut self, def: &ExtractionDef) {
         let floor = def.floor(self.elapsed);
-        let living: Vec<(PlayerId, bool)> = self
+        let living: Vec<(PlayerId, bool, bool)> = self
             .heroes
             .iter()
             .filter(|h| h.alive)
-            .map(|h| (h.player, def.in_safe(h.pos)))
+            .map(|h| {
+                (
+                    h.player,
+                    def.in_safe(h.pos),
+                    def.hot_zone_at(h.pos).is_some(),
+                )
+            })
             .collect();
         let Some(x) = self.run_mut() else {
             return;
         };
         x.floor = floor;
-        let (outside, cool) = (def.heat.outside * DT, def.safe.cool * DT);
+        let (outside, cool, hot) = (
+            def.heat.outside * DT,
+            def.safe.cool * DT,
+            def.heat.hot_zone * DT,
+        );
         if def.settings.heat_shared {
-            if living.iter().any(|&(_, home)| !home) {
+            if living.iter().any(|&(_, home, _)| !home) {
                 x.heat += outside;
+                if living.iter().any(|&(_, _, in_hot)| in_hot) {
+                    x.heat += hot;
+                }
             } else if !living.is_empty() {
                 x.heat -= cool;
             }
             x.heat = x.heat.max(floor);
         } else {
-            for &(p, home) in &living {
+            for &(p, home, in_hot) in &living {
                 let h = &mut hero_heat(x, p).1;
-                let next = if home { *h - cool } else { *h + outside };
+                let next = if home {
+                    *h - cool
+                } else {
+                    *h + outside + if in_hot { hot } else { 0.0 }
+                };
                 *h = next.max(floor);
             }
             for (_, h) in &mut x.heat_by {
@@ -306,7 +323,9 @@ impl World {
         }
         let busiest = outside.iter().map(|o| o.2.spawns).fold(1.0, f32::max);
         let horde = 1.0 + self.difficulty.horde;
-        let target = (target_alive(self.elapsed, outside.len()) as f32 * busiest * horde) as usize;
+        let target =
+            (target_alive(self.elapsed, outside.len()) as f32 * busiest * horde * def.horde_share)
+                as usize;
         let target = target.min(def.max_enemies_per_hero as usize * outside.len());
         let alive = self
             .enemies
@@ -563,6 +582,7 @@ fn hero_heat(x: &mut Extraction, player: PlayerId) -> &mut (PlayerId, f32) {
 pub(super) mod tests {
     use super::*;
     use crate::extraction::tests::test_content;
+    use crate::extraction::HotZoneDef;
 
     /// An extraction run on the test map with `heroes` mages, settings as `settings` says.
     pub(crate) fn run(settings: &str, heroes: u8) -> World {
@@ -1118,5 +1138,39 @@ pub(super) mod tests {
             .drain_events()
             .iter()
             .any(|e| matches!(e, Event::AmbushWarned { .. })));
+    }
+
+    #[test]
+    fn heat_climbs_faster_in_a_hot_zone() {
+        let mut c = test_content("");
+        c.extractions[0].heat.hot_zone = 3.0;
+        c.extractions[0].hot_zones.push(HotZoneDef {
+            name: "Den".into(),
+            center: [150.0, 0.0],
+            radius: 30.0,
+        });
+        let mut w = World::new(Arc::new(c), "goldshire", 1).unwrap();
+        w.add_hero(0, "mage").unwrap();
+        hush(&mut w);
+        at(&mut w, 0, 150.0, 0.0);
+        secs(&mut w, 2.0);
+        // 1 a second outside and 3 in the hot zone.
+        assert!((w.heat_of(0) - 8.0).abs() < 0.1, "{}", w.heat_of(0));
+    }
+
+    #[test]
+    fn the_horde_share_shrinks_the_horde() {
+        let horde = |share: f32| {
+            let mut c = test_content("");
+            c.extractions[0].horde_share = share;
+            let mut w = World::new(Arc::new(c), "goldshire", 4).unwrap();
+            w.add_hero(0, "mage").unwrap();
+            at(&mut w, 0, 0.0, 200.0); // off the exits, which would fly a hero out at 300 s
+            w.elapsed = 300.0;
+            secs(&mut w, 3.0);
+            w.enemies.len()
+        };
+        let (full, half) = (horde(1.0), horde(0.5));
+        assert!(half * 10 < full * 7, "{half} of {full}");
     }
 }
