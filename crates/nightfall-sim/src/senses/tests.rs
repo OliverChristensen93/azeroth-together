@@ -553,6 +553,28 @@ fn an_enemy_whose_facing_is_not_a_number_looks_from_the_side() {
 }
 
 #[test]
+fn a_hero_off_the_maps_grid_is_neither_seen_nor_heard_within_the_fog() {
+    // The map's grid is 30 yd across but the world's bounds reach 50: a hero at (35, 25) stands
+    // off it, 10 yd from a sentry that faces them. Rays are not cast to a place off the grid
+    // ("open air" would show it plain), and a noise there is not heard.
+    let run = |hero_x: f32| {
+        let mut w = world(&sentry(25.0, 25.0, 0.0));
+        w.attach_map(Arc::new(flat(30.0).finish()));
+        put(&mut w, 0, hero_x, 25.0, Gait::Walk, 0);
+        for _ in 0..120 {
+            w.make_noise(0, V3::new(hero_x, 25.0, 0.0), Loudness::Normal);
+            w.step();
+        }
+        w.marks_for(0)
+    };
+    assert!(
+        !run(28.0).is_empty(),
+        "the control, on the grid, is noticed"
+    );
+    assert!(run(35.0).is_empty());
+}
+
+#[test]
 fn an_enemy_off_the_grid_sees_and_hears_nothing() {
     let mut w = world(&sentry(25.0, 25.0, 0.0));
     w.attach_map(open());
@@ -561,6 +583,42 @@ fn an_enemy_off_the_grid_sees_and_hears_nothing() {
     w.enemies[0].pos = V2::new(f32::MAX, 25.0);
     steps(&mut w, 5);
     assert!(w.marks_for(0).is_empty(), "{:?}", w.marks_for(0));
+}
+
+#[test]
+fn a_new_place_to_check_is_not_made_to_wait_for_the_last_ones_failure() {
+    // A sentry hears two noises inside a sealed house: no way there, so it looks from where it
+    // stands. Within a second a noise on the far side of a short wall: that place it walks to.
+    let mut w = world(&sentry(28.0, 35.0, 0.0));
+    let mut b = flat(50.0);
+    house(&mut b, V2::new(30.0, 30.0), V2::new(40.0, 40.0), None, true);
+    b.add_box(V2::new(24.0, 33.0), V2::new(24.5, 37.0), 0.0, 3.0);
+    w.attach_map(Arc::new(b.finish()));
+    put(&mut w, 0, 45.0, 5.0, Gait::Still, 0);
+    w.step();
+    let inside = V3::new(33.0, 35.0, 0.0);
+    w.make_noise(0, inside, Loudness::Normal);
+    w.step();
+    w.make_noise(0, inside, Loudness::Normal);
+    steps(&mut w, 20);
+    assert_eq!(
+        w.marks_for(0),
+        vec![Mark {
+            enemy: 1,
+            alert: Alert::Suspicious
+        }]
+    );
+    assert!(w.enemies[0].pos.distance(V2::new(28.0, 35.0)) <= 0.1);
+    // 20 steps (0.67 s) on, suspicion has drained a little: this noise brings it to check again,
+    // short of alert.
+    let beyond_the_wall = V3::new(20.0, 35.0, 0.0);
+    w.make_noise(0, beyond_the_wall, Loudness::Normal);
+    let mut got_there = false;
+    for _ in 0..300 {
+        w.step();
+        got_there |= w.enemies[0].pos.distance(V2::new(20.0, 35.0)) <= 1.0;
+    }
+    assert!(got_there, "{:?}", w.enemies[0].pos);
 }
 
 #[test]

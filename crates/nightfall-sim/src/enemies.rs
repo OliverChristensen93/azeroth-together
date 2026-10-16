@@ -382,8 +382,10 @@ pub(crate) fn step(
     step_planned(enemies, brains, nav, content, warnings, planner);
 }
 
-/// [`step`] within a step the caller has begun with [`Navigator::begin_step`]: the world does, so
-/// that the senses' searches and the orders' share the one [`STEP_FLOORS`].
+/// One step for every enemy, as the world runs it: the floors it may search are what the senses
+/// have left of the step's [`STEP_FLOORS`], since they search before the orders do (a chase before
+/// a patrol's leg), so a crowd on the heels of a hero cannot make the step dearer, only the
+/// orders later.
 pub(crate) fn step_planned(
     enemies: &mut [Enemy],
     brains: &mut [Brain],

@@ -27,6 +27,8 @@ use crate::{Content, Hero, SenseRules, CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3};
 const LOOK_EVERY: f32 = 2.5;
 /// A chase searches its path again once its hero is this far from the path's end, yards.
 const REPATH: f32 = 2.0;
+/// A chase whose path has run out is at its hero within this many yards past `chase_reach`.
+const CHASE_SETTLE: f32 = 1.0;
 /// Seconds before asking for a path again to a goal none was found to.
 const RETRY: f32 = 1.0;
 
@@ -34,8 +36,18 @@ const RETRY: f32 = 1.0;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Way {
     route: Option<Route>,
-    /// Seconds before asking for a path again to a goal none was found to.
+    /// Seconds left of the wait before asking again for a path to `failed`, the goal none was
+    /// found to. The wait is for that goal alone, a place near it (see [`REPATH`]); another is
+    /// asked for at once.
     retry: f32,
+    failed: Option<V3>,
+}
+
+impl Way {
+    /// A step passes: the wait for a retry runs down whatever the enemy is doing.
+    fn tick(&mut self) {
+        self.retry = (self.retry - DT).max(0.0);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -43,6 +55,8 @@ struct Route {
     goal: V3,
     path: Arc<[V3]>,
     next: usize,
+    /// The path ends where the enemy stood when it was found: no nearer is to be had.
+    nearest: bool,
 }
 
 /// How a step toward a place went.
@@ -71,14 +85,17 @@ pub(crate) fn step_enemies(
     let map = nav.map().clone();
     let noises = std::mem::take(&mut s.noises);
     let mut shouts = std::mem::take(&mut s.shouts);
+    let mut sensed: Vec<Sensed> = Vec::with_capacity(heroes.len());
     for (i, e) in enemies.iter().enumerate() {
         let mind = &mut s.minds[i];
         let eye = V3::at(e.pos, e.z + EYE_HEIGHT);
         // Every hero, seen or not: an alerted enemy must be told it lost sight of its hero.
-        let sensed: Vec<Sensed> = heroes
-            .iter()
-            .map(|h| sense(e, mind, eye, h, &noises, &map, fog, r))
-            .collect();
+        sensed.clear();
+        sensed.extend(
+            heroes
+                .iter()
+                .map(|h| sense(e, mind, eye, h, &noises, &map, fog, r)),
+        );
         if let Some(shout) = mind.think(&sensed, DT, &r.awareness) {
             shouts.push((i, shout));
         }
@@ -96,9 +113,16 @@ pub(crate) fn step_enemies(
             }
         }
     }
-    // One count of path requests for the senses of the whole step.
+    // One count of path requests for the senses of the whole step. They go to the enemies from a
+    // different one each step, so a crowd that has used them up does not always leave the same
+    // few waiting. (The senses spend the step's floors before the orders do.)
     let mut asks = content.rules.world.paths_per_step;
-    for (i, e) in enemies.iter_mut().enumerate() {
+    let n = enemies.len();
+    let first = s.cursor % n.max(1);
+    s.cursor = s.cursor.wrapping_add(1);
+    for k in 0..n {
+        let i = (first + k) % n;
+        let e = &mut enemies[i];
         let mind = &mut s.minds[i];
         let held = mind.state != State::Calm;
         brains[i].hold(held);
@@ -108,6 +132,7 @@ pub(crate) fn step_enemies(
             continue;
         }
         e.asleep = false;
+        s.ways[i].tick();
         react(e, mind, &mut s.ways[i], &map, nav, content, &mut asks);
     }
 }
@@ -135,19 +160,29 @@ fn sense(
         && grid.column_of(e.pos).is_some()
         && grid.column_of(h.pos).is_some();
     let d = e.pos.distance(h.pos);
-    let in_sight =
-        (on_grid && d <= fog && map.line_of_sight(eye, V3::at(h.pos, h.z + CHEST_HEIGHT)))
-            .then_some(feet);
-    let noticed = in_sight.filter(|_| !mind.blind()).and_then(|at| {
-        // An enemy whose facing is not a number looks at the hero from the side.
-        let facing = if e.facing.is_finite() {
-            facing_factor(e.facing, h.pos - e.pos, mind.cone, r)
-        } else {
-            r.side
-        };
-        let range = notice_range(h.visibility, facing, fog, r);
-        (d <= range).then(|| (at, fill_rate(d, range, &r.awareness)))
-    });
+    // An enemy whose facing is not a number looks at the hero from the side.
+    let facing = if e.facing.is_finite() {
+        facing_factor(e.facing, h.pos - e.pos, mind.cone, r)
+    } else {
+        r.side
+    };
+    let range = notice_range(h.visibility, facing, fog, r);
+    // How far a ray is worth casting: an enemy after this hero keeps track of them through the
+    // fog; any other can notice them no further than its notice range, and a sleeper not at all.
+    let looks = if mind.alerted_to(h.player) {
+        fog
+    } else if mind.blind() {
+        f32::NEG_INFINITY
+    } else {
+        range
+    };
+    let in_sight = (on_grid
+        && d <= looks.min(fog)
+        && map.line_of_sight(eye, V3::at(h.pos, h.z + CHEST_HEIGHT)))
+    .then_some(feet);
+    let noticed = in_sight
+        .filter(|_| !mind.blind() && d <= range)
+        .map(|at| (at, fill_rate(d, range, &r.awareness)));
     let heard = noises
         .iter()
         .filter(|n| {
@@ -184,7 +219,18 @@ fn react(
         State::Calm => {}
         State::Wary { place, .. } => stand(e, Some(place.ground())),
         State::Checking { place, .. } | State::Searching { place, .. } if !mind.there => {
-            if go(e, way, place, def.walk_speed, ARRIVE, map, nav, asks) != Progress::Going {
+            if go(
+                e,
+                way,
+                place,
+                def.walk_speed,
+                ARRIVE,
+                REPATH,
+                map,
+                nav,
+                asks,
+            ) != Progress::Going
+            {
                 mind.there = true;
             }
         }
@@ -197,6 +243,7 @@ fn react(
                 last_seen,
                 def.run_speed,
                 r.chase_reach,
+                r.chase_reach + CHASE_SETTLE,
                 map,
                 nav,
                 asks,
@@ -227,10 +274,11 @@ fn look_around(e: &mut Enemy, left: f32, total: f32) {
 }
 
 /// A step toward `goal` at `speed`, stopping `reach` short of it: straight when nothing stands in
-/// the way, else along a path, asked for again when the goal moves. At most `asks` paths are asked
+/// the way, else along a path, asked for again when the goal moves. A path that has run out
+/// counts as arrived within `settle` of the goal. At most `asks` paths are asked
 /// for in a step by all the senses together; the [`Navigator`] may still put a request off to the
 /// next step (its floors are spent) or refuse it (it failed a moment ago). A goal no path was
-/// found to is not asked for again for [`RETRY`] seconds.
+/// found to is not asked for again for [`RETRY`] seconds ([`Way::tick`] counts them down).
 #[allow(clippy::too_many_arguments)]
 fn go(
     e: &mut Enemy,
@@ -238,11 +286,11 @@ fn go(
     goal: V3,
     speed: f32,
     reach: f32,
+    settle: f32,
     map: &Arc<HeightMap>,
     nav: &mut Navigator,
     asks: &mut u32,
 ) -> Progress {
-    way.retry = (way.retry - DT).max(0.0);
     let grid = map.grid();
     // A goal off the map, or not at a number, is a goal nothing reaches (and a straight walk
     // towards it would not end).
@@ -274,16 +322,24 @@ fn go(
         .route
         .as_ref()
         .is_some_and(|rt| rt.goal.ground().distance(to) <= REPATH);
-    if fresh {
-        let rt = way.route.as_ref().unwrap();
-        if rt.next >= rt.path.len() {
-            // It has come as near as the path goes (the search ends on the floor nearest the
-            // goal): asking again would only find the same end.
-            e.speed = 0.0;
-            return Progress::There;
-        }
-    } else {
-        if way.retry > 0.0 {
+    // A route that has run out while the goal is still near its end: the enemy is there if it is
+    // within `settle` of the goal, or if the path could come no nearer (the search ends on the
+    // floor nearest the goal, up to 2 yd off); else the goal is asked for again.
+    let ended = fresh
+        && way
+            .route
+            .as_ref()
+            .is_some_and(|rt| rt.next >= rt.path.len());
+    if ended && (d <= settle || way.route.as_ref().is_some_and(|rt| rt.nearest)) {
+        e.speed = 0.0;
+        return Progress::There;
+    }
+    if !fresh || ended {
+        let blocked = way.retry > 0.0
+            && way
+                .failed
+                .is_some_and(|f| f.ground().distance(to) <= REPATH);
+        if blocked {
             way.route = None;
             e.speed = 0.0;
             return Progress::Stuck;
@@ -292,15 +348,21 @@ fn go(
             *asks -= 1;
             match nav.plan_path(here, goal, false, WANDER_BUDGET) {
                 PathPlan::Found(path) => {
+                    // A path that ends where the enemy stands cannot be bettered by asking again.
+                    let nearest = path
+                        .last()
+                        .is_some_and(|end| end.ground().distance(e.pos) <= ARRIVE);
                     way.route = Some(Route {
                         goal,
                         path,
                         next: 0,
+                        nearest,
                     })
                 }
                 PathPlan::NoPath | PathPlan::KnownNoPath => {
                     way.route = None;
                     way.retry = RETRY;
+                    way.failed = Some(goal);
                     e.speed = 0.0;
                     return Progress::Stuck;
                 }
@@ -359,10 +421,11 @@ mod tests {
         let all = 1000;
         let mut used = 0;
         for _ in 0..(secs / DT) as usize {
+            way.tick();
             nav.begin_step(100_000);
             let mut asks = all;
             let p = go(
-                &mut e, &mut way, goal, 7.0, ARRIVE, &map, &mut nav, &mut asks,
+                &mut e, &mut way, goal, 7.0, ARRIVE, ARRIVE, &map, &mut nav, &mut asks,
             );
             assert_eq!(p, Progress::Stuck);
             used += all - asks;
@@ -402,10 +465,11 @@ mod tests {
         let mut used = 0;
         let mut last = Progress::Going;
         for _ in 0..600 {
+            way.tick();
             nav.begin_step(100_000);
             let mut asks = 1000;
             last = go(
-                &mut e, &mut way, goal, 7.0, ARRIVE, &map, &mut nav, &mut asks,
+                &mut e, &mut way, goal, 7.0, ARRIVE, ARRIVE, &map, &mut nav, &mut asks,
             );
             used += 1000 - asks;
         }
@@ -426,11 +490,54 @@ mod tests {
             let mut asks = 10;
             nav.begin_step(100_000);
             let p = go(
-                &mut e, &mut way, goal, 7.0, ARRIVE, &map, &mut nav, &mut asks,
+                &mut e, &mut way, goal, 7.0, ARRIVE, ARRIVE, &map, &mut nav, &mut asks,
             );
             assert_eq!(p, Progress::Stuck);
             assert_eq!(asks, 10);
             assert_eq!(e.pos, V2::new(10.0, 10.0));
         }
+    }
+    #[test]
+    fn a_route_that_ran_out_short_of_a_moved_goal_is_asked_for_again() {
+        // The enemy stands at the end of a route to (13, 25); the goal is now (13.5, 25), 3.5 yd
+        // off behind a wall, and the route is not known to be the nearest there is.
+        let mut b = flat(50.0);
+        b.add_box(V2::new(11.0, 0.0), V2::new(11.5, 40.0), 0.0, 3.0);
+        let map = Arc::new(b.finish());
+        let mut nav = Navigator::new(map.clone());
+        nav.begin_step(100_000);
+        let (mut e, ..) = sealed();
+        e.pos = V2::new(10.0, 25.0);
+        let mut way = Way {
+            route: Some(Route {
+                goal: V3::new(13.0, 25.0, 0.0),
+                path: Arc::from([V3::new(10.0, 25.0, 0.0)]),
+                next: 1,
+                nearest: false,
+            }),
+            ..Way::default()
+        };
+        let mut asks = 5;
+        let goal = V3::new(13.5, 25.0, 0.0);
+        let p = go(
+            &mut e, &mut way, goal, 7.0, 2.0, 3.0, &map, &mut nav, &mut asks,
+        );
+        assert_eq!(asks, 4, "it asked again");
+        assert_ne!(p, Progress::There);
+        // Within the settle distance the same ended route is arrival, and nothing is asked.
+        let mut way = Way {
+            route: Some(Route {
+                goal: V3::new(13.0, 25.0, 0.0),
+                path: Arc::from([V3::new(10.0, 25.0, 0.0)]),
+                next: 1,
+                nearest: false,
+            }),
+            ..Way::default()
+        };
+        let mut asks = 5;
+        let p = go(
+            &mut e, &mut way, goal, 7.0, 2.0, 3.6, &map, &mut nav, &mut asks,
+        );
+        assert_eq!((p, asks), (Progress::There, 5));
     }
 }

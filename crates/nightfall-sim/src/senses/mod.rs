@@ -55,6 +55,8 @@ pub(crate) struct Senses {
     ways: Vec<Way>,
     /// Shouts raised between steps (an alert from a hit), given out at the next.
     shouts: Vec<(usize, Shout)>,
+    /// Which enemy gets its path asks first next step.
+    cursor: usize,
 }
 
 impl Senses {
