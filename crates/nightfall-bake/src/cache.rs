@@ -17,7 +17,22 @@ use nightfall_sim::{HeightMap, CELL};
 
 use crate::bake::{bake, BakeOutput, BakeRequest};
 
-/// Bumped whenever the bake would make a different map from the same data.
+/// Bumped whenever the bake would make a different map from the same data, or a cache baked
+/// before would be read back as a map it no longer is. What forces a bump:
+///
+/// - `nightfall-sim`'s [`MERGE_GAP`](nightfall_sim::MERGE_GAP) and
+///   [`TERRAIN_DEPTH`](nightfall_sim::TERRAIN_DEPTH), which shape every column's spans;
+/// - any change to the rasterizing (`raster.rs`: which columns a triangle covers, how a hull or
+///   a building fills them), to placement (`place.rs`), or to what the bake takes in (which
+///   models, sets or faces, the placement radii, the bounds' blocking);
+/// - [`CELL`], the column size (it is also in the key itself, so a cache never mixes sizes, but
+///   bump it anyway so the change is seen);
+/// - `benilla-formats`' collision output: the terrain heights, the WMO walking-collision and the
+///   M2 hull triangles it hands the bake, after an upstream merge that touches them.
+///
+/// [`HEADROOM`](nightfall_sim::HEADROOM) and [`MAX_STEP`](nightfall_sim::MAX_STEP) do not:
+/// they are read from the spans at run time. A codec change does not either: a file the codec
+/// rejects is baked again.
 pub const BAKE_VERSION: u32 = 1;
 
 /// A height map, and whether it came from the cache.
