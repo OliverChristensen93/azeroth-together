@@ -5203,7 +5203,7 @@ Under "Build, test, run", add:
 
 - [ ] **Step 3: Mark the spec**
 
-In the spec's status line, change `Status: draft for review.` to `Status: approved; sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md).`
+In the spec's status line (`Status: approved; revised the same day …`), add after its first sentence: `Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md).`
 
 - [ ] **Step 4: Run every test this work touches**
 

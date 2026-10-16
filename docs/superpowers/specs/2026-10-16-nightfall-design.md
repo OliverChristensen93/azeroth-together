@@ -1,6 +1,7 @@
 # Nightfall: design
 
-Date: 2026-10-16. Status: draft for review. Branch: `stealth-extraction`.
+Date: 2026-10-16. Status: approved; revised the same day after research into single-player and co-op
+extraction games (§1.1). Branch: `stealth-extraction`.
 
 *Nightfall* (working title) is a second game inside Azeroth Together: a co-op stealth extraction game
 in Duskwood at night. It shares the engine, the netcode and the launcher with the survivors games and
@@ -25,14 +26,39 @@ to carry across.
 | Enemies | Few and placed with intent (about 60 to 120 on the map), not hordes. |
 | Stealth | Every hero has a visibility and makes noise; every enemy has an awareness of each hero. |
 | What the host knows about the world | A layered height map baked from the player's own WoW data; line of sight and pathfinding run on it. |
-| Death loss | A setting (`death_loss`), playtested both ways. |
+| Death loss | A setting (`death_loss`): `everything`, `everything_one_recovery` or `found_only` (§8.2), the same everywhere on the map. |
+| Hub | Goldshire's Lion's Pride Inn: walked between raids, its NPCs give contracts, trade and keep the stash; its door leads to the raid (§8.4). |
+| Purpose between raids | Contracts from Duskwood's own characters and stations to upgrade in the inn (§8.4, §8.5). |
+| Pressure | A night clock with stages the players hear coming (§7.2), and signature monsters with behaviour to learn (§7.3). |
+| Risk zones | Some places are deadlier and hold better loot; death works the same everywhere (§8.1). |
+| Variety | Every raid a little different: loot, open exits, weather, which named monsters are out (§8.1). |
+| Weight | A heavier bag slows walking and sneaking and makes footsteps louder; it never stops a hero fighting (§8.2). |
 | Rival kits | Come from content: simplified kits first, the full class kits can be assigned for a playtest. |
 | Undecided rules | Settings in content, so they can be playtested both ways. |
 
+### 1.1 Built for no human opponents
+
+Nightfall has no PvP, so it does not try to copy the PvP extraction games (Tarkov, Arc Raiders, Dark
+and Darker), whose tension comes from other people. The successful single-player and co-op ones
+(Escape from Duckov, Zero Sievert, Single Player Tarkov, Road to Vostok, Lethal Company, R.E.P.O.,
+Deep Rock Galactic) keep the loot-and-get-out stakes and get the rest elsewhere:
+
+- **A reason for every raid:** a hub to build up and quests to follow (Duckov's hideout is what its
+  critics praise most). Here: the inn, its stations and the contracts.
+- **Danger with a learnable shape:** enemies as deadly as players would be (Zero Sievert), monsters
+  far stronger than the player that are avoided rather than fought (Lethal Company), bots with goals
+  of their own (Single Player Tarkov's questing bots). Here: senses, signature monsters, rivals.
+- **Clocks that force the pace,** since nobody else does (Deep Rock Galactic's swarms come faster
+  the longer a mission runs). Here: the night clock.
+- **Softer, chosen losses:** a protected item (Duckov's dog), a second chance at a lost body
+  (Duckov's grave), death penalties set by difficulty (Zero Sievert). Here: `death_loss`, safe slots,
+  the companion, the free kit.
+- **Every raid a little different,** so the same map stays uncertain.
+
 ## 2. Sub-projects
 
-The game is built in six sub-projects, each with its own implementation plan, in this order. Each one
-ends in something playable.
+The game is built in seven sub-projects, each with its own implementation plan, in this order. Each
+one ends in something playable.
 
 | # | Sub-project | Playable result |
 |---|---|---|
@@ -40,8 +66,12 @@ ends in something playable.
 | 2 | World knowledge: the baked height map, line of sight, pathfinding | Enemies patrol and walk around houses, not through them |
 | 3 | Senses: visibility, noise, awareness, hidden enemies kept out of the UI | Sneaking past and being spotted |
 | 4 | Combat: Rogue and Mage kits, mobility, dodge, telegraphs, eating and drinking | Fights worth choosing |
-| 5 | Run loop: loot, bags, exits, death loss, the stash and trader | A whole extraction run |
-| 6 | Rivals: bot adventurer parties | The stand-in for other players |
+| 5 | Run loop and the inn: loot, bags, weight, exits, death loss, the companion, Goldshire's inn with its stash, trader, contracts and stations | A whole extraction run with a reason to go back in |
+| 6 | The night's threats: the night clock, signature monsters, risk zones, every raid a little different | Raids that stay uncertain |
+| 7 | Rivals: bot adventurer parties | Others out there with goals of their own |
+
+The run loop and the inn come before rivals: a single-player extraction game rests on the reason to
+go back in (§1.1); rivals add to it.
 
 §3 is specified fully for sub-project 1; the later sections are the design each later plan starts from.
 
@@ -115,7 +145,8 @@ yet); the run ends from a menu button. Concretely:
 - `content/nightfall/`: `map.ron` (Duskwood: bounds, entry points), `classes.ron` (Rogue, Mage:
   model, outfit, stats), `rules.ron` (the atmosphere numbers of §11).
 - Client: pick screen, Nightfall menu (class, host/join/solo, back), units in the WoW UI, night,
-  fog override, view distance, the night grade pass, the hero light.
+  fog override, view distance, the night grade pass, the hero light. The menu is a thin start: in
+  sub-project 5 its choices move into the inn (§8.4).
 - `together-net` generic, survivors still passing its tests and its co-op test.
 
 ## 4. World knowledge (sub-project 2)
@@ -296,10 +327,35 @@ Twilight Grove, ogres at Vul'Gol, and so on.
 **Ravens** are an alarm: a flock on the ground takes off when a hero runs within 8 yd or any hero
 fights within 15 yd, a 40 yd noise.
 
-**Stitches** walks the road from Raven Hill to Darkshire from minute 20 (`stitches_at`): too strong to
-fight, loud, telegraphed swings. He is the run's clock.
+### 7.2 The night clock (sub-project 6)
 
-### 7.2 Rivals (sub-project 6)
+The night deepens in stages, each announced by sound before it lands, so players feel the clock
+without a timer on screen. Starting values (`night_stages` in `rules.ron`):
+
+| From | Stage | What changes |
+|---|---|---|
+| 0:00 | Dusk | The map as placed |
+| 8:00 | The howling | Worgen howls; trackers (§7.1) join patrols, more wanderers |
+| 14:00 | Moonrise | The fog thickens (fog end 40 → 30 yd), enemies' notice range +20% |
+| 20:00 | The hunt | Worgen packs hunt toward the loudest recent noise; one exit may close |
+| 26:00 | Stitches | Stitches walks the road from Raven Hill to Darkshire: too strong to fight, loud, telegraphed swings |
+
+Exits that open late (§8.1) pull the other way: the safest way out comes when the night is worst.
+
+### 7.3 Signature monsters (sub-project 6)
+
+A few named monsters with one behaviour each that players learn and counter, in the manner of
+Lethal Company's monsters. Each raid rolls which are out (§8.1). Starting set:
+
+| Monster | Behaviour | Counter |
+|---|---|---|
+| Mor'Ladim | Walks only while no hero looks at him | Keep him in view while someone else moves |
+| Nightbane trackers | Follow scent: a hero's trail of the last 30 s | Water, roads, or a long detour break the trail |
+| A banshee | Screams when she sees a hero, alerting everything in 60 yd | Break line of sight fast; kill her before she screams |
+| The Dark Riders | Ride the roads at speed, see far along them | Keep off the roads; cross them carefully |
+| Stitches | The last stage of the clock (§7.2) | Be gone, or be far from the road |
+
+### 7.4 Rivals (sub-project 7)
 
 - Parties of 2 to 3 bots: grave robbers, Defias scavengers, Night Watch deserters.
 - They follow **the same sight, noise and awareness rules as heroes**: they can be snuck past,
@@ -324,8 +380,15 @@ fight, loud, telegraphed swings. He is the run's clock.
 - **Darkshire** is guarded by the Night Watch and lit. Monsters stay out (Stitches excepted: the
   guards fight him); heroes standing there are very visible, and rivals can follow them in. It is
   not a safe zone.
+- **Risk zones:** places such as Raven Hill's cemetery, the crypts and Vul'Gol hold more, tougher
+  enemies and the best loot; the outskirts are gentler. Only danger and loot differ: death works the
+  same everywhere.
+- **Every raid a little different** (sub-project 6): each raid rolls its loot (from each container's
+  table), which exits are open and when, the weather (clear, mist, rain shortening the fog), and
+  which signature monsters (§7.3) are out. The map itself stays the same, so knowledge of it pays.
 - **Falling:** a hero at 0 health is downed for 45 s and can crawl. A teammate revives them by
-  standing next to them for 5 s, a 20 yd noise. After 45 s they are dead: their gear drops as a bag.
+  standing next to them for 5 s, a 20 yd noise. After 45 s they are dead: their body stays where they
+  fell, holding their gear (§8.2).
 - The run ends when every hero has extracted or died. The end screen shows each hero's outcome,
   time, kills and what they carried out.
 
@@ -335,19 +398,65 @@ fight, loud, telegraphed swings. He is the run's clock.
   so equipped gear shows on the hero (as `together/dress.rs` does). Kinds: weapons, armour, potions,
   food and water, valuables (sold only), keys, bags.
 - The **backpack** has 16 slots; bags found add slots.
-- **Death loss** (`death_loss`): `everything` (all gear and bags drop) or `found_only` (only what was
-  found this run drops). `safe_slots` (2) are always kept.
-- Containers: chests, crates, bodies, rivals' bags and graves (dug, loud). Rarer loot sits at the
-  more dangerous points of interest.
+- **Weight:** every item weighs something. Past `weight_free` a hero walks and sneaks slower (down to
+  `weight_slow_floor` of normal speed) and their footsteps are louder (noise radius × up to
+  `weight_noise_max`, §5.2). Weight never stops a hero fighting, so a solo player is never stuck;
+  in co-op, spreading the load between bags is the teamwork.
+- **Death loss** (`death_loss`), the same in every zone:
+  - `everything`: all gear and bags are lost with the body.
+  - `everything_one_recovery`: all gear stays on the body where the hero fell, and the body is still
+    there in that player's next raid on the same map, marked on their map. Reaching it gives
+    everything back; dying again before reaching it loses the first body for good. One second chance
+    under pressure, not a refund (in the manner of Escape from Duckov's grave).
+  - `found_only`: only what was found this raid is lost.
+
+  In every mode, teammates can loot a fallen hero's body during the same raid. `safe_slots` (2) are
+  always kept.
+- **The companion** (unlocked at the inn, §8.5): a small pet that follows the hero and carries one
+  item that is never lost, the way Escape from Duckov's dog does.
+- Containers: chests, crates, bodies, rivals' bags and graves (dug, loud). Rarer loot sits in the
+  risk zones (§8.1).
 
 ### 8.3 Between runs
 
 - A **stash** per player, saved locally (`benilla-config/nightfall/stash.ron`), and gold.
-- A **trader** in Nightfall's menu: sell valuables, buy food, water and basic gear.
 - A **free basic kit** for each class, always available, so nobody is stuck with nothing.
-- Progression is gear and gold for now. Anything more is later.
 - In co-op each hero's stash lives on their own machine; the host trusts the loadout a client brings
   (friends' co-op, not competitive).
+
+### 8.4 The inn: Goldshire's Lion's Pride Inn
+
+The hub between raids, walked like the rest of the game. It replaces the menu screens of sub-project 1.
+
+- **Its own scene,** separate from any raid: the inn's interior in Elwynn, at a warm evening light,
+  no fog and no enemies, a contrast to the night outside. Heroes are kept inside its rooms by the same
+  bounds clamp the raid uses. Its building and the ground around it are in the game data.
+- **The door is the way out:** stepping into it opens the raid board: which map (Duskwood first,
+  more later), the contracts taken, and Ready. When everyone is ready, the raid starts at its entry
+  point.
+- **The co-op lobby:** friends who join appear in the inn and walk around in it, as on Deep Rock
+  Galactic's station or Helldivers 2's ship. Class and loadout are picked there.
+- **NPCs at their places:** a contract giver per character (§8.5), a banker for the stash, a trader,
+  and the stations' keepers. Clicking one opens its panel.
+- **Panels:** our own glue panels first. A spike checks whether WoW's real windows (gossip, quest,
+  merchant, bank) can be fed locally, without a server; if they can, the inn switches to them.
+- Stormwind's Trade District could be a later hub, once a test shows the city stands without the
+  ground tiles missing from the data.
+
+### 8.5 Contracts and stations
+
+- **Contracts** come from Duskwood's own characters, taken in the inn before a raid, one or two at a
+  time. Each gives a route and a reason: Commander Althea Ebonlock (thin the worgen at Brightwood),
+  Madame Eva (fetch a tome from Mor'Ladim's grave), Abercrombie (bring remains from Raven Hill),
+  and the big one, Stitches. Completing them pays gold and unlocks stations and their upgrades.
+- **Stations** in the inn, each upgraded with gold and found materials, upgrades kept forever:
+  - the stash (more room);
+  - a workbench (repair and craft);
+  - alchemy (potions);
+  - a cooking fire (food and drink);
+  - a lantern-maker (brighter, quieter lanterns);
+  - the map table (intel before a raid: which signature monsters are out, which exits open);
+  - the kennel (the companion, §8.2).
 
 ## 9. Duskwood (sub-projects 1 and 2)
 
@@ -395,9 +504,12 @@ All in `content/nightfall/rules.ron`, read at startup:
 | `cast_move_speed` | 0.5 | Speed while casting a `slowed` spell |
 | `notice_range` | 35 yd | Notice range at visibility 100 |
 | `stealth_speed` | 0.7 | Rogue speed in stealth |
-| `death_loss` | `everything` | `everything` or `found_only` |
+| `death_loss` | `everything_one_recovery` | `everything`, `everything_one_recovery` or `found_only` |
 | `safe_slots` | 2 | Slots always kept |
-| `stitches_at` | 1200 s | When Stitches starts walking |
+| `weight_free` | 20 | Weight carried with no penalty |
+| `weight_slow_floor` | 0.7 | Slowest walking and sneaking speed at full weight |
+| `weight_noise_max` | 1.5 | Footstep noise radius at full weight |
+| `night_stages` | §7.2 | The night clock's stages and their times |
 | `cart_opens_at` | 1080 s | When Darkshire's exit opens |
 | `downed_for` | 45 s | Time to revive a fallen hero |
 
@@ -416,15 +528,17 @@ All in `content/nightfall/rules.ron`, read at startup:
 
 ## 13. Open questions
 
-- **Rival kits:** simplified or full class kits; both possible through content (§7.2). Decide after
+- **Rival kits:** simplified or full class kits; both possible through content (§7.4). Decide after
   playtests.
-- **Death loss:** `everything` or `found_only` (§8.2). Decide after playtests.
+- **Death loss:** which of the three `death_loss` modes is the default (§8.2). Decide after playtests.
+- **WoW's own windows in the inn:** whether gossip, quest, merchant and bank windows can be fed
+  without a server (§8.4). A spike in sub-project 5.
 - **Dodge key:** which key, without clashing with WoW's default bindings. Decide in sub-project 4.
 - **The name:** *Nightfall* is a working title.
 
 ## 14. Not in this spec
 
 - Other maps and classes.
-- Meta progression beyond the stash, gold and trader.
-- Weather.
+- Progression beyond the stash, gold, contracts and the inn's stations.
+- Weather beyond the per-raid roll of §8.1.
 - Player-versus-player.
