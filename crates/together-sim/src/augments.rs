@@ -320,6 +320,43 @@ pub enum Augment {
     ImprovedSearingPain,
     SoulFire,
     FelFlame,
+    // --- Capstones: hunter ---
+    ArcaneBarrage,
+    TrickShot,
+    LockAndLoad,
+    SplinterArrows,
+    SpreadShot,
+    SerpentSpread,
+    CarefulAim,
+    SniperTraining,
+    PiercingShots,
+    SpreadingVenom,
+    NoxiousStings,
+    ScorpidSting,
+    ImprovedConcussion,
+    DazeWave,
+    FrostShot,
+    Arrowstorm,
+    ExplosiveVolley,
+    HailOfArrows,
+    Minefield,
+    ScorchedEarth,
+    BigGameTrap,
+    FreezingTrap,
+    FrozenWake,
+    DeepFreeze,
+    BestialWrath,
+    KillCommand,
+    Intimidation,
+    ImprovedScatter,
+    WyvernSting,
+    ScatterBurst,
+    ImprovedMark,
+    MarkedForTheKill,
+    HuntersPrey,
+    RapidKilling,
+    TrueshotAura,
+    QuickShots,
 }
 
 impl Augment {
@@ -394,7 +431,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 180] = [
+    pub const CAPSTONES: [Augment; 216] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -575,6 +612,42 @@ impl Augment {
         Augment::ImprovedSearingPain,
         Augment::SoulFire,
         Augment::FelFlame,
+        Augment::ArcaneBarrage,
+        Augment::TrickShot,
+        Augment::LockAndLoad,
+        Augment::SplinterArrows,
+        Augment::SpreadShot,
+        Augment::SerpentSpread,
+        Augment::CarefulAim,
+        Augment::SniperTraining,
+        Augment::PiercingShots,
+        Augment::SpreadingVenom,
+        Augment::NoxiousStings,
+        Augment::ScorpidSting,
+        Augment::ImprovedConcussion,
+        Augment::DazeWave,
+        Augment::FrostShot,
+        Augment::Arrowstorm,
+        Augment::ExplosiveVolley,
+        Augment::HailOfArrows,
+        Augment::Minefield,
+        Augment::ScorchedEarth,
+        Augment::BigGameTrap,
+        Augment::FreezingTrap,
+        Augment::FrozenWake,
+        Augment::DeepFreeze,
+        Augment::BestialWrath,
+        Augment::KillCommand,
+        Augment::Intimidation,
+        Augment::ImprovedScatter,
+        Augment::WyvernSting,
+        Augment::ScatterBurst,
+        Augment::ImprovedMark,
+        Augment::MarkedForTheKill,
+        Augment::HuntersPrey,
+        Augment::RapidKilling,
+        Augment::TrueshotAura,
+        Augment::QuickShots,
     ];
 
     pub fn name(self) -> &'static str {
@@ -825,6 +898,42 @@ impl Augment {
             Augment::ImprovedSearingPain => "Improved Searing Pain",
             Augment::SoulFire => "Soul Fire",
             Augment::FelFlame => "Fel Flame",
+            Augment::ArcaneBarrage => "Arcane Barrage",
+            Augment::TrickShot => "Trick Shot",
+            Augment::LockAndLoad => "Lock and Load",
+            Augment::SplinterArrows => "Splinter Arrows",
+            Augment::SpreadShot => "Spread Shot",
+            Augment::SerpentSpread => "Serpent Spread",
+            Augment::CarefulAim => "Careful Aim",
+            Augment::SniperTraining => "Sniper Training",
+            Augment::PiercingShots => "Piercing Shots",
+            Augment::SpreadingVenom => "Spreading Venom",
+            Augment::NoxiousStings => "Noxious Stings",
+            Augment::ScorpidSting => "Scorpid Sting",
+            Augment::ImprovedConcussion => "Improved Concussion",
+            Augment::DazeWave => "Daze Wave",
+            Augment::FrostShot => "Frost Shot",
+            Augment::Arrowstorm => "Arrowstorm",
+            Augment::ExplosiveVolley => "Explosive Volley",
+            Augment::HailOfArrows => "Hail of Arrows",
+            Augment::Minefield => "Minefield",
+            Augment::ScorchedEarth => "Scorched Earth",
+            Augment::BigGameTrap => "Big Game Trap",
+            Augment::FreezingTrap => "Freezing Trap",
+            Augment::FrozenWake => "Frozen Wake",
+            Augment::DeepFreeze => "Deep Freeze",
+            Augment::BestialWrath => "Bestial Wrath",
+            Augment::KillCommand => "Kill Command",
+            Augment::Intimidation => "Intimidation",
+            Augment::ImprovedScatter => "Improved Scatter",
+            Augment::WyvernSting => "Wyvern Sting",
+            Augment::ScatterBurst => "Scatter Burst",
+            Augment::ImprovedMark => "Improved Mark",
+            Augment::MarkedForTheKill => "Marked for the Kill",
+            Augment::HuntersPrey => "Hunter's Prey",
+            Augment::RapidKilling => "Rapid Killing",
+            Augment::TrueshotAura => "Trueshot Aura",
+            Augment::QuickShots => "Quick Shots",
         }
     }
 
@@ -1077,6 +1186,42 @@ impl Augment {
             Augment::ImprovedSearingPain => "+50% critical strike chance against enemies within 5 yards.",
             Augment::SoulFire => "Every 5th Searing Pain is a Soul Fire: +300% damage, and it Stuns for 1 second.",
             Augment::FelFlame => "Each hit makes your damage over time on its target last 2 seconds longer.",
+            Augment::ArcaneBarrage => "Every 4th shot is three arrows (bosses and elites first).",
+            Augment::TrickShot => "It ricochets to a second enemy within 8 yards, then a third.",
+            Augment::LockAndLoad => "Its crits make Aimed Shot ready.",
+            Augment::SplinterArrows => "Each arrow bursts within 3 yards for half its damage.",
+            Augment::SpreadShot => "A fan of arrows at every enemy in a cone ahead of you instead, 70% each. You aim it by facing.",
+            Augment::SerpentSpread => "Applies your Serpent Sting (yours, if you know it) to what it hits.",
+            Augment::CarefulAim => "+60% critical strike chance against enemies above 80% health.",
+            Augment::SniperTraining => "After 2 seconds standing still, +50% range and +100% damage.",
+            Augment::PiercingShots => "Its target Bleeds for 50% of the hit over 6 seconds.",
+            Augment::SpreadingVenom => "It goes on enemies without it first, anywhere within 30 yards.",
+            Augment::NoxiousStings => "Stung enemies take +10% from your Physical spells.",
+            Augment::ScorpidSting => "Stung enemies are Weakened while it lasts.",
+            Augment::ImprovedConcussion => "20% chance to Stun its target for 2 seconds.",
+            Augment::DazeWave => "Its Chill spreads to every enemy within 6 yards of its target.",
+            Augment::FrostShot => "Its Chill lasts twice as long.",
+            Augment::Arrowstorm => "While you stand still, it keeps falling on the thickest crowd with no end. Moving ends it.",
+            Augment::ExplosiveVolley => "What it hits Burns for 30% over 4 seconds.",
+            Augment::HailOfArrows => "It Chills.",
+            Augment::Minefield => "Lays three traps around you instead of one, at -40% each.",
+            Augment::ScorchedEarth => "Its burning ground lasts twice as long and Chills.",
+            Augment::BigGameTrap => "+100% damage to bosses and elites.",
+            Augment::FreezingTrap => "The enemy that springs it is Frozen for 4 seconds.",
+            Augment::FrozenWake => "While you move, a small patch of its ice drops behind you every 3 seconds.",
+            Augment::DeepFreeze => "Its Chill slows 70%.",
+            Augment::BestialWrath => "Every 20 seconds, the pet bites for triple damage for 6 seconds.",
+            Augment::KillCommand => "When your Arcane Shot or Aimed Shot crits, the pet bites its target at once for double damage.",
+            Augment::Intimidation => "Every 5th bite Stuns its target for 2 seconds.",
+            Augment::ImprovedScatter => "Its target stays Chilled for 4 seconds after the stun.",
+            Augment::WyvernSting => "Its target sleeps for 6 seconds (a long Stun), and is Poisoned for 100% of the hit over 6 seconds.",
+            Augment::ScatterBurst => "Also knocks back and stuns every enemy within 4 yards of its target.",
+            Augment::ImprovedMark => "Marks for +25% instead of +15%.",
+            Augment::MarkedForTheKill => "When a Marked enemy dies, the mark jumps to the next boss or elite in reach, or the closest enemy.",
+            Augment::HuntersPrey => "Your Projectile spells deal +20% to Marked enemies.",
+            Augment::RapidKilling => "Each kill while it lasts makes it last 0.5 seconds longer.",
+            Augment::TrueshotAura => "Instead, always on: you and every ally within 20 yards deal +10% damage.",
+            Augment::QuickShots => "Also +20% move speed while it lasts.",
         }
     }
 
@@ -1173,6 +1318,26 @@ impl Augment {
             Augment::BurningImp | Augment::DemonicSacrifice | Augment::ImprovedImp => "summon_imp",
             Augment::Sacrifice | Augment::Torment | Augment::ConsumeShadows => "summon_voidwalker",
             Augment::ImprovedSearingPain | Augment::SoulFire | Augment::FelFlame => "searing_pain",
+            Augment::ArcaneBarrage | Augment::TrickShot | Augment::LockAndLoad => "arcane_shot",
+            Augment::SplinterArrows | Augment::SpreadShot | Augment::SerpentSpread => "multi_shot",
+            Augment::CarefulAim | Augment::SniperTraining | Augment::PiercingShots => "aimed_shot",
+            Augment::SpreadingVenom | Augment::NoxiousStings | Augment::ScorpidSting => {
+                "serpent_sting"
+            }
+            Augment::ImprovedConcussion | Augment::DazeWave | Augment::FrostShot => {
+                "concussive_shot"
+            }
+            Augment::Arrowstorm | Augment::ExplosiveVolley | Augment::HailOfArrows => "volley",
+            Augment::Minefield | Augment::ScorchedEarth | Augment::BigGameTrap => "explosive_trap",
+            Augment::FreezingTrap | Augment::FrozenWake | Augment::DeepFreeze => "frost_trap",
+            Augment::BestialWrath | Augment::KillCommand | Augment::Intimidation => "call_pet",
+            Augment::ImprovedScatter | Augment::WyvernSting | Augment::ScatterBurst => {
+                "scatter_shot"
+            }
+            Augment::ImprovedMark | Augment::MarkedForTheKill | Augment::HuntersPrey => {
+                "hunters_mark"
+            }
+            Augment::RapidKilling | Augment::TrueshotAura | Augment::QuickShots => "rapid_fire",
             _ => return None,
         })
     }
@@ -1718,6 +1883,66 @@ impl Augment {
             Augment::DemonicSacrifice => s.fx.skip = true,
             Augment::ImprovedImp => s.fx.strikes = s.fx.strikes.max(2),
             Augment::Torment => s.fx.weaken = s.fx.weaken.max(3.0),
+            // Hunter capstones that change the cast's numbers.
+            Augment::TrickShot => {
+                s.fx.jumps = s.fx.jumps.max(2);
+                s.tags = s.tags.with(Tag::Chain);
+            }
+            Augment::SplinterArrows => s.radius = s.radius.max(3.0),
+            Augment::SpreadShot => {
+                s.targeting = Targeting::Ahead;
+                s.count = 99;
+                s.range = s.range.min(20.0);
+                s.damage *= 0.7;
+                s.tags = s.tags.with(Tag::Cone);
+            }
+            Augment::PiercingShots => {
+                s.burn += 0.5;
+                s.fx.dot_time = 6.0;
+                s.tags = s.tags.with(Tag::Bleed).with(Tag::DamageOverTime);
+            }
+            Augment::SpreadingVenom => {
+                s.fx.fresh = true;
+                s.range = s.range.max(30.0);
+            }
+            Augment::ScorpidSting => s.fx.weaken = s.fx.weaken.max(s.fx.dot_time),
+            Augment::FrostShot => s.chill *= 2.0,
+            Augment::ExplosiveVolley => {
+                s.burn += 0.3;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::HailOfArrows => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::Minefield => s.damage *= 0.6,
+            Augment::ScorchedEarth => {
+                s.ground *= 2.0;
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::BigGameTrap => s.fx.vs_elite += 1.0,
+            Augment::DeepFreeze => s.slow = s.slow.max(0.7),
+            Augment::ImprovedScatter => {
+                s.chill = s.chill.max(s.stun + 4.0);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::WyvernSting => {
+                s.stun = s.stun.max(6.0);
+                s.burn += 1.0;
+                s.fx.dot_time = 6.0;
+                s.tags = s.tags.with(Tag::Poison).with(Tag::DamageOverTime);
+            }
+            Augment::ScatterBurst => s.radius = s.radius.max(4.0),
+            Augment::ImprovedMark => s.fx.mark = s.fx.mark.max(0.25),
+            Augment::TrueshotAura => {
+                s.cooldown = 5.0;
+                s.fx.buff.secs = 6.0;
+                s.fx.buff.cd_rate = 0.0;
+                s.fx.buff.power = 0.1;
+                s.tags = s.tags.with(Tag::Aura);
+            }
+            Augment::QuickShots => s.fx.buff.haste += 0.2,
             _ => {}
         }
     }

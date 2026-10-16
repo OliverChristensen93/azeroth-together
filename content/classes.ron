@@ -75,9 +75,11 @@
         speed: 7.0,
         start: "arcane_shot",
         pool: [
-            "arcane_shot", "multi_shot", "serpent_sting", "volley", "explosive_trap",
-            "concussive_shot", "aimed_shot",
+            "arcane_shot", "multi_shot", "aimed_shot", "serpent_sting", "concussive_shot", "volley",
+            "explosive_trap", "frost_trap", "call_pet", "scatter_shot", "hunters_mark",
+            "rapid_fire",
         ],
+        defensive: "disengage",
     ),
     (
         key: "rogue",

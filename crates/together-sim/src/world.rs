@@ -14,6 +14,7 @@
 mod arena;
 mod classes;
 mod combat;
+mod hunter;
 mod priest;
 mod rogue;
 mod warlock;

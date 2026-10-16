@@ -558,6 +558,19 @@ impl World {
             self.pick_weakest(origin, spec.range, spec.count as usize, shot.exclude)
         } else if spec.fx.fresh {
             self.pick_fresh(h, spec, origin)
+        } else if spec.targeting == Targeting::Ahead {
+            let facing = shot.facing.unwrap_or(self.heroes[h].facing);
+            let mut cone = spec.clone();
+            cone.radius = spec.range;
+            let mut near: Vec<(u32, f32)> = self
+                .enemies
+                .iter()
+                .filter(|e| e.hp > 0.0 && in_area(&cone, origin, facing, e.pos))
+                .map(|e| (e.id, origin.distance(e.pos)))
+                .collect();
+            near.sort_by(|a, b| a.1.total_cmp(&b.1));
+            near.truncate(spec.count as usize);
+            near
         } else {
             self.pick_targets(
                 origin,
@@ -852,6 +865,25 @@ impl World {
             left: secs,
             tick: 0.0,
             armed: false,
+            burning: false,
+            vel: V2::ZERO,
+            final_gale: false,
+            whiteout: false,
+            visual,
+        });
+    }
+
+    /// An armed trap of `spec` by `player` at `pos`, waiting for an enemy (a capstone's extra
+    /// trap).
+    pub(super) fn add_trap(&mut self, player: PlayerId, spec: &CastSpec, pos: V2) {
+        let visual = self.content.abilities[spec.ability].visual;
+        self.grounds.push(Ground {
+            by: player,
+            spec: spec.clone(),
+            pos,
+            left: Self::trap_wait(),
+            tick: 0.0,
+            armed: true,
             burning: false,
             vel: V2::ZERO,
             final_gale: false,
@@ -1412,6 +1444,7 @@ impl World {
                         dest: Some(pos),
                         cooldown: 0.0,
                     });
+                    self.trap_sprung_fx(&g, pos, &hit);
                     for id in hit {
                         self.strike(g.by, &g.spec, id, 1.0, pos, Crit::Roll);
                     }

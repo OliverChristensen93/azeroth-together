@@ -57,6 +57,8 @@ pub struct StatusFx {
     pub sapped_by: Option<PlayerId>,
     /// The priest whose Hex of Weakness is on it.
     pub hexed_by: Option<PlayerId>,
+    /// The hunter whose Hunter's Mark is on it.
+    pub marked_by: Option<PlayerId>,
 }
 
 impl StatusFx {
@@ -269,6 +271,7 @@ impl World {
         self.rogue_spec(h, owned, s);
         self.priest_spec(h, owned, s);
         self.warlock_spec(h, owned, s);
+        self.hunter_spec(h, owned, s);
     }
 
     /// The share of each tick of `by`'s damage over time from `spec` that heals `by`, beside the
@@ -302,6 +305,7 @@ impl World {
         self.rogue_before(h, owned, spec);
         self.priest_before(h, owned, spec);
         self.warlock_before(h, owned, spec);
+        self.hunter_before(h, owned, spec);
     }
 
     /// Hero `h` fired `owned` as `spec`: a Finisher spends its combo points, a builder gives
@@ -318,6 +322,7 @@ impl World {
         self.rogue_after(h, owned, spec);
         self.priest_after(h, owned, spec);
         self.warlock_after(h, owned, spec);
+        self.hunter_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -527,6 +532,7 @@ impl World {
         m * self.warrior_scale(h, ei, spec)
             * self.rogue_scale(h, ei, spec)
             * self.warlock_scale(h, ei, spec)
+            * self.hunter_scale(h, ei, spec)
     }
 
     /// A hit of `spec` by hero `h` landed on enemy `id` (index `ei`) for `damage`: lifesteal,
@@ -576,6 +582,7 @@ impl World {
         self.rogue_strike(h, id, spec, damage, crit, scale);
         self.priest_strike(h, id, spec, damage, crit, scale);
         self.warlock_strike(h, id, spec, damage, crit, scale);
+        self.hunter_strike(h, id, spec, damage, crit, scale);
     }
 
     /// The other classes' status effects one hit of `spec` leaves on enemy `ei`, struck from
@@ -831,6 +838,7 @@ impl World {
             self.rogue_tend(h);
             self.priest_tend(h);
             self.warlock_tend(h);
+            self.hunter_tend(h);
         }
     }
 
@@ -909,6 +917,7 @@ impl World {
         self.rogue_deaths(deaths);
         self.priest_deaths(deaths);
         self.warlock_deaths(deaths);
+        self.hunter_deaths(deaths);
     }
 
     /// After a nova of `spec` by hero `h` hit `hit` around `center`: the capstones that count
@@ -1077,12 +1086,18 @@ impl World {
 
     /// Extra crit chance a hit of `spec` from hero `h` has on enemy `ei`.
     pub(super) fn class_crit(&self, h: usize, ei: usize, spec: &CastSpec) -> f32 {
-        self.warlock_crit(h, ei, spec)
+        self.warlock_crit(h, ei, spec) + self.hunter_crit(h, ei, spec)
     }
 
     /// Where ground `g` stands this step, given where it would (a capstone may move it).
     pub(super) fn ground_pos(&self, g: &super::combat::Ground, pos: V2) -> V2 {
-        self.warlock_ground_pos(g, pos)
+        let pos = self.warlock_ground_pos(g, pos);
+        self.hunter_ground_pos(g, pos)
+    }
+
+    /// Trap `g` was sprung at `pos` by the enemies `hit`.
+    pub(super) fn trap_sprung_fx(&mut self, g: &super::combat::Ground, pos: V2, hit: &[u32]) {
+        self.hunter_trap_sprung(g, pos, hit);
     }
 
     /// A blow of `amount` from enemy `from` reached hero `h`'s health, and it still stands.
