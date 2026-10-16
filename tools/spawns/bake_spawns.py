@@ -1,14 +1,19 @@
 """Bake Elwynn's creatures for extraction mode.
 
-    python -I tools/spawns/bake_spawns.py <elwynn_spawns.json> content/spawns.ron
+    python -I tools/spawns/bake_spawns.py <elwynn_spawns.json> content/spawns.ron <mpqx.exe> <WoW/Data>
 
 Keeps every permanent hostile or neutral creature of a kind in KINDS that stands inside the map's
-outline, out of Goldshire's margin and not deep inside a mine (it would stand on the hill above),
-and writes them as content/spawns.ron. See README.md for where the JSON comes from.
+outline, out of Goldshire's margin and not under the terrain (deep in a mine: the client stands
+every creature on the ground, so it would stand on the hill above), and writes them as
+content/spawns.ron. See README.md for where the JSON comes from.
 """
 import json
 import math
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from terrain import Ground  # noqa: E402
 
 # Creature name in the database -> key in content/enemies.ron.
 KINDS = {
@@ -34,8 +39,9 @@ OUTLINE = [
 ]
 SAFE = (-9480.1, 63.5)
 SAFE_MARGIN = 90.0
-# A mine creature this far below the open-air creatures around it is underground.
-UNDERGROUND = 8.0
+# A creature this far below the terrain stands in a mine or a cave under it. Creatures in the open
+# stand within half a yard of it.
+UNDERGROUND = 5.0
 
 
 def inside(x, y):
@@ -49,11 +55,9 @@ def inside(x, y):
     return hit
 
 
-def underground(s, surface):
-    if 'Mine' not in s.get('subzone', ''):
-        return False
-    near = sorted(t['z'] for t in surface if math.hypot(t['x'] - s['x'], t['y'] - s['y']) < 80)
-    return not near or s['z'] < near[len(near) // 2] - UNDERGROUND
+def underground(s, ground):
+    h = ground.height(float(s['x']), float(s['y']))
+    return h is not None and float(s['z']) < h - UNDERGROUND
 
 
 def path_of(s):
@@ -79,14 +83,14 @@ def main():
         and s['reaction_to_alliance'] in ('hostile', 'neutral') and s['rank'] == 0
         and s['name'] in KINDS
     ]
-    surface = [s for s in pool if 'Mine' not in s.get('subzone', '')]
+    ground = Ground(sys.argv[3], sys.argv[4])
     kept, dropped = [], {'outline': 0, 'goldshire': 0, 'underground': 0}
     for s in pool:
         if not inside(s['x'], s['y']):
             dropped['outline'] += 1
         elif math.dist((s['x'], s['y']), SAFE) < SAFE_MARGIN:
             dropped['goldshire'] += 1
-        elif underground(s, surface):
+        elif underground(s, ground):
             dropped['underground'] += 1
         else:
             kept.append(s)
