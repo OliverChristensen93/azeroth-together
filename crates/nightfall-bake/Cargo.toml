@@ -1,0 +1,23 @@
+[package]
+name = "nightfall-bake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bakes Nightfall's height map from the player's own WoW data: terrain, buildings and doodad hulls into nightfall-sim's columns, cached on disk"
+
+[lints]
+workspace = true
+
+[features]
+# `benilla-formats`'s `dev` (its project-folder fallback for finding WoW data), forwarded: every
+# dependent takes `benilla-formats` without default features and forwards `dev`, or the player
+# build would carry the source tree's path.
+default = ["dev"]
+dev = ["benilla-formats/dev"]
+
+[dependencies]
+anyhow.workspace = true
+benilla-formats = { path = "../benilla-formats", default-features = false }
+# The cache is deflated: most of Duskwood's columns are a handful of nearby heights.
+flate2 = "1.1"
+nightfall-sim = { path = "../nightfall-sim" }

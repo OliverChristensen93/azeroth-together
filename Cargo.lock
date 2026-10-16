@@ -5775,6 +5775,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nightfall-bake"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "benilla-formats",
+ "flate2",
+ "nightfall-sim",
+]
+
+[[package]]
 name = "nightfall-sim"
 version = "0.2.0"
 dependencies = [
