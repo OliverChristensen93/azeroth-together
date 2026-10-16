@@ -88,6 +88,10 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   were held). The tomes and items carried are a strip of icons under the player frame, and the
   stat sheet opens with its Stats button or Tab (`together/inventory.rs`; `TOGETHER_STATS=1`
   opens it).
+  The talent web between runs ([docs/TALENT-WEB.md](docs/TALENT-WEB.md)): `content/talents.ron`,
+  `together-sim/src/talents.rs` (model) and `world/combat/talents.rs` (in-run hooks), the menu's
+  Talents screen `together/talents.rs` (saved in `benilla-config/together-talents.txt`);
+  `TOGETHER_TALENTS=1` opens it, `TOGETHER_TALENT_POINTS=<n>` adds test points.
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries

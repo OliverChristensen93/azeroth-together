@@ -50,6 +50,7 @@ mod tests {
             class: "mage".into(),
             race: 1,
             sex: 1,
+            talents: vec![3, 4],
         });
         let frame = encode(&msg).unwrap();
         let back: ClientMsg = read(&mut frame.as_slice()).unwrap();

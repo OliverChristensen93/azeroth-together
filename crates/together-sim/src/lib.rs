@@ -20,6 +20,7 @@ mod powerups;
 mod rng;
 mod spell;
 mod stats;
+mod talents;
 mod world;
 
 pub use augments::{milestone_rank, Augment, Milestone, Requires};
@@ -44,6 +45,10 @@ pub use spell::{
     PLACEHOLDERS,
 };
 pub use stats::{Bane, Difficulty, Pact, Stat, Stats, PACT_BOON};
+pub use talents::{
+    renown_for_run, ClassTalents, HeroTalents, Keystone, NodeKind, PointRules, SpellBonus,
+    TalentBonuses, TalentEffect, TalentNode, TalentProfile, TalentWeb, LOADOUT_SLOTS,
+};
 pub use world::{
     shield_size, status_bits, xp_to_next, ActiveBuff, Bank, Boon, Enemy, EnemyState, Event, Gem,
     Hero, HeroFx, HeroPose, HeroSpells, Offer, Owned, PlayerId, PlayerInput, Snapshot, Source,

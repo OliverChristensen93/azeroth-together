@@ -282,12 +282,17 @@ pub(super) fn hero_name() -> String {
         .unwrap_or_else(|| "Hero".into())
 }
 
-/// The local pick as the wire carries it.
-pub(super) fn own_pick(selection: &Selection) -> Option<HeroPick> {
+/// The local pick as the wire carries it, with the talents taken for its class.
+pub(super) fn own_pick(
+    selection: &Selection,
+    talents: &super::talents::Talents,
+) -> Option<HeroPick> {
     let (_, race, sex) = selection.hero_look()?;
+    let class = content().classes[selection.class].key.clone();
     Some(HeroPick {
         name: hero_name(),
-        class: content().classes[selection.class].key.clone(),
+        talents: talents.pick(&class),
+        class,
         race,
         sex,
     })
@@ -309,8 +314,12 @@ fn lan_address() -> Option<String> {
 
 /// At the menu: the host takes players in and keeps their lobby current; a client follows its
 /// host's lobby and tells it its pick.
-pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
-    let own = own_pick(&selection);
+pub(super) fn lobby(
+    mut net: ResMut<Net>,
+    selection: Res<Selection>,
+    talents: Res<super::talents::Talents>,
+) {
+    let own = own_pick(&selection, &talents);
     let content = content();
     let zone_key = content.zones[selection.zone].key.clone();
     let net = &mut *net;
