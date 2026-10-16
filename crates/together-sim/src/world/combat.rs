@@ -320,6 +320,7 @@ impl World {
         s.range = st.range;
         s.radius = st.radius;
         s.crit = CRIT_CHANCE + hero.stats.get(Stat::Crit);
+        s.crit_mult += hero.stats.get(Stat::CritDamage);
         s.shield = shield_size(def.shield, owned.bonus);
         owned.mods.apply(&mut s);
         for &a in &owned.augments {
@@ -330,7 +331,7 @@ impl World {
             s.vs_frozen += 1.0;
         }
         if s.tags.has(Tag::Fire) && self.knows(h, Augment::CriticalMass) {
-            s.crit_mult = 2.5;
+            s.crit_mult += 0.5;
         }
         if s.tags.has(Tag::Arcane) && self.knows(h, Augment::ArcaneCharge) {
             s.damage *= 1.0 + 0.1 * f32::from(sp.arcane);

@@ -190,7 +190,10 @@ fn sheet(hero: &Hero) -> Vec<(&'static str, String)> {
             "Critical strike",
             format!("{:.0}%", (BASE_CRIT + s.get(Stat::Crit)).min(1.0) * 100.0),
         ),
-        ("Critical damage", "200%".to_string()),
+        (
+            "Critical damage",
+            format!("{:.0}%", (2.0 + s.get(Stat::CritDamage)) * 100.0),
+        ),
         ("Move speed", pct(s.get(Stat::Speed))),
         ("Pickup range", pct(s.get(Stat::Pickup))),
         ("Luck", pct(s.get(Stat::Luck))),

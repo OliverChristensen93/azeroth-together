@@ -23,7 +23,7 @@ pub use host::{ConnId, Host, HostEvent, Invite};
 pub use invite::{code_for, new_host_key, parse_code};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;

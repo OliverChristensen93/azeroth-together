@@ -238,6 +238,7 @@ pub(super) fn tome_icon(stat: Stat) -> &'static str {
         Stat::XpGain => "INV_Misc_Book_12",
         Stat::GoldGain => "INV_Misc_Book_02",
         Stat::Crit => "INV_Misc_Book_01",
+        Stat::CritDamage => "Ability_Racial_BloodRage",
         Stat::Projectiles => "INV_Misc_Book_13",
     }
 }
