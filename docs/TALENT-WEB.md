@@ -176,8 +176,11 @@ points for this session only.
 
 ## Not built, or uncertain
 
-- Not tested in a running game beyond what the screenshot check of this branch shows (see the
-  report): the screen's drag, wheel and hover need a real mouse; co-op with talents was not run.
+- Checked in the real game (background test window): the screen opens and draws the web with a
+  saved loadout; a run starts with the talents applied; the end of a run awards renown and saves
+  it; a local co-op run (host mage, guest warrior) gave the guest its own 5 nodes on the host (the
+  host logs "together: <name> takes <n> talent node(s)" for each hero when a run starts).
+  **Not** checked: the drag, wheel, hover tooltip and clicks (they need a real mouse).
 - No talents in the in-run stat sheet yet (the stats they add do show, as part of each stat).
 - No icons on nodes; colour by school only.
 - No unlock gates (keystones from challenges, 9e) and no "banish" or extra augment option nodes.

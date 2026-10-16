@@ -211,7 +211,8 @@ impl Sim {
             );
             // Each hero's own talents, as far as they connect and its points go.
             let taken: Vec<usize> = p.hero.talents.iter().map(|&n| usize::from(n)).collect();
-            world.apply_talents(p.player, &talents::web(), &taken);
+            let took = world.apply_talents(p.player, &talents::web(), &taken);
+            println!("together: {} takes {took} talent node(s)", p.hero.name);
         }
         give_loadout(&mut world);
         dev.apply(&mut world);
