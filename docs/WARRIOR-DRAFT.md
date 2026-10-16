@@ -1,5 +1,7 @@
 # The warrior: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Charge on F (its stun lasts 1.5 s). Mechanics in `crates/together-sim/src/world/warrior.rs`, each capstone tested there. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders** for the idea's
 size, not balance.

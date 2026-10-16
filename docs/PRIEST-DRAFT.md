@@ -1,5 +1,7 @@
 # The priest: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Psychic Scream on F. Differences: Starfall strikes the 3 closest enemies each second (not random ones); Hex of Domination's mark lasts as long as the hex. Mechanics in `world/priest.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 

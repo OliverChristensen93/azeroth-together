@@ -1,5 +1,7 @@
 # The druid: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Barkskin on F. Differences: Brambles is named **Briar Patch** (the shared library already has Bramble) and Moonfire's Shooting Stars is **Lunar Shower** (the priest has Shooting Stars); Plague of Locusts swarms every enemy within 6 yd of you on each cast rather than being a lasting cloud; Efflorescence's flowers grow where the heal landed. Mechanics in `world/druid.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 
@@ -38,7 +40,7 @@ Insect Swarm, Moonfire and Starfire keep their keys; Wrath is still the start.
 - **Wrath of Cenarius:** +50% damage to Rooted enemies.
 
 ### 2. Moonfire
-- **Shooting Stars:** each of its ticks has a 10% chance to make Starfire ready.
+- **Lunar Shower:** each of its ticks has a 10% chance to make Starfire ready.
 - ★ **Moonkin Aura:** each hit gives you and allies within 20 yd +2% crit chance for 8 s, up to 10%.
 - **Sunfire:** also hits every enemy within 5 yd of its targets.
 
@@ -76,7 +78,7 @@ Insect Swarm, Moonfire and Starfire keep their keys; Wrath is still the start.
 - **Hymn of Life:** heroes inside take 20% less damage.
 
 ### 9. Thorns
-- **Brambles:** attackers are also Rooted for 1 s.
+- **Briar Patch:** attackers are also Rooted for 1 s.
 - ★ **Thorn Volley:** every 5 blows you take, thorns burst at every enemy within 8 yd for 200%.
 - **Nature's Ward:** allies within 20 yd get your Thorns too.
 

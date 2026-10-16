@@ -1,5 +1,7 @@
 # The warlock: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Soulstone on F. Differences: Howl of Terror has a small direct hit (so Nightmare, now 300% over 4 s, has something to scale); the Imp firebolts and the Voidwalker pulses every second. Shadowburn stays in `abilities.ron` but left the pool. Mechanics in `world/warlock.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 

@@ -1,5 +1,7 @@
 # The paladin: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Divine Shield on F. Differences: Sanctity is +10% to all damage, not only Holy. Mechanics in `world/paladin.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 

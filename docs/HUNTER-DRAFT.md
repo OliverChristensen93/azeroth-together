@@ -1,5 +1,7 @@
 # The hunter: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Disengage on F. Differences: Rapid Fire speeds up all your spells, not only Projectiles; the wolf bites every second; Trick Shot ricochets within 8 yd. The pet and traps are not drawn as creatures or objects (their hits are). Mechanics in `world/hunter.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 

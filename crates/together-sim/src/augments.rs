@@ -431,6 +431,43 @@ pub enum Augment {
     ImprovedLayOnHands,
     MartyrsHands,
     HandOfProtection,
+    // --- Capstones: druid ---
+    NaturesGrace,
+    Eclipse,
+    WrathOfCenarius,
+    LunarShower,
+    MoonkinAura,
+    Sunfire,
+    Moonstrike,
+    Starsurge,
+    ImprovedStarfire,
+    Swarming,
+    PlagueOfLocusts,
+    NaturesTorment,
+    Cyclone,
+    EyeOfTheStorm,
+    Tornado,
+    NaturesGrasp,
+    MassEntanglement,
+    ThornedVines,
+    Efflorescence,
+    GiftOfTheWild,
+    RampantGrowth,
+    TranquilMind,
+    Restoration,
+    HymnOfLife,
+    BriarPatch,
+    ThornVolley,
+    NaturesWard,
+    Maul,
+    BearForm,
+    Thrash,
+    Rip,
+    FerociousBite,
+    BloodInTheWater,
+    ImprovedFaerieFire,
+    FaeTransfusion,
+    FaerieSpread,
 }
 
 impl Augment {
@@ -505,7 +542,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 288] = [
+    pub const CAPSTONES: [Augment; 324] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -794,6 +831,42 @@ impl Augment {
         Augment::ImprovedLayOnHands,
         Augment::MartyrsHands,
         Augment::HandOfProtection,
+        Augment::NaturesGrace,
+        Augment::Eclipse,
+        Augment::WrathOfCenarius,
+        Augment::LunarShower,
+        Augment::MoonkinAura,
+        Augment::Sunfire,
+        Augment::Moonstrike,
+        Augment::Starsurge,
+        Augment::ImprovedStarfire,
+        Augment::Swarming,
+        Augment::PlagueOfLocusts,
+        Augment::NaturesTorment,
+        Augment::Cyclone,
+        Augment::EyeOfTheStorm,
+        Augment::Tornado,
+        Augment::NaturesGrasp,
+        Augment::MassEntanglement,
+        Augment::ThornedVines,
+        Augment::Efflorescence,
+        Augment::GiftOfTheWild,
+        Augment::RampantGrowth,
+        Augment::TranquilMind,
+        Augment::Restoration,
+        Augment::HymnOfLife,
+        Augment::BriarPatch,
+        Augment::ThornVolley,
+        Augment::NaturesWard,
+        Augment::Maul,
+        Augment::BearForm,
+        Augment::Thrash,
+        Augment::Rip,
+        Augment::FerociousBite,
+        Augment::BloodInTheWater,
+        Augment::ImprovedFaerieFire,
+        Augment::FaeTransfusion,
+        Augment::FaerieSpread,
     ];
 
     pub fn name(self) -> &'static str {
@@ -1152,6 +1225,42 @@ impl Augment {
             Augment::ImprovedLayOnHands => "Improved Lay on Hands",
             Augment::MartyrsHands => "Martyr's Hands",
             Augment::HandOfProtection => "Hand of Protection",
+            Augment::NaturesGrace => "Nature's Grace",
+            Augment::Eclipse => "Eclipse",
+            Augment::WrathOfCenarius => "Wrath of Cenarius",
+            Augment::LunarShower => "Lunar Shower",
+            Augment::MoonkinAura => "Moonkin Aura",
+            Augment::Sunfire => "Sunfire",
+            Augment::Moonstrike => "Moonstrike",
+            Augment::Starsurge => "Starsurge",
+            Augment::ImprovedStarfire => "Improved Starfire",
+            Augment::Swarming => "Swarming",
+            Augment::PlagueOfLocusts => "Plague of Locusts",
+            Augment::NaturesTorment => "Nature's Torment",
+            Augment::Cyclone => "Cyclone",
+            Augment::EyeOfTheStorm => "Eye of the Storm",
+            Augment::Tornado => "Tornado",
+            Augment::NaturesGrasp => "Nature's Grasp",
+            Augment::MassEntanglement => "Mass Entanglement",
+            Augment::ThornedVines => "Thorned Vines",
+            Augment::Efflorescence => "Efflorescence",
+            Augment::GiftOfTheWild => "Gift of the Wild",
+            Augment::RampantGrowth => "Rampant Growth",
+            Augment::TranquilMind => "Tranquil Mind",
+            Augment::Restoration => "Restoration",
+            Augment::HymnOfLife => "Hymn of Life",
+            Augment::BriarPatch => "Briar Patch",
+            Augment::ThornVolley => "Thorn Volley",
+            Augment::NaturesWard => "Nature's Ward",
+            Augment::Maul => "Maul",
+            Augment::BearForm => "Bear Form",
+            Augment::Thrash => "Thrash",
+            Augment::Rip => "Rip",
+            Augment::FerociousBite => "Ferocious Bite",
+            Augment::BloodInTheWater => "Blood in the Water",
+            Augment::ImprovedFaerieFire => "Improved Faerie Fire",
+            Augment::FaeTransfusion => "Fae Transfusion",
+            Augment::FaerieSpread => "Faerie Spread",
         }
     }
 
@@ -1512,6 +1621,42 @@ impl Augment {
             Augment::ImprovedLayOnHands => "For 10 seconds after it heals, that hero takes 30% less damage.",
             Augment::MartyrsHands => "It heals below 40% instead of 20%, and every enemy within 10 yards takes holy damage equal to the heal.",
             Augment::HandOfProtection => "After it heals, that hero takes no damage for 2 seconds.",
+            Augment::NaturesGrace => "Its crits make your spells come back 30% faster for 3 seconds.",
+            Augment::Eclipse => "Every 6th Wrath begins a Solar Eclipse: your Arcane spells deal +40% for 8 seconds.",
+            Augment::WrathOfCenarius => "+50% damage to Rooted enemies.",
+            Augment::LunarShower => "Each of its ticks has a 10% chance to make Starfire ready.",
+            Augment::MoonkinAura => "Each hit gives you and every ally within 20 yards +2% critical strike chance for 8 seconds, up to 10%.",
+            Augment::Sunfire => "Also hits every enemy within 5 yards of its targets for half.",
+            Augment::Moonstrike => "Always crits enemies with your Moonfire.",
+            Augment::Starsurge => "+20% damage for each enemy with your Moonfire in its range, up to +100%.",
+            Augment::ImprovedStarfire => "Stuns its target for 1 second.",
+            Augment::Swarming => "When a swarmed enemy dies, the swarm jumps to the 2 closest enemies.",
+            Augment::PlagueOfLocusts => "Becomes a cloud around you: it swarms every enemy within 6 yards of you.",
+            Augment::NaturesTorment => "Swarmed enemies take +15% from your Nature spells.",
+            Augment::Cyclone => "The 3 enemies closest to its centre are lifted (Stunned) while it lasts.",
+            Augment::EyeOfTheStorm => "It centres on you and goes where you go; you take 20% less damage inside it.",
+            Augment::Tornado => "Each second it pulls enemies within 10 yards one yard toward its centre.",
+            Augment::NaturesGrasp => "An enemy that strikes you is Rooted for 2 seconds (each at most every 10 seconds).",
+            Augment::MassEntanglement => "Roots every enemy within 8 yards of you instead.",
+            Augment::ThornedVines => "Rooted enemies take damage over time (100% of the hit over 3 seconds).",
+            Augment::Efflorescence => "Each heal it gives leaves flowers there (5 yards, 4 seconds) that heal heroes 2% a second and Root enemies inside.",
+            Augment::GiftOfTheWild => "Its overflow also heals every hero within 20 yards for 5% of their health.",
+            Augment::RampantGrowth => "Its heals bank twice as fast while you are below 50% health.",
+            Augment::TranquilMind => "Enemies inside flee in Fear.",
+            Augment::Restoration => "Heals 50% more on heroes below 50% health.",
+            Augment::HymnOfLife => "Heroes inside take 20% less damage.",
+            Augment::BriarPatch => "Enemies its thorns strike are Rooted for 1 second.",
+            Augment::ThornVolley => "Every 5 blows you take, thorns burst at every enemy within 8 yards for 200%.",
+            Augment::NaturesWard => "Allies within 20 yards get your Thorns too.",
+            Augment::Maul => "Every 3rd Swipe Stuns what it hits for 1 second.",
+            Augment::BearForm => "While you have Swipe you take 15% less damage and Swipe deals +30%, but your Arcane and Nature spells deal 20% less.",
+            Augment::Thrash => "Everything it hits Bleeds for 60% over 6 seconds.",
+            Augment::Rip => "Its bleed deals +50% to bosses and elites.",
+            Augment::FerociousBite => "A Raked enemy below 25% health dies to your next Rake (not a boss).",
+            Augment::BloodInTheWater => "A kill on an enemy Bleeding from you renews Rake on every enemy within 5 yards.",
+            Augment::ImprovedFaerieFire => "Your hits on Marked enemies have +10% critical strike chance.",
+            Augment::FaeTransfusion => "Your hits on Marked enemies heal you 0.5% of your health, up to 5% a second.",
+            Augment::FaerieSpread => "When an enemy with your Faerie Fire dies, it jumps to the closest enemy.",
         }
     }
 
@@ -1675,6 +1820,26 @@ impl Augment {
             }
             Augment::ImprovedLayOnHands | Augment::MartyrsHands | Augment::HandOfProtection => {
                 "lay_on_hands"
+            }
+            Augment::NaturesGrace | Augment::Eclipse | Augment::WrathOfCenarius => "wrath",
+            Augment::LunarShower | Augment::MoonkinAura | Augment::Sunfire => "moonfire",
+            Augment::Moonstrike | Augment::Starsurge | Augment::ImprovedStarfire => "starfire",
+            Augment::Swarming | Augment::PlagueOfLocusts | Augment::NaturesTorment => {
+                "insect_swarm"
+            }
+            Augment::Cyclone | Augment::EyeOfTheStorm | Augment::Tornado => "hurricane",
+            Augment::NaturesGrasp | Augment::MassEntanglement | Augment::ThornedVines => {
+                "entangling_roots"
+            }
+            Augment::Efflorescence | Augment::GiftOfTheWild | Augment::RampantGrowth => {
+                "rejuvenation"
+            }
+            Augment::TranquilMind | Augment::Restoration | Augment::HymnOfLife => "tranquility",
+            Augment::BriarPatch | Augment::ThornVolley | Augment::NaturesWard => "thorns",
+            Augment::Maul | Augment::BearForm | Augment::Thrash => "swipe",
+            Augment::Rip | Augment::FerociousBite | Augment::BloodInTheWater => "rake",
+            Augment::ImprovedFaerieFire | Augment::FaeTransfusion | Augment::FaerieSpread => {
+                "faerie_fire"
             }
             _ => return None,
         })
@@ -2363,6 +2528,39 @@ impl Augment {
             Augment::Devotion => s.fx.buff.guard = s.fx.buff.guard.max(0.1),
             Augment::Sanctity => s.fx.buff.power += 0.1,
             Augment::MartyrsHands => s.fx.heal_below = s.fx.heal_below.max(0.4),
+            // Druid capstones that change the cast's numbers.
+            Augment::WrathOfCenarius => s.fx.vs_rooted += 0.5,
+            Augment::Sunfire => s.radius = s.radius.max(5.0),
+            Augment::ImprovedStarfire => {
+                s.stun = s.stun.max(1.0);
+                s.tags = s.tags.with(Tag::Stun);
+            }
+            Augment::PlagueOfLocusts => {
+                s.targeting = Targeting::Nearest;
+                s.count = 99;
+                s.range = 6.0;
+            }
+            Augment::EyeOfTheStorm => s.follows = true,
+            Augment::MassEntanglement => {
+                s.targeting = Targeting::Nearest;
+                s.count = 99;
+                s.range = 8.0;
+            }
+            Augment::ThornedVines => {
+                s.burn += 1.0;
+                s.fx.dot_time = 3.0;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::TranquilMind => {
+                s.fx.fear = s.fx.fear.max(1.5);
+                s.tags = s.tags.with(Tag::Fear);
+            }
+            Augment::NaturesWard => s.tags = s.tags.with(Tag::Aura),
+            Augment::Thrash => {
+                s.burn += 0.6;
+                s.fx.dot_time = 6.0;
+                s.tags = s.tags.with(Tag::Bleed).with(Tag::DamageOverTime);
+            }
             _ => {}
         }
     }

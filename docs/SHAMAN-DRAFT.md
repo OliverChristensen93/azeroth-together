@@ -1,5 +1,7 @@
 # The shaman: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Ghost Wolf on F. Differences: Magma Totem pulses every second for less (not every 2 s); Lightning Overload strikes the same target again; Storm Nexus loses 5% a jump. Totems are not drawn (their hits are). Mechanics in `world/shaman.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 

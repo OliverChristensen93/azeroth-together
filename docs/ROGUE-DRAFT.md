@@ -1,5 +1,7 @@
 # The rogue: spells and augments (draft for review)
 
+> **Built (2026-10-16)** as a playable prototype: every spell, all 36 capstones and Vanish on F. Differences from the draft: Vanish hides you for 4 s (not 3) with +50% damage for those 4 s; Blade Dance bounces within 8 yd; Lethal Fan also hits Burning enemies; Smoke Bomb's +30% is a Mark (every hero's damage counts). Mechanics in `world/rogue.rs`. Not yet: balance, charges shown on the buff frame, augments for the defensive button.
+
 Built on the mage's system ([MAGE-DRAFT.md](MAGE-DRAFT.md)) and the shared additions
 ([CLASSES-SHARED-DRAFT.md](CLASSES-SHARED-DRAFT.md)). **Numbers are placeholders.**
 

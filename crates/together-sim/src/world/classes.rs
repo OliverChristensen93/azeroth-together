@@ -64,6 +64,10 @@ pub struct StatusFx {
     pub judged_by: Option<PlayerId>,
     pub glimmer_by: Option<PlayerId>,
     pub glimmer_secs: f32,
+    /// The druid whose Faerie Fire is on it, and seconds before Nature's Grasp can root it
+    /// again.
+    pub faerie_by: Option<PlayerId>,
+    pub grasp_cd: f32,
     /// An Earthbind Totem has rooted it once (Earthgrab).
     pub grabbed: bool,
 }
@@ -281,6 +285,7 @@ impl World {
         self.hunter_spec(h, owned, s);
         self.shaman_spec(h, owned, s);
         self.paladin_spec(h, owned, s);
+        self.druid_spec(h, owned, s);
     }
 
     /// The share of each tick of `by`'s damage over time from `spec` that heals `by`, beside the
@@ -298,6 +303,7 @@ impl World {
         let mut rate = 1.0 + fx.cd_rate();
         rate *= self.rogue_rate(h, owned);
         rate *= self.warlock_rate(h, owned);
+        rate *= self.druid_rate(h, owned);
         rate
     }
 
@@ -316,6 +322,7 @@ impl World {
         self.warlock_before(h, owned, spec);
         self.hunter_before(h, owned, spec);
         self.shaman_before(h, owned, spec);
+        self.druid_before(h, owned, spec);
     }
 
     /// Hero `h` fired `owned` as `spec`: a Finisher spends its combo points, a builder gives
@@ -340,6 +347,7 @@ impl World {
         self.hunter_after(h, owned, spec);
         self.shaman_after(h, owned, spec);
         self.paladin_after(h, owned, spec);
+        self.druid_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -427,6 +435,7 @@ impl World {
         }
         self.warrior_overflow(h, spec);
         self.paladin_overflow(h, spec);
+        self.druid_overflow(h, spec);
         true
     }
 
@@ -553,6 +562,7 @@ impl World {
             * self.warlock_scale(h, ei, spec)
             * self.hunter_scale(h, ei, spec)
             * self.shaman_scale(h, ei, spec)
+            * self.druid_scale(h, ei, spec)
     }
 
     /// A hit of `spec` by hero `h` landed on enemy `id` (index `ei`) for `damage`: lifesteal,
@@ -605,6 +615,7 @@ impl World {
         self.hunter_strike(h, id, spec, damage, crit, scale);
         self.shaman_strike(h, id, spec, damage, crit, scale);
         self.paladin_strike(h, id, spec, damage, crit, scale);
+        self.druid_strike(h, id, spec, damage, crit, scale);
     }
 
     /// The other classes' status effects one hit of `spec` leaves on enemy `ei`, struck from
@@ -691,7 +702,8 @@ impl World {
             * self.priest_guard(h)
             * self.warlock_guard(h)
             * self.shaman_guard(h)
-            * self.paladin_guard(h);
+            * self.paladin_guard(h)
+            * self.druid_guard(h);
         let player = self.heroes[h].player;
         let pos = self.heroes[h].pos;
         let banks: Vec<(usize, WardKind)> = self.heroes[h]
@@ -742,6 +754,7 @@ impl World {
                 // Thorns from a friend's Aura count as the friend's damage.
                 self.damage_enemy(by, ability, enemy, dmg, false);
                 self.paladin_thorns(h, by, ability, dmg);
+                self.druid_thorns(by, ability, enemy);
             }
         }
         amount
@@ -870,6 +883,7 @@ impl World {
             self.warlock_tend(h);
             self.hunter_tend(h);
             self.shaman_tend(h);
+            self.druid_tend(h);
             self.spend_heal_charges(h);
         }
     }
@@ -908,6 +922,7 @@ impl World {
             self.priest_charge_spent(h, ability, t, amount);
             self.shaman_charge_spent(h, ability, Some(t));
             self.paladin_charge_spent(h, ability, t, amount);
+            self.druid_charge_spent(h, ability, t);
             let (player, target) = (self.heroes[h].player, self.heroes[t].player);
             self.events.push(Event::Cast {
                 caster: player,
@@ -929,6 +944,7 @@ impl World {
             st.weaken = (st.weaken - DT).max(0.0);
             st.lost = (st.lost - DT).max(0.0);
             st.glimmer_secs = (st.glimmer_secs - DT).max(0.0);
+            st.grasp_cd = (st.grasp_cd - DT).max(0.0);
             if st.glimmer_secs == 0.0 {
                 st.glimmer_by = None;
             }
@@ -958,6 +974,7 @@ impl World {
         self.hunter_deaths(deaths);
         self.shaman_deaths(deaths);
         self.paladin_deaths(deaths);
+        self.druid_deaths(deaths);
     }
 
     /// After a nova of `spec` by hero `h` hit `hit` around `center`: the capstones that count
@@ -1015,8 +1032,10 @@ impl World {
                 .collect();
             let mut healed = 0.0;
             for t in inside {
-                let amount =
-                    spec.fx.heal * self.heroes[t].max_hp * self.shaman_heal_bonus(h, spec, t);
+                let amount = spec.fx.heal
+                    * self.heroes[t].max_hp
+                    * self.shaman_heal_bonus(h, spec, t)
+                    * self.druid_heal_bonus(h, spec, t);
                 let got = self.heal_hero(t, amount, Some(spec));
                 healed += got;
                 if got > 0.0 {
@@ -1125,6 +1144,7 @@ impl World {
         };
         self.priest_tick(h, ability, id, dps);
         self.warlock_tick(h, ability, id, dps, left);
+        self.druid_tick(h, ability);
     }
 
     /// Extra crit chance a hit of `spec` from hero `h` has on enemy `ei`.
@@ -1132,6 +1152,7 @@ impl World {
         self.warlock_crit(h, ei, spec)
             + self.hunter_crit(h, ei, spec)
             + self.shaman_crit(h, ei, spec)
+            + self.druid_crit(h, ei, spec)
     }
 
     /// Where ground `g` stands this step, given where it would (a capstone may move it).
@@ -1149,6 +1170,7 @@ impl World {
     pub(super) fn after_blow(&mut self, h: usize, amount: f32, from: Option<u32>) {
         self.priest_blow(h, amount, from);
         self.paladin_blow(h, amount, from);
+        self.druid_blow(h, amount, from);
     }
 
     /// Hero `h`'s absorbing shield broke.

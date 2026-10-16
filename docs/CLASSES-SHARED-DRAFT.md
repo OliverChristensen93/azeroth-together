@@ -1,5 +1,10 @@
 # Every class: shared tags, mechanics and general augments (draft for review)
 
+> **Built (2026-10-16):** every tag, status, mechanic, general augment and defensive button
+> below, in `crates/together-sim/src/world/classes.rs` (the shared mechanics and the hooks) with each
+> class's capstones in its own file beside it (`warrior.rs` ... `druid.rs`), and all eight classes
+> drafted below. Each class has 12 spells, 36 capstones and its defensive button in `content/`.
+
 The mage ([MAGE-DRAFT.md](MAGE-DRAFT.md)) proved the augment system on one class. This draft lists
 what the other eight classes need on top of it, so each class draft can refer to it:
 [WARRIOR](WARRIOR-DRAFT.md), [ROGUE](ROGUE-DRAFT.md), [PRIEST](PRIEST-DRAFT.md),

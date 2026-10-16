@@ -110,3 +110,24 @@ fn every_class_survives_a_minute_in_every_zone_and_kills_something() {
         }
     }
 }
+
+#[test]
+fn every_class_has_twelve_spells_with_capstones_and_a_defensive_button() {
+    let c = shipped();
+    for class in &c.classes {
+        assert_eq!(class.pool.len(), 12, "{}", class.key);
+        assert!(
+            class.defensive_ix.is_some(),
+            "{} has no defensive",
+            class.key
+        );
+        for key in &class.pool {
+            assert_eq!(
+                together_sim::Augment::capstones_of(key).len(),
+                3,
+                "{}: {key}",
+                class.key
+            );
+        }
+    }
+}
