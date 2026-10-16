@@ -307,6 +307,10 @@ mod set_guard_tests {
             "benilla_app::nightfall::menu::show_roots",
             "hides Nightfall's screens whenever another game is up",
         ),
+        (
+            "benilla_app::nightfall::terrain::show_line",
+            "hides the bake's line whenever another game is up",
+        ),
     ];
 
     #[test]
