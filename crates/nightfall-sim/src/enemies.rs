@@ -84,7 +84,13 @@ pub(crate) enum Order {
         target: usize,
         pause: f32,
     },
-    Wander { center: V3, radius: f32 },
+    /// `height` is the content's: with one, its walks stay near that height (an upper storey);
+    /// without, on the ground under each spot.
+    Wander {
+        center: V3,
+        radius: f32,
+        height: Option<f32>,
+    },
 }
 
 /// An enemy's mind, the host's alone: never sent.
@@ -128,6 +134,37 @@ fn next_target(route: &[Option<V3>], from: usize) -> usize {
         .unwrap_or(from)
 }
 
+/// Where member `k` of spawn `si` stands at `spot`: `stand`, a floor a unit can stand on; else
+/// `floor`, with a warning, since an enemy there cannot walk away (on a ledge, a tree trunk's
+/// top or a narrow wall).
+fn stand_or_warn(
+    content: &Content,
+    si: usize,
+    k: usize,
+    spot: V2,
+    stand: Option<V3>,
+    floor: Option<V3>,
+    warnings: &mut Vec<String>,
+) -> Option<V3> {
+    if stand.is_some() {
+        return stand;
+    }
+    let f = floor?;
+    warnings.push(format!(
+        "{}: {} ({:.1}, {:.1}) has no floor to walk on within 2 yd; it stands at height {:.1}          and cannot walk away",
+        who(content, si),
+        if k == 0 {
+            "its spot".to_owned()
+        } else {
+            format!("member {}'s spot", k + 1)
+        },
+        spot.x,
+        spot.y,
+        f.z
+    ));
+    Some(f)
+}
+
 /// Every enemy the content's spawns place, on the map's floors, with a warning for each that
 /// could not be placed. Ids count from 1 in the content's order.
 pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<Brain>, Vec<String>) {
@@ -140,34 +177,38 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
             continue;
         };
         let def = &content.enemies[kind];
-        // The floor a point stands on: near the height the content gives, else near the terrain.
-        let floor = |p: V2| -> Option<V3> {
-            let hint = s.z.or_else(|| map.ground_at(p)).unwrap_or(0.0);
-            map.floor_near(p, hint).map(|z| V3::at(p, z))
-        };
+        // Where a point stands: on a floor a unit can stand on near the height the content gives,
+        // else near the terrain, a yard or two aside if need be (`stand`: never a tree trunk's or
+        // a rock's top over the ground it was meant for); `floor` is the nearest floor at all.
+        let hint = |p: V2| s.z.or_else(|| map.ground_at(p)).unwrap_or(0.0);
+        let stand = |p: V2| map.stand_near(V3::at(p, hint(p)));
+        let floor = |p: V2| map.floor_near(p, hint(p)).map(|z| V3::at(p, z));
         for k in 0..s.count as usize {
             let mut rng = Rng::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9));
             let placed = match &s.behaviour {
                 Behaviour::Sentry { at, facing } => {
                     let post = V2::new(at.0, at.1);
-                    let stand = if k == 0 {
+                    let spot = if k == 0 {
                         post
                     } else {
                         post + V2::from_angle(k as f32 * TAU / s.count as f32, GROUP_SPACING)
                     };
                     let face = V2::from_angle(facing.to_radians(), 1.0);
-                    floor(stand).map(|p| (p, Order::Sentry { post: p, facing: face }, face))
+                    let at = stand_or_warn(content, si, k, spot, stand(spot), floor(spot), &mut warnings);
+                    at.map(|p| (p, Order::Sentry { post: p, facing: face }, face))
                 }
                 Behaviour::Patrol { route, pause } => {
                     let points: Vec<Option<V3>> =
-                        route.iter().map(|&(x, y)| floor(V2::new(x, y))).collect();
+                        route.iter().map(|&(x, y)| stand(V2::new(x, y))).collect();
                     if k == 0 {
                         for (i, p) in points.iter().enumerate() {
                             if p.is_none() {
                                 warnings.push(format!(
-                                    "{}: patrol point {} has no floor; it is skipped",
+                                    "{}: patrol point {} ({:.1}, {:.1}) has no floor to walk on                                      within 2 yd; it is skipped",
                                     who(content, si),
-                                    i + 1
+                                    i + 1,
+                                    route[i].0,
+                                    route[i].1
                                 ));
                             }
                         }
@@ -186,12 +227,20 @@ pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<
                     })
                 }
                 Behaviour::Wander { center, radius } => {
-                    floor(V2::new(center.0, center.1)).map(|c| {
+                    let middle = V2::new(center.0, center.1);
+                    let c = stand(middle).or_else(|| floor(middle));
+                    c.and_then(|c| {
                         let spot = c.ground()
                             + V2::from_angle(rng.next_f32() * TAU, radius * rng.next_f32().sqrt());
-                        let p = map.floor_near(spot, c.z).map_or(c, |z| V3::at(spot, z));
                         let facing = V2::from_angle(rng.next_f32() * TAU, 1.0);
-                        (p, Order::Wander { center: c, radius: *radius }, facing)
+                        let at = stand(spot).or_else(|| stand(middle));
+                        let at = stand_or_warn(content, si, k, middle, at, Some(c), &mut warnings)?;
+                        let order = Order::Wander {
+                            center: c,
+                            radius: *radius,
+                            height: s.z,
+                        };
+                        Some((at, order, facing))
                     })
                 }
             };
@@ -314,14 +363,21 @@ fn plan(
             }
             (goal, true, PATROL_BUDGET)
         }
-        Order::Wander { center, radius } => {
+        Order::Wander {
+            center,
+            radius,
+            height,
+        } => {
             let spot = center.ground()
                 + V2::from_angle(b.rng.next_f32() * TAU, *radius * b.rng.next_f32().sqrt());
-            let Some(z) = nav.map().floor_near(spot, center.z) else {
+            let hint = height.or_else(|| nav.map().ground_at(spot)).unwrap_or(center.z);
+            // A spot with no floor to walk on (a trunk's top, a hole) is no walk: rest and pick
+            // another.
+            let Some(goal) = nav.stand_near(V3::at(spot, hint)) else {
                 b.wait = 1.0;
                 return;
             };
-            (V3::at(spot, z), false, WANDER_BUDGET)
+            (goal, false, WANDER_BUDGET)
         }
     };
     let searched = match nav.plan_path(here, goal, cache, limit) {
@@ -798,5 +854,76 @@ mod tests {
         // All three know, and wait to try again.
         assert!(brains.iter().all(|b| b.wait > 0.0));
         assert_eq!(warnings.len(), 3, "{warnings:?}");
+    }
+
+    /// Flat ground 50 yd across with tree trunks a yard thick and 8 tall: one at the gate's
+    /// post (10, 10), one on a patrol point (30, 10), and a grove of them every 3 yd over the
+    /// nest around (10, 40).
+    fn woods() -> Arc<HeightMap> {
+        let mut b = flat(50.0);
+        let mut trunk = |x: f32, y: f32| {
+            b.add_box(V2::new(x - 0.5, y - 0.5), V2::new(x + 0.5, y + 0.5), 0.0, 8.0);
+        };
+        trunk(10.2, 10.2);
+        trunk(30.0, 10.0);
+        for i in 0..5 {
+            for j in 0..5 {
+                trunk(4.0 + 3.0 * i as f32, 34.0 + 3.0 * j as f32);
+            }
+        }
+        Arc::new(b.finish())
+    }
+
+    #[test]
+    fn enemies_stand_beside_a_trunk_never_on_it() {
+        let mut w = world(
+            r#"[
+                (place: "Gate", kind: "skeleton", behaviour: Sentry(at: (10.2, 10.2), facing: 90.0)),
+                (place: "Road", kind: "skeleton", behaviour: Patrol(route: [(30.0, 10.0), (30.0, 30.0)], pause: 0.0)),
+                (place: "Nest", kind: "skeleton", count: 3, behaviour: Wander(center: (10.0, 40.0), radius: 6.0)),
+            ]"#,
+            4,
+        );
+        let map = woods();
+        w.attach_map(map.clone());
+        assert!(w.warnings().is_empty(), "{:?}", w.warnings());
+        let gate = &w.enemies[0];
+        assert_eq!(gate.z, 0.0);
+        assert!(gate.pos.distance(V2::new(10.2, 10.2)) <= 2.0, "{:?}", gate.pos);
+        let mut reached = false;
+        for _ in 0..1800 {
+            w.step();
+            for e in &w.enemies {
+                assert!(e.z.abs() < 0.01, "enemy {} at {:?} stands at {}", e.id, e.pos, e.z);
+                assert!(map.stand_near(crate::V3::at(e.pos, e.z)).is_some());
+            }
+            reached |= w.enemies[1].pos.distance(V2::new(30.0, 10.0)) <= 2.0;
+        }
+        assert!(reached);
+        assert_eq!(w.failed_searches(), 0);
+    }
+
+    #[test]
+    fn a_spot_with_no_ground_to_walk_on_nearby_is_named() {
+        // A sentry posted in the middle of a rock 6 yd across and 3 tall: no ground within 2 yd.
+        let rock = || {
+            let mut b = flat(50.0);
+            b.add_box(V2::new(7.0, 7.0), V2::new(13.0, 13.0), 0.0, 3.0);
+            Arc::new(b.finish())
+        };
+        let mut w = world(GATE, 4);
+        w.attach_map(rock());
+        assert_eq!(w.enemies[0].z, 3.0);
+        assert_eq!(w.warnings().len(), 1, "{:?}", w.warnings());
+        assert!(w.warnings()[0].contains("\"Gate\""));
+        assert!(w.warnings()[0].contains("cannot walk away"));
+        // Posted on the rock's top on purpose, it stands there unremarked.
+        let mut w = world(
+            r#"[(place: "Gate", kind: "skeleton", z: Some(3.0), behaviour: Sentry(at: (10.0, 10.0), facing: 90.0))]"#,
+            4,
+        );
+        w.attach_map(rock());
+        assert_eq!(w.enemies[0].z, 3.0);
+        assert!(w.warnings().is_empty(), "{:?}", w.warnings());
     }
 }

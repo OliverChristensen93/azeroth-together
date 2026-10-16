@@ -115,6 +115,23 @@ impl HeightMap {
     pub fn walk_line(&self, a: V3, b: V3) -> bool {
         walk_line(&mut &*self, a, b)
     }
+
+    /// The floor a unit can stand on nearest `p`, as a path's ends are found: in `p`'s own
+    /// column within [`SNAP_HEIGHT`] of `p.z`, else in the nearest column within [`SNAP_REACH`]
+    /// (2 yd) that has one, at that column's middle. `None` when there is none: `p` is on a tree
+    /// trunk's or a rock's top, or in a wall, with no ground near its height beside it.
+    pub fn stand_near(&self, p: V3) -> Option<V3> {
+        stand_at(&mut &*self, p)
+    }
+}
+
+/// [`HeightMap::stand_near`] over any [`Ground`].
+fn stand_at(ground: &mut impl Ground, p: V3) -> Option<V3> {
+    let n = snap(ground, p)?;
+    let map = ground.map();
+    let at = map.node_point(n);
+    let own = map.grid.column_of(p.ground()) == Some(map.grid.cell_of(node_col(n)));
+    Some(if own { V3::at(p.ground(), at.z) } else { at })
 }
 
 /// The walkable floor nearest `p`: its own column's if a unit can stand there, else the nearest
@@ -469,6 +486,16 @@ impl Navigator {
                 PathPlan::NoPath
             }
         }
+    }
+
+    /// [`HeightMap::stand_near`], read through the tiles.
+    pub fn stand_near(&mut self, p: V3) -> Option<V3> {
+        self.walk.trim();
+        let mut ground = Cached {
+            map: &self.map,
+            walk: &mut self.walk,
+        };
+        stand_at(&mut ground, p)
     }
 
     /// The start's and goal's walkable floors.
