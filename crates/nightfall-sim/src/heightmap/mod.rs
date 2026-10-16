@@ -11,6 +11,7 @@
 //! the player's WoW data; tests build small ones by hand with [`HeightMapBuilder`].
 
 mod build;
+mod sight;
 #[cfg(test)]
 pub(crate) mod testmap;
 
@@ -94,6 +95,12 @@ impl Grid {
             self.origin.x + (ix as f32 + 0.5) * self.cell,
             self.origin.y + (iy as f32 + 0.5) * self.cell,
         )
+    }
+
+    /// Column `(ix, iy)`'s index, or `None` off the grid.
+    pub(crate) fn at(&self, ix: i64, iy: i64) -> Option<usize> {
+        (ix >= 0 && iy >= 0 && ix < self.nx as i64 && iy < self.ny as i64)
+            .then(|| self.index(ix as u32, iy as u32))
     }
 }
 
