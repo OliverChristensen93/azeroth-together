@@ -16,7 +16,7 @@ use crate::names::NameCache;
 use crate::net::{GuidIndex, ObjectStore, SelfGuid};
 
 /// Player guids are this plus the player's number.
-const HERO_SERIAL_BASE: u64 = 0x10;
+pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
 
 /// Which entity draws which hero, and the run speed last given our controller.
 #[derive(Resource, Default)]

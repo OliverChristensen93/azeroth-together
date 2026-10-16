@@ -105,6 +105,14 @@ fn entry_of(kind: usize) -> u32 {
     kind as u32 + 1
 }
 
+/// The serial of a creature guid for an enemy `id` of template `entry`: the entry sits in bits
+/// 24..48, as the server's do, so lookups that have only the guid (the live-shot gate, a name
+/// query) find the name by it, and the enemy's id fills the low 24 bits.
+pub(super) fn enemy_guid_serial(entry: u32, id: u32) -> u64 {
+    debug_assert!(id < 1 << 24, "enemy id {id} overflows the guid's counter");
+    u64::from(entry) << 24 | u64::from(id)
+}
+
 fn trace() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_SEEN").is_some())
@@ -164,9 +172,7 @@ pub(super) fn sync(
             );
         }
         let kind = UnitKind::Creature { entry };
-        // A creature guid carries its template entry in bits 24..48, as the server's do: lookups
-        // that have only the guid (the live-shot gate, a name query) find the name by it.
-        let serial = u64::from(entry) << 24 | u64::from(enemy.id);
+        let serial = enemy_guid_serial(entry, enemy.id);
         let e = units::spawn_unit(
             &mut commands,
             &UnitSpec {
@@ -275,6 +281,7 @@ pub(super) fn trace_seen(sim: Res<Sim>, real: Res<Time<Real>>, mut last: Local<f
 
 #[cfg(test)]
 mod tests {
+    use super::super::view::HERO_SERIAL_BASE;
     use super::*;
 
     #[test]
@@ -306,5 +313,17 @@ mod tests {
         assert_eq!(p.at(0.5), V3::new(1.0, 2.0, 2.0));
         assert_eq!(p.facing, V2::new(1.0, 0.0));
         assert_eq!(entry_of(0), 1);
+    }
+
+    #[test]
+    fn an_enemys_guid_carries_its_entry_and_is_never_a_heros() {
+        for (entry, id) in [(1, 0), (3, 17), (200, (1 << 24) - 1)] {
+            let guid = units::unit_guid(UnitKind::Creature { entry }, enemy_guid_serial(entry, id));
+            assert_eq!(benilla_protocol::guid::entry(guid), Some(entry));
+            for player in 0..4 {
+                let hero = units::unit_guid(UnitKind::Player, HERO_SERIAL_BASE + player);
+                assert_ne!(guid, hero);
+            }
+        }
     }
 }
