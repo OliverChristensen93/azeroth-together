@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use together_sim::{
     milestone_rank, AbilityKind, Augment, Cone, Item, Milestone, Owned, Stat, Tag, Targeting,
-    World, BURN_SECS, MAX_RANK,
+    World, MAX_RANK,
 };
 
 use super::{Phase, Sim};
@@ -186,6 +186,8 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
     // Every number it has, one a line.
     let stat = |name: &str, value: String| Line::two(name, value, GREY, WHITE);
     let shield = def.kind == AbilityKind::Shield;
+    // A ward or a buff works on the hero: no area of its own to show.
+    let on_you = matches!(def.kind, AbilityKind::Ward | AbilityKind::Buff);
     let school = school(s.tags);
     let dmg = s.damage.round();
     let tick = 1.0 / s.tick_rate.max(0.1);
@@ -199,6 +201,7 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
             ),
         ),
         AbilityKind::Ground => stat("Damage", format!("{dmg} {school} every {tick:.1} sec")),
+        AbilityKind::Buff if s.damage <= 0.0 => stat("Lasts", format!("{:.0} sec", s.fx.buff.secs)),
         _ => stat("Damage", format!("{dmg} {school}")),
     });
     if s.charges > 1 {
@@ -206,16 +209,16 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
     }
     let picks = matches!(
         s.targeting,
-        Targeting::Nearest | Targeting::ElitesFirst | Targeting::Densest
+        Targeting::Nearest | Targeting::ElitesFirst | Targeting::Densest | Targeting::Weakest
     );
     if picks && !shield {
         out.push(stat("Range", format!("{:.0} yd", s.range)));
     }
     if matches!(def.kind, AbilityKind::Bolt | AbilityKind::Strike) {
-        let who = if s.targeting == Targeting::ElitesFirst {
-            "bosses and elites first"
-        } else {
-            "the nearest"
+        let who = match s.targeting {
+            Targeting::ElitesFirst => "bosses and elites first",
+            Targeting::Weakest => "the most wounded",
+            _ => "the nearest",
         };
         out.push(stat("Targets", format!("{}, {who}", s.count)));
         if s.volley > 1 {
@@ -227,7 +230,7 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
         if s.radius > 0.0 {
             out.push(stat("Splash", format!("{:.0} yd, half damage", s.radius)));
         }
-    } else if !shield {
+    } else if !shield && !on_you {
         let (name, value) = match (s.targeting, s.cone) {
             (Targeting::Ahead, Cone::Ahead) => ("Cone", format!("{:.0} yd ahead", s.radius)),
             (Targeting::Ahead, Cone::Behind) => ("Cone", format!("{:.0} yd behind", s.radius)),
@@ -250,7 +253,7 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
         out.push(stat("Duration", format!("up to {:.0} sec", def.duration)));
     }
     if s.burn > 0.0 {
-        let secs = BURN_SECS * s.dot_secs / s.dot_speed.max(0.1);
+        let secs = s.fx.dot_time * s.dot_secs / s.dot_speed.max(0.1);
         let total = s.burn * s.dot_mult * s.dot_secs * s.tick_rate * 100.0;
         out.push(stat(
             "Burning",
@@ -278,6 +281,45 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
     }
     if s.knockback > 0.0 {
         out.push(stat("Knockback", "yes".to_string()));
+    }
+    // The other classes' effects.
+    let fx = &s.fx;
+    if fx.ward.is_some() {
+        out.push(stat("Charges", fx.bank.to_string()));
+    }
+    if fx.heal > 0.0 {
+        out.push(stat(
+            "Heal",
+            format!(
+                "{:.0} ({:.0}% of health)",
+                hero.max_hp * fx.heal,
+                fx.heal * 100.0
+            ),
+        ));
+    }
+    if fx.leech > 0.0 {
+        out.push(stat("Lifesteal", format!("{:.0}%", fx.leech * 100.0)));
+    }
+    if fx.fear > 0.0 {
+        out.push(stat("Fear", format!("{:.1} sec", fx.fear)));
+    }
+    if fx.root > 0.0 {
+        out.push(stat("Root", format!("{:.1} sec", fx.root)));
+    }
+    if fx.weaken > 0.0 {
+        out.push(stat("Weakens", format!("{:.0} sec", fx.weaken)));
+    }
+    if fx.mark > 0.0 {
+        out.push(stat(
+            "Marks",
+            format!("+{:.0}% damage taken", fx.mark * 100.0),
+        ));
+    }
+    if fx.jumps > 0 {
+        out.push(stat("Jumps", fx.jumps.to_string()));
+    }
+    if fx.stacks > 1 {
+        out.push(stat("Stacks", format!("up to {}", fx.stacks)));
     }
     if !shield {
         out.push(stat(

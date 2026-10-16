@@ -277,7 +277,7 @@ pub(super) struct LocalInput {
     pub(super) pick: Option<u8>,
     pub(super) reroll: bool,
     pub(super) skip: bool,
-    /// The movement ability was used this frame ([`blink`]).
+    /// The defensive button was pressed this frame ([`defend`]).
     pub(super) dash: bool,
 }
 
@@ -364,7 +364,7 @@ impl Plugin for TogetherPlugin {
                 Update,
                 (
                     read_keys,
-                    blink,
+                    defend,
                     feed_pose,
                     step_sim,
                     view::settle_shrines,
@@ -611,17 +611,17 @@ fn give_loadout(world: &mut World) {
     }
 }
 
-/// Blink: yards forward, seconds of cooldown, and its `Spell.dbc` id for the visual.
-const BLINK_YARDS: f32 = 10.0;
-const BLINK_COOLDOWN: f32 = 30.0;
-const BLINK_SPELL: u32 = 1953;
+/// Seconds a press of the defensive button waits for the world to answer before another counts.
+const DEFEND_GRACE: f32 = 0.5;
 
-/// The mage's movement ability: Blink, on F, ten yards the way the hero faces. WoW's controller
-/// owns the hero's position, so the jump happens here, before [`feed_pose`] reads it; the next
-/// input tells the simulation (`PlayerInput::dash`), where augments act on where it left and
-/// landed. `TOGETHER_AUTOPLAY` blinks whenever it can.
+/// The defensive button, F: the ability the hero's class names as its `defensive` in
+/// `content/classes.ron` (the mage's Blink, the warrior's Charge, ...). The world owns its
+/// cooldown and its effect, and its visual comes with the world's cast. A movement one is made
+/// here first, since WoW's controller owns the hero's position: the leap happens before
+/// [`feed_pose`] reads it, and the next input tells the simulation (`PlayerInput::dash`), which
+/// acts on where the hero left and landed. `TOGETHER_AUTOPLAY` presses it whenever it is ready.
 #[allow(clippy::too_many_arguments)]
-fn blink(
+fn defend(
     keys: Res<ButtonInput<KeyCode>>,
     real: Res<Time<Real>>,
     sim: Res<Sim>,
@@ -630,8 +630,7 @@ fn blink(
     mut input: ResMut<LocalInput>,
     mut bodies: Query<&mut Transform>,
     world_point: benilla_world::world_point::WorldPoint,
-    mut fx: units::Fx,
-    mut ready_at: Local<f32>,
+    mut asked_until: Local<f32>,
 ) {
     let Some(hero) = sim.world.hero(sim.me) else {
         return;
@@ -639,11 +638,21 @@ fn blink(
     if !hero.alive || !hero.offers.is_empty() || !player.active {
         return;
     }
-    if content().classes[hero.class].key != "mage" {
+    let content = sim.world.content();
+    let Some(ability) = content.classes[hero.class].defensive_ix else {
+        return;
+    };
+    let now = real.elapsed_secs();
+    if hero.spell.fx.defense_cd > 0.0 || now < *asked_until {
         return;
     }
-    let now = real.elapsed_secs();
-    if now < *ready_at || !(keys.just_pressed(KeyCode::KeyF) || autoplay()) {
+    if !(keys.just_pressed(KeyCode::KeyF) || autoplay()) {
+        return;
+    }
+    *asked_until = now + DEFEND_GRACE;
+    input.dash = true;
+    let leap = content.abilities[ability].leap;
+    if leap <= 0.0 {
         return;
     }
     let Some(&body) = views.heroes.get(&sim.me) else {
@@ -653,16 +662,13 @@ fn blink(
         return;
     };
     let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
-    let to = bevy_to_ground(tf.translation) + V2::new(yaw.cos(), yaw.sin()) * BLINK_YARDS;
+    let to = bevy_to_ground(tf.translation) + V2::new(yaw.cos(), yaw.sin()) * leap;
     let mut at = units::ground_to_bevy(to, tf.translation.y);
     if let Some(h) = world_point.terrain_height_under(at) {
         at.y = h;
     }
     tf.translation = at;
     player.pos = at;
-    input.dash = true;
-    *ready_at = now + BLINK_COOLDOWN;
-    fx.cast(body, BLINK_SPELL, &[], None);
 }
 
 /// Bevy's position to WoW's ground plane.

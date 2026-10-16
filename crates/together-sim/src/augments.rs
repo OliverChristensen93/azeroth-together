@@ -140,11 +140,80 @@ pub enum Augment {
     ShatteringBarrier,
     IceFloes,
     FrostArmor,
+    // --- The other classes' general augments ---
+    Shadowflame,
+    Twilight,
+    SacredFlame,
+    Thunderstrike,
+    Balance,
+    Frostbrand,
+    Crusader,
+    Shadowblade,
+    Lacerate,
+    Hemorrhage,
+    Crippling,
+    Virulent,
+    Dread,
+    Panic,
+    Bramble,
+    Grasping,
+    Crushing,
+    Forked,
+    Conductive,
+    Pack,
+    FeralBond,
+    Frenzy,
+    BoomingVoice,
+    Commanding,
+    DeepReserves,
+    Overflowing,
+    MendingLink,
+    Renewing,
+    Sanguine,
+    Bloodthirsty,
+    Sweeping,
+    // --- Capstones: warrior ---
+    BloodAndThunder,
+    Rampage,
+    CleavingSwings,
+    Overpower,
+    HeroicThrow,
+    ChampionsGuard,
+    MortalWounds,
+    SuddenDeath,
+    ColossusSmash,
+    Bladestorm,
+    FuriousSpin,
+    SecondWind,
+    Shockwave,
+    Aftershock,
+    Thunderstruck,
+    GushingWound,
+    BloodFrenzy,
+    DeepWounds,
+    ExecutionersChain,
+    Massacre,
+    VictoryRush,
+    BloodCraze,
+    UnbridledWrath,
+    Bloodbath,
+    Revenge,
+    ShieldBash,
+    LastStand,
+    RallyingCry,
+    CripplingPresence,
+    WarCry,
+    ChallengingShout,
+    ShatteringRoar,
+    Fearsome,
+    ExposeArmor,
+    Devastate,
+    SunderingBlows,
 }
 
 impl Augment {
     /// Every general augment, in the library's order.
-    pub const GENERAL: [Augment; 35] = [
+    pub const GENERAL: [Augment; 66] = [
         Augment::Frostfire,
         Augment::Spellfire,
         Augment::Spellfrost,
@@ -180,10 +249,41 @@ impl Augment {
         Augment::Heavy,
         Augment::Twin,
         Augment::Hasted,
+        Augment::Shadowflame,
+        Augment::Twilight,
+        Augment::SacredFlame,
+        Augment::Thunderstrike,
+        Augment::Balance,
+        Augment::Frostbrand,
+        Augment::Crusader,
+        Augment::Shadowblade,
+        Augment::Lacerate,
+        Augment::Hemorrhage,
+        Augment::Crippling,
+        Augment::Virulent,
+        Augment::Dread,
+        Augment::Panic,
+        Augment::Bramble,
+        Augment::Grasping,
+        Augment::Crushing,
+        Augment::Forked,
+        Augment::Conductive,
+        Augment::Pack,
+        Augment::FeralBond,
+        Augment::Frenzy,
+        Augment::BoomingVoice,
+        Augment::Commanding,
+        Augment::DeepReserves,
+        Augment::Overflowing,
+        Augment::MendingLink,
+        Augment::Renewing,
+        Augment::Sanguine,
+        Augment::Bloodthirsty,
+        Augment::Sweeping,
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 36] = [
+    pub const CAPSTONES: [Augment; 72] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -220,6 +320,42 @@ impl Augment {
         Augment::ShatteringBarrier,
         Augment::IceFloes,
         Augment::FrostArmor,
+        Augment::BloodAndThunder,
+        Augment::Rampage,
+        Augment::CleavingSwings,
+        Augment::Overpower,
+        Augment::HeroicThrow,
+        Augment::ChampionsGuard,
+        Augment::MortalWounds,
+        Augment::SuddenDeath,
+        Augment::ColossusSmash,
+        Augment::Bladestorm,
+        Augment::FuriousSpin,
+        Augment::SecondWind,
+        Augment::Shockwave,
+        Augment::Aftershock,
+        Augment::Thunderstruck,
+        Augment::GushingWound,
+        Augment::BloodFrenzy,
+        Augment::DeepWounds,
+        Augment::ExecutionersChain,
+        Augment::Massacre,
+        Augment::VictoryRush,
+        Augment::BloodCraze,
+        Augment::UnbridledWrath,
+        Augment::Bloodbath,
+        Augment::Revenge,
+        Augment::ShieldBash,
+        Augment::LastStand,
+        Augment::RallyingCry,
+        Augment::CripplingPresence,
+        Augment::WarCry,
+        Augment::ChallengingShout,
+        Augment::ShatteringRoar,
+        Augment::Fearsome,
+        Augment::ExposeArmor,
+        Augment::Devastate,
+        Augment::SunderingBlows,
     ];
 
     pub fn name(self) -> &'static str {
@@ -295,6 +431,73 @@ impl Augment {
             Augment::ShatteringBarrier => "Shattering Barrier",
             Augment::IceFloes => "Ice Floes",
             Augment::FrostArmor => "Frost Armor",
+            Augment::Shadowflame => "Shadowflame",
+            Augment::Twilight => "Twilight",
+            Augment::SacredFlame => "Sacred Flame",
+            Augment::Thunderstrike => "Thunderstrike",
+            Augment::Balance => "Balance",
+            Augment::Frostbrand => "Frostbrand",
+            Augment::Crusader => "Crusader",
+            Augment::Shadowblade => "Shadowblade",
+            Augment::Lacerate => "Lacerate",
+            Augment::Hemorrhage => "Hemorrhage",
+            Augment::Crippling => "Crippling",
+            Augment::Virulent => "Virulent",
+            Augment::Dread => "Dread",
+            Augment::Panic => "Panic",
+            Augment::Bramble => "Bramble",
+            Augment::Grasping => "Grasping",
+            Augment::Crushing => "Crushing",
+            Augment::Forked => "Forked",
+            Augment::Conductive => "Conductive",
+            Augment::Pack => "Pack",
+            Augment::FeralBond => "Feral Bond",
+            Augment::Frenzy => "Frenzy",
+            Augment::BoomingVoice => "Booming Voice",
+            Augment::Commanding => "Commanding",
+            Augment::DeepReserves => "Deep Reserves",
+            Augment::Overflowing => "Overflowing",
+            Augment::MendingLink => "Mending Link",
+            Augment::Renewing => "Renewing",
+            Augment::Sanguine => "Sanguine",
+            Augment::Bloodthirsty => "Bloodthirsty",
+            Augment::Sweeping => "Sweeping",
+            Augment::BloodAndThunder => "Blood and Thunder",
+            Augment::Rampage => "Rampage",
+            Augment::CleavingSwings => "Cleaving Swings",
+            Augment::Overpower => "Overpower",
+            Augment::HeroicThrow => "Heroic Throw",
+            Augment::ChampionsGuard => "Champion's Guard",
+            Augment::MortalWounds => "Mortal Wounds",
+            Augment::SuddenDeath => "Sudden Death",
+            Augment::ColossusSmash => "Colossus Smash",
+            Augment::Bladestorm => "Bladestorm",
+            Augment::FuriousSpin => "Furious Spin",
+            Augment::SecondWind => "Second Wind",
+            Augment::Shockwave => "Shockwave",
+            Augment::Aftershock => "Aftershock",
+            Augment::Thunderstruck => "Thunderstruck",
+            Augment::GushingWound => "Gushing Wound",
+            Augment::BloodFrenzy => "Blood Frenzy",
+            Augment::DeepWounds => "Deep Wounds",
+            Augment::ExecutionersChain => "Executioner's Chain",
+            Augment::Massacre => "Massacre",
+            Augment::VictoryRush => "Victory Rush",
+            Augment::BloodCraze => "Blood Craze",
+            Augment::UnbridledWrath => "Unbridled Wrath",
+            Augment::Bloodbath => "Bloodbath",
+            Augment::Revenge => "Revenge",
+            Augment::ShieldBash => "Shield Bash",
+            Augment::LastStand => "Last Stand",
+            Augment::RallyingCry => "Rallying Cry",
+            Augment::CripplingPresence => "Crippling Presence",
+            Augment::WarCry => "War Cry",
+            Augment::ChallengingShout => "Challenging Shout",
+            Augment::ShatteringRoar => "Shattering Roar",
+            Augment::Fearsome => "Fearsome",
+            Augment::ExposeArmor => "Expose Armor",
+            Augment::Devastate => "Devastate",
+            Augment::SunderingBlows => "Sundering Blows",
         }
     }
 
@@ -372,6 +575,73 @@ impl Augment {
             Augment::ShatteringBarrier => "When the shield breaks or ends, it deals 3× what it absorbed within 15 yards and casts Frost Nova.",
             Augment::IceFloes => "While the shield holds, your Frost spells' cooldowns run 25% faster.",
             Augment::FrostArmor => "Enemies that strike the shield are Chilled and take 20% of the blow as Frost damage.",
+            Augment::Shadowflame => "Counts as Fire and Shadow. A Fire spell heals you for 10% of its damage; a Shadow spell also leaves Burning.",
+            Augment::Twilight => "Counts as Holy and Shadow. +20% damage to bosses and elites.",
+            Augment::SacredFlame => "Counts as Holy and Fire. A Holy spell also leaves Burning; a Fire spell heals you for 10% of its damage.",
+            Augment::Thunderstrike => "Counts as Physical and Nature. Each hit arcs to one more enemy within 8 yards for 50%.",
+            Augment::Balance => "Counts as Arcane and Nature. +15% critical strike chance.",
+            Augment::Frostbrand => "Counts as Frost and Nature. A Nature spell also Chills; a Frost spell also Poisons (30% of the hit over 4 seconds).",
+            Augment::Crusader => "Counts as Physical and Holy. Its hits heal you for 2% of your health, at most once a second.",
+            Augment::Shadowblade => "Counts as Physical and Shadow. +25% damage to enemies that are Feared, Stunned, Frozen or Rooted.",
+            Augment::Lacerate => "Its Bleed stacks up to 3 times.",
+            Augment::Hemorrhage => "Enemies Bleeding from your spells take +20% from your Physical hits.",
+            Augment::Crippling => "Enemies it Poisons are Chilled.",
+            Augment::Virulent => "Its Poison stacks 3 more times.",
+            Augment::Dread => "Feared enemies take +25% damage from it.",
+            Augment::Panic => "Its Fear lasts 1.5 seconds longer.",
+            Augment::Bramble => "Rooted enemies take +25% damage from it.",
+            Augment::Grasping => "Its Root lasts 1.5 seconds longer.",
+            Augment::Crushing => "+40% damage to Stunned enemies.",
+            Augment::Forked => "Jumps 2 more times.",
+            Augment::Conductive => "Its jumps lose no damage.",
+            Augment::Pack => "Two at once, -35% damage each.",
+            Augment::FeralBond => "Its strikes heal you for 5% of their damage.",
+            Augment::Frenzy => "Strikes 40% faster.",
+            Augment::BoomingVoice => "+50% area.",
+            Augment::Commanding => "Its effects last 50% longer.",
+            Augment::DeepReserves => "Holds 2 more charges.",
+            Augment::Overflowing => "Its overflow strikes 2 enemies for +50%.",
+            Augment::MendingLink => "A heal it gives also heals every other hero within 10 yards for half as much.",
+            Augment::Renewing => "A heal it gives also heals 30% more over 6 seconds.",
+            Augment::Sanguine => "Lifesteal past full health becomes a shield, up to 20% of your health.",
+            Augment::Bloodthirsty => "Heals you for 10% more of its damage.",
+            Augment::Sweeping => "Its single-target hits also strike one enemy beside the target for 50%.",
+            Augment::BloodAndThunder => "Enemies it hits that are not Bleeding get your Rend (yours, with its augments, if you know it).",
+            Augment::Rampage => "Each enemy it hits gives you +1% damage for 8 seconds, up to 30%.",
+            Augment::CleavingSwings => "Every 3rd Cleave hits every enemy within its reach, not only the closest.",
+            Augment::Overpower => "When it crits, it is ready again at once and its next hit deals +50%.",
+            Augment::HeroicThrow => "Reaches 20 yards: you hurl your weapon at the elite. Counts as a Projectile.",
+            Augment::ChampionsGuard => "Each hit on a boss or elite banks a Shield Block charge (up to its cap, even without Shield Block).",
+            Augment::MortalWounds => "Its target is Marked: it takes +20% damage from every source for 6 seconds.",
+            Augment::SuddenDeath => "Each kill by your Melee spells has a 10% chance to make Mortal Strike ready.",
+            Augment::ColossusSmash => "Also strikes every enemy within 6 yards of its target for 50% and Stuns them for 1 second. +50% cooldown.",
+            Augment::Bladestorm => "Becomes a storm of blades that follows you for 4 seconds, striking everything within reach twice a second at 40%.",
+            Augment::FuriousSpin => "Each kill it makes takes half a second off its cooldown.",
+            Augment::SecondWind => "Each enemy it hits heals you for 1% of your health, up to 10% a spin.",
+            Augment::Shockwave => "A 12-yard cone ahead of you instead. +40% damage, and it Stuns for 2 seconds instead of Chilling.",
+            Augment::Aftershock => "Leaves the ground shaking for 4 seconds: it hits for 25% and Chills every second.",
+            Augment::Thunderstruck => "Enemies it hits are Weakened (25% less damage) for 6 seconds.",
+            Augment::GushingWound => "When an enemy Bleeding from your spells dies, its bleeds burst onto every enemy within 5 yards.",
+            Augment::BloodFrenzy => "Your Bleeds heal you for 20% of the damage they deal.",
+            Augment::DeepWounds => "Your Melee crits make their target Bleed with your Rend.",
+            Augment::ExecutionersChain => "A kill casts Execute again at once at the next most wounded enemy.",
+            Augment::Massacre => "Its bonus counts below 50% health instead of 30%.",
+            Augment::VictoryRush => "Each kill heals you for 5% of your health.",
+            Augment::BloodCraze => "Below 50% health, its cooldown is halved and it heals twice as much.",
+            Augment::UnbridledWrath => "Its crits cast Whirlwind (yours, if you know it), at most every 4 seconds.",
+            Augment::Bloodbath => "Its target also Bleeds for 100% of the hit over 6 seconds.",
+            Augment::Revenge => "Every block spent strikes every enemy within 6 yards for 150% of its damage.",
+            Augment::ShieldBash => "A blocked attacker is Stunned for 1.5 seconds.",
+            Augment::LastStand => "Below 30% health, every charge refills at once (at most every 20 seconds).",
+            Augment::RallyingCry => "Each enemy it reaches heals you for 1% of your health, up to 15%.",
+            Augment::CripplingPresence => "Enemies it Weakens are also Chilled.",
+            Augment::WarCry => "Also gives you and every ally within 20 yards +15% damage for 6 seconds.",
+            Augment::ChallengingShout => "Instead of scattering them, it pulls every enemy within 15 yards to you, and you take 40% less damage for 4 seconds.",
+            Augment::ShatteringRoar => "Everything it reaches is also Sundered twice.",
+            Augment::Fearsome => "Its Fear holds elites as long as normal enemies.",
+            Augment::ExposeArmor => "At 5 Sunder stacks the armor shatters: the stacks go, and the target is Marked for +25% for 8 seconds.",
+            Augment::Devastate => "Hits every enemy within 6 yards of you instead, at 60%, each taking a stack.",
+            Augment::SunderingBlows => "Your Melee crits on a Sundered enemy add a stack.",
         }
     }
 
@@ -394,6 +664,24 @@ impl Augment {
             Augment::BlazingSpeed | Augment::LivingWave | Augment::DragonsBreath => "blast_wave",
             Augment::PresenceOfMind | Augment::Kindling | Augment::Combustion => "pyroblast",
             Augment::ShatteringBarrier | Augment::IceFloes | Augment::FrostArmor => "ice_barrier",
+            Augment::BloodAndThunder | Augment::Rampage | Augment::CleavingSwings => "cleave",
+            Augment::Overpower | Augment::HeroicThrow | Augment::ChampionsGuard => "heroic_strike",
+            Augment::MortalWounds | Augment::SuddenDeath | Augment::ColossusSmash => {
+                "mortal_strike"
+            }
+            Augment::Bladestorm | Augment::FuriousSpin | Augment::SecondWind => "whirlwind",
+            Augment::Shockwave | Augment::Aftershock | Augment::Thunderstruck => "thunder_clap",
+            Augment::GushingWound | Augment::BloodFrenzy | Augment::DeepWounds => "rend",
+            Augment::ExecutionersChain | Augment::Massacre | Augment::VictoryRush => "execute",
+            Augment::BloodCraze | Augment::UnbridledWrath | Augment::Bloodbath => "bloodthirst",
+            Augment::Revenge | Augment::ShieldBash | Augment::LastStand => "shield_block",
+            Augment::RallyingCry | Augment::CripplingPresence | Augment::WarCry => {
+                "demoralizing_shout"
+            }
+            Augment::ChallengingShout | Augment::ShatteringRoar | Augment::Fearsome => {
+                "intimidating_shout"
+            }
+            Augment::ExposeArmor | Augment::Devastate | Augment::SunderingBlows => "sunder_armor",
             _ => return None,
         })
     }
@@ -434,7 +722,17 @@ impl Augment {
     pub fn is_conversion(self) -> bool {
         matches!(
             self,
-            Augment::Frostfire | Augment::Spellfire | Augment::Spellfrost
+            Augment::Frostfire
+                | Augment::Spellfire
+                | Augment::Spellfrost
+                | Augment::Shadowflame
+                | Augment::Twilight
+                | Augment::SacredFlame
+                | Augment::Thunderstrike
+                | Augment::Balance
+                | Augment::Frostbrand
+                | Augment::Crusader
+                | Augment::Shadowblade
         )
     }
 
@@ -469,6 +767,37 @@ impl Augment {
             Augment::Concussive => Requires::AnyOf(&[Knockback]),
             Augment::Fortified | Augment::Reflective => Requires::AnyOf(&[Shield]),
             Augment::TwinCharges => Requires::Cooldown(30),
+            Augment::Shadowflame => Requires::AnyOf(&[Fire, Shadow]),
+            Augment::Twilight => Requires::AnyOf(&[Holy, Shadow]),
+            Augment::SacredFlame => Requires::AnyOf(&[Holy, Fire]),
+            Augment::Thunderstrike => Requires::AnyOf(&[Physical, Nature]),
+            Augment::Balance => Requires::AnyOf(&[Arcane, Nature]),
+            Augment::Frostbrand => Requires::AnyOf(&[Frost, Nature]),
+            Augment::Crusader => Requires::AnyOf(&[Physical, Holy]),
+            Augment::Shadowblade => Requires::AnyOf(&[Physical, Shadow]),
+            Augment::Lacerate => Requires::AnyOf(&[Bleed]),
+            Augment::Hemorrhage => Requires::AnyOf(&[Bleed]),
+            Augment::Crippling => Requires::AnyOf(&[Poison]),
+            Augment::Virulent => Requires::AnyOf(&[Poison]),
+            Augment::Dread => Requires::AnyOf(&[Fear]),
+            Augment::Panic => Requires::AnyOf(&[Fear]),
+            Augment::Bramble => Requires::AnyOf(&[Root]),
+            Augment::Grasping => Requires::AnyOf(&[Root]),
+            Augment::Crushing => Requires::AnyOf(&[Stun]),
+            Augment::Forked => Requires::AnyOf(&[Chain]),
+            Augment::Conductive => Requires::AnyOf(&[Chain]),
+            Augment::Pack => Requires::AnyOf(&[Summon, Totem]),
+            Augment::FeralBond => Requires::AnyOf(&[Summon, Totem]),
+            Augment::Frenzy => Requires::AnyOf(&[Summon, Totem]),
+            Augment::BoomingVoice => Requires::AnyOf(&[Shout]),
+            Augment::Commanding => Requires::AnyOf(&[Shout]),
+            Augment::DeepReserves => Requires::AnyOf(&[Ward]),
+            Augment::Overflowing => Requires::AnyOf(&[Ward]),
+            Augment::MendingLink => Requires::AnyOf(&[Heal]),
+            Augment::Renewing => Requires::AnyOf(&[Heal]),
+            Augment::Sanguine => Requires::AnyOf(&[Leech]),
+            Augment::Bloodthirsty => Requires::AnyOf(&[Leech]),
+            Augment::Sweeping => Requires::AnyOf(&[Melee]),
             _ => Requires::Any,
         }
     }
@@ -496,8 +825,10 @@ impl Augment {
         if self.is_cone_shape() && taken.iter().any(|a| a.is_cone_shape()) {
             return false;
         }
-        // A shield deals no damage itself: damage trades mean nothing to it.
-        if spec.tags.has(Tag::Shield) && matches!(self, Augment::Heavy | Augment::Twin) {
+        // A shield or a buff deals no damage itself: damage trades mean nothing to it.
+        if (spec.tags.has(Tag::Shield) || spec.damage <= 0.0)
+            && matches!(self, Augment::Heavy | Augment::Twin)
+        {
             return false;
         }
         match self.requires() {
@@ -589,11 +920,15 @@ impl Augment {
                 s.freeze = 0.0;
                 s.freeze_chance = 0.0;
                 s.stun = 0.0;
+                s.fx.fear = 0.0;
+                s.fx.root = 0.0;
                 s.tags = s
                     .tags
                     .without(Tag::Slow)
                     .without(Tag::Freeze)
-                    .without(Tag::Stun);
+                    .without(Tag::Stun)
+                    .without(Tag::Fear)
+                    .without(Tag::Root);
                 s.damage *= 2.2;
             }
             Augment::Concussive => {
@@ -634,6 +969,142 @@ impl Augment {
                 s.tags = s.tags.with(Tag::DamageOverTime);
             }
             Augment::FrozenOrb => s.follows = false,
+            // The other classes' general augments.
+            Augment::Shadowflame => {
+                if s.tags.has(Tag::Fire) {
+                    s.fx.leech += 0.1;
+                }
+                if s.tags.has(Tag::Shadow) {
+                    s.burn += 0.3;
+                    s.tags = s.tags.with(Tag::DamageOverTime);
+                }
+                s.tags = s.tags.with(Tag::Fire).with(Tag::Shadow);
+            }
+            Augment::Twilight => {
+                s.tags = s.tags.with(Tag::Holy).with(Tag::Shadow);
+                s.fx.vs_elite += 0.2;
+            }
+            Augment::SacredFlame => {
+                if s.tags.has(Tag::Holy) {
+                    s.burn += 0.3;
+                    s.tags = s.tags.with(Tag::DamageOverTime);
+                }
+                if s.tags.has(Tag::Fire) {
+                    s.fx.leech += 0.1;
+                }
+                s.tags = s.tags.with(Tag::Holy).with(Tag::Fire);
+            }
+            Augment::Thunderstrike => {
+                s.tags = s.tags.with(Tag::Physical).with(Tag::Nature);
+                s.fx.arc += 0.5;
+            }
+            Augment::Balance => {
+                s.tags = s.tags.with(Tag::Arcane).with(Tag::Nature);
+                s.crit += 0.15;
+            }
+            Augment::Frostbrand => {
+                if s.tags.has(Tag::Nature) && s.chill == 0.0 {
+                    s.chill = crate::spell::CHILL_SECS;
+                    s.tags = s.tags.with(Tag::Slow);
+                }
+                if s.tags.has(Tag::Frost) {
+                    s.burn += 0.3;
+                    s.tags = s.tags.with(Tag::DamageOverTime).with(Tag::Poison);
+                }
+                s.tags = s.tags.with(Tag::Frost).with(Tag::Nature);
+            }
+            Augment::Crusader => s.tags = s.tags.with(Tag::Physical).with(Tag::Holy),
+            Augment::Shadowblade => {
+                s.tags = s.tags.with(Tag::Physical).with(Tag::Shadow);
+                s.fx.vs_held += 0.25;
+                s.fx.vs_rooted += 0.25;
+            }
+            Augment::Lacerate => s.fx.stacks = s.fx.stacks.max(3),
+            Augment::Crippling => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::Virulent => s.fx.stacks += 3,
+            Augment::Dread => s.fx.vs_feared += 0.25,
+            Augment::Panic => s.fx.fear += 1.5,
+            Augment::Bramble => s.fx.vs_rooted += 0.25,
+            Augment::Grasping => s.fx.root += 1.5,
+            Augment::Crushing => s.fx.vs_stunned += 0.4,
+            Augment::Forked => s.fx.jumps += 2,
+            Augment::Conductive => s.fx.jump_keep = 1.0,
+            Augment::Pack => {
+                s.twin = true;
+                s.damage *= 0.65;
+            }
+            Augment::FeralBond => s.fx.leech += 0.05,
+            Augment::Frenzy => s.tick_rate *= 1.4,
+            Augment::BoomingVoice => s.radius *= 1.5,
+            Augment::Commanding => {
+                s.fx.fear *= 1.5;
+                s.fx.weaken *= 1.5;
+                s.fx.mark_secs *= 1.5;
+                s.fx.buff.secs *= 1.5;
+            }
+            Augment::DeepReserves => s.fx.bank += 2,
+            Augment::Overflowing => s.fx.overflow = 2,
+            Augment::MendingLink => s.fx.mending = 0.5,
+            Augment::Renewing => s.fx.renewing = 0.3,
+            Augment::Sanguine => s.fx.sanguine = 0.2,
+            Augment::Bloodthirsty => s.fx.leech += 0.1,
+            Augment::Sweeping => s.fx.sweep = 0.5,
+            // Warrior capstones that change the cast's numbers.
+            Augment::HeroicThrow => {
+                s.range = s.range.max(20.0);
+                s.tags = s.tags.with(Tag::Projectile);
+            }
+            Augment::MortalWounds => {
+                s.fx.mark = s.fx.mark.max(0.2);
+                s.fx.mark_secs = s.fx.mark_secs.max(6.0);
+            }
+            Augment::ColossusSmash => s.cooldown *= 1.5,
+            Augment::Bladestorm => {
+                s.ground = 4.0;
+                s.follows = true;
+                s.tick_rate *= 2.0;
+                s.fx.ground_share = 0.4;
+            }
+            Augment::Shockwave => {
+                s.targeting = Targeting::Ahead;
+                s.radius = s.radius.max(12.0);
+                s.damage *= 1.4;
+                s.chill = 0.0;
+                s.stun = s.stun.max(2.0);
+                s.tags = s.tags.with(Tag::Cone).with(Tag::Stun).without(Tag::Slow);
+            }
+            Augment::Aftershock => {
+                s.ground = 4.0;
+                s.fx.ground_share = 0.25;
+                s.fx.ground_control = true;
+            }
+            Augment::Thunderstruck => s.fx.weaken = s.fx.weaken.max(6.0),
+            Augment::Massacre => s.fx.execute_at = s.fx.execute_at.max(0.5),
+            Augment::Bloodbath => {
+                s.burn += 1.0;
+                s.fx.dot_time = 6.0;
+                s.tags = s.tags.with(Tag::Bleed).with(Tag::DamageOverTime);
+            }
+            Augment::CripplingPresence => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::ChallengingShout => {
+                s.fx.fear = 0.0;
+                s.fx.pull = 15.0;
+                s.tags = s.tags.without(Tag::Fear);
+            }
+            Augment::ShatteringRoar => s.fx.sunder += 2,
+            Augment::Fearsome => s.fx.full_control = true,
+            Augment::Devastate => {
+                s.targeting = Targeting::Nearest;
+                s.count = 99;
+                s.range = 6.0;
+                s.damage *= 0.6;
+            }
             _ => {}
         }
     }
@@ -686,18 +1157,22 @@ pub(crate) mod tests {
             shatter: 0.0,
             shield: 0.0,
             charges: 1,
+            fx: crate::spell::SpellFx::default(),
         }
     }
 
     #[test]
-    fn three_capstones_for_each_of_twelve_spells() {
+    fn three_capstones_for_each_spell_that_has_them() {
         let mut spells: Vec<&str> = Augment::CAPSTONES
             .iter()
             .filter_map(|a| a.capstone_of())
             .collect();
-        assert_eq!(spells.len(), 36);
+        assert_eq!(spells.len(), Augment::CAPSTONES.len());
         spells.dedup();
-        assert_eq!(spells.len(), 12);
+        assert_eq!(spells.len() * 3, Augment::CAPSTONES.len());
+        for key in &spells {
+            assert_eq!(Augment::capstones_of(key).len(), 3, "{key}");
+        }
         assert!(Augment::GENERAL.iter().all(|a| a.capstone_of().is_none()));
         assert_eq!(Augment::capstones_of("fireball").len(), 3);
     }

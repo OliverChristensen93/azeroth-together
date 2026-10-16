@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::interact::Placement;
 use crate::spell::{Tag, Tags, Targeting};
@@ -29,6 +29,23 @@ pub enum AbilityKind {
     /// A shield on the caster worth `shield` of its maximum health, until broken or `duration`
     /// seconds pass.
     Shield,
+    /// Banks a charge of its `ward` kind on each cooldown, up to `charges`; with the bank full it
+    /// strikes the nearest enemy in `range` instead (overflow).
+    Ward,
+    /// An effect on the caster (and, tagged Aura, on allies near it) for `duration` seconds: more
+    /// damage, faster cooldowns, guard, haste, thorns, hiding.
+    Buff,
+}
+
+/// What a [`AbilityKind::Ward`] spell's charges do when they spend themselves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WardKind {
+    /// Heals a hero who drops below `heal_below` of their health by `heal` of it.
+    Heal,
+    /// Blocks a blow completely, and strikes its attacker back for the spell's damage.
+    Block,
+    /// Strikes an enemy that hits the hero for the spell's damage; the blow still lands.
+    Thorns,
 }
 
 fn one() -> u32 {
@@ -100,6 +117,9 @@ pub struct AbilityDef {
     /// Seconds a Freeze lasts, for a spell tagged Freeze.
     #[serde(default = "two_f")]
     pub freeze: f32,
+    /// Seconds a Stun lasts, for a spell tagged Stun.
+    #[serde(default = "one_f")]
+    pub stun: f32,
     /// Yards a Knockback pushes, for a spell tagged Knockback.
     #[serde(default = "knockback_f")]
     pub knockback: f32,
@@ -109,6 +129,106 @@ pub struct AbilityDef {
     /// [`AbilityDef::tags`] as a set.
     #[serde(skip)]
     pub tag_set: Tags,
+    // --- What the other classes' spells add (see `spell::SpellFx`). ---
+    /// Share of its damage that heals the caster.
+    #[serde(default)]
+    pub leech: f32,
+    /// Seconds of Fear (for a spell tagged Fear), Root (tagged Root) and Weakened on a hit.
+    #[serde(default = "fear_f")]
+    pub fear: f32,
+    #[serde(default = "root_f")]
+    pub root: f32,
+    #[serde(default)]
+    pub weaken: f32,
+    /// Extra damage its target takes from every source (0.15 is +15%), and for how long.
+    #[serde(default)]
+    pub mark: f32,
+    #[serde(default = "six_f")]
+    pub mark_secs: f32,
+    /// Sunder stacks each hit adds.
+    #[serde(default)]
+    pub sunder: u8,
+    /// A heal's size as a share of max health; for a heal ward, the share of health below which
+    /// its charges spend themselves.
+    #[serde(default)]
+    pub heal: f32,
+    #[serde(default = "half_f")]
+    pub heal_below: f32,
+    /// What a [`AbilityKind::Ward`] banks, and how many charges at most.
+    #[serde(default)]
+    pub ward: Option<WardKind>,
+    #[serde(default = "three_u8")]
+    pub charges: u8,
+    /// Jumps of a Chain spell.
+    #[serde(default)]
+    pub jumps: u32,
+    /// Extra damage (1 is +100%) to enemies below `execute_at` of their health.
+    #[serde(default)]
+    pub execute: f32,
+    #[serde(default = "execute_at_f")]
+    pub execute_at: f32,
+    /// Combo points a builder's cast gives.
+    #[serde(default)]
+    pub combo: u8,
+    /// Times its damage over time stacks on one enemy, and its length in seconds.
+    #[serde(default = "one_u8")]
+    pub stacks: u8,
+    #[serde(default = "burn_secs_f")]
+    pub dot_time: f32,
+    /// A summon or totem ([`AbilityKind::Ground`]): enemies it strikes each beat; it `follows`
+    /// its caster (a pet) or stands where it was put (a totem).
+    #[serde(default)]
+    pub strikes: u32,
+    #[serde(default)]
+    pub follows: bool,
+    /// A trap: a ground area that waits, armed, until an enemy steps in.
+    #[serde(default)]
+    pub trap: bool,
+    /// Extra damage to enemies held by a Stun, Freeze or Fear (1 is +100%).
+    #[serde(default)]
+    pub vs_held: f32,
+    /// Yards the caster moves the way it faces (a defensive button).
+    #[serde(default)]
+    pub leap: f32,
+    /// A [`AbilityKind::Buff`]'s effects: share of blows taken away, extra move speed, how much
+    /// faster cooldowns run, extra damage, damage back to attackers (a share of `damage`: 1 is all
+    /// of it), seconds hidden from the horde, and the health share a killing blow leaves.
+    #[serde(default)]
+    pub guard: f32,
+    #[serde(default)]
+    pub haste: f32,
+    #[serde(default)]
+    pub haste_cd: f32,
+    #[serde(default)]
+    pub power: f32,
+    #[serde(default)]
+    pub thorns: f32,
+    #[serde(default)]
+    pub hide: f32,
+    #[serde(default)]
+    pub cheat: f32,
+}
+
+fn fear_f() -> f32 {
+    crate::spell::FEAR_SECS
+}
+fn root_f() -> f32 {
+    crate::spell::ROOT_SECS
+}
+fn six_f() -> f32 {
+    6.0
+}
+fn half_f() -> f32 {
+    0.5
+}
+fn three_u8() -> u8 {
+    3
+}
+fn execute_at_f() -> f32 {
+    crate::spell::EXECUTE_AT
+}
+fn burn_secs_f() -> f32 {
+    crate::spell::BURN_SECS
 }
 
 fn two_f() -> f32 {
@@ -126,7 +246,7 @@ impl AbilityDef {
             AbilityKind::Bolt | AbilityKind::Strike => Targeting::Nearest,
             AbilityKind::Nova => Targeting::Around,
             AbilityKind::Ground => Targeting::Densest,
-            AbilityKind::Shield => Targeting::Caster,
+            AbilityKind::Shield | AbilityKind::Ward | AbilityKind::Buff => Targeting::Caster,
         })
     }
 }
@@ -237,10 +357,16 @@ pub struct ClassDef {
     pub start: String,
     /// The abilities level-up cards offer.
     pub pool: Vec<String>,
+    /// The ability on the defensive button (F); none when left out.
+    #[serde(default)]
+    pub defensive: String,
     #[serde(skip)]
     pub start_ix: usize,
     #[serde(skip)]
     pub pool_ix: Vec<usize>,
+    /// [`ClassDef::defensive`] resolved to an index into [`Content::abilities`].
+    #[serde(skip)]
+    pub defensive_ix: Option<usize>,
 }
 
 fn one_u8() -> u8 {
@@ -422,6 +548,10 @@ impl Content {
                 .iter()
                 .map(|k| resolve(&ability_keys, "classes.ron", &class.key, k))
                 .collect::<Result<_, _>>()?;
+            class.defensive_ix = Some(class.defensive.as_str())
+                .filter(|k| !k.is_empty())
+                .map(|k| resolve(&ability_keys, "classes.ron", &class.key, k))
+                .transpose()?;
             if class.looks.is_empty() {
                 return Err(ContentError::Invalid {
                     file: "classes.ron",

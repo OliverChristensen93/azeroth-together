@@ -12,8 +12,12 @@
 //! friend's gold.
 
 mod arena;
+mod classes;
 mod combat;
+mod rogue;
+mod warrior;
 
+pub use classes::{ActiveBuff, Bank, Boon, HeroFx, StatusFx};
 pub use combat::{shield_size, status_bits, HeroSpells, Status};
 
 use std::collections::HashMap;
@@ -1136,7 +1140,7 @@ impl World {
         hero.speed = class.speed
             * (1.0 + hero.stats.get(Stat::Speed))
             * (1.0 + swift)
-            * (1.0 + hero.spell.haste);
+            * (1.0 + hero.spell.haste + hero.spell.fx.haste());
     }
 
     fn move_heroes(&mut self) {
@@ -1154,7 +1158,7 @@ impl World {
                 };
                 if let Some(input) = input {
                     if std::mem::take(&mut input.dash) {
-                        dashes.push((h, hero.pos, pos));
+                        dashes.push((h, hero.pos, pos, true));
                     }
                 }
                 hero.moving = pos.distance(hero.pos) > 1e-3;
@@ -1167,6 +1171,9 @@ impl World {
             let jump = input.as_ref().is_some_and(|i| i.jump);
             let dir = input.map_or(V2::ZERO, |i| {
                 i.jump = false;
+                if std::mem::take(&mut i.dash) {
+                    dashes.push((h, hero.pos, hero.pos, false));
+                }
                 i.move_dir
             });
             if jump && hero.air == 0.0 && hero.vy == 0.0 {
@@ -1192,8 +1199,8 @@ impl World {
                 hero.pos = center + off.normalize_or_zero() * leash;
             }
         }
-        for (h, left, landed) in dashes {
-            self.dashed(h, left, landed);
+        for (h, left, landed, client_moved) in dashes {
+            self.defend(h, left, landed, client_moved);
         }
         if !self.triggers.is_empty() {
             self.run_triggers();
@@ -1366,7 +1373,7 @@ impl World {
         let living: Vec<(PlayerId, V2)> = self
             .heroes
             .iter()
-            .filter(|h| h.alive)
+            .filter(|h| h.alive && h.spell.fx.hidden <= 0.0)
             .map(|h| (h.player, h.pos))
             .collect();
         if living.is_empty() {
@@ -1417,9 +1424,22 @@ impl World {
                 e.pos += shove[i] * (DT * 8.0).min(0.5);
                 continue;
             }
+            if e.status.fx.fear > 0.0 || e.status.fx.lost > 0.0 {
+                // Feared, it runs from whoever feared it; lost (Smoke Bomb), it mills about.
+                let away = (e.pos - e.status.fx.fear_from).normalize_or_zero();
+                let fleeing = e.status.fx.fear > 0.0 && away != V2::ZERO;
+                e.moving = fleeing;
+                if fleeing {
+                    e.facing = away;
+                    e.pos += away * (combat::chilled(e.speed, &e.status) * DT);
+                }
+                e.pos += shove[i] * (DT * 8.0).min(0.5);
+                continue;
+            }
             e.facing = to.normalize_or_zero();
-            e.moving = !contact;
-            let step = if contact {
+            let rooted = e.status.fx.root > 0.0;
+            e.moving = !contact && !rooted;
+            let step = if contact || rooted {
                 V2::ZERO
             } else {
                 e.facing * (combat::chilled(e.speed, &e.status) * DT)
@@ -1428,7 +1448,7 @@ impl World {
             e.attack_cd -= DT;
             if contact && e.attack_cd <= 0.0 {
                 e.attack_cd = 1.3;
-                swings.push((e.id, player, e.damage));
+                swings.push((e.id, player, e.damage * World::weakness(e)));
             }
         }
         for (enemy, player, amount) in swings {
@@ -1469,9 +1489,14 @@ impl World {
         }
         let guard = if hero.spell.guard > 0.0 { 0.5 } else { 1.0 };
         let amount = amount * (1.0 - hero.stats.get(Stat::Armor)) * guard;
+        let amount = self.ward_blow(h, amount, from);
         let amount = self.shield_blow(h, amount, from);
         let hero = &mut self.heroes[h];
         hero.hp -= amount;
+        if hero.hp <= 0.0 && self.cheat_death(h) {
+            return amount;
+        }
+        let hero = &mut self.heroes[h];
         if hero.hp <= 0.0 {
             // Its cards wait: a fallen hero is not waited on, and chooses once raised.
             hero.hp = 0.0;

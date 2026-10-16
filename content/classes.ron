@@ -1,7 +1,8 @@
 // Playable classes, ported from benilla-app's survivors/data.rs. `looks` are CreatureDisplayInfo
 // ids of the class's trainers (the bodies a hero can wear); `weapons` are the virtual item slots
 // (slot 0 main hand, 1 off hand, 2 ranged); `start` is the ability every run begins with; `pool` is
-// what level-up cards offer. Plate and mail classes start tougher, cloth starts quicker.
+// what level-up cards offer; `defensive` is the ability on the defensive button (F). Plate and mail
+// classes start tougher, cloth starts quicker.
 [
     (
         key: "warrior",
@@ -24,9 +25,11 @@
         speed: 7.0,
         start: "cleave",
         pool: [
-            "cleave", "heroic_strike", "whirlwind", "thunder_clap", "sweeping_strikes",
-            "demoralizing_shout", "execute", "mortal_strike",
+            "cleave", "heroic_strike", "mortal_strike", "whirlwind", "thunder_clap", "rend",
+            "execute", "bloodthirst", "shield_block", "demoralizing_shout", "intimidating_shout",
+            "sunder_armor",
         ],
+        defensive: "charge",
     ),
     (
         key: "paladin",
@@ -165,6 +168,7 @@
             "blizzard", "flamestrike", "fire_blast", "cone_of_cold", "blast_wave", "pyroblast",
             "ice_barrier",
         ],
+        defensive: "blink",
     ),
     (
         key: "warlock",

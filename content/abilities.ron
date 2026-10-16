@@ -8,8 +8,10 @@
 // time is folded into one Strike; totems cast their own spell on their own beat.
 // A description's `{damage}`, `{range}`, `{area}`, `{targets}` and the like are filled with the
 // spell's real numbers as cast (see `together_sim::describe` for the list).
-// Not yet supported by the simulation (left out here and from every class pool):
-//   retaliation, power_word_shield, divine_shield, thorns, rejuvenation.
+// The other classes' new kinds: Ward (banks charges: Heal, Block or Thorns, with overflow when
+// full), Buff (an effect on the caster, on allies too when tagged Aura); a Ground with `strikes`
+// is a summon (`follows: true`) or a totem; `trap: true` waits for an enemy. A spell tagged
+// DamageOverTime but not Direct has no hit: `burn` times its damage comes over `dot_time` sec.
 [
     // --- Mage ---
     (key: "frostbolt", name: "Frostbolt", visual: 116, kind: Bolt,
@@ -55,15 +57,19 @@
     (key: "ice_barrier", name: "Ice Barrier", visual: 11426, kind: Shield,
      damage: 0.0, cooldown: 20.0, shield: 0.25, duration: 15.0, tags: [Frost, Shield],
      description: "Every {cooldown} sec, a shield of ice absorbs {shield_hp} damage ({shield}% of your health) for up to {duration} sec."),
-    // --- Warrior ---
+    // --- Warrior (docs/WARRIOR-DRAFT.md) ---
     (key: "cleave", name: "Cleave", visual: 845, kind: Strike,
      damage: 14.0, cooldown: 1.1, range: 5.0, count: 3,
      tags: [Physical, Melee, Direct],
      description: "Sweeps your weapon through {targets} within {range} yards for {damage} damage."),
     (key: "heroic_strike", name: "Heroic Strike", visual: 78, kind: Strike,
-     damage: 28.0, cooldown: 1.6, range: 5.0,
+     damage: 30.0, cooldown: 1.8, range: 6.0, target: Some(ElitesFirst),
      tags: [Physical, Melee, Direct],
      description: "A heavy blow against {targets} within {range} yards for {damage} damage."),
+    (key: "mortal_strike", name: "Mortal Strike", visual: 12294, kind: Strike,
+     damage: 70.0, cooldown: 6.0, range: 6.0, target: Some(ElitesFirst),
+     tags: [Physical, Melee, Direct],
+     description: "A crushing strike on {targets} within {range} yards for {damage} damage."),
     (key: "whirlwind", name: "Whirlwind", visual: 1680, kind: Nova,
      damage: 16.0, cooldown: 4.0, radius: 7.0,
      tags: [Physical, Melee, Area, Direct],
@@ -72,22 +78,34 @@
      damage: 10.0, cooldown: 5.0, radius: 8.0,
      tags: [Physical, Area, Direct, Slow],
      description: "Slams the ground, jolting every enemy {area} for {damage} damage and Chilling them ({slow}% slower for {chill} sec)."),
-    (key: "sweeping_strikes", name: "Sweeping Strikes", visual: 12292, kind: Nova,
-     damage: 6.0, cooldown: 0.6, radius: 5.5,
-     tags: [Physical, Melee, Area, Direct],
-     description: "Cuts at every enemy {area} for {damage} damage every {cooldown} sec."),
-    (key: "demoralizing_shout", name: "Demoralizing Shout", visual: 1160, kind: Nova,
-     damage: 4.0, cooldown: 8.0, radius: 11.0,
-     tags: [Physical, Area],
-     description: "A roar that rattles every enemy {area} for {damage} damage."),
+    (key: "rend", name: "Rend", visual: 772, kind: Strike,
+     damage: 30.0, cooldown: 4.0, range: 6.0, count: 3, burn: 1.0, dot_time: 9.0,
+     tags: [Physical, Melee, Bleed, DamageOverTime],
+     description: "Rends {targets} within {range} yards: they Bleed for {dot} damage over {burn_secs} sec."),
     (key: "execute", name: "Execute", visual: 5308, kind: Strike,
-     damage: 40.0, cooldown: 2.0, range: 8.0, count: 2,
+     damage: 40.0, cooldown: 2.0, range: 8.0, count: 2, target: Some(Weakest), execute: 1.0,
      tags: [Physical, Melee, Direct],
-     description: "Finishes off {targets} within {range} yards with savage blows for {damage} damage."),
-    (key: "mortal_strike", name: "Mortal Strike", visual: 12294, kind: Strike,
-     damage: 48.0, cooldown: 3.0, range: 5.0,
+     description: "Finishes off {targets} within {range} yards for {damage} damage, doubled against enemies below {execute_at}% health."),
+    (key: "bloodthirst", name: "Bloodthirst", visual: 23881, kind: Strike,
+     damage: 24.0, cooldown: 3.0, range: 6.0, target: Some(ElitesFirst), leech: 0.3,
+     tags: [Physical, Melee, Direct, Leech],
+     description: "A bloodthirsty strike at {targets} within {range} yards for {damage} damage that heals you for {leech}% of it."),
+    (key: "shield_block", name: "Shield Block", visual: 2565, kind: Ward, ward: Some(Block),
+     damage: 20.0, cooldown: 6.0, range: 8.0, charges: 3,
+     tags: [Physical, Ward],
+     description: "Every {cooldown} sec, banks a block charge (up to {charges}): it blocks a blow completely and strikes the attacker back for {damage} damage. With every charge banked, it shield-slams the closest enemy within {range} yards instead."),
+    (key: "demoralizing_shout", name: "Demoralizing Shout", visual: 1160, kind: Nova,
+     damage: 4.0, cooldown: 8.0, radius: 11.0, weaken: 6.0,
+     tags: [Physical, Area, Shout],
+     description: "A roar that rattles every enemy {area} for {damage} damage and Weakens them (25% less damage) for {weaken} sec."),
+    (key: "intimidating_shout", name: "Intimidating Shout", visual: 5246, kind: Nova,
+     damage: 2.0, cooldown: 14.0, radius: 8.0, fear: 3.0,
+     tags: [Physical, Area, Shout, Fear],
+     description: "A terrifying roar: every enemy {area} takes {damage} damage and flees in Fear for {fear} sec."),
+    (key: "sunder_armor", name: "Sunder Armor", visual: 7386, kind: Strike,
+     damage: 10.0, cooldown: 1.5, range: 6.0, target: Some(ElitesFirst), sunder: 1,
      tags: [Physical, Melee, Direct],
-     description: "A crushing strike on {targets} within {range} yards for {damage} damage."),
+     description: "Sunders the armor of {targets} within {range} yards for {damage} damage: each stack makes it take 4% more from every source, up to 5."),
     // --- Rogue ---
     (key: "sinister_strike", name: "Sinister Strike", visual: 1752, kind: Strike,
      damage: 15.0, cooldown: 0.85, range: 5.0,
@@ -291,6 +309,15 @@
      damage: 6.0, cooldown: 6.0, range: 16.0, count: 4,
      tags: [Nature, Direct, Root],
      description: "Grasping roots wound {targets} within {range} yards for {damage} damage."),
+    // --- Defensive buttons (F): named by each class's `defensive`, never in a pool. ---
+    (key: "blink", name: "Blink", visual: 1953, kind: Buff,
+     damage: 0.0, cooldown: 30.0, leap: 10.0,
+     tags: [Arcane],
+     description: "Teleports you {leap} yards the way you face."),
+    (key: "charge", name: "Charge", visual: 100, kind: Nova,
+     damage: 10.0, cooldown: 30.0, radius: 5.0, leap: 12.0, stun: 1.5,
+     tags: [Physical, Area, Stun],
+     description: "Charges {leap} yards the way you face: every enemy within {radius} yards of where you land takes {damage} damage and is Stunned for {stun} sec."),
     // --- Items' strikes: in no class's pool. Their damage comes from the hit or kill that set
     // them off, not from `damage`; they are here for their visual and their damage-meter row. ---
     (key: "static_shard", name: "Static Shard", visual: 421, kind: Strike,

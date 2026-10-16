@@ -46,10 +46,22 @@ pub enum Tag {
     Fear,
     Knockback,
     Heal,
+    /// Physical damage over time.
+    Bleed,
+    /// Nature damage over time that can stack.
+    Poison,
+    /// A roar around the caster that changes what enemies (or allies) do.
+    Shout,
+    /// Spends the rogue's combo points for more effect.
+    Finisher,
+    /// Banks charges on its cooldown that spend themselves when needed.
+    Ward,
+    /// Heals its caster for part of the damage it deals.
+    Leech,
 }
 
 impl Tag {
-    pub const ALL: [Tag; 27] = [
+    pub const ALL: [Tag; 33] = [
         Tag::Physical,
         Tag::Fire,
         Tag::Frost,
@@ -77,6 +89,12 @@ impl Tag {
         Tag::Fear,
         Tag::Knockback,
         Tag::Heal,
+        Tag::Bleed,
+        Tag::Poison,
+        Tag::Shout,
+        Tag::Finisher,
+        Tag::Ward,
+        Tag::Leech,
     ];
 
     /// The magic schools and Physical: what a conversion changes.
@@ -119,17 +137,23 @@ impl Tag {
             Tag::Fear => "Fear",
             Tag::Knockback => "Knockback",
             Tag::Heal => "Heal",
+            Tag::Bleed => "Bleed",
+            Tag::Poison => "Poison",
+            Tag::Shout => "Shout",
+            Tag::Finisher => "Finisher",
+            Tag::Ward => "Ward",
+            Tag::Leech => "Lifesteal",
         }
     }
 
-    fn bit(self) -> u32 {
-        1 << (self as u32)
+    fn bit(self) -> u64 {
+        1 << (self as u64)
     }
 }
 
 /// A set of [`Tag`]s.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Tags(pub u32);
+pub struct Tags(pub u64);
 
 impl Tags {
     pub fn of(tags: &[Tag]) -> Tags {
@@ -179,6 +203,8 @@ pub enum Targeting {
     Ahead,
     /// The caster itself (a shield).
     Caster,
+    /// The most wounded enemies in range (least health left, as a share of their maximum).
+    Weakest,
 }
 
 /// Which way a cone points: ahead of the caster (its own way), behind it, or four narrower cones
@@ -202,6 +228,24 @@ pub const KNOCKBACK: f32 = 2.5;
 /// How long control effects hold an elite, and a boss, against a normal enemy.
 pub const ELITE_CONTROL: f32 = 0.5;
 pub const BOSS_CONTROL: f32 = 0.25;
+/// Below this share of health an execute bonus counts, before augments.
+pub const EXECUTE_AT: f32 = 0.3;
+/// The share of the last hit each jump of a Chain spell keeps, and how far it jumps.
+pub const CHAIN_KEEP: f32 = 0.8;
+pub const CHAIN_REACH: f32 = 8.0;
+/// Seconds Fear and Root last when a spell does not say.
+pub const FEAR_SECS: f32 = 3.0;
+pub const ROOT_SECS: f32 = 3.0;
+/// How much less a Weakened enemy deals.
+pub const WEAKEN: f32 = 0.25;
+/// Combo points held at most, and the extra damage each gives a Finisher.
+pub const MAX_COMBO: u8 = 5;
+pub const COMBO_POWER: f32 = 0.25;
+/// Sunder: the extra damage each stack makes its enemy take, the most stacks, and seconds they
+/// last.
+pub const SUNDER_EACH: f32 = 0.04;
+pub const SUNDER_MAX: u8 = 5;
+pub const SUNDER_SECS: f32 = 10.0;
 /// The half-angle of a cone, in radians (45°).
 pub const CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 
@@ -280,12 +324,203 @@ pub struct CastSpec {
     pub shield: f32,
     /// Charges held at most.
     pub charges: u8,
+    /// What the other classes' spells add: lifesteal, fear, roots, wards, summons and the rest.
+    pub fx: SpellFx,
+}
+
+/// A lasting effect a Buff spell puts on its caster (and, for an Aura, on allies near it).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BuffFx {
+    /// Seconds it lasts.
+    pub secs: f32,
+    /// Share of every blow taken away (1 is immune).
+    pub guard: f32,
+    /// Extra move speed (0.6 is +60%).
+    pub haste: f32,
+    /// How much faster cooldowns run (0.3 is 30% faster).
+    pub cd_rate: f32,
+    /// Extra damage on every spell (0.5 is +50%).
+    pub power: f32,
+    /// Damage dealt back to every enemy that strikes the hero.
+    pub thorns: f32,
+    /// Seconds the horde loses the hero.
+    pub hide: f32,
+    /// A killing blow while it lasts leaves the hero at this share of its health instead
+    /// (Soulstone).
+    pub cheat: f32,
+}
+
+/// The effects the other classes' spells bring to a cast, beside the mage's in [`CastSpec`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpellFx {
+    /// Share of its damage that heals the caster.
+    pub leech: f32,
+    /// Seconds of Fear, Root and Weakened on a hit, 0 for none.
+    pub fear: f32,
+    pub root: f32,
+    pub weaken: f32,
+    /// Extra damage a Marked enemy takes from every source, and for how long.
+    pub mark: f32,
+    pub mark_secs: f32,
+    /// Sunder stacks a hit adds.
+    pub sunder: u8,
+    /// A heal's size as a share of max health: a heal charge, a healing ground's tick, a nova's
+    /// heal.
+    pub heal: f32,
+    /// A heal charge spends itself on a hero below this share of health.
+    pub heal_below: f32,
+    /// What a Ward spell banks, if it is one.
+    pub ward: Option<crate::content::WardKind>,
+    /// Charges a Ward spell banks at most.
+    pub bank: u8,
+    /// Enemies its overflow strikes when the bank is full.
+    pub overflow: u32,
+    /// Times a Chain spell jumps on, and the share of the last hit each jump keeps.
+    pub jumps: u32,
+    pub jump_keep: f32,
+    /// Below this share of health its execute bonus counts.
+    pub execute_at: f32,
+    /// Combo points a builder gives.
+    pub combo: u8,
+    /// Times its damage over time stacks on one enemy.
+    pub stacks: u8,
+    /// Seconds its damage over time lasts before upgrades.
+    pub dot_time: f32,
+    /// A summon or totem: enemies it strikes each beat (0 for a ground area that hits all inside).
+    pub strikes: u32,
+    /// A trap: it waits, armed, until an enemy steps in.
+    pub trap: bool,
+    /// Extra damage against enemies held (Stunned, Frozen or Feared), Feared, Rooted, Stunned, and
+    /// against bosses and elites.
+    pub vs_held: f32,
+    pub vs_feared: f32,
+    pub vs_rooted: f32,
+    pub vs_stunned: f32,
+    pub vs_elite: f32,
+    /// Share of a single-target hit that also strikes an enemy beside the target (Sweeping), or
+    /// arcs to one within 8 yards (Thunderstrike).
+    pub sweep: f32,
+    pub arc: f32,
+    /// Yards the caster moves the way it faces (a defensive button).
+    pub leap: f32,
+    /// What a Buff spell puts on its caster.
+    pub buff: BuffFx,
+    /// Its lifesteal past full health becomes a shield, up to this share of health (Sanguine).
+    pub sanguine: f32,
+    /// A heal it gives also heals every other hero within 10 yards for this share of it (Mending
+    /// Link), and this share more over 6 seconds (Renewing).
+    pub mending: f32,
+    pub renewing: f32,
+    /// The share of the cast a lasting ground it leaves deals each tick (0 for burning ground's
+    /// own), and whether that ground keeps the cast's control effects.
+    pub ground_share: f32,
+    pub ground_control: bool,
+    /// A nova first pulls enemies within this many yards to its centre.
+    pub pull: f32,
+    /// Its control holds elites as long as normal enemies.
+    pub full_control: bool,
+}
+
+impl Default for SpellFx {
+    fn default() -> Self {
+        SpellFx {
+            leech: 0.0,
+            fear: 0.0,
+            root: 0.0,
+            weaken: 0.0,
+            mark: 0.0,
+            mark_secs: 0.0,
+            sunder: 0,
+            heal: 0.0,
+            heal_below: 0.5,
+            ward: None,
+            bank: 3,
+            overflow: 1,
+            jumps: 0,
+            jump_keep: CHAIN_KEEP,
+            execute_at: EXECUTE_AT,
+            combo: 0,
+            stacks: 1,
+            dot_time: BURN_SECS,
+            strikes: 0,
+            trap: false,
+            vs_held: 0.0,
+            vs_feared: 0.0,
+            vs_rooted: 0.0,
+            vs_stunned: 0.0,
+            vs_elite: 0.0,
+            sweep: 0.0,
+            arc: 0.0,
+            leap: 0.0,
+            buff: BuffFx::default(),
+            sanguine: 0.0,
+            mending: 0.0,
+            renewing: 0.0,
+            ground_share: 0.0,
+            ground_control: false,
+            pull: 0.0,
+            full_control: false,
+        }
+    }
+}
+
+impl SpellFx {
+    /// The effects ability `def` has with nothing on it.
+    pub fn base(def: &AbilityDef) -> SpellFx {
+        let tags = def.tag_set;
+        SpellFx {
+            leech: def.leech,
+            fear: if tags.has(Tag::Fear) { def.fear } else { 0.0 },
+            root: if tags.has(Tag::Root) { def.root } else { 0.0 },
+            weaken: def.weaken,
+            mark: def.mark,
+            mark_secs: def.mark_secs,
+            sunder: def.sunder,
+            heal: def.heal,
+            heal_below: def.heal_below,
+            ward: def.ward,
+            bank: def.charges.max(1),
+            jumps: def.jumps,
+            execute_at: def.execute_at,
+            combo: def.combo,
+            stacks: def.stacks.max(1),
+            dot_time: def.dot_time.max(0.5),
+            strikes: def.strikes,
+            trap: def.trap,
+            vs_held: def.vs_held,
+            leap: def.leap,
+            buff: BuffFx {
+                secs: if def.kind == AbilityKind::Buff {
+                    def.duration
+                } else {
+                    0.0
+                },
+                guard: def.guard,
+                haste: def.haste,
+                cd_rate: def.haste_cd,
+                power: def.power,
+                thorns: def.thorns,
+                hide: def.hide,
+                cheat: def.cheat,
+            },
+            ..SpellFx::default()
+        }
+    }
 }
 
 impl CastSpec {
+    /// The charges a Ward spell banks at most.
+    pub fn charges_held(&self) -> u8 {
+        self.fx.bank.max(1)
+    }
+
     /// The control effects a spell can lose to Brute Force.
     pub fn has_control(&self) -> bool {
-        self.chill > 0.0 || self.freeze > 0.0 || self.stun > 0.0
+        self.chill > 0.0
+            || self.freeze > 0.0
+            || self.stun > 0.0
+            || self.fx.fear > 0.0
+            || self.fx.root > 0.0
     }
 }
 
@@ -329,7 +564,7 @@ impl CastSpec {
             },
             freeze_chance: 0.0,
             permafrost: false,
-            stun: if tags.has(Tag::Stun) { 1.0 } else { 0.0 },
+            stun: if tags.has(Tag::Stun) { def.stun } else { 0.0 },
             knockback: if tags.has(Tag::Knockback) {
                 def.knockback
             } else {
@@ -353,17 +588,18 @@ impl CastSpec {
             returning: false,
             vs_chilled: 0.0,
             vs_frozen: 0.0,
-            execute: 0.0,
+            execute: def.execute,
             shatter: 0.0,
             shield: def.shield,
             charges: 1,
+            fx: SpellFx::base(def),
         }
     }
 }
 
 /// The placeholders an ability's description may hold, each `{name}`; [`describe`] fills them
 /// from the cast, so the text always gives its real numbers.
-pub const PLACEHOLDERS: [&str; 19] = [
+pub const PLACEHOLDERS: [&str; 37] = [
     "damage",
     "range",
     "radius",
@@ -383,6 +619,24 @@ pub const PLACEHOLDERS: [&str; 19] = [
     "burn_secs",
     "shield",
     "shield_hp",
+    "dot",
+    "heal",
+    "heal_below",
+    "charges",
+    "jumps",
+    "fear",
+    "root",
+    "weaken",
+    "mark",
+    "mark_secs",
+    "leech",
+    "leap",
+    "secs",
+    "guard",
+    "haste",
+    "power",
+    "hide",
+    "execute_at",
 ];
 
 /// A number as a description gives it: whole when it is, else to one decimal.
@@ -427,6 +681,8 @@ pub fn describe(def: &AbilityDef, s: &CastSpec, max_hp: f32) -> String {
                     format!("the {n} closest enemies (prioritizing bosses and elites)")
                 }
                 (Targeting::Densest, _) => "the thickest crowd".to_string(),
+                (Targeting::Weakest, 1) => "the most wounded enemy".to_string(),
+                (Targeting::Weakest, n) => format!("the {n} most wounded enemies"),
                 (_, 1) => "the closest enemy".to_string(),
                 (_, n) => format!("the {n} closest enemies"),
             },
@@ -445,9 +701,27 @@ pub fn describe(def: &AbilityDef, s: &CastSpec, max_hp: f32) -> String {
             "freeze" => num(s.freeze),
             "stun" => num(s.stun),
             "burn" => num((s.burn * s.dot_mult * s.dot_secs * s.tick_rate * 100.0).round()),
-            "burn_secs" => num(BURN_SECS * s.dot_secs / s.dot_speed.max(0.1)),
+            "burn_secs" => num(s.fx.dot_time * s.dot_secs / s.dot_speed.max(0.1)),
             "shield" => num((s.shield * 100.0).round()),
             "shield_hp" => num((s.shield * max_hp).round()),
+            "dot" => num((s.damage * s.burn * s.dot_mult * s.dot_secs * s.tick_rate).round()),
+            "heal" => num((s.fx.heal * 100.0).round()),
+            "heal_below" => num((s.fx.heal_below * 100.0).round()),
+            "charges" => s.charges_held().to_string(),
+            "jumps" => s.fx.jumps.to_string(),
+            "fear" => num(s.fx.fear),
+            "root" => num(s.fx.root),
+            "weaken" => num(s.fx.weaken),
+            "mark" => num((s.fx.mark * 100.0).round()),
+            "mark_secs" => num(s.fx.mark_secs),
+            "leech" => num((s.fx.leech * 100.0).round()),
+            "leap" => num(s.fx.leap),
+            "secs" => num(s.fx.buff.secs),
+            "guard" => num((s.fx.buff.guard * 100.0).round()),
+            "haste" => num((s.fx.buff.haste * 100.0).round()),
+            "power" => num((s.fx.buff.power * 100.0).round()),
+            "hide" => num(s.fx.buff.hide),
+            "execute_at" => num((s.fx.execute_at * 100.0).round()),
             _ => return None,
         })
     };
