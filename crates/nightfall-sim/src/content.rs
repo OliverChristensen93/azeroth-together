@@ -141,6 +141,16 @@ impl fmt::Display for ContentError {
 
 impl std::error::Error for ContentError {}
 
+/// A finite number above zero (NaN and infinity are not).
+fn positive(x: f32) -> bool {
+    x.is_finite() && x > 0.0
+}
+
+/// A finite number, zero or more.
+fn non_negative(x: f32) -> bool {
+    x.is_finite() && x >= 0.0
+}
+
 fn parse<T: for<'de> Deserialize<'de>>(file: &'static str, text: &str) -> Result<T, ContentError> {
     ron::from_str(text).map_err(|e| ContentError::Parse {
         file,
@@ -149,6 +159,8 @@ fn parse<T: for<'de> Deserialize<'de>>(file: &'static str, text: &str) -> Result
 }
 
 impl Content {
+    // The float checks are negated comparisons on purpose, so a NaN fails them.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn from_ron(src: ContentSources) -> Result<Self, ContentError> {
         let classes: Vec<ClassDef> = parse("classes.ron", src.classes)?;
         let map: MapFile = parse("map.ron", src.map)?;
@@ -162,6 +174,18 @@ impl Content {
             if classes[..i].iter().any(|d| d.key == c.key) {
                 return invalid(format!("class \"{}\" is listed twice", c.key));
             }
+            if !positive(c.speed) {
+                return invalid(format!(
+                    "class \"{}\": speed {} must be a positive number",
+                    c.key, c.speed
+                ));
+            }
+            if !positive(c.base_hp) {
+                return invalid(format!(
+                    "class \"{}\": base_hp {} must be a positive number",
+                    c.key, c.base_hp
+                ));
+            }
         }
         let bounds = Bounds::new(map.bounds.iter().map(|&(x, y)| V2::new(x, y)).collect())
             .map_err(|why| ContentError::Invalid(format!("map.ron: {why}")))?;
@@ -173,6 +197,9 @@ impl Content {
                 return invalid(format!("map.ron: entry ({x}, {y}) is outside the bounds"));
             }
         }
+        if rules.hero_level == 0 {
+            return invalid("rules.ron: hero_level must be at least 1".into());
+        }
         let a = &rules.atmosphere;
         if a.night_minute >= 1440 {
             return invalid(format!(
@@ -180,8 +207,23 @@ impl Content {
                 a.night_minute
             ));
         }
+        // Written as a negated `<` so that a NaN on either side is rejected too.
         if !(a.fog_start < a.fog_end) {
             return invalid("rules.ron: fog_start must be less than fog_end".into());
+        }
+        // Negated for NaN as above: the world drawn short of the fog's end would show its edge.
+        if !(a.view_distance >= a.fog_end) {
+            return invalid(format!(
+                "rules.ron: view_distance {} is short of fog_end {}",
+                a.view_distance, a.fog_end
+            ));
+        }
+        let light = &a.hero_light;
+        if !non_negative(light.intensity) || !non_negative(light.range) {
+            return invalid(format!(
+                "rules.ron: hero_light intensity {} and range {} must be numbers, not negative",
+                light.intensity, light.range
+            ));
         }
         Ok(Self {
             classes,
@@ -277,6 +319,61 @@ mod tests {
             load(CLASSES, MAP, &rules),
             Err(ContentError::Invalid(_))
         ));
+    }
+
+    /// `result` is refused, and the reason names `what`.
+    fn refused_naming(result: Result<Content, ContentError>, what: &str) {
+        match result {
+            Err(ContentError::Invalid(why)) => assert!(why.contains(what), "{why}"),
+            other => panic!("expected a refusal naming {what}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_class_speed_must_be_a_positive_number() {
+        for bad in ["0.0", "-7.0", "NaN", "inf"] {
+            let classes = CLASSES.replacen("speed: 7.0", &format!("speed: {bad}"), 1);
+            refused_naming(load(&classes, MAP, RULES), "speed");
+        }
+    }
+
+    #[test]
+    fn a_class_base_hp_must_be_a_positive_number() {
+        for bad in ["0.0", "-100.0", "NaN", "inf"] {
+            let classes = CLASSES.replacen("base_hp: 100.0", &format!("base_hp: {bad}"), 1);
+            refused_naming(load(&classes, MAP, RULES), "base_hp");
+        }
+    }
+
+    #[test]
+    fn the_hero_level_is_at_least_one() {
+        let rules = RULES.replace("hero_level: 30", "hero_level: 0");
+        refused_naming(load(CLASSES, MAP, &rules), "hero_level");
+    }
+
+    #[test]
+    fn the_world_is_drawn_at_least_to_the_fogs_end() {
+        let rules = RULES.replace("view_distance: 120.0", "view_distance: 30.0");
+        refused_naming(load(CLASSES, MAP, &rules), "view_distance");
+        let rules = RULES.replace("view_distance: 120.0", "view_distance: NaN");
+        refused_naming(load(CLASSES, MAP, &rules), "view_distance");
+        let rules = RULES.replace("view_distance: 120.0", "view_distance: 40.0");
+        assert!(
+            load(CLASSES, MAP, &rules).is_ok(),
+            "exactly at the fog's end is fine"
+        );
+    }
+
+    #[test]
+    fn the_hero_light_is_finite_and_not_negative() {
+        for bad in ["intensity: -0.6", "intensity: NaN", "intensity: inf"] {
+            let rules = RULES.replace("intensity: 0.6", bad);
+            refused_naming(load(CLASSES, MAP, &rules), "hero_light");
+        }
+        for bad in ["range: -9.0", "range: NaN"] {
+            let rules = RULES.replace("range: 9.0", bad);
+            refused_naming(load(CLASSES, MAP, &rules), "hero_light");
+        }
     }
 
     #[test]
