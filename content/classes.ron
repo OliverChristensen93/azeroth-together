@@ -123,7 +123,11 @@
         base_hp: 120.0,
         speed: 7.5,
         start: "smite",
-        pool: ["smite", "shadow_word_pain", "holy_fire", "mind_blast", "holy_nova", "psychic_scream"],
+        pool: [
+            "smite", "holy_fire", "mind_blast", "shadow_word_pain", "mind_flay", "devouring_plague",
+            "holy_nova", "starshards", "renew", "power_word_shield", "lightwell", "hex_of_weakness",
+        ],
+        defensive: "psychic_scream",
     ),
     (
         key: "shaman",

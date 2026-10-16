@@ -246,6 +246,43 @@ pub enum Augment {
     BlindingPowder,
     SmokeBomb,
     Sap,
+    // --- Capstones: priest ---
+    Atonement,
+    DivineFury,
+    SearingLight,
+    Martyrdom,
+    PurgeTheWicked,
+    HolyFervor,
+    PsychicHorror,
+    ShadowyApparitions,
+    ShadowyInsight,
+    SpreadingPain,
+    Misery,
+    DeathsEcho,
+    MindSear,
+    PsychicLink,
+    MindTrauma,
+    Plaguebearer,
+    VampiricEmbrace,
+    Insatiable,
+    SearingNova,
+    DivineAegis,
+    Inspiration,
+    ShootingStars,
+    Starfall,
+    LunarGuidance,
+    HolyWordSanctify,
+    BlessedRecovery,
+    InnerFocus,
+    BodyAndSoul,
+    Rapture,
+    BorrowedTime,
+    Sanctuary,
+    LightsWrath,
+    SpringOfLight,
+    TouchOfWeakness,
+    HexOfDomination,
+    SpreadingHex,
 }
 
 impl Augment {
@@ -320,7 +357,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 108] = [
+    pub const CAPSTONES: [Augment; 144] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -429,6 +466,42 @@ impl Augment {
         Augment::BlindingPowder,
         Augment::SmokeBomb,
         Augment::Sap,
+        Augment::Atonement,
+        Augment::DivineFury,
+        Augment::SearingLight,
+        Augment::Martyrdom,
+        Augment::PurgeTheWicked,
+        Augment::HolyFervor,
+        Augment::PsychicHorror,
+        Augment::ShadowyApparitions,
+        Augment::ShadowyInsight,
+        Augment::SpreadingPain,
+        Augment::Misery,
+        Augment::DeathsEcho,
+        Augment::MindSear,
+        Augment::PsychicLink,
+        Augment::MindTrauma,
+        Augment::Plaguebearer,
+        Augment::VampiricEmbrace,
+        Augment::Insatiable,
+        Augment::SearingNova,
+        Augment::DivineAegis,
+        Augment::Inspiration,
+        Augment::ShootingStars,
+        Augment::Starfall,
+        Augment::LunarGuidance,
+        Augment::HolyWordSanctify,
+        Augment::BlessedRecovery,
+        Augment::InnerFocus,
+        Augment::BodyAndSoul,
+        Augment::Rapture,
+        Augment::BorrowedTime,
+        Augment::Sanctuary,
+        Augment::LightsWrath,
+        Augment::SpringOfLight,
+        Augment::TouchOfWeakness,
+        Augment::HexOfDomination,
+        Augment::SpreadingHex,
     ];
 
     pub fn name(self) -> &'static str {
@@ -607,6 +680,42 @@ impl Augment {
             Augment::BlindingPowder => "Blinding Powder",
             Augment::SmokeBomb => "Smoke Bomb",
             Augment::Sap => "Sap",
+            Augment::Atonement => "Atonement",
+            Augment::DivineFury => "Divine Fury",
+            Augment::SearingLight => "Searing Light",
+            Augment::Martyrdom => "Martyrdom",
+            Augment::PurgeTheWicked => "Purge the Wicked",
+            Augment::HolyFervor => "Holy Fervor",
+            Augment::PsychicHorror => "Psychic Horror",
+            Augment::ShadowyApparitions => "Shadowy Apparitions",
+            Augment::ShadowyInsight => "Shadowy Insight",
+            Augment::SpreadingPain => "Spreading Pain",
+            Augment::Misery => "Misery",
+            Augment::DeathsEcho => "Death's Echo",
+            Augment::MindSear => "Mind Sear",
+            Augment::PsychicLink => "Psychic Link",
+            Augment::MindTrauma => "Mind Trauma",
+            Augment::Plaguebearer => "Plaguebearer",
+            Augment::VampiricEmbrace => "Vampiric Embrace",
+            Augment::Insatiable => "Insatiable",
+            Augment::SearingNova => "Searing Nova",
+            Augment::DivineAegis => "Divine Aegis",
+            Augment::Inspiration => "Inspiration",
+            Augment::ShootingStars => "Shooting Stars",
+            Augment::Starfall => "Starfall",
+            Augment::LunarGuidance => "Lunar Guidance",
+            Augment::HolyWordSanctify => "Holy Word: Sanctify",
+            Augment::BlessedRecovery => "Blessed Recovery",
+            Augment::InnerFocus => "Inner Focus",
+            Augment::BodyAndSoul => "Body and Soul",
+            Augment::Rapture => "Rapture",
+            Augment::BorrowedTime => "Borrowed Time",
+            Augment::Sanctuary => "Sanctuary",
+            Augment::LightsWrath => "Light's Wrath",
+            Augment::SpringOfLight => "Spring of Light",
+            Augment::TouchOfWeakness => "Touch of Weakness",
+            Augment::HexOfDomination => "Hex of Domination",
+            Augment::SpreadingHex => "Spreading Hex",
         }
     }
 
@@ -787,6 +896,42 @@ impl Augment {
             Augment::BlindingPowder => "Enemies it Fears stay Chilled for 4 seconds after.",
             Augment::SmokeBomb => "Instead of Fear, a cloud of smoke at your feet for 5 seconds: enemies inside lose you and take +30% damage.",
             Augment::Sap => "A Blinded enemy takes double damage from your next hit on it.",
+            Augment::Atonement => "Each Smite heals you, or the most wounded ally within 30 yards, for 50% of its damage.",
+            Augment::DivineFury => "Every 4th Smite strikes 3 targets.",
+            Augment::SearingLight => "Each Smite on the same target deals +10% more than the last, up to +50%; a new target starts again.",
+            Augment::Martyrdom => "Costs 3% of your health each cast, but deals +80%.",
+            Augment::PurgeTheWicked => "When its target dies, its burn jumps to the 2 closest enemies.",
+            Augment::HolyFervor => "Each of its burn ticks has a 5% chance to make Holy Fire ready.",
+            Augment::PsychicHorror => "Its target and every enemy within 5 yards of it flee in Fear for 2 seconds.",
+            Augment::ShadowyApparitions => "Its crits send a shadow at the closest other enemy for 50%.",
+            Augment::ShadowyInsight => "Each Shadow Word: Pain tick has a 10% chance to make Mind Blast ready.",
+            Augment::SpreadingPain => "It goes on enemies that do not have it yet first, anywhere within 30 yards.",
+            Augment::Misery => "Enemies in pain are Marked: +10% damage from every source.",
+            Augment::DeathsEcho => "When an enemy in pain dies, a shadow flies to the closest enemy for 50% of the pain's total.",
+            Augment::MindSear => "Each hit also strikes every enemy within 4 yards of the target for 50%.",
+            Augment::PsychicLink => "Each hit also strikes every enemy with your Shadow Word: Pain for 30%.",
+            Augment::MindTrauma => "Flayed enemies are Weakened for 4 seconds.",
+            Augment::Plaguebearer => "When a plagued enemy dies, the plague jumps to the 2 closest enemies.",
+            Augment::VampiricEmbrace => "While any enemy carries your plague, all your Shadow damage heals you and every ally within 20 yards for 15% of it.",
+            Augment::Insatiable => "Heals twice as much while you are below 50% health.",
+            Augment::SearingNova => "Everything it hits Burns for 40% of the hit over 4 seconds.",
+            Augment::DivineAegis => "Its heal on a hero at full health becomes a shield instead, up to 20% of their health.",
+            Augment::Inspiration => "Each enemy it hits makes you take 1% less damage for 4 seconds, up to 20%.",
+            Augment::ShootingStars => "Its crits drop a star on another crowd for 100%.",
+            Augment::Starfall => "Instead of one spot, stars fall on 3 enemies near you every second for 6 seconds. It goes where you go.",
+            Augment::LunarGuidance => "Enemies it hits are Marked +10% for 4 seconds.",
+            Augment::HolyWordSanctify => "Spending your last charge casts Holy Nova (yours, if you know it) and heals you 25%.",
+            Augment::BlessedRecovery => "A charge also heals you when a single blow takes 15% or more of your health.",
+            Augment::InnerFocus => "While your bank is full, your other Holy spells deal +15%.",
+            Augment::BodyAndSoul => "While the shield holds, +25% move speed.",
+            Augment::Rapture => "When the shield breaks, every enemy within 8 yards flees in Fear for 3 seconds.",
+            Augment::BorrowedTime => "After it breaks, your spells come back 50% faster for 4 seconds.",
+            Augment::Sanctuary => "Heroes inside take 20% less damage.",
+            Augment::LightsWrath => "When the well ends, it bursts for holy damage equal to all it healed, within 10 yards.",
+            Augment::SpringOfLight => "Enemies inside are Chilled.",
+            Augment::TouchOfWeakness => "A hexed enemy that strikes you takes Hex's damage back, tripled.",
+            Augment::HexOfDomination => "Its targets also take +30% from everyone and deal 50% less instead of 25%.",
+            Augment::SpreadingHex => "When a hexed enemy dies, the hex jumps to the closest enemy.",
         }
     }
 
@@ -847,6 +992,24 @@ impl Augment {
             }
             Augment::Counterattack | Augment::Nimble | Augment::CheatDeath => "riposte",
             Augment::BlindingPowder | Augment::SmokeBomb | Augment::Sap => "blind",
+            Augment::Atonement | Augment::DivineFury | Augment::SearingLight => "smite",
+            Augment::Martyrdom | Augment::PurgeTheWicked | Augment::HolyFervor => "holy_fire",
+            Augment::PsychicHorror | Augment::ShadowyApparitions | Augment::ShadowyInsight => {
+                "mind_blast"
+            }
+            Augment::SpreadingPain | Augment::Misery | Augment::DeathsEcho => "shadow_word_pain",
+            Augment::MindSear | Augment::PsychicLink | Augment::MindTrauma => "mind_flay",
+            Augment::Plaguebearer | Augment::VampiricEmbrace | Augment::Insatiable => {
+                "devouring_plague"
+            }
+            Augment::SearingNova | Augment::DivineAegis | Augment::Inspiration => "holy_nova",
+            Augment::ShootingStars | Augment::Starfall | Augment::LunarGuidance => "starshards",
+            Augment::HolyWordSanctify | Augment::BlessedRecovery | Augment::InnerFocus => "renew",
+            Augment::BodyAndSoul | Augment::Rapture | Augment::BorrowedTime => "power_word_shield",
+            Augment::Sanctuary | Augment::LightsWrath | Augment::SpringOfLight => "lightwell",
+            Augment::TouchOfWeakness | Augment::HexOfDomination | Augment::SpreadingHex => {
+                "hex_of_weakness"
+            }
             _ => return None,
         })
     }
@@ -1303,6 +1466,40 @@ impl Augment {
             Augment::SmokeBomb => {
                 s.fx.fear = 0.0;
                 s.tags = s.tags.without(Tag::Fear);
+            }
+            // Priest capstones that change the cast's numbers.
+            Augment::Martyrdom => s.damage *= 1.8,
+            Augment::SpreadingPain => {
+                s.fx.fresh = true;
+                s.range = s.range.max(30.0);
+            }
+            Augment::Misery => {
+                s.fx.mark = s.fx.mark.max(0.1);
+                s.fx.mark_secs = s.fx.mark_secs.max(12.0);
+            }
+            Augment::MindTrauma => s.fx.weaken = s.fx.weaken.max(4.0),
+            Augment::SearingNova => {
+                s.burn += 0.4;
+                s.tags = s.tags.with(Tag::DamageOverTime);
+            }
+            Augment::Starfall => {
+                s.follows = true;
+                s.fx.strikes = 3;
+                s.range = s.range.max(20.0);
+                s.ground = s.ground.max(6.0);
+            }
+            Augment::LunarGuidance => {
+                s.fx.mark = s.fx.mark.max(0.1);
+                s.fx.mark_secs = s.fx.mark_secs.max(4.0);
+            }
+            Augment::SpringOfLight => {
+                s.chill = s.chill.max(crate::spell::CHILL_SECS);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::HexOfDomination => {
+                s.fx.mark = s.fx.mark.max(0.3);
+                s.fx.mark_secs = s.fx.mark_secs.max(s.fx.weaken);
+                s.fx.weaken_cut = s.fx.weaken_cut.max(0.5);
             }
             _ => {}
         }

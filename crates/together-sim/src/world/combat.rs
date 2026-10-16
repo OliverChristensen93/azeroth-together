@@ -201,7 +201,7 @@ struct Bomb {
 
 /// A lasting area on the ground: a Blizzard, Flamestrike's burning ground, a Frozen Orb.
 #[derive(Clone, Debug)]
-pub(super) struct Ground {
+pub struct Ground {
     pub by: PlayerId,
     pub spec: CastSpec,
     pub pos: V2,
@@ -552,6 +552,8 @@ impl World {
         let elites_first = spec.targeting == Targeting::ElitesFirst;
         let targets = if spec.targeting == Targeting::Weakest {
             self.pick_weakest(origin, spec.range, spec.count as usize, shot.exclude)
+        } else if spec.fx.fresh {
+            self.pick_fresh(h, spec, origin)
         } else {
             self.pick_targets(
                 origin,
@@ -1328,6 +1330,7 @@ impl World {
                     self.leech(h, dps * leech, 0.0);
                 }
             }
+            self.class_tick(by, ability, id, dps);
         }
         for (pos, source, bomb) in blasts {
             self.detonate(pos, source, bomb);
@@ -1486,6 +1489,7 @@ impl World {
             }
             if left <= 0.0 {
                 self.grounds.remove(i);
+                self.ground_ended(&g, pos);
                 if g.final_gale {
                     if let Some(nova) = self.content.ability("frost_nova") {
                         self.triggers.push(Trigger {
@@ -1626,6 +1630,7 @@ impl World {
             }
         }
         if broke {
+            self.class_shield_broke(h);
             self.end_shield(h);
         }
         amount - taken

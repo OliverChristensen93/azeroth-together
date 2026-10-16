@@ -346,7 +346,6 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::super::classes::testkit::*;
-    use super::*;
 
     /// Hero 0's spell at `slot` fires on the next step.
     fn ready(w: &mut World, slot: usize) {

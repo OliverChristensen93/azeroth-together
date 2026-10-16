@@ -423,6 +423,10 @@ pub struct SpellFx {
     pub only_dotted: bool,
     /// Seconds enemies it reaches lose the heroes and mill about (Smoke Bomb).
     pub lost: f32,
+    /// It picks enemies without its own damage over time first (Spreading Pain).
+    pub fresh: bool,
+    /// How much less its Weakened enemies deal.
+    pub weaken_cut: f32,
 }
 
 impl Default for SpellFx {
@@ -466,6 +470,8 @@ impl Default for SpellFx {
             full_control: false,
             only_dotted: false,
             lost: 0.0,
+            fresh: false,
+            weaken_cut: WEAKEN,
         }
     }
 }

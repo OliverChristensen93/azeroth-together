@@ -14,6 +14,7 @@
 mod arena;
 mod classes;
 mod combat;
+mod priest;
 mod rogue;
 mod warrior;
 
@@ -1505,6 +1506,7 @@ impl World {
             hero.revive = 0.0;
             self.events.push(Event::HeroDied { player });
         } else {
+            self.after_blow(h, amount, from);
             self.frozen_core(h);
             if !self.triggers.is_empty() {
                 self.run_triggers();

@@ -39,8 +39,9 @@ pub struct StatusFx {
     pub fear_from: V2,
     /// Seconds it cannot move.
     pub root: f32,
-    /// Seconds it deals [`WEAKEN`] less.
+    /// Seconds it deals `weaken_cut` less ([`WEAKEN`] for most spells).
     pub weaken: f32,
+    pub weaken_cut: f32,
     /// Extra damage it takes from every source while `mark_secs` lasts.
     pub mark: f32,
     pub mark_secs: f32,
@@ -51,6 +52,8 @@ pub struct StatusFx {
     pub lost: f32,
     /// A rogue's Blind left it open: that hero's next hit on it deals double (Sap).
     pub sapped_by: Option<PlayerId>,
+    /// The priest whose Hex of Weakness is on it.
+    pub hexed_by: Option<PlayerId>,
 }
 
 impl StatusFx {
@@ -102,6 +105,8 @@ pub struct HeroFx {
     /// Heals over time (Renewing): health a second and seconds left.
     pub hots: Vec<(f32, f32)>,
     pub boons: Vec<Boon>,
+    /// The enemy a focusing capstone last hit (Searing Light).
+    pub focus: Option<u32>,
     /// Counters capstones keep (every 3rd swing, blows taken), keyed by the augment.
     pub counts: Vec<(crate::augments::Augment, u32)>,
 }
@@ -111,6 +116,7 @@ impl HeroFx {
     pub fn haste(&self) -> f32 {
         self.buffs.iter().map(|b| b.fx.haste).sum::<f32>()
             + self.boon(crate::augments::Augment::Nimble)
+            + self.boon(crate::augments::Augment::BodyAndSoul)
     }
 
     /// The share of blows its buffs take away (the strongest counts).
@@ -258,6 +264,7 @@ impl World {
         s.damage *= 1.0 + self.heroes[h].spell.fx.power();
         self.warrior_spec(h, owned, s);
         self.rogue_spec(h, owned, s);
+        self.priest_spec(h, owned, s);
     }
 
     /// The share of each tick of `by`'s damage over time from `spec` that heals `by`, beside the
@@ -288,6 +295,7 @@ impl World {
         }
         self.warrior_before(h, owned, spec);
         self.rogue_before(h, owned, spec);
+        self.priest_before(h, owned, spec);
     }
 
     /// Hero `h` fired `owned` as `spec`: a Finisher spends its combo points, a builder gives
@@ -302,6 +310,7 @@ impl World {
         }
         self.warrior_after(h, owned, spec);
         self.rogue_after(h, owned, spec);
+        self.priest_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -555,6 +564,7 @@ impl World {
         }
         self.warrior_strike(h, id, spec, damage, crit, scale);
         self.rogue_strike(h, id, spec, damage, crit, scale);
+        self.priest_strike(h, id, spec, damage, crit, scale);
     }
 
     /// The other classes' status effects one hit of `spec` leaves on enemy `ei`, struck from
@@ -573,7 +583,11 @@ impl World {
             st.root = st.root.max(control_secs(fx.root, elite, boss));
         }
         if fx.weaken > 0.0 {
+            if st.weaken <= 0.0 {
+                st.weaken_cut = 0.0;
+            }
             st.weaken = st.weaken.max(fx.weaken);
+            st.weaken_cut = st.weaken_cut.max(fx.weaken_cut);
         }
         if fx.mark > 0.0 && (fx.mark >= st.mark || st.mark_secs <= 0.0) {
             st.mark = fx.mark;
@@ -632,7 +646,7 @@ impl World {
         if amount <= 0.0 {
             return 0.0;
         }
-        let amount = amount * self.warrior_guard(h);
+        let amount = amount * self.warrior_guard(h) * self.priest_guard(h);
         let player = self.heroes[h].player;
         let pos = self.heroes[h].pos;
         let banks: Vec<(usize, WardKind)> = self.heroes[h]
@@ -804,6 +818,7 @@ impl World {
             self.spend_heal_charges(h);
             self.warrior_tend(h);
             self.rogue_tend(h);
+            self.priest_tend(h);
         }
     }
 
@@ -838,6 +853,7 @@ impl World {
             self.spend_charge(h, ability);
             let amount = spec.fx.heal * self.heroes[t].max_hp;
             self.heal_hero(t, amount, Some(&spec));
+            self.priest_charge_spent(h, ability, t, amount);
             let (player, target) = (self.heroes[h].player, self.heroes[t].player);
             self.events.push(Event::Cast {
                 caster: player,
@@ -875,13 +891,31 @@ impl World {
     pub(super) fn class_deaths(&mut self, deaths: &[Death]) {
         self.warrior_deaths(deaths);
         self.rogue_deaths(deaths);
+        self.priest_deaths(deaths);
     }
 
     /// After a nova of `spec` by hero `h` hit `hit` around `center`: the capstones that count
     /// what a nova reached.
     pub(super) fn after_nova(&mut self, h: usize, spec: &CastSpec, center: V2, hit: &[u32]) {
+        if spec.fx.heal > 0.0 {
+            // A nova that heals (Holy Nova): every hero in its reach.
+            let near: Vec<usize> = (0..self.heroes.len())
+                .filter(|&t| {
+                    self.heroes[t].alive && self.heroes[t].pos.distance(center) <= spec.radius
+                })
+                .collect();
+            for t in near {
+                let amount = spec.fx.heal * self.heroes[t].max_hp;
+                let spare = amount - (self.heroes[t].max_hp - self.heroes[t].hp);
+                self.heal_hero(t, amount, Some(spec));
+                if spare > 0.0 {
+                    self.priest_overheal(h, t, spec, spare);
+                }
+            }
+        }
         self.warrior_nova(h, spec, center, hit);
         self.rogue_nova(h, spec, center, hit);
+        self.priest_nova(h, spec, center, hit);
     }
 
     /// Where a ground area of `spec` cast from `origin` is put: at the origin for a totem, a trap
@@ -912,12 +946,16 @@ impl World {
                     self.heroes[t].alive && self.heroes[t].pos.distance(pos) <= spec.radius
                 })
                 .collect();
+            let mut healed = 0.0;
             for t in inside {
                 let amount = spec.fx.heal * self.heroes[t].max_hp;
-                if self.heal_hero(t, amount, Some(spec)) > 0.0 {
+                let got = self.heal_hero(t, amount, Some(spec));
+                healed += got;
+                if got > 0.0 {
                     healed_any = true;
                 }
             }
+            self.priest_ground_healed(h, spec, healed);
             if spec.fx.strikes == 0 {
                 // A healing ground that also burns what stands in it.
                 return spec.damage <= 0.0;
@@ -950,7 +988,6 @@ impl World {
         for (id, _) in targets {
             self.strike(by, spec, id, 1.0, pos, Crit::Roll);
         }
-        let _ = h;
         true
     }
 
@@ -974,10 +1011,56 @@ impl World {
     /// How much less enemy `e` deals: Weakened.
     pub(super) fn weakness(e: &Enemy) -> f32 {
         if e.status.fx.weaken > 0.0 {
-            1.0 - WEAKEN
+            1.0 - e.status.fx.weaken_cut.max(WEAKEN).min(1.0)
         } else {
             1.0
         }
+    }
+
+    /// The `count` enemies within `range` of `from` that do not yet carry hero `h`'s damage over
+    /// time from `spec`, nearest first; then those that do.
+    pub(super) fn pick_fresh(&self, h: usize, spec: &CastSpec, from: V2) -> Vec<(u32, f32)> {
+        let player = self.heroes[h].player;
+        let mut near: Vec<(u32, f32, bool)> = self
+            .enemies
+            .iter()
+            .filter(|e| e.hp > 0.0)
+            .map(|e| {
+                let has = e
+                    .status
+                    .burns
+                    .iter()
+                    .any(|b| b.by == player && b.ability == spec.ability);
+                (e.id, from.distance(e.pos), has)
+            })
+            .filter(|&(_, d, _)| d <= spec.range)
+            .collect();
+        near.sort_by(|a, b| a.2.cmp(&b.2).then(a.1.total_cmp(&b.1)));
+        near.truncate(spec.count as usize);
+        near.into_iter().map(|(id, d, _)| (id, d)).collect()
+    }
+
+    /// A tick of `by`'s damage over time from `ability` on enemy `id`, for `dps`.
+    pub(super) fn class_tick(&mut self, by: PlayerId, ability: usize, id: u32, dps: f32) {
+        let Some(h) = self.hero_ix(by) else {
+            return;
+        };
+        self.priest_tick(h, ability, id, dps);
+    }
+
+    /// A blow of `amount` from enemy `from` reached hero `h`'s health, and it still stands.
+    pub(super) fn after_blow(&mut self, h: usize, amount: f32, from: Option<u32>) {
+        self.priest_blow(h, amount, from);
+    }
+
+    /// Hero `h`'s absorbing shield broke.
+    pub(super) fn class_shield_broke(&mut self, h: usize) {
+        self.priest_shield_broke(h);
+    }
+
+    /// A ground area `g` ran out at `pos`.
+    pub(super) fn ground_ended(&mut self, g: &super::combat::Ground, pos: V2) {
+        self.priest_ground_ended(g, pos);
     }
 }
 
