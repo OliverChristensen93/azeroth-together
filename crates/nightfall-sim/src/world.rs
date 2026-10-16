@@ -1,12 +1,15 @@
-//! The world of a run: its heroes and where they stand. A hero's position comes from its player's
-//! client (WoW's controller moves it there, as a WoW client reports its moves to a server); the
-//! world keeps it inside the map. Sub-project 1 has nothing else to simulate; later sub-projects
-//! add enemies, senses, combat and loot here.
+//! The world of a run: its heroes, its enemies and where they stand. A hero's position comes from
+//! its player's client (WoW's controller moves it there, as a WoW client reports its moves to a
+//! server); the world keeps it inside the map. Enemies are the host's: once the baked height map
+//! is attached ([`World::attach_map`]) they are placed from the content and walk its floors
+//! ([`crate::enemies`]). A client's world mirrors its host's snapshots and has no map.
 
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::enemies::{self, Brain, Enemy};
+use crate::heightmap::{HeightMap, Navigator};
 use crate::{Content, V2};
 
 /// A player, numbered from 0 (the host).
@@ -54,6 +57,8 @@ pub struct Hero {
 pub struct Snapshot {
     pub elapsed: f32,
     pub heroes: Vec<Hero>,
+    /// The enemies; a player's own snapshot has those near their hero.
+    pub enemies: Vec<Enemy>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -65,10 +70,20 @@ pub enum WorldError {
 pub struct World {
     content: Arc<Content>,
     pub heroes: Vec<Hero>,
+    /// The host's, placed when a map is attached; a client's, from its host's snapshots.
+    pub enemies: Vec<Enemy>,
     /// Seconds since the run began.
     pub elapsed: f32,
     /// Each player's latest input since the last step.
     inputs: Vec<(PlayerId, PlayerInput)>,
+    /// What each enemy means to do, beside it in `enemies`: the host's alone, never sent.
+    brains: Vec<Brain>,
+    /// The height map and its paths, once attached: the host's alone.
+    nav: Option<Navigator>,
+    /// What the content asked that the map could not give (a patrol point no path reaches).
+    warnings: Vec<String>,
+    /// Which enemy chooses its way first next step, so the path budget goes round.
+    plan_cursor: usize,
 }
 
 impl World {
@@ -77,8 +92,13 @@ impl World {
         Self {
             content,
             heroes: Vec::new(),
+            enemies: Vec::new(),
             elapsed: 0.0,
             inputs: Vec::new(),
+            brains: Vec::new(),
+            nav: None,
+            warnings: Vec::new(),
+            plan_cursor: 0,
         }
     }
 
@@ -137,6 +157,30 @@ impl World {
         self.heroes.iter().find(|h| h.player == player)
     }
 
+    pub fn enemy(&self, id: u32) -> Option<&Enemy> {
+        self.enemies.iter().find(|e| e.id == id)
+    }
+
+    /// The host's height map: from now on the world knows walls and floors, and the content's
+    /// enemies are placed on them (any placed before start over).
+    pub fn attach_map(&mut self, map: Arc<HeightMap>) {
+        let (enemies, brains, warnings) = enemies::spawn_all(&self.content, &map);
+        self.enemies = enemies;
+        self.brains = brains;
+        self.warnings.extend(warnings);
+        self.nav = Some(Navigator::new(map));
+    }
+
+    /// The height map, on the host once attached.
+    pub fn map(&self) -> Option<&Arc<HeightMap>> {
+        self.nav.as_ref().map(Navigator::map)
+    }
+
+    /// What the content asked that the map could not give, for the log.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
     /// `player`'s input for the next step, replacing any earlier one since the last step.
     pub fn set_input(&mut self, player: PlayerId, input: PlayerInput) {
         match self.inputs.iter_mut().find(|(p, _)| *p == player) {
@@ -145,8 +189,9 @@ impl World {
         }
     }
 
-    /// One step: each hero takes its player's pose, kept inside the map. A pose that is not a
-    /// number is dropped, so a broken client cannot poison the world.
+    /// One step: each hero takes its player's pose, kept inside the map (a pose that is not a
+    /// number is dropped, so a broken client cannot poison the world); then, once a map is
+    /// attached, every enemy goes about its business.
     pub fn step(&mut self) {
         let bounds = &self.content.map.bounds;
         for (player, input) in self.inputs.drain(..) {
@@ -162,13 +207,25 @@ impl World {
                 }
             }
         }
+        if let Some(nav) = &mut self.nav {
+            enemies::step(
+                &mut self.enemies,
+                &mut self.brains,
+                nav,
+                &self.content,
+                &mut self.warnings,
+                &mut self.plan_cursor,
+            );
+        }
         self.elapsed += DT;
     }
 
+    /// The whole world, as the host has it.
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             elapsed: self.elapsed,
             heroes: self.heroes.clone(),
+            enemies: self.enemies.clone(),
         }
     }
 
@@ -176,6 +233,7 @@ impl World {
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) {
         self.elapsed = snapshot.elapsed;
         self.heroes = snapshot.heroes;
+        self.enemies = snapshot.enemies;
     }
 }
 

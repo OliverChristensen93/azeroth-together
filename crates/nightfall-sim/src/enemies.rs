@@ -1,0 +1,623 @@
+//! Nightfall's enemies as the host runs them (spec §7.1): placed from the content's spawns on the
+//! height map's floors, then each about its business. A sentry holds its post, a patrol walks its
+//! route round and round, a wanderer roams its area and rests between walks. They go where the
+//! map's paths go, so around houses rather than through them. What they notice (sub-project 3)
+//! and how they fight (sub-project 4) come later; an enemy's [`Brain`] is where both plug in.
+
+use std::f32::consts::TAU;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::content::Behaviour;
+use crate::heightmap::{HeightMap, Navigator, MAX_STEP};
+use crate::{Content, DT, V2, V3};
+
+/// Floors a patrol's or sentry's path search may look at: its legs can be long, and each is
+/// searched once (the [`Navigator`] keeps them).
+pub const PATROL_BUDGET: usize = 40_000;
+/// Floors a wanderer's search may look at: its walks are short, and a spot it cannot reach (in a
+/// closed house) must be given up on cheaply.
+pub const WANDER_BUDGET: usize = 4_000;
+/// Within this many yards of a point, an enemy is there.
+const ARRIVE: f32 = 0.6;
+/// How far apart a group of sentries stands around its post.
+const GROUP_SPACING: f32 = 1.5;
+/// Seconds before a sentry tries again to reach a post it found no path to.
+const RETRY: f32 = 5.0;
+/// Failed walks in a row before a wanderer's area is reported.
+const WANDER_GIVE_UP: u32 = 10;
+
+/// An enemy as every client sees it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Enemy {
+    pub id: u32,
+    /// Index into [`Content::enemies`].
+    pub kind: usize,
+    pub pos: V2,
+    /// The floor it stands on.
+    pub z: f32,
+    pub facing: V2,
+    pub hp: f32,
+    pub max_hp: f32,
+    /// How fast it moved this step, yards a second (0 standing).
+    pub speed: f32,
+}
+
+/// A small random number generator (xorshift64*), seeded per enemy, so a run plays the same every
+/// time with the same inputs.
+#[derive(Clone, Debug)]
+pub(crate) struct Rng(u64);
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Self(seed | 1)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// A number in `0..1`.
+    fn next_f32(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+/// What an enemy is set to do.
+pub(crate) enum Order {
+    Sentry { post: V3, facing: V2 },
+    /// `None` marks a point with no floor, or one no path reaches: it is skipped.
+    Patrol {
+        route: Vec<Option<V3>>,
+        target: usize,
+        pause: f32,
+    },
+    Wander { center: V3, radius: f32 },
+}
+
+/// An enemy's mind, the host's alone: never sent.
+pub(crate) struct Brain {
+    /// Index into [`Content::spawns`], for warnings.
+    spawn: usize,
+    order: Order,
+    /// The path being walked, and the next point of it.
+    path: Option<Arc<[V3]>>,
+    next: usize,
+    /// Seconds to stand before moving on.
+    wait: f32,
+    /// Failed searches in a row.
+    failures: u32,
+    /// A warning about it has been given.
+    warned: bool,
+    rng: Rng,
+}
+
+/// How a warning names a spawn.
+fn who(content: &Content, spawn: usize) -> String {
+    let s = &content.spawns[spawn];
+    format!("spawns.ron: \"{}\" ({})", s.place, s.kind)
+}
+
+/// `d` as a facing; north when it is (nearly) nothing.
+fn heading(d: V2) -> V2 {
+    let n = d.normalize_or_zero();
+    if n == V2::ZERO {
+        V2::new(1.0, 0.0)
+    } else {
+        n
+    }
+}
+
+/// The next point of the route after `from` that is not skipped; `from` itself when none is.
+fn next_target(route: &[Option<V3>], from: usize) -> usize {
+    (1..=route.len())
+        .map(|d| (from + d) % route.len())
+        .find(|&i| route[i].is_some())
+        .unwrap_or(from)
+}
+
+/// Every enemy the content's spawns place, on the map's floors, with a warning for each that
+/// could not be placed. Ids count from 1 in the content's order.
+pub(crate) fn spawn_all(content: &Content, map: &HeightMap) -> (Vec<Enemy>, Vec<Brain>, Vec<String>) {
+    let mut enemies = Vec::new();
+    let mut brains = Vec::new();
+    let mut warnings = Vec::new();
+    let mut id = 1u32;
+    for (si, s) in content.spawns.iter().enumerate() {
+        let Some(kind) = content.enemy(&s.kind) else {
+            continue;
+        };
+        let def = &content.enemies[kind];
+        // The floor a point stands on: near the height the content gives, else near the terrain.
+        let floor = |p: V2| -> Option<V3> {
+            let hint = s.z.or_else(|| map.ground_at(p)).unwrap_or(0.0);
+            map.floor_near(p, hint).map(|z| V3::at(p, z))
+        };
+        for k in 0..s.count as usize {
+            let mut rng = Rng::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+            let placed = match &s.behaviour {
+                Behaviour::Sentry { at, facing } => {
+                    let post = V2::new(at.0, at.1);
+                    let stand = if k == 0 {
+                        post
+                    } else {
+                        post + V2::from_angle(k as f32 * TAU / s.count as f32, GROUP_SPACING)
+                    };
+                    let face = V2::from_angle(facing.to_radians(), 1.0);
+                    floor(stand).map(|p| (p, Order::Sentry { post: p, facing: face }, face))
+                }
+                Behaviour::Patrol { route, pause } => {
+                    let points: Vec<Option<V3>> =
+                        route.iter().map(|&(x, y)| floor(V2::new(x, y))).collect();
+                    if k == 0 {
+                        for (i, p) in points.iter().enumerate() {
+                            if p.is_none() {
+                                warnings.push(format!(
+                                    "{}: patrol point {} has no floor; it is skipped",
+                                    who(content, si),
+                                    i + 1
+                                ));
+                            }
+                        }
+                    }
+                    let first = k % points.len();
+                    points[first].map(|p| {
+                        let target = next_target(&points, first);
+                        let facing = points[target]
+                            .map_or(V2::new(1.0, 0.0), |t| heading(t.ground() - p.ground()));
+                        let order = Order::Patrol {
+                            route: points.clone(),
+                            target,
+                            pause: *pause,
+                        };
+                        (p, order, facing)
+                    })
+                }
+                Behaviour::Wander { center, radius } => {
+                    floor(V2::new(center.0, center.1)).map(|c| {
+                        let spot = c.ground()
+                            + V2::from_angle(rng.next_f32() * TAU, radius * rng.next_f32().sqrt());
+                        let p = map.floor_near(spot, c.z).map_or(c, |z| V3::at(spot, z));
+                        let facing = V2::from_angle(rng.next_f32() * TAU, 1.0);
+                        (p, Order::Wander { center: c, radius: *radius }, facing)
+                    })
+                }
+            };
+            let Some((at, order, facing)) = placed else {
+                warnings.push(format!("{}: no floor to stand on; left out", who(content, si)));
+                continue;
+            };
+            enemies.push(Enemy {
+                id,
+                kind,
+                pos: at.ground(),
+                z: at.z,
+                facing,
+                hp: def.hp,
+                max_hp: def.hp,
+                speed: 0.0,
+            });
+            brains.push(Brain {
+                spawn: si,
+                order,
+                path: None,
+                next: 0,
+                wait: 0.0,
+                failures: 0,
+                warned: false,
+                rng,
+            });
+            id += 1;
+        }
+    }
+    (enemies, brains, warnings)
+}
+
+/// One step for every enemy: those with nowhere to go choose a way (at most `paths_per_step`
+/// searches, starting one enemy further along each step so every enemy gets its turn), then all
+/// walk.
+pub(crate) fn step(
+    enemies: &mut [Enemy],
+    brains: &mut [Brain],
+    nav: &mut Navigator,
+    content: &Content,
+    warnings: &mut Vec<String>,
+    cursor: &mut usize,
+) {
+    let n = enemies.len();
+    if n == 0 {
+        return;
+    }
+    let mut budget = content.rules.world.paths_per_step;
+    let first = *cursor % n;
+    *cursor = cursor.wrapping_add(1);
+    for i in 0..n {
+        let k = (first + i) % n;
+        plan(&enemies[k], &mut brains[k], nav, content, warnings, &mut budget);
+    }
+    let map = nav.map();
+    for (e, b) in enemies.iter_mut().zip(brains.iter_mut()) {
+        walk(e, b, map, content);
+    }
+}
+
+/// An idle enemy chooses where to go next and searches its path, if the step's budget allows.
+fn plan(
+    e: &Enemy,
+    b: &mut Brain,
+    nav: &mut Navigator,
+    content: &Content,
+    warnings: &mut Vec<String>,
+    budget: &mut u32,
+) {
+    if b.wait > 0.0 || b.path.is_some() || *budget == 0 {
+        return;
+    }
+    let here = V3::at(e.pos, e.z);
+    let (goal, cache, limit) = match &mut b.order {
+        Order::Sentry { post, .. } => {
+            if here.ground().distance(post.ground()) <= ARRIVE {
+                return;
+            }
+            (*post, true, PATROL_BUDGET)
+        }
+        Order::Patrol { route, target, pause } => {
+            let Some(goal) = route[*target] else {
+                *target = next_target(route, *target);
+                return;
+            };
+            if here.ground().distance(goal.ground()) <= ARRIVE {
+                *target = next_target(route, *target);
+                b.wait = *pause;
+                return;
+            }
+            (goal, true, PATROL_BUDGET)
+        }
+        Order::Wander { center, radius } => {
+            let spot = center.ground()
+                + V2::from_angle(b.rng.next_f32() * TAU, *radius * b.rng.next_f32().sqrt());
+            let Some(z) = nav.map().floor_near(spot, center.z) else {
+                b.wait = 1.0;
+                return;
+            };
+            (V3::at(spot, z), false, WANDER_BUDGET)
+        }
+    };
+    *budget -= 1;
+    if let Some(path) = nav.find_path(here, goal, cache, limit) {
+        b.path = Some(path);
+        b.next = 0;
+        b.failures = 0;
+        return;
+    }
+    match &mut b.order {
+        Order::Sentry { .. } => {
+            b.wait = RETRY;
+            if !b.warned {
+                b.warned = true;
+                warnings.push(format!("{}: no path to its post", who(content, b.spawn)));
+            }
+        }
+        Order::Patrol { route, target, .. } => {
+            warnings.push(format!(
+                "{}: no path to patrol point {} ({:.1}, {:.1}); it is skipped",
+                who(content, b.spawn),
+                *target + 1,
+                goal.x,
+                goal.y
+            ));
+            route[*target] = None;
+            *target = next_target(route, *target);
+        }
+        Order::Wander { .. } => {
+            b.failures += 1;
+            b.wait = 1.0;
+            if b.failures >= WANDER_GIVE_UP && !b.warned {
+                b.warned = true;
+                warnings.push(format!(
+                    "{}: finds no ground to walk to in its area",
+                    who(content, b.spawn)
+                ));
+            }
+        }
+    }
+}
+
+/// An enemy walks its path for a step at its walking speed, on the floor under it.
+fn walk(e: &mut Enemy, b: &mut Brain, map: &HeightMap, content: &Content) {
+    if b.wait > 0.0 {
+        b.wait = (b.wait - DT).max(0.0);
+        e.speed = 0.0;
+        return;
+    }
+    let Some(path) = b.path.clone() else {
+        e.speed = 0.0;
+        if let Order::Sentry { facing, .. } = &b.order {
+            e.facing = *facing;
+        }
+        return;
+    };
+    let speed = content.enemies[e.kind].walk_speed;
+    let from = e.pos;
+    let mut left = speed * DT;
+    while left > 1e-6 && b.next < path.len() {
+        let to = path[b.next];
+        let d = e.pos.distance(to.ground());
+        if d <= left {
+            e.pos = to.ground();
+            e.z = to.z;
+            left -= d;
+            b.next += 1;
+        } else {
+            e.pos += (to.ground() - e.pos) * (left / d);
+            left = 0.0;
+        }
+    }
+    e.z = map.floor_within(e.pos, e.z, MAX_STEP).unwrap_or(e.z);
+    let moved = e.pos - from;
+    if moved.length() > 1e-4 {
+        e.facing = moved.normalize_or_zero();
+        e.speed = speed;
+    } else {
+        e.speed = 0.0;
+    }
+    if b.next >= path.len() {
+        b.path = None;
+        arrive(e, b, content);
+    }
+}
+
+/// At the end of a path: a sentry turns to its watch, a patrol rests and takes its next point, a
+/// wanderer rests a while.
+fn arrive(e: &mut Enemy, b: &mut Brain, content: &Content) {
+    match &mut b.order {
+        Order::Sentry { facing, .. } => e.facing = *facing,
+        Order::Patrol { route, target, pause } => {
+            *target = next_target(route, *target);
+            b.wait = *pause;
+        }
+        Order::Wander { .. } => {
+            let (lo, hi) = content.rules.world.wander_pause;
+            b.wait = lo + (hi - lo) * b.rng.next_f32();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::heightmap::testmap::{flat, house};
+    use crate::{Content, ContentSources, HeightMap, World, V2};
+
+    const CLASSES: &str = r#"[
+        (key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0, base_hp: 135.0, speed: 7.0),
+    ]"#;
+    const MAP: &str = r#"(key: "test", name: "Test", map: 0,
+        bounds: [(0.0, 0.0), (50.0, 0.0), (50.0, 50.0), (0.0, 50.0)],
+        entries: [(5.0, 5.0, 0.0)])"#;
+    const ENEMIES: &str = r#"[
+        (key: "skeleton", name: "Skeleton", display: 200, level: 28, hp: 900.0, walk_speed: 2.5, run_speed: 7.0),
+    ]"#;
+
+    fn world(spawns: &str, paths_per_step: u32) -> World {
+        let rules = format!(
+            r#"(hero_level: 30, atmosphere: (night_minute: 0, fog_start: 10.0, fog_end: 40.0,
+                fog_color: (0.1, 0.1, 0.1), view_distance: 120.0,
+                hero_light: (color: (1.0, 0.8, 0.6), intensity: 0.6, range: 9.0)),
+                world: (share_sight_within: 10.0, paths_per_step: {paths_per_step}, wander_pause: (1.0, 2.0)))"#
+        );
+        let content = Content::from_ron(ContentSources {
+            classes: CLASSES,
+            map: MAP,
+            rules: &rules,
+            enemies: ENEMIES,
+            spawns,
+        })
+        .unwrap();
+        World::new(Arc::new(content))
+    }
+
+    /// Flat ground 50 yd across with a closed house (no door, no roof) over [20, 30]².
+    fn town() -> Arc<HeightMap> {
+        let mut b = flat(50.0);
+        house(&mut b, V2::new(20.0, 20.0), V2::new(30.0, 30.0), None, false);
+        Arc::new(b.finish())
+    }
+
+    fn in_house(p: V2) -> bool {
+        p.x > 20.0 && p.x < 30.0 && p.y > 20.0 && p.y < 30.0
+    }
+
+    const GATE: &str =
+        r#"[(place: "Gate", kind: "skeleton", behaviour: Sentry(at: (10.0, 10.0), facing: 90.0))]"#;
+
+    #[test]
+    fn a_world_without_a_map_has_no_enemies() {
+        let mut w = world(GATE, 4);
+        w.step();
+        assert!(w.enemies.is_empty());
+        assert!(w.map().is_none());
+    }
+
+    #[test]
+    fn a_sentry_holds_its_post_facing_its_way() {
+        let mut w = world(GATE, 4);
+        w.attach_map(town());
+        for _ in 0..30 {
+            w.step();
+        }
+        let e = &w.enemies[0];
+        assert_eq!(e.id, 1);
+        assert_eq!(e.pos, V2::new(10.0, 10.0));
+        assert_eq!(e.z, 0.0);
+        assert!(e.facing.y > 0.99, "{:?}", e.facing);
+        assert_eq!(e.speed, 0.0);
+        assert_eq!(e.hp, 900.0);
+        assert!(w.warnings().is_empty());
+    }
+
+    #[test]
+    fn a_patrol_walks_around_a_house_not_through_it() {
+        let mut w = world(
+            r#"[(place: "Road", kind: "skeleton", behaviour: Patrol(route: [(25.0, 10.0), (25.0, 40.0)], pause: 0.0))]"#,
+            4,
+        );
+        w.attach_map(town());
+        let mut reached = false;
+        for _ in 0..900 {
+            w.step();
+            let e = &w.enemies[0];
+            assert!(!in_house(e.pos), "{:?}", e.pos);
+            reached |= e.pos.distance(V2::new(25.0, 40.0)) <= 0.6;
+        }
+        assert!(reached);
+    }
+
+    #[test]
+    fn wanderers_stay_in_their_area() {
+        let mut w = world(
+            r#"[(place: "Nest", kind: "skeleton", count: 3, behaviour: Wander(center: (10.0, 40.0), radius: 6.0))]"#,
+            4,
+        );
+        w.attach_map(town());
+        assert_eq!(w.enemies.len(), 3);
+        let start: Vec<V2> = w.enemies.iter().map(|e| e.pos).collect();
+        for _ in 0..1800 {
+            w.step();
+            for e in &w.enemies {
+                assert!(e.pos.distance(V2::new(10.0, 40.0)) <= 6.75, "{:?}", e.pos);
+            }
+        }
+        assert!(w.enemies.iter().zip(&start).any(|(e, s)| e.pos != *s));
+    }
+
+    #[test]
+    fn an_unreachable_patrol_point_is_skipped_and_named() {
+        let mut w = world(
+            r#"[(place: "Road", kind: "skeleton", behaviour: Patrol(route: [(10.0, 10.0), (25.0, 25.0), (40.0, 10.0)], pause: 0.0))]"#,
+            4,
+        );
+        w.attach_map(town());
+        let mut reached = false;
+        for _ in 0..1200 {
+            w.step();
+            reached |= w.enemies[0].pos.distance(V2::new(40.0, 10.0)) <= 0.6;
+        }
+        assert!(reached);
+        let named = w
+            .warnings()
+            .iter()
+            .filter(|m| m.contains("\"Road\"") && m.contains("patrol point 2"))
+            .count();
+        assert_eq!(named, 1, "{:?}", w.warnings());
+    }
+
+    #[test]
+    fn a_spawn_with_no_floor_is_left_out_and_named() {
+        let mut b = flat(50.0);
+        for col in b.columns_in(V2::new(8.0, 8.0), V2::new(12.0, 12.0)) {
+            b.set_ground(col, f32::NAN);
+        }
+        let mut w = world(GATE, 4);
+        w.attach_map(Arc::new(b.finish()));
+        assert!(w.enemies.is_empty());
+        assert!(w.warnings()[0].contains("\"Gate\""));
+    }
+
+    #[test]
+    fn no_more_paths_a_step_than_the_rules_allow() {
+        let mut w = world(
+            r#"[(place: "Pack", kind: "skeleton", count: 10, behaviour: Wander(center: (10.0, 10.0), radius: 5.0))]"#,
+            2,
+        );
+        w.attach_map(town());
+        w.step();
+        assert_eq!(w.enemies.iter().filter(|e| e.speed > 0.0).count(), 2);
+    }
+
+    #[test]
+    fn the_same_run_twice_is_the_same() {
+        let run = || {
+            let mut w = world(
+                r#"[
+                    (place: "Road", kind: "skeleton", behaviour: Patrol(route: [(25.0, 10.0), (25.0, 40.0)])),
+                    (place: "Nest", kind: "skeleton", count: 3, behaviour: Wander(center: (10.0, 40.0), radius: 6.0)),
+                ]"#,
+                4,
+            );
+            w.attach_map(town());
+            for _ in 0..300 {
+                w.step();
+            }
+            w.snapshot()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn a_mirror_takes_the_hosts_enemies() {
+        let mut host = world(GATE, 4);
+        host.attach_map(town());
+        host.step();
+        let mut mirror = world("[]", 4);
+        mirror.apply_snapshot(host.snapshot());
+        assert_eq!(mirror.enemies, host.enemies);
+        assert!(mirror.enemy(1).is_some());
+        mirror.step();
+        assert_eq!(mirror.enemies, host.enemies);
+    }
+
+    #[test]
+    fn a_sentry_cut_off_from_its_post_waits_to_try_again_and_names_it_once() {
+        use super::{Brain, Enemy, Navigator, Order, Rng, RETRY};
+        use crate::{DT, V3};
+
+        let w = world(GATE, 4);
+        let content = w.content().clone();
+        let mut nav = Navigator::new(town());
+        // Outside the closed house, with a post inside it.
+        let post = V3::new(25.0, 25.0, 0.0);
+        let mut enemies = vec![Enemy {
+            id: 1,
+            kind: 0,
+            pos: V2::new(10.0, 10.0),
+            z: 0.0,
+            facing: V2::new(1.0, 0.0),
+            hp: 900.0,
+            max_hp: 900.0,
+            speed: 0.0,
+        }];
+        let mut brains = vec![Brain {
+            spawn: 0,
+            order: Order::Sentry {
+                post,
+                facing: V2::new(1.0, 0.0),
+            },
+            path: None,
+            next: 0,
+            wait: 0.0,
+            failures: 0,
+            warned: false,
+            rng: Rng::new(1),
+        }];
+        let (mut warnings, mut cursor) = (Vec::new(), 0);
+        super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut cursor);
+        // The search failed once: the sentry now rests instead of searching again next step.
+        assert!(brains[0].wait > RETRY - 2.0 * DT, "{}", brains[0].wait);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("\"Gate\""));
+        // Over 12 s it retries twice more, and the warning is not repeated.
+        for _ in 0..360 {
+            super::step(&mut enemies, &mut brains, &mut nav, &content, &mut warnings, &mut cursor);
+        }
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(enemies[0].pos, V2::new(10.0, 10.0));
+    }
+}
