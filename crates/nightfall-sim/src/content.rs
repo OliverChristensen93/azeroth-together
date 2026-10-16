@@ -47,6 +47,9 @@ pub struct ClassDef {
     pub base_hp: f32,
     /// Running speed, yards per second.
     pub speed: f32,
+    /// The class can stealth (spec §6.3's Rogue toggle, the stealthed rows of §5.1).
+    #[serde(default)]
+    pub stealth: bool,
 }
 
 fn white() -> u32 {
@@ -67,6 +70,16 @@ pub struct MapDef {
     pub bounds: Bounds,
     /// Where a party can start, WoW `(x, y, z)`.
     pub entries: Vec<[f32; 3]>,
+    /// Its lit places (spec §5.1).
+    pub lit: Vec<LitArea>,
+}
+
+/// A lit place: a hero standing in it is easier to see (spec §5.1: campfires, Darkshire's lamps).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LitArea {
+    pub at: V2,
+    /// Yards.
+    pub radius: f32,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +89,8 @@ struct MapFile {
     map: u32,
     bounds: Vec<(f32, f32)>,
     entries: Vec<(f32, f32, f32)>,
+    #[serde(default)]
+    lit: Vec<(f32, f32, f32)>,
 }
 
 /// The light a hero carries: a small glow so a player sees their feet.
@@ -110,6 +125,9 @@ pub struct Rules {
     /// The world's knowledge (spec §4); its defaults when `rules.ron` leaves it out.
     #[serde(default)]
     pub world: WorldRules,
+    /// The senses (spec §5); the spec's values when `rules.ron` leaves any out.
+    #[serde(default)]
+    pub senses: SenseRules,
 }
 
 /// How the host uses what it knows of the world.
@@ -130,6 +148,341 @@ impl Default for WorldRules {
             share_sight_within: 10.0,
             paths_per_step: 4,
             wander_pause: (3.0, 8.0),
+        }
+    }
+}
+
+/// The senses (spec §5): how visible and how loud heroes are and how enemies grow aware of them.
+/// Every number is a starting value to playtest; each left out takes the spec's.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct SenseRules {
+    /// Visibility 0..100 by stance (spec §5.1).
+    pub visibility: StanceTable,
+    /// Visibility multipliers: a lit lantern, standing in a lit area, a fire spell's flash.
+    pub lantern: f32,
+    pub lit: f32,
+    pub flash: f32,
+    /// How long a flash lasts, seconds.
+    pub flash_for: f32,
+    /// How far an enemy notices a hero of visibility 100 straight ahead, yards.
+    pub notice_range: f32,
+    /// The front cone's width, degrees: every enemy's, and a sentry's wider one (spec §7.1).
+    pub cone: f32,
+    pub sentry_cone: f32,
+    /// The rear cone's width, degrees; between the two lie the sides.
+    pub behind_cone: f32,
+    /// The notice range's share at the sides and behind (the front is 1).
+    pub side: f32,
+    pub behind: f32,
+    /// Footsteps (spec §5.2).
+    pub steps: StepNoise,
+    /// Every other noise (spec §5.2).
+    pub loudness: LoudnessTable,
+    /// A listener without line of sight to a noise hears it within this share of its radius.
+    pub walls: f32,
+    /// The rings by the player frame show the loudest noise of the last this-many seconds.
+    pub noise_memory: f32,
+    pub awareness: AwarenessRules,
+    /// An alerted enemy closes to this many yards of its hero.
+    pub chase_reach: f32,
+    /// The first hit on an enemy not alerted to its attacker is multiplied by this (spec §5.4).
+    pub ambush: f32,
+    /// A stealthed hero's speed, as a share of their own (spec §6.3, §11).
+    pub stealth_speed: f32,
+    /// The heartbeat plays while an enemy alerted to you is this near, yards (spec §10).
+    pub heartbeat_within: f32,
+    /// The night grade's vignette (strength, inner edge from the centre, both 0..1) at visibility
+    /// 100 and at 0: it tightens as the hero hides (spec §10).
+    pub vignette_seen: (f32, f32),
+    pub vignette_hidden: (f32, f32),
+}
+
+impl Default for SenseRules {
+    fn default() -> Self {
+        Self {
+            visibility: StanceTable::default(),
+            lantern: 1.6,
+            lit: 1.5,
+            flash: 2.0,
+            flash_for: 1.0,
+            notice_range: 35.0,
+            cone: 120.0,
+            sentry_cone: 180.0,
+            behind_cone: 120.0,
+            side: 0.6,
+            behind: 0.3,
+            steps: StepNoise::default(),
+            loudness: LoudnessTable::default(),
+            walls: 0.5,
+            noise_memory: 1.0,
+            awareness: AwarenessRules::default(),
+            chase_reach: 2.0,
+            ambush: 1.5,
+            stealth_speed: 0.7,
+            heartbeat_within: 20.0,
+            vignette_seen: (0.45, 0.35),
+            vignette_hidden: (0.85, 0.1),
+        }
+    }
+}
+
+impl SenseRules {
+    /// What is wrong with these numbers, if anything: each check is one the senses rely on.
+    fn problem(&self) -> Option<&'static str> {
+        let v = &self.visibility;
+        let a = &self.awareness;
+        let l = &self.loudness;
+        let s = &self.steps;
+        let in01 = |x: f32| (0.0..=1.0).contains(&x);
+        // Range checks like `x >= 0.0` let infinity through, and a NaN fails them only by luck, so
+        // every number is first required to be finite.
+        let every_number = [
+            v.run,
+            v.walk,
+            v.still,
+            v.sneak,
+            v.sneak_still,
+            self.lantern,
+            self.lit,
+            self.flash,
+            self.flash_for,
+            self.notice_range,
+            self.cone,
+            self.sentry_cone,
+            self.behind_cone,
+            self.side,
+            self.behind,
+            s.run,
+            s.walk,
+            s.sneak,
+            s.every,
+            l.quiet,
+            l.normal,
+            l.loud,
+            l.hit,
+            l.open,
+            l.dig,
+            l.ravens,
+            l.extract,
+            self.walls,
+            self.noise_memory,
+            a.fill,
+            a.fill_min,
+            a.noise,
+            a.drain,
+            a.suspicious,
+            a.check,
+            a.alert,
+            a.shout,
+            a.lose_after,
+            a.search_for,
+            self.chase_reach,
+            self.ambush,
+            self.stealth_speed,
+            self.heartbeat_within,
+            self.vignette_seen.0,
+            self.vignette_seen.1,
+            self.vignette_hidden.0,
+            self.vignette_hidden.1,
+        ];
+        let checks: [(bool, &'static str); 13] = [
+            (
+                every_number.into_iter().all(f32::is_finite),
+                "every number must be finite",
+            ),
+            (
+                [v.run, v.walk, v.still, v.sneak, v.sneak_still]
+                    .into_iter()
+                    .all(|x| (0.0..=100.0).contains(&x)),
+                "visibility values must be 0 to 100",
+            ),
+            (
+                [self.lantern, self.lit, self.flash]
+                    .into_iter()
+                    .all(|x| x >= 1.0)
+                    && self.flash_for >= 0.0,
+                "lantern, lit and flash must be 1 or more, flash_for 0 or more",
+            ),
+            (self.notice_range > 0.0, "notice_range must be above 0"),
+            (
+                self.cone > 0.0
+                    && self.sentry_cone > 0.0
+                    && self.behind_cone >= 0.0
+                    && self.cone.max(self.sentry_cone) + self.behind_cone <= 360.0,
+                "cone, sentry_cone and behind_cone must leave room for each other in 360 degrees",
+            ),
+            (
+                in01(self.side) && in01(self.behind),
+                "side and behind must be 0 to 1",
+            ),
+            (
+                [s.run, s.walk, s.sneak].into_iter().all(|x| x >= 0.0) && s.every > 0.0,
+                "steps need radii of 0 or more and `every` above 0",
+            ),
+            (
+                [
+                    l.quiet, l.normal, l.loud, l.hit, l.open, l.dig, l.ravens, l.extract,
+                ]
+                .into_iter()
+                .all(|x| x >= 0.0),
+                "loudness radii must be 0 or more",
+            ),
+            (
+                in01(self.walls) && self.noise_memory > 0.0,
+                "walls must be 0 to 1 and noise_memory above 0",
+            ),
+            (
+                0.0 < a.suspicious && a.suspicious < a.check && a.check < a.alert,
+                "awareness needs 0 < suspicious < check < alert",
+            ),
+            (
+                a.fill >= a.fill_min
+                    && a.fill_min >= 0.0
+                    && a.noise >= 0.0
+                    && a.drain >= 0.0
+                    && a.shout >= 0.0
+                    && a.lose_after >= 0.0
+                    && a.search_for >= 0.0,
+                "awareness rates, reaches and times must be 0 or more, fill at least fill_min",
+            ),
+            (
+                self.chase_reach > 0.0
+                    && self.ambush >= 1.0
+                    && self.stealth_speed > 0.0
+                    && self.stealth_speed <= 1.0
+                    && self.heartbeat_within >= 0.0,
+                "chase_reach above 0, ambush 1 or more, stealth_speed above 0 up to 1, heartbeat_within 0 or more",
+            ),
+            (
+                [
+                    self.vignette_seen.0,
+                    self.vignette_seen.1,
+                    self.vignette_hidden.0,
+                    self.vignette_hidden.1,
+                ]
+                .into_iter()
+                .all(in01),
+                "vignette values must be 0 to 1",
+            ),
+        ];
+        checks.into_iter().find(|(ok, _)| !ok).map(|(_, why)| why)
+    }
+}
+
+/// Visibility 0..100 for each stance (spec §5.1's table).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct StanceTable {
+    pub run: f32,
+    pub walk: f32,
+    pub still: f32,
+    pub sneak: f32,
+    pub sneak_still: f32,
+}
+
+impl Default for StanceTable {
+    fn default() -> Self {
+        Self {
+            run: 100.0,
+            walk: 55.0,
+            still: 35.0,
+            sneak: 20.0,
+            sneak_still: 8.0,
+        }
+    }
+}
+
+/// How far a footstep carries by stance, yards, and how often a moving hero steps, seconds
+/// (spec §5.2).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct StepNoise {
+    pub run: f32,
+    pub walk: f32,
+    pub sneak: f32,
+    pub every: f32,
+}
+
+impl Default for StepNoise {
+    fn default() -> Self {
+        Self {
+            run: 12.0,
+            walk: 4.0,
+            sneak: 0.0,
+            every: 0.5,
+        }
+    }
+}
+
+/// How far other noises carry, yards (spec §5.2): abilities by loudness, a hit landing or a unit
+/// dying, opening a chest or searching a body, digging a grave, ravens taking off, a second of
+/// extracting.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct LoudnessTable {
+    pub quiet: f32,
+    pub normal: f32,
+    pub loud: f32,
+    pub hit: f32,
+    pub open: f32,
+    pub dig: f32,
+    pub ravens: f32,
+    pub extract: f32,
+}
+
+impl Default for LoudnessTable {
+    fn default() -> Self {
+        Self {
+            quiet: 8.0,
+            normal: 20.0,
+            loud: 40.0,
+            hit: 15.0,
+            open: 15.0,
+            dig: 30.0,
+            ravens: 40.0,
+            extract: 25.0,
+        }
+    }
+}
+
+/// How an enemy's suspicion of a hero rises and falls, and what it does at each level (spec §5.3).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct AwarenessRules {
+    /// Seeing a hero fills suspicion by `fill × (1 − distance / notice range)` a second, at least
+    /// `fill_min`.
+    pub fill: f32,
+    pub fill_min: f32,
+    /// A noise heard adds this much.
+    pub noise: f32,
+    /// Neither seen nor heard, it drains this much a second.
+    pub drain: f32,
+    /// From `suspicious` an enemy turns to look ("?"), from `check` it goes to look, at `alert` it
+    /// is alerted ("!").
+    pub suspicious: f32,
+    pub check: f32,
+    pub alert: f32,
+    /// An alerted enemy shouts to every ally this near, yards.
+    pub shout: f32,
+    /// Seconds out of sight before an alerted enemy searches, and how long it looks around there.
+    pub lose_after: f32,
+    pub search_for: f32,
+}
+
+impl Default for AwarenessRules {
+    fn default() -> Self {
+        Self {
+            fill: 60.0,
+            fill_min: 10.0,
+            noise: 35.0,
+            drain: 10.0,
+            suspicious: 40.0,
+            check: 60.0,
+            alert: 100.0,
+            shout: 15.0,
+            lose_after: 5.0,
+            search_for: 15.0,
         }
     }
 }
@@ -168,6 +521,8 @@ fn two_f32() -> f32 {
 pub enum Behaviour {
     /// Stands at a post, facing `facing` degrees (0 north, 90 west).
     Sentry { at: (f32, f32), facing: f32 },
+    /// Lies at a post facing `facing`: hears but does not see until alerted (spec §7.1).
+    Sleeper { at: (f32, f32), facing: f32 },
     /// Walks its route point by point and back to the first, resting `pause` seconds at each.
     Patrol {
         route: Vec<(f32, f32)>,
@@ -291,6 +646,9 @@ impl Content {
                 return invalid(format!("map.ron: entry ({x}, {y}) is outside the bounds"));
             }
         }
+        if map.lit.iter().any(|&(_, _, r)| !positive(r)) {
+            return invalid("map.ron: a lit area needs a radius above 0".into());
+        }
         if rules.hero_level == 0 {
             return invalid("rules.ron: hero_level must be at least 1".into());
         }
@@ -353,7 +711,7 @@ impl Content {
                 return invalid(format!("{who}: z must be a finite number"));
             }
             match &s.behaviour {
-                Behaviour::Sentry { at, facing } => {
+                Behaviour::Sentry { at, facing } | Behaviour::Sleeper { at, facing } => {
                     if !inside(*at) {
                         return invalid(format!("{who}: its post {at:?} is outside the bounds"));
                     }
@@ -397,6 +755,9 @@ impl Content {
                     .into(),
             );
         }
+        if let Some(why) = rules.senses.problem() {
+            return invalid(format!("rules.ron: senses: {why}"));
+        }
         Ok(Self {
             classes,
             map: MapDef {
@@ -405,6 +766,14 @@ impl Content {
                 map: map.map,
                 bounds,
                 entries: map.entries.iter().map(|&(x, y, z)| [x, y, z]).collect(),
+                lit: map
+                    .lit
+                    .iter()
+                    .map(|&(x, y, radius)| LitArea {
+                        at: V2::new(x, y),
+                        radius,
+                    })
+                    .collect(),
             },
             rules,
             enemies,
@@ -741,6 +1110,130 @@ mod tests {
         }
         let same = ENEMIES.replacen("run_speed: 7.0", "run_speed: 2.5", 1);
         assert!(load_all(CLASSES, MAP, RULES, &same, SPAWNS).is_ok());
+    }
+
+    #[test]
+    fn the_senses_default_to_the_spec_when_left_out() {
+        let c = load(CLASSES, MAP, RULES).unwrap();
+        let s = &c.rules.senses;
+        assert_eq!(s.notice_range, 35.0);
+        assert_eq!(s.visibility.walk, 55.0);
+        assert_eq!(s.steps.run, 12.0);
+        assert_eq!(s.loudness.dig, 30.0);
+        assert_eq!(s.awareness.alert, 100.0);
+        assert_eq!(s.stealth_speed, 0.7);
+        assert!(c.map.lit.is_empty());
+        assert!(!c.classes[0].stealth);
+    }
+
+    #[test]
+    fn senses_given_in_part_keep_the_rest() {
+        let rules = RULES.replacen(
+            "(hero_level: 30,",
+            "(hero_level: 30, senses: (notice_range: 30.0, awareness: (drain: 5.0)),",
+            1,
+        );
+        let c = load(CLASSES, MAP, &rules).unwrap();
+        assert_eq!(c.rules.senses.notice_range, 30.0);
+        assert_eq!(c.rules.senses.awareness.drain, 5.0);
+        assert_eq!(c.rules.senses.awareness.noise, 35.0);
+        assert_eq!(c.rules.senses.visibility.run, 100.0);
+    }
+
+    #[test]
+    fn senses_that_cannot_work_are_refused() {
+        for bad in [
+            "awareness: (suspicious: 70.0)",
+            "stealth_speed: 0.0",
+            "walls: 1.5",
+            "visibility: (run: 120.0)",
+            "cone: 300.0",
+            "steps: (every: 0.0)",
+        ] {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, senses: ({bad}),"),
+                1,
+            );
+            assert!(
+                matches!(load(CLASSES, MAP, &rules), Err(ContentError::Invalid(_))),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn senses_that_are_not_finite_numbers_are_refused() {
+        // Each of these passes a bare `>= 0` or `> 0` check, so infinity needs its own refusal.
+        for bad in [
+            "notice_range: inf",
+            "cone: inf",
+            "steps: (run: inf)",
+            "steps: (every: inf)",
+            "loudness: (dig: inf)",
+            "noise_memory: inf",
+            "awareness: (noise: inf)",
+            "awareness: (shout: inf)",
+            "awareness: (fill: inf)",
+            "awareness: (suspicious: NaN)",
+            "chase_reach: inf",
+            "ambush: inf",
+            "lantern: inf",
+            "flash_for: inf",
+            "heartbeat_within: inf",
+            "behind_cone: inf",
+        ] {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, senses: ({bad}),"),
+                1,
+            );
+            refused_naming(load(CLASSES, MAP, &rules), "senses");
+        }
+    }
+
+    #[test]
+    fn a_class_may_stealth() {
+        let classes = CLASSES.replace(
+            "base_hp: 100.0, speed: 7.0),",
+            "base_hp: 100.0, speed: 7.0, stealth: true),",
+        );
+        let c = load(&classes, MAP, RULES).unwrap();
+        assert!(c.classes[0].stealth);
+        assert!(!c.classes[1].stealth);
+    }
+
+    #[test]
+    fn lit_areas_load_and_need_a_radius() {
+        let map = MAP.replace("entries:", "lit: [(20.0, 30.0, 6.0)], entries:");
+        let c = load(CLASSES, &map, RULES).unwrap();
+        assert_eq!(
+            c.map.lit,
+            vec![LitArea {
+                at: V2::new(20.0, 30.0),
+                radius: 6.0
+            }]
+        );
+        let none = MAP.replace("entries:", "lit: [(20.0, 30.0, 0.0)], entries:");
+        assert!(matches!(
+            load(CLASSES, &none, RULES),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_sleeper_lies_inside_the_bounds() {
+        let sleeper = SPAWNS.replace(
+            "Sentry(at: (60.0, 50.0), facing: 90.0)",
+            "Sleeper(at: (60.0, 50.0), facing: 90.0)",
+        );
+        let c = load_all(CLASSES, MAP, RULES, ENEMIES, &sleeper).unwrap();
+        assert!(matches!(c.spawns[0].behaviour, Behaviour::Sleeper { .. }));
+        let out = sleeper.replace("at: (60.0, 50.0)", "at: (160.0, 50.0)");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, ENEMIES, &out),
+            Err(ContentError::Invalid(_))
+        ));
     }
 
     #[test]

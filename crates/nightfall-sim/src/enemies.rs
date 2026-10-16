@@ -194,7 +194,7 @@ pub(crate) fn spawn_all(
             let mut rng =
                 Rng::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9));
             let placed = match &s.behaviour {
-                Behaviour::Sentry { at, facing } => {
+                Behaviour::Sentry { at, facing } | Behaviour::Sleeper { at, facing } => {
                     let post = V2::new(at.0, at.1);
                     let spot = if k == 0 {
                         post

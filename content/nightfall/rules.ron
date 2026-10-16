@@ -23,4 +23,53 @@
         paths_per_step: 4,
         wander_pause: (3.0, 8.0),
     ),
+    // The senses (spec §5): how visible and how loud heroes are, and how enemies grow aware of
+    // them. Every number is a starting value to playtest; one left out takes the value shown here.
+    senses: (
+        // Visibility 0..100 by stance, and what light multiplies it by (a lantern, standing in a
+        // lit area, a fire spell's flash for `flash_for` seconds); never past 100.
+        visibility: (run: 100.0, walk: 55.0, still: 35.0, sneak: 20.0, sneak_still: 8.0),
+        lantern: 1.6,
+        lit: 1.5,
+        flash: 2.0,
+        flash_for: 1.0,
+        // An enemy notices a hero within notice_range × visibility / 100 × facing yards, never
+        // past the fog: facing is 1 in its front cone (degrees; a sentry's is wider), `behind` in
+        // its rear cone, `side` between.
+        notice_range: 35.0,
+        cone: 120.0,
+        sentry_cone: 180.0,
+        behind_cone: 120.0,
+        side: 0.6,
+        behind: 0.3,
+        // Footsteps: how far each carries by stance (yards), one every `every` seconds of moving.
+        steps: (run: 12.0, walk: 4.0, sneak: 0.0, every: 0.5),
+        // How far other noises carry, yards: abilities by loudness, a hit or a death, opening a
+        // chest or searching a body, digging a grave, ravens taking off, a second of extracting.
+        loudness: (quiet: 8.0, normal: 20.0, loud: 40.0, hit: 15.0, open: 15.0, dig: 30.0,
+                   ravens: 40.0, extract: 25.0),
+        // Through a wall (no line of sight) a noise carries this share of its radius.
+        walls: 0.5,
+        // The rings by the player frame show the loudest noise of the last this-many seconds.
+        noise_memory: 1.0,
+        // Suspicion 0..100 of each hero: sight fills it by fill × (1 − distance / notice range) a
+        // second (at least fill_min), a noise adds `noise`, neither drains `drain` a second. From
+        // `suspicious` an enemy turns to look ("?"), from `check` it goes to look, at `alert` it
+        // is alerted ("!") and shouts to allies within `shout` yards. Out of sight `lose_after`
+        // seconds, it searches where it last saw its hero for `search_for` seconds.
+        awareness: (fill: 60.0, fill_min: 10.0, noise: 35.0, drain: 10.0, suspicious: 40.0,
+                    check: 60.0, alert: 100.0, shout: 15.0, lose_after: 5.0, search_for: 15.0),
+        // An alerted enemy closes to this many yards of its hero.
+        chase_reach: 2.0,
+        // The first hit on an enemy not alerted to its attacker is multiplied by this.
+        ambush: 1.5,
+        // A stealthed hero moves at this share of their speed.
+        stealth_speed: 0.7,
+        // The heartbeat plays while an enemy alerted to you is this near, yards.
+        heartbeat_within: 20.0,
+        // The night grade's vignette (strength, inner edge from the centre; 0..1) at visibility
+        // 100 and at 0: it tightens as the hero hides.
+        vignette_seen: (0.45, 0.35),
+        vignette_hidden: (0.85, 0.1),
+    ),
 )

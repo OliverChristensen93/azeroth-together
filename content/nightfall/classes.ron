@@ -1,7 +1,7 @@
 // Nightfall's classes. `race` and `sex` are the body every hero of the class wears for now
 // (ChrRaces ids: 1 human; sex 0 male, 1 female). `weapons` are the virtual item slots (slot 0 main
 // hand, 1 off hand, 2 ranged), the same looks the survivors classes use. Abilities come in
-// sub-project 4.
+// sub-project 4; the Rogue's Stealth toggle is here already (sub-project 3).
 [
     (
         key: "rogue",
@@ -19,6 +19,8 @@
         sheath: 1,
         base_hp: 135.0,
         speed: 7.0,
+        // Stealth on its key (spec §6.3): sneaking at stealth_speed, nearly unseen.
+        stealth: true,
     ),
     (
         key: "mage",

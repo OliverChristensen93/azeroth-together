@@ -59,3 +59,19 @@ fn both_classes_play_in_duskwood() {
     assert!(content.map.bounds.contains(h.pos) || content.map.bounds.clamp(h.pos) == h.pos);
     assert_ne!(h.pos, far, "a pose far off the map was kept inside it");
 }
+
+#[test]
+fn the_shipped_senses_are_the_specs_and_the_rogue_stealths() {
+    let c = shipped();
+    let s = &c.rules.senses;
+    assert_eq!(s.notice_range, 35.0);
+    assert_eq!(s.stealth_speed, 0.7);
+    assert_eq!(s.visibility.sneak_still, 8.0);
+    assert_eq!(s.awareness.lose_after, 5.0);
+    assert!(c.classes[c.class("rogue").unwrap()].stealth);
+    assert!(!c.classes[c.class("mage").unwrap()].stealth);
+    assert!(c
+        .spawns
+        .iter()
+        .any(|sp| matches!(sp.behaviour, nightfall_sim::Behaviour::Sleeper { .. })));
+}

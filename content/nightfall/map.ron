@@ -16,4 +16,7 @@
     entries: [
         (-10051.8, -792.5, 36.5),
     ],
+    // Lit places, (x, y, radius) yards: a hero standing in one is easier to see. measure:
+    // Darkshire's lamps and the campfires, once walked in the game (NIGHTFALL_TRACE_POS=1).
+    lit: [],
 )

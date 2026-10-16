@@ -1,5 +1,6 @@
-// Where Nightfall's enemies stand and walk (spec §7.1): a sentry holds a post, a patrol walks its
-// route round and round, wanderers roam an area. Points are WoW (x, y) yards; `facing` is degrees
+// Where Nightfall's enemies stand and walk (spec §7.1): a sentry holds a post, a sleeper lies at
+// one (it hears but does not see until alerted), a patrol walks its route round and round,
+// wanderers roam an area. Points are WoW (x, y) yards; `facing` is degrees
 // from north toward west; `z` (optional) picks the floor near that height, for an upper storey.
 //
 // Every group sits near the first entry for now, so a run meets them at once. Each is marked
@@ -21,4 +22,7 @@
     // measure: the Rotting Orchard.
     (place: "Near the entry: ravagers", kind: "black_ravager", count: 2,
      behaviour: Wander(center: (-10020.0, -760.0), radius: 20.0)),
+    // measure: Raven Hill's crypt, where the dead lie until woken.
+    (place: "Near the entry: a sleeper", kind: "fetid_corpse",
+     behaviour: Sleeper(at: (-10062.0, -805.0), facing: 45.0)),
 ]

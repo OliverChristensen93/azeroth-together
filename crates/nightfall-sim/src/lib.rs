@@ -19,8 +19,9 @@ mod world;
 
 pub use bounds::Bounds;
 pub use content::{
-    Atmosphere, Behaviour, ClassDef, Content, ContentError, ContentSources, EnemyDef, HeroLight,
-    MapDef, Rules, SpawnDef, WeaponDef, WorldRules,
+    Atmosphere, AwarenessRules, Behaviour, ClassDef, Content, ContentError, ContentSources,
+    EnemyDef, HeroLight, LitArea, LoudnessTable, MapDef, Rules, SenseRules, SpawnDef, StanceTable,
+    StepNoise, WeaponDef, WorldRules,
 };
 pub use enemies::{Enemy, PATROL_BUDGET, STEP_FLOORS, WANDER_BUDGET};
 pub use heightmap::{
