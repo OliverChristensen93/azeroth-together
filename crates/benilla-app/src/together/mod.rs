@@ -18,6 +18,7 @@ mod actions;
 mod dev;
 mod dress;
 mod hud;
+mod inventory;
 mod levelup;
 mod lobby;
 mod menu;
@@ -296,6 +297,7 @@ impl Plugin for TogetherPlugin {
             .init_resource::<session::Net>()
             .init_resource::<lobby::JoinDialog>()
             .init_resource::<dev::DevSettings>()
+            .init_resource::<inventory::SheetOpen>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
             .add_systems(
@@ -305,6 +307,7 @@ impl Plugin for TogetherPlugin {
                     levelup::setup,
                     meter::setup,
                     tooltip::setup,
+                    inventory::setup,
                     menu::spawn_root,
                 ),
             )
@@ -324,6 +327,7 @@ impl Plugin for TogetherPlugin {
                     ui::tune_ui,
                     session::close_on_exit,
                     tooltip::show_tip,
+                    inventory::refresh,
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )

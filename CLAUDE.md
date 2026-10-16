@@ -78,7 +78,10 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   experience, hero and enemy health, enemy damage, horde size and the rank new spells start at, for
   runs this player starts or hosts; `TOGETHER_DEV_PANEL=1` opens it. Spell tooltips are
   `together/tooltip.rs` (WoW's own action-button tooltip is turned off in `ui.rs`);
-  `TOGETHER_TIP_SLOT=<n>` shows button n's for a test shot.
+  `TOGETHER_TIP_SLOT=<n>` shows button n's for a test shot (`TOGETHER_TIP_SHIFT=1` as if Shift
+  were held). The tomes and items carried are a strip of icons under the player frame, and the
+  stat sheet opens with its Stats button or Tab (`together/inventory.rs`; `TOGETHER_STATS=1`
+  opens it).
   `TOGETHER_FRAIL=<player>` drops that hero to 1 health 15 s into the run, to see a fall and a revive.
   `TOGETHER_SHOWCASE=1` puts one of each shrine, one of each power-up and an elite camp around the
   start, and brings the boss 8 s in; `TOGETHER_AUTOPLAY` also walks to shrines and pots and carries

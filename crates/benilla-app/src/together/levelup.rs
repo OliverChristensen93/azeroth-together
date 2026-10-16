@@ -221,10 +221,10 @@ enum Icon {
 
 /// An icon slot filled from a texture under `Interface\Icons`, by name.
 #[derive(Component)]
-pub(super) struct TextureIcon(&'static str);
+pub(super) struct TextureIcon(pub &'static str);
 
 /// The book a tome of `stat` wears.
-fn tome_icon(stat: Stat) -> &'static str {
+pub(super) fn tome_icon(stat: Stat) -> &'static str {
     match stat {
         Stat::Damage => "INV_Misc_Book_07",
         Stat::Cooldown => "INV_Misc_Book_08",
@@ -243,7 +243,7 @@ fn tome_icon(stat: Stat) -> &'static str {
 }
 
 /// The icon an item wears: a gem, a fang, a key, a charm, a ring, a bag.
-fn item_icon(item: Item) -> &'static str {
+pub(super) fn item_icon(item: Item) -> &'static str {
     match item {
         Item::StaticShard => "INV_Misc_Gem_Sapphire_02",
         Item::EmberCore => "INV_Misc_Gem_Ruby_02",

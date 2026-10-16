@@ -421,14 +421,14 @@ pub fn describe(def: &AbilityDef, s: &CastSpec, max_hp: f32) -> String {
             },
             "targets" => match (s.targeting, s.count) {
                 (Targeting::ElitesFirst, 1) => {
-                    "the nearest elite or boss, else the nearest enemy".to_string()
+                    "the closest enemy (prioritizing bosses and elites)".to_string()
                 }
                 (Targeting::ElitesFirst, n) => {
-                    format!("the {n} nearest enemies, elites and bosses first")
+                    format!("the {n} closest enemies (prioritizing bosses and elites)")
                 }
                 (Targeting::Densest, _) => "the thickest crowd".to_string(),
-                (_, 1) => "the nearest enemy".to_string(),
-                (_, n) => format!("the {n} nearest enemies"),
+                (_, 1) => "the closest enemy".to_string(),
+                (_, n) => format!("the {n} closest enemies"),
             },
             "count" => s.count.to_string(),
             "volley" => s.volley.to_string(),
@@ -490,7 +490,7 @@ mod tests {
         s.count = 3;
         assert_eq!(
             describe(&def, &s, 100.0),
-            "Hits the 3 nearest enemies within 22 yards for 12, {nope}."
+            "Hits the 3 closest enemies within 22 yards for 12, {nope}."
         );
     }
 

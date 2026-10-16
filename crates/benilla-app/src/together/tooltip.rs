@@ -8,8 +8,8 @@ use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use together_sim::{
-    milestone_rank, AbilityKind, Augment, Cone, Milestone, Owned, Stat, Tag, Targeting, World,
-    BURN_SECS, MAX_RANK,
+    milestone_rank, AbilityKind, Augment, Cone, Item, Milestone, Owned, Stat, Tag, Targeting,
+    World, BURN_SECS, MAX_RANK,
 };
 
 use super::{Phase, Sim};
@@ -49,8 +49,17 @@ pub(super) struct SpellSlot(pub usize);
 #[derive(Component)]
 pub(super) struct TipAbility(pub usize);
 
+/// A tome or an item in the inventory strip ([`super::inventory`]).
+#[derive(Component, Clone, Copy)]
+pub(super) enum TipThing {
+    Tome(Stat),
+    Item(Item),
+}
+
 /// What the mouse is over.
 enum Hover {
+    /// A tome or an item the hero carries.
+    Thing(TipThing),
     /// One of the hero's spells, by its index.
     Slot(usize),
     /// A card's spell, which the hero may not know yet.
@@ -204,7 +213,7 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
     }
     if matches!(def.kind, AbilityKind::Bolt | AbilityKind::Strike) {
         let who = if s.targeting == Targeting::ElitesFirst {
-            "elites and bosses first"
+            "bosses and elites first"
         } else {
             "the nearest"
         };
@@ -351,12 +360,56 @@ fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
     out
 }
 
+/// The tooltip of a tome or item hero `h` carries: what it does, and where it stands.
+fn thing_lines(world: &World, h: usize, thing: TipThing) -> Vec<Line> {
+    let hero = &world.heroes[h];
+    let rules = &world.content().rules;
+    match thing {
+        TipThing::Tome(stat) => vec![
+            Line {
+                size: 14.0,
+                ..Line::two(
+                    stat.tome(),
+                    format!("Rank {}/{}", hero.tome_rank(stat), rules.tome_max_rank),
+                    WHITE,
+                    GREY,
+                )
+            },
+            Line::one(format!("Raises your {}.", stat.name().to_lowercase()), GOLD),
+            Line::one(
+                format!("In all: {}", stat.describe(hero.stats.get(stat))),
+                GREEN,
+            ),
+        ],
+        TipThing::Item(item) => {
+            let n = hero
+                .items
+                .iter()
+                .find(|(i, _)| *i == item)
+                .map_or(0, |&(_, n)| n);
+            vec![
+                Line {
+                    size: 14.0,
+                    ..Line::two(
+                        item.name(),
+                        format!("{n}/{}", item.max_copies(rules.item_max_copies)),
+                        WHITE,
+                        GREY,
+                    )
+                },
+                Line::one(format!("{}.", item.describe(n)), GOLD),
+            ]
+        }
+    }
+}
+
 /// The spell under the mouse, by its index among the hero's spells: on the level-up screen's
 /// row, or on WoW's action bar (whose buttons hold the spells in order from the first).
 /// `TOGETHER_TIP_SLOT=<n>` holds button `n` for a test shot.
 fn hovered(
     slots: &Query<(&SpellSlot, &Interaction)>,
     cards: &Query<(&TipAbility, &Interaction)>,
+    things: &Query<(&TipThing, &Interaction)>,
     script: Option<&UiScript>,
 ) -> Option<Hover> {
     let over = |i: &Interaction| matches!(i, Interaction::Hovered | Interaction::Pressed);
@@ -365,6 +418,9 @@ fn hovered(
     }
     if let Some((card, _)) = cards.iter().find(|(_, i)| over(i)) {
         return Some(Hover::Ability(card.0));
+    }
+    if let Some((thing, _)) = things.iter().find(|(_, i)| over(i)) {
+        return Some(Hover::Thing(*thing));
     }
     if let Some(n) = std::env::var("TOGETHER_TIP_SLOT")
         .ok()
@@ -385,6 +441,7 @@ pub(super) fn show_tip(
     script: Option<NonSend<UiScript>>,
     slots: Query<(&SpellSlot, &Interaction)>,
     cards: Query<(&TipAbility, &Interaction)>,
+    things: Query<(&TipThing, &Interaction)>,
     keys: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
@@ -400,7 +457,7 @@ pub(super) fn show_tip(
         .then_some(())
         .and(sim.as_ref())
         .and_then(|sim| {
-            let hover = hovered(&slots, &cards, script.as_deref())?;
+            let hover = hovered(&slots, &cards, &things, script.as_deref())?;
             let h = sim.world.heroes.iter().position(|x| x.player == sim.me)?;
             let known = &sim.world.heroes[h].abilities;
             // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
@@ -413,6 +470,7 @@ pub(super) fn show_tip(
                     .find(|o| o.ability == a)
                     .cloned()
                     .unwrap_or_else(|| Owned::new(a, 0.0)),
+                Hover::Thing(thing) => return Some(thing_lines(&sim.world, h, thing)),
             };
             Some(lines(&sim.world, h, &owned, extended))
         });
