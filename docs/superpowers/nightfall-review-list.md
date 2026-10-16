@@ -38,5 +38,13 @@ may not be what you pictured. Each line says what was decided, why, and how to c
    uncommitted edits there): `together/tooltip.rs` keeps `shown` in a `Local`, which a VM-memo guard
    test flags; and Survivors' UI tuning replaces `ActionButton_SetTooltip` for the whole UI session,
    so after visiting Survivors, Nightfall's action-button tooltips stay silent until a `/reload`.
+11. **The browser (wasm) build was already broken before Nightfall**: `together-net`'s tokio
+    `rt-multi-thread` feature in `benilla-app` (since commit 6a3218d on the Survivors line) does not
+    build for wasm32. Nightfall adds nothing new that breaks it. If you want the browser build back,
+    the game crates and modules need `cfg(not(target_arch = "wasm32"))` gates; otherwise drop the
+    wasm job from this fork's CI. Your call.
+12. **Duskwood's walls bake in about 3–4 s** on the host's first launch (a progress line shows at
+    the menu) and load from a 54 MB cache in `benilla-config/nightfall/` after that. A joined friend
+    never bakes.
 10. **The WoW interface is hidden at Nightfall's menu** (it is a full-screen panel with no hero
     yet) and shown in a run, as Survivors does.
