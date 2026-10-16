@@ -22,3 +22,29 @@ fn the_shipped_content_loads_with_rogue_and_mage_in_duskwood() {
         assert!(c.map.bounds.contains(V2::new(e[0], e[1])));
     }
 }
+
+#[test]
+fn both_classes_play_in_duskwood() {
+    use std::sync::Arc;
+
+    use nightfall_sim::{HeroPose, PlayerInput, World};
+
+    let content = Arc::new(shipped());
+    let mut w = World::new(content.clone());
+    w.add_hero(0, "rogue", "Valeera", 1, 0).unwrap();
+    w.add_hero(1, "mage", "Jaina", 1, 1).unwrap();
+    let far = V2::new(0.0, 0.0);
+    w.set_input(
+        0,
+        PlayerInput {
+            pose: Some(HeroPose {
+                pos: far,
+                facing: V2::new(1.0, 0.0),
+            }),
+        },
+    );
+    w.step();
+    let h = w.hero(0).unwrap();
+    assert!(content.map.bounds.contains(h.pos) || content.map.bounds.clamp(h.pos) == h.pos);
+    assert_ne!(h.pos, far, "a pose far off the map was kept inside it");
+}

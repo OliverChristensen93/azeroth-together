@@ -10,6 +10,7 @@
 mod bounds;
 mod content;
 mod math;
+mod world;
 
 pub use bounds::Bounds;
 pub use content::{
@@ -17,3 +18,6 @@ pub use content::{
     WeaponDef,
 };
 pub use math::V2;
+pub use world::{
+    Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ,
+};
