@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::messages::LobbyPlayer;
-use nightfall_sim::{HeroPose, PlayerId, PlayerInput, Snapshot, World, DT, V2};
+use nightfall_sim::{HeroPose, Mark, PlayerId, PlayerInput, Snapshot, World, DT, V2};
 
 use super::menu::{LeaveRun, Selection, StartRequest};
 use super::session::{self, Heard, Net, Role};
@@ -34,9 +34,9 @@ pub(super) struct Sim {
     acc: f32,
     /// Seconds between the states the views glide between: a step, or a host's snapshot.
     span: f32,
-    /// Joined: the host's snapshots, each with what our hero sees in it, not yet played, oldest
-    /// first.
-    inbox: VecDeque<(Snapshot, Vec<u32>)>,
+    /// Joined: the host's snapshots not yet played, oldest first, each with what our hero sees
+    /// in it and what its enemies think of our hero.
+    inbox: VecDeque<(Snapshot, Vec<u32>, Vec<Mark>)>,
     /// Joined: playback has begun.
     playing: bool,
     /// A step was taken (or a snapshot applied) this frame.
@@ -44,6 +44,9 @@ pub(super) struct Sim {
     /// The enemies our hero sees (spec §4.3): worked out here alone or hosting, the host's word
     /// when joined. Sub-project 3 hides the others from the interface.
     pub seen: Vec<u32>,
+    /// What the enemies think of our hero (spec §5.5): worked out here alone or hosting, the
+    /// host's word when joined.
+    pub marks: Vec<Mark>,
     /// Hosting: how many of the world's warnings (content the map could not give, paths that found
     /// nothing) are in the log already; they keep coming while the run is stepped.
     warned: usize,
@@ -72,6 +75,7 @@ impl Sim {
             playing: false,
             stepped: false,
             seen: Vec::new(),
+            marks: Vec::new(),
             warned: 0,
         }
     }
@@ -87,6 +91,7 @@ impl Sim {
             playing: false,
             stepped: false,
             seen: Vec::new(),
+            marks: Vec::new(),
             warned: 0,
         }
     }
@@ -136,9 +141,10 @@ impl Sim {
     }
 
     fn apply_next(&mut self) {
-        if let Some((snapshot, seen)) = self.inbox.pop_front() {
+        if let Some((snapshot, seen, marks)) = self.inbox.pop_front() {
             self.world.apply_snapshot(snapshot);
             self.seen = seen;
+            self.marks = marks;
             self.stepped = true;
         }
     }
@@ -314,8 +320,8 @@ pub(super) fn step_sim(
             end.0 = true;
         }
         for h in heard {
-            if let Heard::State(snapshot, seen) = h {
-                sim.inbox.push_back((snapshot, seen));
+            if let Heard::State(snapshot, seen, marks) = h {
+                sim.inbox.push_back((snapshot, seen, marks));
             }
         }
         sim.play_back(time.delta_secs());
@@ -348,6 +354,7 @@ pub(super) fn step_sim(
         );
         sim.world.step();
         sim.seen = sim.world.seen_by(sim.me);
+        sim.marks = sim.world.marks_for(sim.me);
         session::host_send(&mut net, &sim.world);
         sim.stepped = true;
     }

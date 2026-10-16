@@ -3,10 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{PlayerId, PlayerInput, Snapshot};
+use crate::{Mark, PlayerId, PlayerInput, Snapshot};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// The hero a player brings: their name and pick.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,9 +52,13 @@ pub enum ServerMsg {
     Lobby { players: Vec<LobbyPlayer> },
     /// The run begins.
     Start,
-    /// The world after a step, as this player gets it: the enemies near their hero, and which of
-    /// them their hero sees (spec §4.3).
-    State { snapshot: Snapshot, seen: Vec<u32> },
+    /// The world after a step, as this player gets it: the enemies near their hero, which of
+    /// them their hero sees (spec §4.3), and what each thinks of their hero (spec §5.5).
+    State {
+        snapshot: Snapshot,
+        seen: Vec<u32>,
+        marks: Vec<Mark>,
+    },
     /// The host ended the run and went back to its menu.
     Ended,
 }
@@ -64,7 +68,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{Content, ContentSources, Enemy, World, V2};
+    use crate::{Alert, Content, ContentSources, Enemy, Mark, World, V2};
 
     #[test]
     fn messages_survive_the_wire() {
@@ -122,10 +126,34 @@ mod tests {
         let msg = ServerMsg::State {
             snapshot,
             seen: (1..=20).collect(),
+            marks: (1..=20)
+                .map(|enemy| Mark {
+                    enemy,
+                    alert: Alert::Suspicious,
+                })
+                .collect(),
         };
         let bytes = postcard::to_stdvec(&msg).unwrap().len();
-        // Four heroes and the twenty enemies near one of them, 15 times a second, stay near
-        // 20 KB a second.
-        assert!(bytes < 1400, "{bytes} bytes");
+        // Four heroes with their senses and the twenty enemies near one of them, all marked, 15
+        // times a second, stay near 22 KB a second.
+        assert!(bytes < 1500, "{bytes} bytes");
+    }
+
+    #[test]
+    fn a_state_with_marks_survives_the_wire() {
+        let msg = ServerMsg::State {
+            snapshot: crate::Snapshot {
+                elapsed: 1.5,
+                heroes: Vec::new(),
+                enemies: Vec::new(),
+            },
+            seen: vec![3, 4],
+            marks: vec![Mark {
+                enemy: 3,
+                alert: Alert::Alerted,
+            }],
+        };
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), msg);
     }
 }

@@ -181,6 +181,28 @@ impl World {
             .collect()
     }
 
+    /// What the first hit by `by`'s hero on enemy `enemy` is multiplied by (spec §5.4): `ambush`
+    /// while the enemy is not alerted to that hero (alerted to another, it is still caught
+    /// unawares by this one), else 1. Sub-project 4's damage calls it.
+    pub fn ambush(&self, enemy: u32, by: PlayerId) -> f32 {
+        match self.mind_of(enemy) {
+            Some(m) if !m.alerted_to(by) => self.content().rules.senses.ambush,
+            _ => 1.0,
+        }
+    }
+
+    /// Whether `by`'s hero may open on enemy `enemy` (spec §5.4: Sap, Cheap Shot, Garrote and
+    /// Ambush need it not alerted to them). An enemy that is not there takes no opener.
+    pub fn opener_allowed(&self, enemy: u32, by: PlayerId) -> bool {
+        self.mind_of(enemy).is_some_and(|m| !m.alerted_to(by))
+    }
+
+    /// The mind of enemy `enemy`, on the host.
+    fn mind_of(&self, enemy: u32) -> Option<&Mind> {
+        let i = self.enemies.iter().position(|e| e.id == enemy)?;
+        self.senses.minds.get(i)
+    }
+
     /// Enemy `enemy` is alerted to `by`'s hero where they stand, and shouts at the next step: the
     /// seam sub-project 4's hits use. Nothing happens for an enemy or a hero that is not there.
     pub fn alert(&mut self, enemy: u32, by: PlayerId) {

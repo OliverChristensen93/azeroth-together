@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
-use nightfall_sim::{PlayerId, PlayerInput, Snapshot, World, DT};
+use nightfall_sim::{Mark, PlayerId, PlayerInput, Snapshot, World, DT};
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
 
@@ -500,6 +500,7 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
             &ServerMsg::State {
                 snapshot: world.snapshot_for(p.player),
                 seen: world.seen_by(p.player),
+                marks: world.marks_for(p.player),
             },
         );
     }
@@ -507,8 +508,8 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
 
 /// What a client heard from its host during a run.
 pub(super) enum Heard {
-    /// A state, and which enemies in it our hero sees.
-    State(Snapshot, Vec<u32>),
+    /// A state, which enemies in it our hero sees, and what they think of our hero.
+    State(Snapshot, Vec<u32>, Vec<Mark>),
     Ended,
     Lost(String),
 }
@@ -528,8 +529,12 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
     let mut heard = Vec::new();
     for event in client.poll() {
         match event {
-            ClientEvent::Message(ServerMsg::State { snapshot, seen }) => {
-                heard.push(Heard::State(snapshot, seen));
+            ClientEvent::Message(ServerMsg::State {
+                snapshot,
+                seen,
+                marks,
+            }) => {
+                heard.push(Heard::State(snapshot, seen, marks));
             }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
             ClientEvent::Disconnected(why) => heard.push(Heard::Lost(why)),

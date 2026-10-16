@@ -664,3 +664,23 @@ fn a_crowd_chasing_round_a_wall_stays_within_the_steps_floors() {
         w.enemies.iter().map(|e| e.pos).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn an_ambush_and_an_opener_need_an_enemy_not_alerted_to_the_attacker() {
+    let mut w = world(&sentry(10.0, 10.0, 0.0));
+    w.attach_map(open());
+    put(&mut w, 0, 10.0, 45.0, Gait::Still, 0);
+    put(&mut w, 1, 45.0, 10.0, Gait::Still, 0);
+    w.step();
+    assert_eq!(w.ambush(1, 0), 1.5);
+    assert!(w.opener_allowed(1, 0));
+    w.alert(1, 0);
+    assert_eq!(w.ambush(1, 0), 1.0);
+    assert!(!w.opener_allowed(1, 0));
+    // Alerted to one hero, it can still be ambushed by another.
+    assert_eq!(w.ambush(1, 1), 1.5);
+    assert!(w.opener_allowed(1, 1));
+    // An enemy that is not there takes no ambush and no opener.
+    assert_eq!(w.ambush(99, 0), 1.0);
+    assert!(!w.opener_allowed(99, 0));
+}
