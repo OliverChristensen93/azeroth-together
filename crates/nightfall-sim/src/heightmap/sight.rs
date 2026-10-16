@@ -13,7 +13,8 @@ use crate::V3;
 
 impl HeightMap {
     /// Whether nothing solid stands between `a` and `b`. An end that is not a number sees
-    /// nothing.
+    /// nothing, and neither does a walk that runs out of columns before reaching `b` (rounding
+    /// never should make it): what cannot be checked is not seen.
     pub fn line_of_sight(&self, a: V3, b: V3) -> bool {
         if !a.is_finite() || !b.is_finite() {
             return false;
@@ -47,7 +48,7 @@ impl HeightMap {
                 return false;
             }
             if (ix, iy) == end || t_out >= 1.0 {
-                break;
+                return true;
             }
             if next_x < next_y {
                 ix += step_x;
@@ -59,7 +60,7 @@ impl HeightMap {
                 next_y += delta_y;
             }
         }
-        true
+        false
     }
 
     /// Whether column `(ix, iy)` is solid anywhere from `lo` to `hi`, passing over a span that
@@ -208,5 +209,60 @@ mod tests {
     fn under_the_ground_is_not_seen_through() {
         let m = flat(50.0).finish();
         assert!(!m.line_of_sight(V3::new(10.0, 10.0, 1.0), V3::new(20.0, 10.0, -1.0)));
+    }
+
+    #[test]
+    fn a_ray_through_a_house_corner_on_the_grid_lines_does_not_slip_in() {
+        // The corner (20, 20) is a column corner: the ray meets the x and y edges at once.
+        let mut b = flat(50.0);
+        house(
+            &mut b,
+            V2::new(20.0, 20.0),
+            V2::new(30.0, 30.0),
+            None,
+            false,
+        );
+        let m = b.finish();
+        for (a, b) in [
+            (eye(10.0, 10.0), eye(25.0, 25.0)),
+            (eye(25.0, 25.0), eye(10.0, 10.0)),
+            (eye(10.0, 10.0), eye(40.0, 40.0)),
+            (eye(40.0, 40.0), eye(10.0, 10.0)),
+            (eye(35.0, 35.0), eye(25.0, 25.0)),
+        ] {
+            assert!(!m.line_of_sight(a, b), "{a:?} -> {b:?}");
+        }
+        // Grazing the corner from outside to outside is one way or the other, but never a panic.
+        let _ = m.line_of_sight(eye(10.0, 30.0), eye(30.0, 10.0));
+    }
+
+    #[test]
+    fn a_ray_along_a_wall_face_on_a_grid_line_is_held_by_the_wall() {
+        // A wall from x = 20 to 20.5 across y 15 to 35; rays run exactly along its faces.
+        let mut b = flat(50.0);
+        b.add_box(V2::new(20.0, 15.0), V2::new(20.5, 35.0), 0.0, 3.0);
+        let m = b.finish();
+        // On its outer face (x = 20 is the wall's own column's edge): along the wall, inside it.
+        assert!(!m.line_of_sight(eye(20.0, 10.0), eye(20.0, 40.0)));
+        assert!(!m.line_of_sight(eye(20.0, 40.0), eye(20.0, 10.0)));
+        // Just off it, and along its far face (x = 20.5 is the next column's edge), it is clear.
+        assert!(m.line_of_sight(eye(19.99, 10.0), eye(19.99, 40.0)));
+        assert!(m.line_of_sight(eye(20.5, 10.0), eye(20.5, 40.0)));
+        // Across it, on a grid line, never.
+        assert!(!m.line_of_sight(eye(15.0, 25.0), eye(25.0, 25.0)));
+        assert!(!m.line_of_sight(eye(25.0, 20.0), eye(15.0, 20.0)));
+    }
+
+    #[test]
+    fn someone_against_a_wall_is_seen_from_their_side_only() {
+        // The one seen stands in the wall's own column, as `b`.
+        let at = eye(24.3, 10.0);
+        let mut thick = flat(50.0);
+        thick.add_box(V2::new(24.0, 0.0), V2::new(25.5, 50.0), 0.0, 3.0);
+        let m = thick.finish();
+        assert!(m.line_of_sight(eye(10.0, 10.0), at));
+        assert!(m.line_of_sight(eye(10.0, 30.0), at));
+        assert!(!m.line_of_sight(eye(40.0, 10.0), at));
+        assert!(!m.line_of_sight(eye(40.0, 2.0), at));
     }
 }
