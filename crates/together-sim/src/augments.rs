@@ -209,6 +209,43 @@ pub enum Augment {
     ExposeArmor,
     Devastate,
     SunderingBlows,
+    // --- Capstones: rogue ---
+    CombatPotency,
+    BladeDance,
+    RelentlessStrikes,
+    Ambush,
+    Opportunity,
+    SealFate,
+    RestlessBlades,
+    ColdBlood,
+    Ruthlessness,
+    VenomousWounds,
+    CrimsonTempest,
+    Bloodletter,
+    AdrenalineRush,
+    FlowingSteel,
+    SerratedBlades,
+    PoisonedKnives,
+    LethalFan,
+    FanThePack,
+    Envenom,
+    ToxicCloud,
+    MindNumbingPoison,
+    ImprovedGouge,
+    DirtyTricks,
+    GougedEyes,
+    MarkedForDeath,
+    KidneyBurst,
+    QuickRecovery,
+    Adrenaline,
+    RestlessTempo,
+    ImprovedSlice,
+    Counterattack,
+    Nimble,
+    CheatDeath,
+    BlindingPowder,
+    SmokeBomb,
+    Sap,
 }
 
 impl Augment {
@@ -283,7 +320,7 @@ impl Augment {
     ];
 
     /// Every capstone, three per spell, in spell order.
-    pub const CAPSTONES: [Augment; 72] = [
+    pub const CAPSTONES: [Augment; 108] = [
         Augment::GlacialSpike,
         Augment::Shatterbolt,
         Augment::WintersChill,
@@ -356,6 +393,42 @@ impl Augment {
         Augment::ExposeArmor,
         Augment::Devastate,
         Augment::SunderingBlows,
+        Augment::CombatPotency,
+        Augment::BladeDance,
+        Augment::RelentlessStrikes,
+        Augment::Ambush,
+        Augment::Opportunity,
+        Augment::SealFate,
+        Augment::RestlessBlades,
+        Augment::ColdBlood,
+        Augment::Ruthlessness,
+        Augment::VenomousWounds,
+        Augment::CrimsonTempest,
+        Augment::Bloodletter,
+        Augment::AdrenalineRush,
+        Augment::FlowingSteel,
+        Augment::SerratedBlades,
+        Augment::PoisonedKnives,
+        Augment::LethalFan,
+        Augment::FanThePack,
+        Augment::Envenom,
+        Augment::ToxicCloud,
+        Augment::MindNumbingPoison,
+        Augment::ImprovedGouge,
+        Augment::DirtyTricks,
+        Augment::GougedEyes,
+        Augment::MarkedForDeath,
+        Augment::KidneyBurst,
+        Augment::QuickRecovery,
+        Augment::Adrenaline,
+        Augment::RestlessTempo,
+        Augment::ImprovedSlice,
+        Augment::Counterattack,
+        Augment::Nimble,
+        Augment::CheatDeath,
+        Augment::BlindingPowder,
+        Augment::SmokeBomb,
+        Augment::Sap,
     ];
 
     pub fn name(self) -> &'static str {
@@ -498,6 +571,42 @@ impl Augment {
             Augment::ExposeArmor => "Expose Armor",
             Augment::Devastate => "Devastate",
             Augment::SunderingBlows => "Sundering Blows",
+            Augment::CombatPotency => "Combat Potency",
+            Augment::BladeDance => "Blade Dance",
+            Augment::RelentlessStrikes => "Relentless Strikes",
+            Augment::Ambush => "Ambush",
+            Augment::Opportunity => "Opportunity",
+            Augment::SealFate => "Seal Fate",
+            Augment::RestlessBlades => "Restless Blades",
+            Augment::ColdBlood => "Cold Blood",
+            Augment::Ruthlessness => "Ruthlessness",
+            Augment::VenomousWounds => "Venomous Wounds",
+            Augment::CrimsonTempest => "Crimson Tempest",
+            Augment::Bloodletter => "Bloodletter",
+            Augment::AdrenalineRush => "Adrenaline Rush",
+            Augment::FlowingSteel => "Flowing Steel",
+            Augment::SerratedBlades => "Serrated Blades",
+            Augment::PoisonedKnives => "Poisoned Knives",
+            Augment::LethalFan => "Lethal Fan",
+            Augment::FanThePack => "Fan the Pack",
+            Augment::Envenom => "Envenom",
+            Augment::ToxicCloud => "Toxic Cloud",
+            Augment::MindNumbingPoison => "Mind-numbing Poison",
+            Augment::ImprovedGouge => "Improved Gouge",
+            Augment::DirtyTricks => "Dirty Tricks",
+            Augment::GougedEyes => "Gouged Eyes",
+            Augment::MarkedForDeath => "Marked for Death",
+            Augment::KidneyBurst => "Kidney Burst",
+            Augment::QuickRecovery => "Quick Recovery",
+            Augment::Adrenaline => "Adrenaline",
+            Augment::RestlessTempo => "Restless Tempo",
+            Augment::ImprovedSlice => "Improved Slice",
+            Augment::Counterattack => "Counterattack",
+            Augment::Nimble => "Nimble",
+            Augment::CheatDeath => "Cheat Death",
+            Augment::BlindingPowder => "Blinding Powder",
+            Augment::SmokeBomb => "Smoke Bomb",
+            Augment::Sap => "Sap",
         }
     }
 
@@ -642,6 +751,42 @@ impl Augment {
             Augment::ExposeArmor => "At 5 Sunder stacks the armor shatters: the stacks go, and the target is Marked for +25% for 8 seconds.",
             Augment::Devastate => "Hits every enemy within 6 yards of you instead, at 60%, each taking a stack.",
             Augment::SunderingBlows => "Your Melee crits on a Sundered enemy add a stack.",
+            Augment::CombatPotency => "Each hit has a 25% chance to give an extra combo point.",
+            Augment::BladeDance => "Bounces from its target to the next closest enemy within 8 yards, up to 4 times; every bounce gives a combo point.",
+            Augment::RelentlessStrikes => "Each hit takes 0.3 seconds off your Finishers' cooldowns.",
+            Augment::Ambush => "For 4 seconds after your defensive button, it deals triple damage and always crits.",
+            Augment::Opportunity => "Its bonus against Stunned, Frozen or Feared enemies is +200%.",
+            Augment::SealFate => "Its crits give an extra combo point.",
+            Augment::RestlessBlades => "Each combo point it spends takes 2 seconds off your defensive button's cooldown.",
+            Augment::ColdBlood => "At 5 combo points it also strikes every enemy within 6 yards of its target for half.",
+            Augment::Ruthlessness => "Each Eviscerate gives back 1 combo point.",
+            Augment::VenomousWounds => "Its bleed deals +50% to enemies Poisoned by you.",
+            Augment::CrimsonTempest => "Its bleed also spreads to every enemy within 8 yards of its target.",
+            Augment::Bloodletter => "When a Ruptured enemy dies, you gain 2 combo points.",
+            Augment::AdrenalineRush => "Hitting 8 or more enemies makes your spells come back 50% faster for 4 seconds (at most every 12 seconds).",
+            Augment::FlowingSteel => "While you keep moving it comes back twice as fast; standing still, half as fast.",
+            Augment::SerratedBlades => "Everything it hits Bleeds for 50% of the hit over 4 seconds.",
+            Augment::PoisonedKnives => "Everything it hits gets your Deadly Poison (yours, with its augments, if you know it).",
+            Augment::LethalFan => "Reaches 20 yards but only hits enemies that are Bleeding, Burning or Poisoned, for +100%.",
+            Augment::FanThePack => "Gives a combo point for every 3 enemies it hits.",
+            Augment::Envenom => "Your Finishers consume your poison stacks on their target, dealing what they had left at once, doubled.",
+            Augment::ToxicCloud => "An enemy Poisoned by you that dies leaves a poison cloud (5 yards, 4 seconds) that poisons what walks in.",
+            Augment::MindNumbingPoison => "Enemies with 3 or more of its stacks are Weakened.",
+            Augment::ImprovedGouge => "Its Stun lasts 1 second longer.",
+            Augment::DirtyTricks => "It seeks bosses and elites first, and its Stun holds elites as long as normal enemies.",
+            Augment::GougedEyes => "Stunned enemies take +30% from your Finishers.",
+            Augment::MarkedForDeath => "Its target is Marked (+25% damage from everyone) for its stun and 4 seconds more; bosses resist the stun but not the mark.",
+            Augment::KidneyBurst => "At 5 combo points it also strikes and stuns every enemy within 5 yards of its target.",
+            Augment::QuickRecovery => "Heals you 2% of your health for every combo point it spends.",
+            Augment::Adrenaline => "Also +20% move speed while it lasts.",
+            Augment::RestlessTempo => "Each kill while it lasts makes it last 1 second longer, with no limit.",
+            Augment::ImprovedSlice => "Your spells come back 45% faster instead of 30%.",
+            Augment::Counterattack => "Every dodge spent casts Blade Flurry (yours, with its augments, if you know it).",
+            Augment::Nimble => "Every dodge gives +10% move speed for 3 seconds, up to 30%.",
+            Augment::CheatDeath => "Once every 60 seconds, a killing blow leaves you at 10% health and refills your dodges.",
+            Augment::BlindingPowder => "Enemies it Fears stay Chilled for 4 seconds after.",
+            Augment::SmokeBomb => "Instead of Fear, a cloud of smoke at your feet for 5 seconds: enemies inside lose you and take +30% damage.",
+            Augment::Sap => "A Blinded enemy takes double damage from your next hit on it.",
         }
     }
 
@@ -682,6 +827,26 @@ impl Augment {
                 "intimidating_shout"
             }
             Augment::ExposeArmor | Augment::Devastate | Augment::SunderingBlows => "sunder_armor",
+            Augment::CombatPotency | Augment::BladeDance | Augment::RelentlessStrikes => {
+                "sinister_strike"
+            }
+            Augment::Ambush | Augment::Opportunity | Augment::SealFate => "backstab",
+            Augment::RestlessBlades | Augment::ColdBlood | Augment::Ruthlessness => "eviscerate",
+            Augment::VenomousWounds | Augment::CrimsonTempest | Augment::Bloodletter => "rupture",
+            Augment::AdrenalineRush | Augment::FlowingSteel | Augment::SerratedBlades => {
+                "blade_flurry"
+            }
+            Augment::PoisonedKnives | Augment::LethalFan | Augment::FanThePack => "fan_of_knives",
+            Augment::Envenom | Augment::ToxicCloud | Augment::MindNumbingPoison => "deadly_poison",
+            Augment::ImprovedGouge | Augment::DirtyTricks | Augment::GougedEyes => "gouge",
+            Augment::MarkedForDeath | Augment::KidneyBurst | Augment::QuickRecovery => {
+                "kidney_shot"
+            }
+            Augment::Adrenaline | Augment::RestlessTempo | Augment::ImprovedSlice => {
+                "slice_and_dice"
+            }
+            Augment::Counterattack | Augment::Nimble | Augment::CheatDeath => "riposte",
+            Augment::BlindingPowder | Augment::SmokeBomb | Augment::Sap => "blind",
             _ => return None,
         })
     }
@@ -1104,6 +1269,40 @@ impl Augment {
                 s.count = 99;
                 s.range = 6.0;
                 s.damage *= 0.6;
+            }
+            // Rogue capstones that change the cast's numbers.
+            Augment::BladeDance => {
+                s.fx.jumps = s.fx.jumps.max(4);
+                s.tags = s.tags.with(Tag::Chain);
+            }
+            Augment::Opportunity => s.fx.vs_held += 1.0,
+            Augment::SerratedBlades => {
+                s.burn += 0.5;
+                s.tags = s.tags.with(Tag::Bleed).with(Tag::DamageOverTime);
+            }
+            Augment::LethalFan => {
+                s.radius = s.radius.max(20.0);
+                s.damage *= 2.0;
+                s.fx.only_dotted = true;
+            }
+            Augment::ImprovedGouge => s.stun += 1.0,
+            Augment::DirtyTricks => {
+                s.targeting = Targeting::ElitesFirst;
+                s.fx.full_control = true;
+            }
+            Augment::MarkedForDeath => {
+                s.fx.mark = s.fx.mark.max(0.25);
+                s.fx.mark_secs = s.fx.mark_secs.max(4.0);
+            }
+            Augment::Adrenaline => s.fx.buff.haste += 0.2,
+            Augment::ImprovedSlice => s.fx.buff.cd_rate = s.fx.buff.cd_rate.max(0.45),
+            Augment::BlindingPowder => {
+                s.chill = s.chill.max(s.fx.fear + 4.0);
+                s.tags = s.tags.with(Tag::Slow);
+            }
+            Augment::SmokeBomb => {
+                s.fx.fear = 0.0;
+                s.tags = s.tags.without(Tag::Fear);
             }
             _ => {}
         }

@@ -692,6 +692,7 @@ impl World {
             .enemies
             .iter()
             .filter(|e| e.hp > 0.0 && in_area(spec, center, facing, e.pos))
+            .filter(|e| !spec.fx.only_dotted || e.status.burning())
             .map(|e| (e.id, center.distance(e.pos)))
             .collect();
         if hit.is_empty() {
@@ -832,6 +833,25 @@ impl World {
             visual,
         });
         true
+    }
+
+    /// A plain lasting area of `spec` by `player` at `pos` for `secs`, hitting what stands in it on
+    /// its beat: a capstone's cloud (Toxic Cloud, Smoke Bomb).
+    pub(super) fn add_ground(&mut self, player: PlayerId, spec: &CastSpec, pos: V2, secs: f32) {
+        let visual = self.content.abilities[spec.ability].visual;
+        self.grounds.push(Ground {
+            by: player,
+            spec: spec.clone(),
+            pos,
+            left: secs,
+            tick: 0.0,
+            armed: false,
+            burning: false,
+            vel: V2::ZERO,
+            final_gale: false,
+            whiteout: false,
+            visual,
+        });
     }
 
     /// A shield on hero `h`, ending any shield it still had.

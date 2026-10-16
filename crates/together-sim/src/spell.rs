@@ -419,6 +419,10 @@ pub struct SpellFx {
     pub pull: f32,
     /// Its control holds elites as long as normal enemies.
     pub full_control: bool,
+    /// A nova that only hits enemies already under damage over time (Lethal Fan).
+    pub only_dotted: bool,
+    /// Seconds enemies it reaches lose the heroes and mill about (Smoke Bomb).
+    pub lost: f32,
 }
 
 impl Default for SpellFx {
@@ -460,6 +464,8 @@ impl Default for SpellFx {
             ground_control: false,
             pull: 0.0,
             full_control: false,
+            only_dotted: false,
+            lost: 0.0,
         }
     }
 }
@@ -599,7 +605,7 @@ impl CastSpec {
 
 /// The placeholders an ability's description may hold, each `{name}`; [`describe`] fills them
 /// from the cast, so the text always gives its real numbers.
-pub const PLACEHOLDERS: [&str; 37] = [
+pub const PLACEHOLDERS: [&str; 39] = [
     "damage",
     "range",
     "radius",
@@ -637,6 +643,8 @@ pub const PLACEHOLDERS: [&str; 37] = [
     "power",
     "hide",
     "execute_at",
+    "stacks",
+    "cd_rate",
 ];
 
 /// A number as a description gives it: whole when it is, else to one decimal.
@@ -722,6 +730,8 @@ pub fn describe(def: &AbilityDef, s: &CastSpec, max_hp: f32) -> String {
             "power" => num((s.fx.buff.power * 100.0).round()),
             "hide" => num(s.fx.buff.hide),
             "execute_at" => num((s.fx.execute_at * 100.0).round()),
+            "stacks" => s.fx.stacks.to_string(),
+            "cd_rate" => num((s.fx.buff.cd_rate * 100.0).round()),
             _ => return None,
         })
     };

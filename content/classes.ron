@@ -98,7 +98,11 @@
         base_hp: 135.0,
         speed: 7.0,
         start: "sinister_strike",
-        pool: ["sinister_strike", "eviscerate", "blade_flurry", "rupture", "gouge", "kidney_shot"],
+        pool: [
+            "sinister_strike", "backstab", "eviscerate", "rupture", "blade_flurry", "fan_of_knives",
+            "deadly_poison", "gouge", "kidney_shot", "slice_and_dice", "riposte", "blind",
+        ],
+        defensive: "vanish",
     ),
     (
         key: "priest",

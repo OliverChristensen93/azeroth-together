@@ -47,9 +47,10 @@ pub struct StatusFx {
     /// Sunder stacks, and seconds before they go.
     pub sunder: u8,
     pub sunder_secs: f32,
-    /// Seconds a hero's Smoke Bomb hides the heroes from it (it wanders), and seconds of a
-    /// Challenging Shout's pull.
+    /// Seconds a hero's Smoke Bomb hides the heroes from it (it mills about).
     pub lost: f32,
+    /// A rogue's Blind left it open: that hero's next hit on it deals double (Sap).
+    pub sapped_by: Option<PlayerId>,
 }
 
 impl StatusFx {
@@ -109,6 +110,7 @@ impl HeroFx {
     /// Extra move speed from buffs and boons.
     pub fn haste(&self) -> f32 {
         self.buffs.iter().map(|b| b.fx.haste).sum::<f32>()
+            + self.boon(crate::augments::Augment::Nimble)
     }
 
     /// The share of blows its buffs take away (the strongest counts).
@@ -299,6 +301,7 @@ impl World {
             self.give_combo(h, spec.fx.combo);
         }
         self.warrior_after(h, owned, spec);
+        self.rogue_after(h, owned, spec);
     }
 
     /// `n` more combo points for hero `h`, up to [`MAX_COMBO`].
@@ -580,6 +583,9 @@ impl World {
             st.sunder = (st.sunder + fx.sunder).min(SUNDER_MAX);
             st.sunder_secs = SUNDER_SECS;
         }
+        if fx.lost > 0.0 && !boss {
+            st.lost = st.lost.max(fx.lost);
+        }
     }
 
     /// A Chain spell's jumps after its hit on `first` at `at`: each to the nearest enemy not yet
@@ -652,6 +658,7 @@ impl World {
                 cooldown: 0.0,
             });
             self.warrior_blocked(h, &spec, from);
+            self.rogue_blocked(h, &spec, from);
             return 0.0;
         }
         if let (Some(enemy), Some(&(ability, _))) =
