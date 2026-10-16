@@ -16,8 +16,8 @@ mod world;
 
 pub use bounds::Bounds;
 pub use content::{
-    Atmosphere, ClassDef, Content, ContentError, ContentSources, HeroLight, MapDef, Rules,
-    WeaponDef,
+    Atmosphere, Behaviour, ClassDef, Content, ContentError, ContentSources, EnemyDef, HeroLight,
+    MapDef, Rules, SpawnDef, WeaponDef, WorldRules,
 };
 pub use heightmap::{
     Floors, Grid, HeightMap, HeightMapBuilder, Navigator, Span, SpanList, CELL, HEADROOM,

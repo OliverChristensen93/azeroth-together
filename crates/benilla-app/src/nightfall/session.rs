@@ -324,8 +324,8 @@ pub(super) fn own_pick(selection: &Selection) -> HeroPick {
 
 /// The content files' hash, which a client and its host must share.
 fn our_content_hash() -> u64 {
-    let c = super::content_texts();
-    content_hash(&[&c.0, &c.1, &c.2])
+    let texts: Vec<&str> = super::content_texts().iter().map(String::as_str).collect();
+    content_hash(&texts)
 }
 
 /// At the menu: the host takes players in and keeps their lobby current; a client follows its

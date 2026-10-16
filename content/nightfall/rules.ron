@@ -15,4 +15,12 @@
         // A warm glow at each hero, linear RGB: a pool of light around the hero's feet, not a beacon.
         hero_light: (color: (1.0, 0.82, 0.6), intensity: 3.5, range: 12.0),
     ),
+    // What the host does with what it knows of the world (spec §4): how near a teammate shares
+    // what they see (yards), how many path searches the host makes a step, and how long a
+    // wanderer rests between walks (seconds, shortest and longest).
+    world: (
+        share_sight_within: 10.0,
+        paths_per_step: 4,
+        wander_pause: (3.0, 8.0),
+    ),
 )

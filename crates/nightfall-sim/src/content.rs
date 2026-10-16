@@ -1,5 +1,5 @@
-//! Nightfall's content: its classes, its map and its rules, read from RON (`content/nightfall/`)
-//! so they change without a rebuild, and checked as they load so a mistake is a clear message at
+//! Nightfall's content: its classes, its map, its enemies and where they go, and its rules, read
+//! from RON (`content/nightfall/`) so they change without a rebuild, and checked as they load so a mistake is a clear message at
 //! startup rather than a strange run.
 
 use std::fmt;
@@ -107,13 +107,103 @@ pub struct Rules {
     /// Every hero's level: fixed, there is no levelling in a run.
     pub hero_level: u32,
     pub atmosphere: Atmosphere,
+    /// The world's knowledge (spec §4); its defaults when `rules.ron` leaves it out.
+    #[serde(default)]
+    pub world: WorldRules,
 }
+
+/// How the host uses what it knows of the world.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WorldRules {
+    /// A teammate this near (yards) shares what they see (spec §4.3).
+    pub share_sight_within: f32,
+    /// The most path searches the host makes a step, so many enemies choosing a way at once
+    /// never stall it.
+    pub paths_per_step: u32,
+    /// How long a wanderer rests between walks, seconds (shortest, longest).
+    pub wander_pause: (f32, f32),
+}
+
+impl Default for WorldRules {
+    fn default() -> Self {
+        Self {
+            share_sight_within: 10.0,
+            paths_per_step: 4,
+            wander_pause: (3.0, 8.0),
+        }
+    }
+}
+
+/// A kind of enemy: one of Duskwood's creatures (spec §7.1).
+#[derive(Clone, Debug, Deserialize)]
+pub struct EnemyDef {
+    pub key: String,
+    pub name: String,
+    /// `CreatureDisplayInfo.dbc` id: the model.
+    pub display: u32,
+    #[serde(default = "one_f32")]
+    pub scale: f32,
+    pub level: u32,
+    pub hp: f32,
+    /// Walking (patrols, wanderers), yards a second.
+    pub walk_speed: f32,
+    /// Running, for the chases of later sub-projects, yards a second.
+    pub run_speed: f32,
+}
+
+fn one_f32() -> f32 {
+    1.0
+}
+
+fn one_u32() -> u32 {
+    1
+}
+
+fn two_f32() -> f32 {
+    2.0
+}
+
+/// What a group of enemies does (spec §7.1). Points are WoW `(x, y)` yards.
+#[derive(Clone, Debug, Deserialize)]
+pub enum Behaviour {
+    /// Stands at a post, facing `facing` degrees (0 north, 90 west).
+    Sentry { at: (f32, f32), facing: f32 },
+    /// Walks its route point by point and back to the first, resting `pause` seconds at each.
+    Patrol {
+        route: Vec<(f32, f32)>,
+        #[serde(default = "two_f32")]
+        pause: f32,
+    },
+    /// Roams within `radius` yards of `center`, resting between walks.
+    Wander { center: (f32, f32), radius: f32 },
+}
+
+/// A group of enemies at a place.
+#[derive(Clone, Debug, Deserialize)]
+pub struct SpawnDef {
+    /// The point of interest, for the content's author and the host's warnings.
+    pub place: String,
+    /// An [`EnemyDef::key`].
+    pub kind: String,
+    #[serde(default = "one_u32")]
+    pub count: u32,
+    /// The height to look for a floor near (a house's upper storey, a crypt); without it, the
+    /// floor nearest the terrain.
+    #[serde(default)]
+    pub z: Option<f32>,
+    pub behaviour: Behaviour,
+}
+
+/// The most enemies one spawn line places.
+const MAX_SPAWN_COUNT: u32 = 20;
 
 /// The text of each content file.
 pub struct ContentSources<'a> {
     pub classes: &'a str,
     pub map: &'a str,
     pub rules: &'a str,
+    pub enemies: &'a str,
+    pub spawns: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -121,6 +211,8 @@ pub struct Content {
     pub classes: Vec<ClassDef>,
     pub map: MapDef,
     pub rules: Rules,
+    pub enemies: Vec<EnemyDef>,
+    pub spawns: Vec<SpawnDef>,
 }
 
 /// Content that does not load, and why.
@@ -165,6 +257,8 @@ impl Content {
         let classes: Vec<ClassDef> = parse("classes.ron", src.classes)?;
         let map: MapFile = parse("map.ron", src.map)?;
         let rules: Rules = parse("rules.ron", src.rules)?;
+        let enemies: Vec<EnemyDef> = parse("enemies.ron", src.enemies)?;
+        let spawns: Vec<SpawnDef> = parse("spawns.ron", src.spawns)?;
         let invalid = |why: String| Err(ContentError::Invalid(why));
 
         if classes.is_empty() {
@@ -225,6 +319,84 @@ impl Content {
                 light.intensity, light.range
             ));
         }
+        for (i, e) in enemies.iter().enumerate() {
+            if enemies[..i].iter().any(|d| d.key == e.key) {
+                return invalid(format!("enemy \"{}\" is listed twice", e.key));
+            }
+            if !(positive(e.hp) && positive(e.walk_speed) && positive(e.scale)) {
+                return invalid(format!(
+                    "enemies.ron: \"{}\" needs hp, walk_speed and scale above 0 (and finite)",
+                    e.key
+                ));
+            }
+            // Negated for NaN as above; an infinite run speed would cross the map in one step.
+            if !(e.run_speed.is_finite() && e.run_speed >= e.walk_speed) {
+                return invalid(format!(
+                    "enemies.ron: \"{}\" needs a finite run_speed of at least walk_speed",
+                    e.key
+                ));
+            }
+            if e.level == 0 {
+                return invalid(format!("enemies.ron: \"{}\" needs level 1 or more", e.key));
+            }
+        }
+        let inside = |(x, y): (f32, f32)| bounds.contains(V2::new(x, y));
+        for s in &spawns {
+            let who = format!("spawns.ron: \"{}\"", s.place);
+            if !enemies.iter().any(|e| e.key == s.kind) {
+                return invalid(format!("{who}: no enemy \"{}\" in enemies.ron", s.kind));
+            }
+            if s.count == 0 || s.count > MAX_SPAWN_COUNT {
+                return invalid(format!("{who}: count must be 1 to {MAX_SPAWN_COUNT}"));
+            }
+            if s.z.is_some_and(|z| !z.is_finite()) {
+                return invalid(format!("{who}: z must be a finite number"));
+            }
+            match &s.behaviour {
+                Behaviour::Sentry { at, facing } => {
+                    if !inside(*at) {
+                        return invalid(format!("{who}: its post {at:?} is outside the bounds"));
+                    }
+                    if !facing.is_finite() {
+                        return invalid(format!("{who}: facing must be a finite number"));
+                    }
+                }
+                Behaviour::Patrol { route, pause } => {
+                    if route.len() < 2 {
+                        return invalid(format!("{who}: a patrol needs 2 points or more"));
+                    }
+                    if let Some(p) = route.iter().find(|p| !inside(**p)) {
+                        return invalid(format!("{who}: route point {p:?} is outside the bounds"));
+                    }
+                    if !non_negative(*pause) {
+                        return invalid(format!("{who}: pause must be 0 or more"));
+                    }
+                }
+                Behaviour::Wander { center, radius } => {
+                    if !inside(*center) {
+                        return invalid(format!(
+                            "{who}: its centre {center:?} is outside the bounds"
+                        ));
+                    }
+                    if !positive(*radius) {
+                        return invalid(format!("{who}: radius must be above 0"));
+                    }
+                }
+            }
+        }
+        let w = &rules.world;
+        // Negated for NaN as above.
+        if !non_negative(w.share_sight_within)
+            || w.paths_per_step == 0
+            || !(non_negative(w.wander_pause.0)
+                && w.wander_pause.1.is_finite()
+                && w.wander_pause.0 <= w.wander_pause.1)
+        {
+            return invalid(
+                "rules.ron: world needs share_sight_within of 0 or more, paths_per_step of 1 or more and wander_pause (shortest, longest) from 0 up"
+                    .into(),
+            );
+        }
         Ok(Self {
             classes,
             map: MapDef {
@@ -235,7 +407,14 @@ impl Content {
                 entries: map.entries.iter().map(|&(x, y, z)| [x, y, z]).collect(),
             },
             rules,
+            enemies,
+            spawns,
         })
+    }
+
+    /// The enemy kind with this key, by index.
+    pub fn enemy(&self, key: &str) -> Option<usize> {
+        self.enemies.iter().position(|e| e.key == key)
     }
 
     /// The class with this key, by index.
@@ -259,11 +438,33 @@ mod tests {
         fog_end: 40.0, fog_color: (0.1, 0.1, 0.1), view_distance: 120.0,
         hero_light: (color: (1.0, 0.8, 0.6), intensity: 0.6, range: 9.0)))"#;
 
+    const ENEMIES: &str = r#"[
+        (key: "skeleton", name: "Skeleton", display: 200, level: 28, hp: 900.0, walk_speed: 2.5, run_speed: 7.0),
+        (key: "spider", name: "Spider", display: 955, scale: 0.9, level: 26, hp: 800.0, walk_speed: 2.2, run_speed: 7.0),
+    ]"#;
+    const SPAWNS: &str = r#"[
+        (place: "Gate", kind: "skeleton", behaviour: Sentry(at: (60.0, 50.0), facing: 90.0)),
+        (place: "Road", kind: "skeleton", behaviour: Patrol(route: [(20.0, 20.0), (80.0, 20.0)])),
+        (place: "Nest", kind: "spider", count: 3, z: Some(1.0), behaviour: Wander(center: (30.0, 70.0), radius: 10.0)),
+    ]"#;
+
     fn load(classes: &str, map: &str, rules: &str) -> Result<Content, ContentError> {
+        load_all(classes, map, rules, ENEMIES, SPAWNS)
+    }
+
+    fn load_all(
+        classes: &str,
+        map: &str,
+        rules: &str,
+        enemies: &str,
+        spawns: &str,
+    ) -> Result<Content, ContentError> {
         Content::from_ron(ContentSources {
             classes,
             map,
             rules,
+            enemies,
+            spawns,
         })
     }
 
@@ -374,6 +575,172 @@ mod tests {
             let rules = RULES.replace("range: 9.0", bad);
             refused_naming(load(CLASSES, MAP, &rules), "hero_light");
         }
+    }
+
+    #[test]
+    fn enemies_and_their_places_load() {
+        let c = load(CLASSES, MAP, RULES).unwrap();
+        assert_eq!(c.enemy("spider"), Some(1));
+        assert_eq!(c.enemy("worgen"), None);
+        assert_eq!(c.enemies[0].scale, 1.0);
+        assert_eq!(c.spawns.len(), 3);
+        assert_eq!(c.spawns[0].count, 1);
+        assert_eq!(c.spawns[2].z, Some(1.0));
+        match &c.spawns[1].behaviour {
+            Behaviour::Patrol { route, pause } => {
+                assert_eq!(route.len(), 2);
+                assert_eq!(*pause, 2.0);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_world_rules_default_when_absent_and_are_checked_when_given() {
+        let c = load(CLASSES, MAP, RULES).unwrap();
+        assert_eq!(c.rules.world.share_sight_within, 10.0);
+        assert_eq!(c.rules.world.paths_per_step, 4);
+        let rules = RULES.replacen(
+            "(hero_level: 30,",
+            "(hero_level: 30, world: (share_sight_within: 10.0, paths_per_step: 0, wander_pause: (3.0, 8.0)),",
+            1,
+        );
+        assert!(matches!(
+            load(CLASSES, MAP, &rules),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn each_world_rule_is_checked() {
+        let with = |world: &str| {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, world: {world},"),
+                1,
+            );
+            load(CLASSES, MAP, &rules)
+        };
+        assert!(
+            with("(share_sight_within: 0.0, paths_per_step: 1, wander_pause: (0.0, 0.0))").is_ok()
+        );
+        for bad in [
+            "(share_sight_within: -1.0, paths_per_step: 4, wander_pause: (3.0, 8.0))",
+            "(share_sight_within: NaN, paths_per_step: 4, wander_pause: (3.0, 8.0))",
+            "(share_sight_within: 10.0, paths_per_step: 4, wander_pause: (8.0, 3.0))",
+            "(share_sight_within: 10.0, paths_per_step: 4, wander_pause: (-1.0, 3.0))",
+            "(share_sight_within: 10.0, paths_per_step: 4, wander_pause: (NaN, 3.0))",
+            "(share_sight_within: 10.0, paths_per_step: 4, wander_pause: (3.0, inf))",
+        ] {
+            refused_naming(with(bad), "world");
+        }
+    }
+
+    #[test]
+    fn a_spawn_of_an_unknown_kind_is_refused() {
+        let spawns = SPAWNS.replace("kind: \"spider\"", "kind: \"wolf\"");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, ENEMIES, &spawns),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_spawn_outside_the_bounds_is_refused() {
+        let post = SPAWNS.replace("at: (60.0, 50.0)", "at: (160.0, 50.0)");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, ENEMIES, &post),
+            Err(ContentError::Invalid(_))
+        ));
+        let route = SPAWNS.replace("(80.0, 20.0)", "(80.0, -20.0)");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, ENEMIES, &route),
+            Err(ContentError::Invalid(_))
+        ));
+        let centre = SPAWNS.replace("center: (30.0, 70.0)", "center: (30.0, 170.0)");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, ENEMIES, &centre),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_patrol_needs_two_points_and_a_wander_a_radius() {
+        let one = SPAWNS.replace("[(20.0, 20.0), (80.0, 20.0)]", "[(20.0, 20.0)]");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, ENEMIES, &one),
+            Err(ContentError::Invalid(_))
+        ));
+        for bad in ["0.0", "-5.0", "NaN"] {
+            let none = SPAWNS.replace("radius: 10.0", &format!("radius: {bad}"));
+            refused_naming(load_all(CLASSES, MAP, RULES, ENEMIES, &none), "radius");
+        }
+    }
+
+    #[test]
+    fn a_spawn_count_is_one_to_twenty() {
+        for bad in ["0", "21"] {
+            let spawns = SPAWNS.replace("count: 3", &format!("count: {bad}"));
+            refused_naming(load_all(CLASSES, MAP, RULES, ENEMIES, &spawns), "count");
+        }
+        let most = SPAWNS.replace("count: 3", "count: 20");
+        assert!(load_all(CLASSES, MAP, RULES, ENEMIES, &most).is_ok());
+    }
+
+    #[test]
+    fn a_patrols_pause_and_a_spawns_numbers_are_finite() {
+        let pause = SPAWNS.replace("(80.0, 20.0)])", "(80.0, 20.0)], pause: -1.0)");
+        refused_naming(load_all(CLASSES, MAP, RULES, ENEMIES, &pause), "pause");
+        let facing = SPAWNS.replace("facing: 90.0", "facing: NaN");
+        refused_naming(load_all(CLASSES, MAP, RULES, ENEMIES, &facing), "facing");
+        let z = SPAWNS.replace("z: Some(1.0)", "z: Some(inf)");
+        refused_naming(load_all(CLASSES, MAP, RULES, ENEMIES, &z), "z must");
+    }
+
+    #[test]
+    fn an_enemy_kind_twice_or_without_health_is_refused() {
+        let twice = ENEMIES.replace("\"spider\", name", "\"skeleton\", name");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, &twice, SPAWNS),
+            Err(ContentError::Invalid(_))
+        ));
+        let dead = ENEMIES.replace("hp: 900.0", "hp: 0.0");
+        assert!(matches!(
+            load_all(CLASSES, MAP, RULES, &dead, SPAWNS),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn an_enemys_numbers_are_finite_and_above_zero() {
+        for (from, to) in [
+            ("hp: 900.0", "hp: -1.0"),
+            ("hp: 900.0", "hp: NaN"),
+            ("hp: 900.0", "hp: inf"),
+            ("walk_speed: 2.5", "walk_speed: 0.0"),
+            ("walk_speed: 2.5", "walk_speed: NaN"),
+            ("scale: 0.9", "scale: 0.0"),
+            ("scale: 0.9", "scale: -1.0"),
+            ("scale: 0.9", "scale: inf"),
+            ("level: 28", "level: 0"),
+        ] {
+            let enemies = ENEMIES.replacen(from, to, 1);
+            refused_naming(
+                load_all(CLASSES, MAP, RULES, &enemies, SPAWNS),
+                "enemies.ron",
+            );
+        }
+    }
+
+    #[test]
+    fn an_enemy_runs_at_least_as_fast_as_it_walks() {
+        // The skeleton walks at 2.5: running at 2.0 is slower, and NaN and infinity are no speed.
+        for bad in ["2.0", "NaN", "inf"] {
+            let enemies = ENEMIES.replacen("run_speed: 7.0", &format!("run_speed: {bad}"), 1);
+            refused_naming(load_all(CLASSES, MAP, RULES, &enemies, SPAWNS), "run_speed");
+        }
+        let same = ENEMIES.replacen("run_speed: 7.0", "run_speed: 2.5", 1);
+        assert!(load_all(CLASSES, MAP, RULES, &same, SPAWNS).is_ok());
     }
 
     #[test]

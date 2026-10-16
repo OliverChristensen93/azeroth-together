@@ -7,6 +7,8 @@ pub fn shipped() -> Content {
         classes: include_str!("../../../content/nightfall/classes.ron"),
         map: include_str!("../../../content/nightfall/map.ron"),
         rules: include_str!("../../../content/nightfall/rules.ron"),
+        enemies: include_str!("../../../content/nightfall/enemies.ron"),
+        spawns: include_str!("../../../content/nightfall/spawns.ron"),
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }
@@ -21,6 +23,14 @@ fn the_shipped_content_loads_with_rogue_and_mage_in_duskwood() {
     for e in &c.map.entries {
         assert!(c.map.bounds.contains(V2::new(e[0], e[1])));
     }
+}
+
+#[test]
+fn duskwoods_creatures_are_placed_inside_it() {
+    let c = shipped();
+    assert!(c.enemy("nightbane_worgen").is_some());
+    assert!(!c.spawns.is_empty());
+    assert_eq!(c.rules.world.share_sight_within, 10.0);
 }
 
 #[test]

@@ -32,10 +32,11 @@ use nightfall_sim::{Content, ContentSources};
 use crate::game_pick::GameMode;
 
 static CONTENT: OnceLock<Arc<Content>> = OnceLock::new();
-/// The content files' text (classes, map, rules), for the hash a client and host compare.
-static CONTENT_TEXTS: OnceLock<(String, String, String)> = OnceLock::new();
+/// The content files' text (classes, map, rules, enemies, spawns), for the hash a client and host
+/// compare.
+static CONTENT_TEXTS: OnceLock<[String; 5]> = OnceLock::new();
 
-pub(super) fn content_texts() -> &'static (String, String, String) {
+pub(super) fn content_texts() -> &'static [String; 5] {
     CONTENT_TEXTS.get().expect("nightfall::prepare ran")
 }
 
@@ -105,10 +106,20 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         "rules.ron",
         include_str!("../../../../content/nightfall/rules.ron"),
     )?;
+    let enemies = read(
+        "enemies.ron",
+        include_str!("../../../../content/nightfall/enemies.ron"),
+    )?;
+    let spawns = read(
+        "spawns.ron",
+        include_str!("../../../../content/nightfall/spawns.ron"),
+    )?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         map: &map,
         rules: &rules,
+        enemies: &enemies,
+        spawns: &spawns,
     })
     .map_err(|e| e.to_string())?;
     if let Some(key) = class_key() {
@@ -121,7 +132,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         None => println!("nightfall: content compiled in"),
     }
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set((classes, map, rules));
+    let _ = CONTENT_TEXTS.set([classes, map, rules, enemies, spawns]);
     Ok(())
 }
 

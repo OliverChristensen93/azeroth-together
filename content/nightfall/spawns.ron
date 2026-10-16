@@ -1,0 +1,24 @@
+// Where Nightfall's enemies stand and walk (spec §7.1): a sentry holds a post, a patrol walks its
+// route round and round, wanderers roam an area. Points are WoW (x, y) yards; `facing` is degrees
+// from north toward west; `z` (optional) picks the floor near that height, for an upper storey.
+//
+// Every group sits near the first entry for now, so a run meets them at once. Each is marked
+// `measure:` with the place it belongs; move it there once measured in the game
+// (`NIGHTFALL_TRACE_POS=1` logs where the hero stands, and
+// `cargo run -p nightfall-bake --example buildings -- <x> <y> <radius>` lists the buildings
+// around a point).
+[
+    // measure: Raven Hill cemetery's gate.
+    (place: "Near the entry: a sentry", kind: "skeletal_warrior",
+     behaviour: Sentry(at: (-10040.0, -800.0), facing: 180.0)),
+    // measure: the road past Brightwood Grove.
+    (place: "Near the entry: a patrol", kind: "nightbane_worgen",
+     behaviour: Patrol(route: [(-10035.0, -775.0), (-10035.0, -815.0), (-10070.0, -815.0),
+                               (-10070.0, -775.0)], pause: 2.0)),
+    // measure: Twilight Grove's webs.
+    (place: "Near the entry: spiders", kind: "venom_web_spider", count: 3,
+     behaviour: Wander(center: (-10085.0, -790.0), radius: 18.0)),
+    // measure: the Rotting Orchard.
+    (place: "Near the entry: ravagers", kind: "black_ravager", count: 2,
+     behaviour: Wander(center: (-10020.0, -760.0), radius: 20.0)),
+]

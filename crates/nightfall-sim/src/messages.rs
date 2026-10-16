@@ -88,6 +88,8 @@ mod tests {
                 classes: include_str!("../../../content/nightfall/classes.ron"),
                 map: include_str!("../../../content/nightfall/map.ron"),
                 rules: include_str!("../../../content/nightfall/rules.ron"),
+                enemies: include_str!("../../../content/nightfall/enemies.ron"),
+                spawns: include_str!("../../../content/nightfall/spawns.ron"),
             })
             .unwrap(),
         );

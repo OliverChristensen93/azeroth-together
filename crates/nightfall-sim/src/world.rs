@@ -197,6 +197,8 @@ mod tests {
                 rules: r#"(hero_level: 30, atmosphere: (night_minute: 0, fog_start: 10.0,
                     fog_end: 40.0, fog_color: (0.1, 0.1, 0.1), view_distance: 120.0,
                     hero_light: (color: (1.0, 0.8, 0.6), intensity: 0.6, range: 9.0)))"#,
+                enemies: "[]",
+                spawns: "[]",
             })
             .unwrap(),
         )
