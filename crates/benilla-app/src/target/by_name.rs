@@ -268,7 +268,7 @@ impl ByNameScan<'_, '_> {
     }
 }
 
-/// One unit query's candidates, shared by [`ByNameScan`] and [`PlayerLookup`].
+/// One unit query's candidates for [`ByNameScan`]; a [`super::Concealed`] unit is not among them.
 type UnitQuery<'w, 's> = Query<
     'w,
     's,
@@ -278,6 +278,7 @@ type UnitQuery<'w, 's> = Query<
         &'static Transform,
         Option<&'static ObjectStore>,
     ),
+    Without<super::Concealed>,
 >;
 
 /// The resolver's walk (`0x493aa0`): a name to a unit, logging one `by-name:` line per call,

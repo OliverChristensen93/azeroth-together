@@ -279,6 +279,7 @@ struct PlateWorld<'w, 's> {
             &'static Guid,
             &'static Transform,
             Option<&'static ObjectStore>,
+            Has<crate::target::Concealed>,
         ),
         Without<SelfPlayer>,
     >,
@@ -386,7 +387,7 @@ fn drive_vplates(
     let diag = viewport.length();
     let sort_pt = Vec2::new(0.4 * diag, viewport.y - 0.3 * diag);
     let mut cands = Vec::new();
-    for (entity, net, guid, tf, store) in &world.units {
+    for (entity, net, guid, tf, store, concealed) in &world.units {
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
@@ -402,8 +403,9 @@ fn drive_vplates(
         if store.is_none_or(|s| s.0.unit_health().unwrap_or(0) == 0) {
             continue;
         }
-        // `0x60f62e`: `bytes_1` byte 3 `& 3` (ghost or creep) has no plate.
-        if store.is_some_and(|s| s.0.unit_is_ghost_visual()) {
+        // `0x60f62e`: `bytes_1` byte 3 `& 3` (ghost or creep) has no plate, nor has a unit a
+        // game mode conceals.
+        if crate::target::plate_hidden(store, concealed) {
             continue;
         }
         if (tf.translation - self_tf.translation).length_squared() > MAX_DIST_SQ {

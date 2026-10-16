@@ -178,6 +178,7 @@ pub(super) fn load_creature_types(mut commands: Commands, world_assets: Option<R
 /// Deviation: our own body is never a candidate. The reference's friendly scan picks the player at
 /// some facings (`CanAssist(P, P)` is true, `0x6061e0`; the cone test `0x47f220`), but our scoring
 /// always puts the player dead centre at distance 0, so CTRL-TAB would pick us on every press.
+/// A [`super::Concealed`] unit is never a candidate.
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)] // one bundled system param, the app's convention
 pub(crate) struct TargetScan<'w, 's> {
@@ -191,7 +192,7 @@ pub(crate) struct TargetScan<'w, 's> {
             &'static Transform,
             Option<&'static ObjectStore>,
         ),
-        Without<SelfPlayer>,
+        (Without<SelfPlayer>, Without<super::Concealed>),
     >,
     self_q: Query<
         'w,
@@ -1391,6 +1392,54 @@ mod tests {
             })
             .expect("the scan runs as a one-shot system");
         assert_eq!(pool, [MOB]);
+    }
+
+    #[test]
+    fn a_concealed_body_is_never_a_candidate() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        const SEEN: u64 = 0xBEEF;
+        const HIDDEN: u64 = 0xF00D;
+        let mut world = World::new();
+        world.init_resource::<Reputations>();
+        world.init_resource::<NameCache>();
+        world.spawn((
+            SelfPlayer,
+            Transform::default(),
+            Guid(1),
+            store(&[
+                (F_TYPE, TYPE_PLAYER),
+                (F_FLAGS, CONTROLLED),
+                (F_HEALTH, 100),
+                (F_MAXHEALTH, 100),
+            ]),
+        ));
+        for guid in [SEEN, HIDDEN] {
+            let e = world
+                .spawn((
+                    NetEntity {
+                        kind: EntityKind::Unit,
+                        display_id: None,
+                        scale: 1.0,
+                    },
+                    Guid(guid),
+                    Transform::from_xyz(0.0, 0.0, 5.0),
+                    store(&[(F_HEALTH, 100), (F_MAXHEALTH, 100)]),
+                ))
+                .id();
+            if guid == HIDDEN {
+                world.entity_mut(e).insert(crate::target::Concealed);
+            }
+        }
+        let pool = world
+            .run_system_once(|scan: TargetScan| {
+                scan.build(ScanSide::Enemy)
+                    .iter()
+                    .map(|c| c.guid)
+                    .collect::<Vec<_>>()
+            })
+            .expect("the scan runs as a one-shot system");
+        assert_eq!(pool, [SEEN]);
     }
 
     /// It follows a hostile switch and survives a friendly selection and a clear (`0x49377d`).

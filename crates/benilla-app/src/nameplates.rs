@@ -274,6 +274,8 @@ pub(crate) fn drive_nameplates(
         Has<SelfPlayer>,
         // Whether the body is drawn: a unit outside the scene has nothing to float a name over.
         Option<&InheritedVisibility>,
+        // A game mode's hidden unit has no name ([`crate::target::Concealed`]).
+        Has<crate::target::Concealed>,
     )>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     // The optimistic AFK mirror (`[0xb6e5cc]`), the own player's `<AFK>` override.
@@ -354,7 +356,7 @@ pub(crate) fn drive_nameplates(
     // The billboard facing: screen-aligned (the camera's own rotation), this frame's camera.
     let facing = cam_tf.rotation;
     let mut seen = bevy::ecs::entity::EntityHashSet::default();
-    for (entity, net, guid, tf, store, is_self, drawn) in &units {
+    for (entity, net, guid, tf, store, is_self, drawn, concealed) in &units {
         // A name needs a drawn body; this precedes the ShouldShowName ladder.
         if !drawn.is_none_or(|v| v.get()) {
             continue;
@@ -366,9 +368,10 @@ pub(crate) fn drive_nameplates(
         // creature shows only as the target, as in the reference; that gate leg is untraced.
         let show = if vplates.0.contains(&entity) || bubbles.0.contains(&entity) {
             false
-        } else if store.is_some_and(|s| s.0.unit_is_ghost_visual()) {
-            // The ghost vis-flag suppresses the name, target rescue included: `0x607101` and
-            // `0x60f62e` both test `bytes_1` byte 3 `& 3`.
+        } else if crate::target::plate_hidden(store, concealed) {
+            // The ghost and creep vis-flags suppress the name, target rescue included:
+            // `0x607101` and `0x60f62e` both test `bytes_1` byte 3 `& 3`. So does a game mode's
+            // concealment.
             false
         } else if is_self {
             // The own CVar, before the rescue; no name over a fully faded first-person avatar

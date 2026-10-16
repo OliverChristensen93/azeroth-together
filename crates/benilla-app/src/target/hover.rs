@@ -98,6 +98,8 @@ pub(super) struct TargetHoverState<'w, 's> {
     self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     /// The unit and player filter while a word stands (`0x480610`).
     units: crate::spell::targeting::PickChecks<'w, 's>,
+    /// Units a game mode hides from the player ([`super::Concealed`]): never picked.
+    concealed: Query<'w, 's, (), With<super::Concealed>>,
 }
 
 impl TargetHoverState<'_, '_> {
@@ -113,7 +115,7 @@ impl TargetHoverState<'_, '_> {
 
     /// Whether an object of this kind is a candidate of this pick, the posed pass and the box
     /// fallback alike: every unit and player outside targeting but the two [`Self::excludes`]
-    /// drops, and while targeting the ones `0x480610` passes for the word
+    /// drops, never a concealed one, and while targeting the ones `0x480610` passes for the word
     /// ([`crate::spell::targeting::PickChecks::admits_unit`]); a corpse (`0x480816`) always
     /// outside targeting, whose pick flags carry `0x40`, and while targeting only one `0x6e6260`
     /// passes. A corpse whose store has not streamed is refused then. `is_self` is the active
@@ -127,7 +129,9 @@ impl TargetHoverState<'_, '_> {
     ) -> bool {
         match kind {
             EntityKind::Unit | EntityKind::Player => {
-                !self.excludes(is_self, store) && self.units.admits_unit(entity, store)
+                !self.concealed.contains(entity)
+                    && !self.excludes(is_self, store)
+                    && self.units.admits_unit(entity, store)
             }
             EntityKind::Corpse => {
                 let Some(word) = self.corpse_pick.0 else {

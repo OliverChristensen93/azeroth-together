@@ -15,6 +15,7 @@ use benilla_world::interact::{WorldClick, WorldRightClick};
 use benilla_world::schedule::WorldStage;
 
 mod by_name;
+mod concealed;
 // `pub(crate)` for the chest live probe, which drives the mouse's own `click::resolve_go_action`.
 pub(crate) mod click;
 // `pub(crate)` for the hover inspector, which runs the cursor's `cursor_mode::go_highlightable`.
@@ -42,6 +43,8 @@ pub(crate) mod ring;
 mod scan;
 mod script;
 pub(crate) use script::ScriptSelect;
+// A game mode's hidden units (Nightfall's unseen enemies): no TAB, mouseover or plate.
+pub(crate) use concealed::{plate_hidden, Concealed};
 
 /// `Faction.dbc` and our reputation table as one [`SystemParam`], since every reaction function
 /// takes both; `factions` is `Option` so a UI-only harness runs without client data.
