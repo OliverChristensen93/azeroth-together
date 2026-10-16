@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::messages::LobbyPlayer;
-use nightfall_sim::{HeroPose, Mark, PlayerId, PlayerInput, Snapshot, World, DT, V2};
+use nightfall_sim::{Gait, HeroPose, Mark, PlayerId, PlayerInput, Snapshot, World, DT, V2};
 
 use super::menu::{LeaveRun, Selection, StartRequest};
 use super::session::{self, Heard, Net, Role};
@@ -154,13 +154,28 @@ impl Sim {
 #[derive(Resource, Default)]
 pub(super) struct LocalInput {
     pose: Option<HeroPose>,
+    /// How the hero moves, read off the controller ([`super::stance::gait_of`]).
+    pub gait: Gait,
+    /// Stealth presses this session, counted round past 255 ([`PlayerInput::stealth_presses`]).
+    pub stealth_presses: u8,
+}
+
+impl LocalInput {
+    /// The input for the next step, with `pose`.
+    fn with_pose(&self, pose: Option<HeroPose>) -> PlayerInput {
+        PlayerInput {
+            pose,
+            gait: self.gait,
+            stealth_presses: self.stealth_presses,
+        }
+    }
 }
 
 /// The run is over (left, ended by the host, or the connection went): [`back_to_menu`] leaves it.
 #[derive(Resource, Default)]
 pub(super) struct EndRun(pub bool);
 
-fn autoplay() -> bool {
+pub(super) fn autoplay() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_AUTOPLAY").is_some())
 }
@@ -292,6 +307,12 @@ pub(super) fn feed_pose(
         // Bevy's up is WoW's z.
         z: tf.translation.y,
     });
+    // The autoplay walk moves the body itself, holding no key: it says its own gait.
+    input.gait = if autoplay() {
+        super::stance::auto_gait().gait()
+    } else {
+        super::stance::gait_of(player.move_flags())
+    };
 }
 
 /// The run's clock. Alone or hosting: fixed steps for the real time that passed, each sent to the
@@ -311,10 +332,7 @@ pub(super) fn step_sim(
     if net.is_client() {
         let heard = session::client_exchange(
             &mut net,
-            PlayerInput {
-                pose: input.pose,
-                ..Default::default()
-            },
+            input.with_pose(input.pose),
         );
         if session::client_left_run(&mut net, &heard) {
             end.0 = true;
@@ -347,10 +365,7 @@ pub(super) fn step_sim(
         sim.acc -= DT;
         sim.world.set_input(
             sim.me,
-            PlayerInput {
-                pose: Some(pose),
-                ..Default::default()
-            },
+            input.with_pose(Some(pose)),
         );
         sim.world.step();
         sim.seen = sim.world.seen_by(sim.me);

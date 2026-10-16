@@ -544,6 +544,8 @@ pub(crate) struct SelectCommit<'w, 's> {
     reputations: Res<'w, crate::net::Reputations>,
     /// `assistAttack`, the assist tail's second leg.
     assist_attack: Res<'w, super::AssistAttack>,
+    /// Units a game mode hides ([`super::Concealed`]): never selected, `/assist` included.
+    concealed: Query<'w, 's, (), With<super::Concealed>>,
 }
 
 impl SelectCommit<'_, '_> {
@@ -569,6 +571,10 @@ impl SelectCommit<'_, '_> {
             info!("assist ({how}): the basis is targeting guid {guid:#x}, which is not streamed");
             return;
         };
+        if self.concealed.contains(entity) {
+            info!("assist ({how}): the basis is targeting a concealed unit; silent no-op");
+            return;
+        }
         info!("assist ({how}) -> the basis unit's target, guid {guid:#x}");
         // `engaged` and attackability are read before the selection: `SetSelection` may re-point
         // a swing we already had (`0x4938c8`), and `0x5ecb70` then skips the send but still runs

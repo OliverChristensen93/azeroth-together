@@ -10,12 +10,14 @@
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
 mod atmosphere;
+mod conceal;
 mod dress;
 mod enemies;
 mod grade;
 mod menu;
 mod run;
 mod session;
+mod stance;
 mod terrain;
 mod ui;
 mod units;
@@ -240,6 +242,23 @@ impl Plugin for NightfallPlugin {
                     .in_set(benilla_world::schedule::WorldStage::Input)
                     // The controller has moved the hero this frame before its pose is read.
                     .after(crate::player::PlayerControlSet)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                stance::stealth_key
+                    .before(run::feed_pose)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                (conceal::enemies, conceal::heroes, stance::trace)
+                    .chain()
+                    .after(enemies::place)
+                    // Its commands land before the run can end and despawn the bodies.
+                    .before(run::leave_run)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )
