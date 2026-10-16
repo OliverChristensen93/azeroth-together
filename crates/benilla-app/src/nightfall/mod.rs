@@ -11,6 +11,7 @@
 
 mod atmosphere;
 mod dress;
+mod enemies;
 mod grade;
 mod menu;
 mod run;
@@ -167,6 +168,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
+            .init_resource::<enemies::EnemyViews>()
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
             .add_plugins(grade::plugin)
@@ -224,6 +226,10 @@ impl Plugin for NightfallPlugin {
                     view::sync,
                     view::write_vitals,
                     view::place,
+                    enemies::sync,
+                    enemies::vitals,
+                    enemies::place,
+                    enemies::trace_seen,
                 )
                     .chain()
                     .in_set(benilla_world::schedule::WorldStage::Input)

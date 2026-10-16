@@ -355,6 +355,7 @@ pub(super) fn back_to_menu(
     mut commands: Commands,
     mut end: ResMut<EndRun>,
     mut views: ResMut<Views>,
+    mut enemy_views: ResMut<super::enemies::EnemyViews>,
     mut index: ResMut<crate::net::GuidIndex>,
     mut player: ResMut<crate::player::Player>,
     mut next: ResMut<NextState<Phase>>,
@@ -369,6 +370,7 @@ pub(super) fn back_to_menu(
     let gone: std::collections::HashSet<Entity> = spawned.iter().collect();
     index.0.retain(|_, e| !gone.contains(e));
     *views = Views::default();
+    *enemy_views = super::enemies::EnemyViews::default();
     commands.remove_resource::<Sim>();
     player.active = false;
     next.set(Phase::Menu);

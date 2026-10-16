@@ -28,7 +28,6 @@ const FIELD_BYTES_2: u16 = 164;
 
 /// `FactionTemplate.dbc`: friendly to players, and the hostile monster template.
 pub(super) const FACTION_FRIENDLY: u32 = 35;
-#[allow(dead_code)] // Spawned by the creatures of sub-project 2.
 pub(super) const FACTION_MONSTER: u32 = 14;
 
 const HIGH_CREATURE: u64 = 0xF130 << 48;
@@ -56,7 +55,6 @@ pub(super) type Weapon = (u16, u32, u8, u8, u8, u8, u8);
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnitKind {
     /// A creature, named by its template `entry` (see [`crate::names::NameCache`]).
-    #[allow(dead_code)] // Spawned by the creatures of sub-project 2.
     Creature { entry: u32 },
     /// A player: the local one is driven by WoW's own character controller.
     Player,
