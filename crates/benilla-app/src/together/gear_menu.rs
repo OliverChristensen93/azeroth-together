@@ -158,6 +158,8 @@ pub(super) fn build(
                 ..default()
             },
             GearPanel,
+            // Solid under the frame's own fill, so the zone list does not show through.
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.97)),
             Visibility::Hidden,
             bevy::ui::FocusPolicy::Block,
             Interaction::default(),
