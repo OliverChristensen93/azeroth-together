@@ -19,6 +19,10 @@ mod ui;
 mod units;
 mod view;
 
+/// The UI decisions, for the launcher's test of moving between the games.
+#[cfg(test)]
+pub(crate) use ui::{exit_chunk as ui_exit_chunk, ui_chunk};
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -130,6 +134,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
+            .init_resource::<ui::UiShown>()
             .add_plugins(grade::plugin)
             .add_systems(Startup, menu::spawn_roots)
             // Ungated: hides Nightfall's screens whenever another game is up.
@@ -149,7 +154,10 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
             .add_systems(Update, ui::tune_ui.in_set(NightfallSet))
-            .add_systems(OnExit(GameMode::Nightfall), atmosphere::leave)
+            .add_systems(
+                OnExit(GameMode::Nightfall),
+                (atmosphere::leave, ui::show_on_exit),
+            )
             .add_systems(
                 Update,
                 (

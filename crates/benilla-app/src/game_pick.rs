@@ -242,6 +242,47 @@ mod tests {
         );
         assert_eq!(initial_mode(["NIGHTFALLEN"]), GameMode::Pick);
     }
+
+    /// Whether `UIParent` is shown after `chunk` runs.
+    fn apply(chunk: Option<&str>, shown: &mut bool) {
+        match chunk {
+            Some("UIParent:Show()") => *shown = true,
+            Some("UIParent:Hide()") => *shown = false,
+            Some(other) => panic!("unexpected chunk {other}"),
+            None => {}
+        }
+    }
+
+    /// Pick → Survivors' menu → Back → Nightfall's menu → a run → Back → Survivors' menu → a
+    /// run: each game owns WoW's interface while it is up and leaves it shown when it goes.
+    #[test]
+    fn each_game_owns_the_ui_across_switches() {
+        use crate::{nightfall as nf, together as sv};
+        let session = 1;
+        let mut shown = true;
+        let (mut sv_last, mut nf_last) = (None, None);
+
+        apply(sv::ui_chunk(session, sv::Phase::Menu, sv_last), &mut shown);
+        sv_last = Some((session, sv::Phase::Menu));
+        assert!(!shown, "Survivors' menu hides the UI");
+        apply(sv::ui_exit_chunk(sv_last), &mut shown);
+        sv_last = None;
+        assert!(shown, "leaving Survivors shows it again");
+
+        apply(nf::ui_chunk(session, nf::Phase::Menu, nf_last), &mut shown);
+        nf_last = Some((session, nf::Phase::Menu));
+        apply(nf::ui_chunk(session, nf::Phase::Playing, nf_last), &mut shown);
+        nf_last = Some((session, nf::Phase::Playing));
+        assert!(shown, "a Nightfall run has the player frame, bars, chat and minimap");
+        apply(nf::ui_exit_chunk(nf_last), &mut shown);
+        assert!(shown);
+
+        apply(sv::ui_chunk(session, sv::Phase::Menu, sv_last), &mut shown);
+        sv_last = Some((session, sv::Phase::Menu));
+        assert!(!shown, "coming back, Survivors' menu hides the UI again");
+        apply(sv::ui_chunk(session, sv::Phase::Playing, sv_last), &mut shown);
+        assert!(shown, "and a Survivors run shows it");
+    }
 }
 
 /// Both games share one `Update` schedule, so a game's system that is not in its game's set runs

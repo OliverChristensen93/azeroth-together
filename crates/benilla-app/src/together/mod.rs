@@ -31,6 +31,10 @@ mod ui;
 mod units;
 mod view;
 
+/// The UI decisions, for the launcher's test of moving between the games.
+#[cfg(test)]
+pub(crate) use ui::{exit_chunk as ui_exit_chunk, ui_chunk};
+
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -320,6 +324,7 @@ impl Plugin for TogetherPlugin {
             .init_resource::<hazards::Telegraphs>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
+            .init_resource::<ui::UiShown>()
             .add_systems(
                 Startup,
                 (
@@ -385,7 +390,7 @@ impl Plugin for TogetherPlugin {
             .add_systems(OnExit(Phase::Menu), menu::clear_preview)
             .add_systems(
                 OnExit(crate::game_pick::GameMode::Survivors),
-                menu::clear_preview,
+                (menu::clear_preview, ui::show_on_exit),
             )
             .add_systems(OnEnter(Phase::Menu), hazards::clear)
             // The run.
