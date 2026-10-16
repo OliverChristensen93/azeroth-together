@@ -259,3 +259,61 @@ pub(super) fn boss_bar(
         }
     }
 }
+
+/// The spells whose WoW state kits show an enemy's statuses, as its aura slots carry them:
+/// Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Immolate's flames (Burning) and
+/// Hammer of Justice's daze (Stunned).
+const STATUS_AURAS: [(u8, u32); 4] = [
+    (together_sim::status_bits::FROZEN, 122),
+    (together_sim::status_bits::CHILLED, 116),
+    (together_sim::status_bits::BURNING, 348),
+    (together_sim::status_bits::STUNNED, 853),
+];
+/// `UNIT_FIELD_AURA` and `UNIT_FIELD_AURAFLAGS`, and the first of the harmful auras' slots.
+const FIELD_AURA: u16 = 47;
+const FIELD_AURAFLAGS: u16 = 95;
+const FIRST_DEBUFF_SLOT: u16 = 32;
+/// An occupied slot's flags nibble.
+const AURA_ON: u32 = 0x0E;
+
+/// Each enemy's statuses as auras on its unit, so the engine plays their WoW visuals: the ice
+/// block of a Freeze, a Chill's tint, a burn's flames, a stun's daze.
+pub(super) fn status_auras(
+    sim: Res<Sim>,
+    views: Res<Views>,
+    mut stores: Query<&mut crate::net::ObjectStore>,
+    mut shown: Local<std::collections::HashMap<u32, u8>>,
+) {
+    shown.retain(|id, _| views.enemies.contains_key(id));
+    for enemy in &sim.world.enemies {
+        let bits = enemy.status.bits();
+        if shown.get(&enemy.id).copied().unwrap_or(0) == bits {
+            continue;
+        }
+        let Some(mut store) = views
+            .enemies
+            .get(&enemy.id)
+            .and_then(|&e| stores.get_mut(e).ok())
+        else {
+            continue;
+        };
+        let mut pairs = Vec::new();
+        let mut flags = 0;
+        for (k, &(bit, spell)) in STATUS_AURAS.iter().enumerate() {
+            let on = bits & bit != 0;
+            pairs.push((
+                FIELD_AURA + FIRST_DEBUFF_SLOT + k as u16,
+                if on { spell } else { 0 },
+            ));
+            if on {
+                flags |= AURA_ON << (4 * k);
+            }
+        }
+        // Slots 32 to 39 share one flags field, a nibble each.
+        pairs.push((FIELD_AURAFLAGS + FIRST_DEBUFF_SLOT / 8, flags));
+        store
+            .0
+            .merge(benilla_protocol::messages::ObjectFields::from_pairs(&pairs));
+        shown.insert(enemy.id, bits);
+    }
+}

@@ -280,6 +280,9 @@ pub(super) struct LocalInput {
     pub(super) skip: bool,
     /// The movement ability was used this frame ([`blink`]).
     pub(super) dash: bool,
+    /// Freeze or unfreeze the level-up hand; banish the spell on a card.
+    pub(super) freeze: bool,
+    pub(super) banish: Option<u8>,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -300,6 +303,7 @@ impl Plugin for TogetherPlugin {
             .init_resource::<dev::DevSettings>()
             .init_resource::<inventory::SheetOpen>()
             .init_resource::<hazards::Pending>()
+            .init_resource::<levelup::BanishMode>()
             .init_resource::<hazards::Telegraphs>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
@@ -378,6 +382,7 @@ impl Plugin for TogetherPlugin {
                     hazards::show,
                     view::sync,
                     view::write_vitals,
+                    hazards::status_auras,
                     view::place,
                 )
                     .chain()
@@ -555,6 +560,7 @@ fn read_keys(
     real: Res<Time<Real>>,
     sim: Res<Sim>,
     mut input: ResMut<LocalInput>,
+    mut banishing: ResMut<levelup::BanishMode>,
     mut up_since: Local<Option<f32>>,
 ) {
     let choosing = sim
@@ -579,11 +585,22 @@ fn read_keys(
         .enumerate()
     {
         if keys.just_pressed(key) {
-            input.pick = Some(i as u8);
+            // In banish mode a card's key banishes its spell instead.
+            if std::mem::take(&mut banishing.0) {
+                input.banish = Some(i as u8);
+            } else {
+                input.pick = Some(i as u8);
+            }
         }
     }
     if keys.just_pressed(KeyCode::KeyR) {
         input.reroll = true;
+    }
+    if keys.just_pressed(KeyCode::KeyT) {
+        input.freeze = true;
+    }
+    if keys.just_pressed(KeyCode::KeyG) {
+        banishing.0 = !banishing.0;
     }
 }
 
@@ -788,6 +805,8 @@ fn step_sim(
             reroll: std::mem::take(&mut input.reroll),
             skip: std::mem::take(&mut input.skip),
             dash: std::mem::take(&mut input.dash),
+            freeze: std::mem::take(&mut input.freeze),
+            banish: input.banish.take(),
             pose: input.pose,
             ..Default::default()
         };
@@ -820,6 +839,8 @@ fn step_sim(
                 reroll: std::mem::take(&mut input.reroll),
                 skip: std::mem::take(&mut input.skip),
                 dash: std::mem::take(&mut input.dash),
+                freeze: std::mem::take(&mut input.freeze),
+                banish: input.banish.take(),
                 pose: Some(pose),
                 ..Default::default()
             };

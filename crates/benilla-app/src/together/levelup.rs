@@ -1,6 +1,8 @@
 //! The card screen: the run dims, a title over the hand of cards, each card in its rarity's
 //! colour with exactly what it would do; under them the spells the hero has, Skip and Reroll.
-//! 1, 2 and 3 (or a click) pick a card, R rerolls. A level-up deals spells and tomes; a shrine,
+//! 1, 2 and 3 (or a click) pick a card, R rerolls, T freezes the hand (it comes back at the next
+//! level-up, less the card taken), G then a card banishes its spell for the run. A level-up
+//! deals spells and tomes; a shrine,
 //! an altar or a chest deals its own hand under its own name.
 //!
 //! Laid out on the 768-unit canvas (`UiScale`, set by [`super::menu::apply_ui_scale`]).
@@ -52,7 +54,19 @@ pub(super) struct CardButton(u8);
 pub(super) enum HandButton {
     Skip,
     Reroll,
+    Freeze,
+    Banish,
 }
+
+/// The next card clicked (or its key pressed) banishes its spell instead of taking it.
+#[derive(Resource, Default)]
+pub(super) struct BanishMode(pub bool);
+
+#[derive(Component)]
+pub(super) struct FreezeText;
+
+#[derive(Component)]
+pub(super) struct BanishText;
 
 #[derive(Component)]
 pub(super) struct RerollText;
@@ -176,7 +190,12 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                             ..default()
                         },
                     ));
-                    for (button, text) in [(HandButton::Skip, "Skip"), (HandButton::Reroll, "")] {
+                    for (button, text) in [
+                        (HandButton::Skip, "Skip"),
+                        (HandButton::Reroll, ""),
+                        (HandButton::Freeze, ""),
+                        (HandButton::Banish, ""),
+                    ] {
                         bar.spawn((
                             button,
                             Button,
@@ -191,11 +210,12 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ))
                         .with_children(|b| {
                             let mut t = b.spawn(label(&fonts.text, text, 12.0, GOLD));
-                            if button == HandButton::Reroll {
-                                t.insert(RerollText);
-                            } else {
-                                t.insert(SkipText);
-                            }
+                            match button {
+                                HandButton::Reroll => t.insert(RerollText),
+                                HandButton::Skip => t.insert(SkipText),
+                                HandButton::Freeze => t.insert(FreezeText),
+                                HandButton::Banish => t.insert(BanishText),
+                            };
                         });
                     }
                 });
@@ -750,6 +770,9 @@ pub(super) struct Shown {
 
     rerolls: u32,
     more: usize,
+    frozen: bool,
+    banishes: u8,
+    banishing: bool,
 }
 
 /// The screen's title and the line under it, for `offer`.
@@ -810,7 +833,10 @@ pub(super) fn refresh(
         Query<&mut Text, With<TitleText>>,
         Query<&mut Text, With<HintText>>,
         Query<&mut Text, With<SkipText>>,
+        Query<&mut Text, With<FreezeText>>,
+        Query<&mut Text, With<BanishText>>,
     )>,
+    banishing: Res<BanishMode>,
     mut shown: Local<Option<Shown>>,
 ) {
     // A fallen hero chooses once raised.
@@ -846,6 +872,9 @@ pub(super) fn refresh(
 
         rerolls: hero.rerolls,
         more: hero.offers.len() - 1,
+        frozen: hero.frozen,
+        banishes: hero.banishes,
+        banishing: banishing.0,
     };
     if shown.as_ref() == Some(&now) {
         return;
@@ -874,6 +903,21 @@ pub(super) fn refresh(
     }
     if let Ok(mut t) = texts.p5().single_mut() {
         t.0 = if augmenting { "Hold" } else { "Skip" }.to_string();
+    }
+    let levelling = offer.source == Source::LevelUp;
+    if let Ok(mut t) = texts.p6().single_mut() {
+        t.0 = match (levelling, now.frozen) {
+            (false, _) => "No freeze".to_string(),
+            (true, false) => "Freeze   (T)".to_string(),
+            (true, true) => "Frozen: unfreeze   (T)".to_string(),
+        };
+    }
+    if let Ok(mut t) = texts.p7().single_mut() {
+        t.0 = match (now.banishes, now.banishing) {
+            (0, _) => "No banish".to_string(),
+            (_, true) => "Banish: choose a new spell".to_string(),
+            (n, false) => format!("Banish {n}   (G)"),
+        };
     }
     if let Ok(mut t) = texts.p2().single_mut() {
         t.0 = if now.more > 0 {
@@ -931,6 +975,7 @@ pub(super) fn refresh(
 #[allow(clippy::type_complexity)]
 pub(super) fn clicks(
     mut input: ResMut<LocalInput>,
+    mut banishing: ResMut<BanishMode>,
     mut cards: Query<
         (&CardButton, &CardTint, &Interaction, &mut BackgroundColor),
         (Changed<Interaction>, Without<HandButton>),
@@ -939,7 +984,13 @@ pub(super) fn clicks(
 ) {
     for (card, tint, interaction, mut bg) in &mut cards {
         match interaction {
-            Interaction::Pressed => input.pick = Some(card.0),
+            Interaction::Pressed => {
+                if std::mem::take(&mut banishing.0) {
+                    input.banish = Some(card.0);
+                } else {
+                    input.pick = Some(card.0);
+                }
+            }
             Interaction::Hovered => bg.0 = tint.0.lighter(0.06),
             Interaction::None => bg.0 = tint.0,
         }
@@ -949,6 +1000,8 @@ pub(super) fn clicks(
             Interaction::Pressed => match button {
                 HandButton::Skip => input.skip = true,
                 HandButton::Reroll => input.reroll = true,
+                HandButton::Freeze => input.freeze = true,
+                HandButton::Banish => banishing.0 = !banishing.0,
             },
             Interaction::Hovered => bg.0 = Color::srgb(0.3, 0.17, 0.08),
             Interaction::None => bg.0 = Color::srgb(0.18, 0.1, 0.05),
