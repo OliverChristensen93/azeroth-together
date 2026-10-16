@@ -13,6 +13,7 @@
 
 mod arena;
 mod combat;
+mod gear;
 
 pub use combat::{shield_size, status_bits, HeroSpells, Status};
 
@@ -27,6 +28,7 @@ use crate::cards::{
     ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, SpellMods, MAX_RANK,
 };
 use crate::content::{AbilityKind, Content};
+use crate::gear::{GearPiece, HeroGear, Slot};
 use crate::interact::{
     chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
     ESCORT_DISTANCE, ESCORT_GOAL,
@@ -145,6 +147,10 @@ pub struct PlayerInput {
     /// running WoW's character controller moves its hero itself, as WoW clients do, and reports
     /// the pose; the world only keeps it inside the arena.
     pub pose: Option<HeroPose>,
+    /// Switch on the hero's dormant gear piece in this slot (its index in [`Slot::ALL`]),
+    /// paying its gold.
+    #[serde(default)]
+    pub gear_on: Option<u8>,
 }
 
 /// A hero's position and facing as its player's client reports them.
@@ -255,6 +261,16 @@ pub enum Event {
         id: u32,
         kind: PickupKind,
         by: PlayerId,
+    },
+    /// A boss or an elite dropped a piece of equipment for `player`, for the stash.
+    GearFound {
+        player: PlayerId,
+        piece: GearPiece,
+    },
+    /// `player` paid to switch on the piece it wears in `slot`.
+    GearOn {
+        player: PlayerId,
+        slot: Slot,
     },
 }
 
@@ -396,6 +412,9 @@ pub struct Hero {
     /// What its spells' augments keep track of: a shield, streaks, charges, timers.
     #[serde(default)]
     pub spell: HeroSpells,
+    /// The equipment it brought into the run, dormant until switched on, and what it found.
+    #[serde(default)]
+    pub gear: HeroGear,
 }
 
 impl Hero {
@@ -732,6 +751,7 @@ impl World {
             damage_done: 0.0,
             damage_by: Vec::new(),
             spell: HeroSpells::default(),
+            gear: HeroGear::default(),
         });
         Ok(())
     }
@@ -834,6 +854,7 @@ impl World {
         held.skip |= input.skip;
         held.jump |= input.jump;
         held.dash |= input.dash;
+        held.gear_on = input.gear_on.or(held.gear_on);
     }
 
     /// `player` left: their hero goes, and the run no longer waits on them.
@@ -957,6 +978,7 @@ impl World {
     /// Advance the run by one [`DT`]. Picks are taken even while paused; nothing else moves then.
     pub fn step(&mut self) {
         self.apply_picks();
+        self.switch_gear();
         if self.paused() || self.game_over() {
             return;
         }
@@ -1648,6 +1670,9 @@ impl World {
             if boss {
                 self.place(InteractableKind::Cache, pos);
                 self.events.push(Event::BossDied { id });
+            }
+            if elite {
+                self.drop_gear(boss);
             }
             // An elite is worth several, and always carries gold; so is a boss.
             let reward = if elite { ELITE_REWARD } else { 1 };

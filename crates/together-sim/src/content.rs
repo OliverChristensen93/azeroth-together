@@ -187,12 +187,19 @@ pub struct ZoneDef {
     /// The enemy key of the zone's boss, who comes every few minutes; none when left out.
     #[serde(default)]
     pub boss: String,
+    /// The item level of the equipment its bosses and elites drop (10 when left out).
+    #[serde(default = "ten_levels")]
+    pub item_level: u16,
     /// [`ZoneDef::boss`] resolved to an index into [`Content::enemies`].
     #[serde(skip)]
     pub boss_ix: Option<usize>,
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
+}
+
+fn ten_levels() -> u16 {
+    10
 }
 
 /// One weapon a hero holds, as the client's virtual item fields want it.

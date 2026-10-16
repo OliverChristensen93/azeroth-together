@@ -326,6 +326,7 @@ impl World {
         for &a in &owned.augments {
             a.shape(&mut s);
         }
+        self.gear_shape(h, def, &mut s);
         let sp = &hero.spell;
         if owned.augments.contains(&Augment::ShardBurst) {
             s.vs_frozen += 1.0;
@@ -652,6 +653,7 @@ impl World {
                 }
             }
         }
+        self.gear_pull(h, spec, center);
         let mut hit: Vec<(u32, f32)> = self
             .enemies
             .iter()
