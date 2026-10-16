@@ -154,7 +154,8 @@ fn stand_or_warn(
     }
     let f = floor?;
     warnings.push(format!(
-        "{}: {} ({:.1}, {:.1}) has no floor to walk on within 2 yd; it stands at height {:.1}          and cannot walk away",
+        "{}: {} ({:.1}, {:.1}) has no floor to walk on within 2 yd; it stands at height {:.1} \
+         and cannot walk away",
         who(content, si),
         if k == 0 {
             "its spot".to_owned()
@@ -228,7 +229,8 @@ pub(crate) fn spawn_all(
                         for (i, p) in points.iter().enumerate() {
                             if p.is_none() {
                                 warnings.push(format!(
-                                    "{}: patrol point {} ({:.1}, {:.1}) has no floor to walk on                                      within 2 yd; it is skipped",
+                                    "{}: patrol point {} ({:.1}, {:.1}) has no floor to walk on \
+                                     within 2 yd; it is skipped",
                                     who(content, si),
                                     i + 1,
                                     route[i].0,
@@ -269,10 +271,20 @@ pub(crate) fn spawn_all(
                 }
             };
             let Some((at, order, facing)) = placed else {
-                warnings.push(format!(
-                    "{}: no floor to stand on; left out",
-                    who(content, si)
-                ));
+                // Named as the one member, not the group: the rest may stand.
+                let member = format!("member {} of {}", k + 1, s.count);
+                warnings.push(match &s.behaviour {
+                    Behaviour::Patrol { route, .. } => format!(
+                        "{}: {member} would start on patrol point {}, which has no floor; that \
+                         member is left out",
+                        who(content, si),
+                        k % route.len() + 1
+                    ),
+                    _ => format!(
+                        "{}: {member} has no floor to stand on; that member is left out",
+                        who(content, si)
+                    ),
+                });
                 continue;
             };
             enemies.push(Enemy {
@@ -1088,5 +1100,29 @@ mod tests {
         assert_eq!(planner.asked, asked);
         assert_eq!(planner.failed_searches(), 0);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn a_patrol_member_on_a_point_with_no_floor_is_named_alone() {
+        // The first of two points is over a hole: the member starting there is left out, the one
+        // starting on the second walks.
+        let mut b = flat(50.0);
+        for col in b.columns_in(V2::new(6.0, 6.0), V2::new(14.0, 14.0)) {
+            b.set_ground(col, f32::NAN);
+        }
+        let mut w = world(
+            r#"[(place: "Road", kind: "skeleton", count: 2, behaviour: Patrol(route: [(10.0, 10.0), (40.0, 10.0)], pause: 0.0))]"#,
+            4,
+        );
+        w.attach_map(Arc::new(b.finish()));
+        assert_eq!(w.enemies.len(), 1);
+        let warnings = w.warnings();
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].contains("patrol point 1") && warnings[0].contains("skipped"));
+        assert!(
+            warnings[1].contains("member 1 of 2")
+                && warnings[1].contains("that member is left out"),
+            "{warnings:?}"
+        );
     }
 }
