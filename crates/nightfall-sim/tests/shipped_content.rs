@@ -50,6 +50,7 @@ fn both_classes_play_in_duskwood() {
             pose: Some(HeroPose {
                 pos: far,
                 facing: V2::new(1.0, 0.0),
+                z: 36.5,
             }),
         },
     );

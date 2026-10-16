@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{PlayerId, PlayerInput, Snapshot};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The hero a player brings: their name and pick.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,8 +52,9 @@ pub enum ServerMsg {
     Lobby { players: Vec<LobbyPlayer> },
     /// The run begins.
     Start,
-    /// The world after a step.
-    State { snapshot: Snapshot },
+    /// The world after a step, as this player gets it: the enemies near their hero, and which of
+    /// them their hero sees (spec §4.3).
+    State { snapshot: Snapshot, seen: Vec<u32> },
     /// The host ended the run and went back to its menu.
     Ended,
 }
@@ -63,7 +64,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{Content, ContentSources, World};
+    use crate::{Content, ContentSources, Enemy, World, V2};
 
     #[test]
     fn messages_survive_the_wire() {
@@ -98,11 +99,26 @@ mod tests {
             w.add_hero(p, if p % 2 == 0 { "rogue" } else { "mage" }, "Twelve chars", 1, 0)
                 .unwrap();
         }
+        let mut snapshot = w.snapshot();
+        snapshot.enemies = (1..=20)
+            .map(|id| Enemy {
+                id,
+                kind: 0,
+                pos: V2::new(-10051.8, -792.5),
+                z: 36.5,
+                facing: V2::new(1.0, 0.0),
+                hp: 900.0,
+                max_hp: 900.0,
+                speed: 2.5,
+            })
+            .collect();
         let msg = ServerMsg::State {
-            snapshot: w.snapshot(),
+            snapshot,
+            seen: (1..=20).collect(),
         };
         let bytes = postcard::to_stdvec(&msg).unwrap().len();
-        // Four heroes at 15 snapshots a second stay far under a kilobyte each.
-        assert!(bytes < 400, "{bytes} bytes");
+        // Four heroes and the twenty enemies near one of them, 15 times a second, stay near
+        // 20 KB a second.
+        assert!(bytes < 1400, "{bytes} bytes");
     }
 }

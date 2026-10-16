@@ -482,7 +482,7 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
     if h.steps % SEND_EVERY != 0 {
         return;
     }
-    let snapshot = world.snapshot();
+    // Each player gets the enemies near their own hero and which of them they see (spec §4.3).
     let host = h.host.lock().unwrap();
     for p in &h.peers {
         if host.backlog(p.conn) > MAX_BACKLOG {
@@ -491,7 +491,8 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
         host.send(
             p.conn,
             &ServerMsg::State {
-                snapshot: snapshot.clone(),
+                snapshot: world.snapshot_for(p.player),
+                seen: world.seen_by(p.player),
             },
         );
     }
@@ -499,7 +500,8 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
 
 /// What a client heard from its host during a run.
 pub(super) enum Heard {
-    State(Snapshot),
+    /// A state, and which enemies in it our hero sees.
+    State(Snapshot, Vec<u32>),
     Ended,
     Lost(String),
 }
@@ -519,7 +521,9 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
     let mut heard = Vec::new();
     for event in client.poll() {
         match event {
-            ClientEvent::Message(ServerMsg::State { snapshot }) => heard.push(Heard::State(snapshot)),
+            ClientEvent::Message(ServerMsg::State { snapshot, seen }) => {
+                heard.push(Heard::State(snapshot, seen));
+            }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
             ClientEvent::Disconnected(why) => heard.push(Heard::Lost(why)),
             ClientEvent::Message(_) | ClientEvent::Connected => {}

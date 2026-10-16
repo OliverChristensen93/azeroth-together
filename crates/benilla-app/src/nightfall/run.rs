@@ -34,12 +34,16 @@ pub(super) struct Sim {
     acc: f32,
     /// Seconds between the states the views glide between: a step, or a host's snapshot.
     span: f32,
-    /// Joined: the host's snapshots not yet played, oldest first.
-    inbox: VecDeque<Snapshot>,
+    /// Joined: the host's snapshots, each with what our hero sees in it, not yet played, oldest
+    /// first.
+    inbox: VecDeque<(Snapshot, Vec<u32>)>,
     /// Joined: playback has begun.
     playing: bool,
     /// A step was taken (or a snapshot applied) this frame.
     pub stepped: bool,
+    /// The enemies our hero sees (spec §4.3): worked out here alone or hosting, the host's word
+    /// when joined. Sub-project 3 hides the others from the interface.
+    pub seen: Vec<u32>,
 }
 
 impl Sim {
@@ -58,6 +62,7 @@ impl Sim {
             inbox: VecDeque::new(),
             playing: false,
             stepped: false,
+            seen: Vec::new(),
         }
     }
 
@@ -71,6 +76,7 @@ impl Sim {
             inbox: VecDeque::new(),
             playing: false,
             stepped: false,
+            seen: Vec::new(),
         }
     }
 
@@ -110,8 +116,9 @@ impl Sim {
     }
 
     fn apply_next(&mut self) {
-        if let Some(snapshot) = self.inbox.pop_front() {
+        if let Some((snapshot, seen)) = self.inbox.pop_front() {
             self.world.apply_snapshot(snapshot);
+            self.seen = seen;
             self.stepped = true;
         }
     }
@@ -250,6 +257,8 @@ pub(super) fn feed_pose(
     input.pose = Some(HeroPose {
         pos,
         facing: V2::new(yaw.cos(), yaw.sin()),
+        // Bevy's up is WoW's z.
+        z: tf.translation.y,
     });
 }
 
@@ -272,8 +281,8 @@ pub(super) fn step_sim(
             end.0 = true;
         }
         for h in heard {
-            if let Heard::State(snapshot) = h {
-                sim.inbox.push_back(snapshot);
+            if let Heard::State(snapshot, seen) = h {
+                sim.inbox.push_back((snapshot, seen));
             }
         }
         sim.play_back(time.delta_secs());
@@ -292,6 +301,7 @@ pub(super) fn step_sim(
         sim.acc -= DT;
         sim.world.set_input(sim.me, PlayerInput { pose: Some(pose) });
         sim.world.step();
+        sim.seen = sim.world.seen_by(sim.me);
         session::host_send(&mut net, &sim.world);
         sim.stepped = true;
     }

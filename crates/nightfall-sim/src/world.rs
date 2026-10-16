@@ -22,12 +22,17 @@ pub const DT: f32 = 1.0 / TICK_HZ as f32;
 
 /// How far apart heroes who start at the same entry stand, yards.
 const SPAWN_SPACING: f32 = 2.0;
+/// How far (yards) a reported height may be from a floor and still stand on it.
+const HERO_FLOOR_REACH: f32 = 1.0;
 
 /// Where a player's client put its hero, and the way it faces.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct HeroPose {
     pub pos: V2,
     pub facing: V2,
+    /// The height of its feet as the client's controller has it: which floor of a house the hero
+    /// is on, for what it sees.
+    pub z: f32,
 }
 
 /// What a player sends a step.
@@ -45,6 +50,8 @@ pub struct Hero {
     pub race: u8,
     pub sex: u8,
     pub pos: V2,
+    /// The floor it stands on (the reported height while no floor is near it: a jump).
+    pub z: f32,
     pub facing: V2,
     pub hp: f32,
     pub max_hp: f32,
@@ -125,6 +132,7 @@ impl World {
         }
         let map = &self.content.map;
         let entry = V2::new(map.entries[0][0], map.entries[0][1]);
+        let z = map.entries[0][2];
         let k = self.heroes.len();
         let pos = if k == 0 {
             entry
@@ -140,6 +148,7 @@ impl World {
             race,
             sex,
             pos,
+            z,
             facing: V2::new(1.0, 0.0),
             hp: def.base_hp,
             max_hp: def.base_hp,
@@ -207,6 +216,17 @@ impl World {
             }
             if let Some(hero) = self.heroes.iter_mut().find(|h| h.player == player) {
                 hero.pos = bounds.clamp(pose.pos);
+                if pose.z.is_finite() {
+                    // On the host, the floor nearest the reported height, so a hero on a stair
+                    // sees from where they stand; a height with no floor near it (a jump) is
+                    // kept as it is.
+                    let pos = hero.pos;
+                    hero.z = self
+                        .nav
+                        .as_ref()
+                        .and_then(|nav| nav.map().floor_within(pos, pose.z, HERO_FLOOR_REACH))
+                        .unwrap_or(pose.z);
+                }
                 let facing = pose.facing.normalize_or_zero();
                 if facing != V2::ZERO {
                     hero.facing = facing;
@@ -277,6 +297,7 @@ mod tests {
             pose: Some(HeroPose {
                 pos: V2::new(x, y),
                 facing: V2::new(0.0, 2.0),
+                z: 10.0,
             }),
         }
     }
@@ -341,6 +362,7 @@ mod tests {
             pose: Some(HeroPose {
                 pos: V2::new(55.0, 50.0),
                 facing: V2::new(f32::INFINITY, 0.0),
+                z: 10.0,
             }),
         };
         w.set_input(0, bad_facing);
@@ -348,6 +370,51 @@ mod tests {
         let h = w.hero(0).unwrap();
         assert_eq!(h.pos, V2::new(50.0, 50.0));
         assert!(h.facing.is_finite());
+    }
+
+    #[test]
+    fn a_hero_stands_on_the_floor_near_the_height_its_client_reports() {
+        let mut w = World::new(content());
+        w.attach_map(Arc::new(crate::heightmap::testmap::flat(100.0).finish()));
+        w.add_hero(0, "rogue", "A", 1, 0).unwrap();
+        assert_eq!(w.hero(0).unwrap().z, 10.0);
+        let at = |z: f32| PlayerInput {
+            pose: Some(HeroPose {
+                pos: V2::new(60.0, 40.0),
+                facing: V2::new(1.0, 0.0),
+                z,
+            }),
+        };
+        w.set_input(0, at(0.3));
+        w.step();
+        assert_eq!(w.hero(0).unwrap().z, 0.0);
+        // Mid-jump, no floor within a yard: the reported height stands.
+        w.set_input(0, at(5.0));
+        w.step();
+        assert_eq!(w.hero(0).unwrap().z, 5.0);
+        w.set_input(0, at(f32::NAN));
+        w.step();
+        let h = w.hero(0).unwrap();
+        assert_eq!(h.z, 5.0);
+        assert_eq!(h.pos, V2::new(60.0, 40.0));
+    }
+
+    #[test]
+    fn without_a_map_a_hero_takes_the_reported_height() {
+        let mut w = World::new(content());
+        w.add_hero(0, "rogue", "A", 1, 0).unwrap();
+        w.set_input(
+            0,
+            PlayerInput {
+                pose: Some(HeroPose {
+                    pos: V2::new(60.0, 40.0),
+                    facing: V2::new(1.0, 0.0),
+                    z: 12.5,
+                }),
+            },
+        );
+        w.step();
+        assert_eq!(w.hero(0).unwrap().z, 12.5);
     }
 
     #[test]

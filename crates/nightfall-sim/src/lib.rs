@@ -14,6 +14,7 @@ mod enemies;
 mod heightmap;
 mod math;
 pub mod messages;
+mod sight;
 mod world;
 
 pub use bounds::Bounds;
@@ -27,4 +28,5 @@ pub use heightmap::{
 };
 pub use enemies::{Enemy, PATROL_BUDGET, WANDER_BUDGET};
 pub use math::{V2, V3};
+pub use sight::{CHEST_HEIGHT, EYE_HEIGHT};
 pub use world::{Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ};
