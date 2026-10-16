@@ -10,6 +10,7 @@
 mod bounds;
 mod content;
 mod math;
+pub mod messages;
 mod world;
 
 pub use bounds::Bounds;
