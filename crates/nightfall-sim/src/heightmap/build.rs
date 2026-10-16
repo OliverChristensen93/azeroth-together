@@ -65,8 +65,13 @@ impl HeightMapBuilder {
         }
     }
 
-    /// The columns whose centres lie in `[min, max)`.
+    /// The columns whose centres lie in `[min, max)`. A bound that is not finite (infinite, or not
+    /// a number) selects nothing, like a span that is not a number: the box of a broken model must
+    /// not fill the map.
     pub fn columns_in(&self, min: V2, max: V2) -> Vec<usize> {
+        if ![min.x, min.y, max.x, max.y].iter().all(|v| v.is_finite()) {
+            return Vec::new();
+        }
         let g = self.grid;
         let range = |lo: f32, hi: f32, origin: f32, n: u32| {
             let first = ((lo - origin) / g.cell - 0.5).ceil().max(0.0) as i64;

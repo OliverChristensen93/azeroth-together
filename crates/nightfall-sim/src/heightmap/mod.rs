@@ -438,4 +438,30 @@ mod tests {
             .columns_in(V2::new(-5.0, -5.0), V2::new(-1.0, -1.0))
             .is_empty());
     }
+
+    #[test]
+    fn a_box_with_a_non_finite_corner_adds_nothing() {
+        let mut b = flat(10.0);
+        let corners = [
+            (V2::new(f32::NEG_INFINITY, 1.0), V2::new(2.0, 2.0)),
+            (V2::new(1.0, 1.0), V2::new(f32::INFINITY, 2.0)),
+            (V2::new(1.0, f32::NAN), V2::new(2.0, 2.0)),
+            (V2::new(1.0, 1.0), V2::new(2.0, f32::NAN)),
+            (
+                V2::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
+                V2::new(f32::INFINITY, f32::INFINITY),
+            ),
+        ];
+        for (min, max) in corners {
+            assert!(b.columns_in(min, max).is_empty(), "{min:?} {max:?}");
+            b.add_box(min, max, 0.0, 5.0);
+            b.block_box(min, max);
+        }
+        let m = b.finish();
+        let g = m.grid();
+        for col in 0..g.columns() {
+            assert_eq!(m.floors_at(col).as_slice(), &[0.0]);
+            assert!(!m.is_blocked(col));
+        }
+    }
 }
