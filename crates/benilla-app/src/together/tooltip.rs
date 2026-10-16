@@ -1,14 +1,15 @@
-//! A spell's tooltip in WoW's look: what it does now with every bonus applied, its augments, its
-//! next milestone and its crit. It shows by the cursor over the action bar's spells (WoW's own
-//! tooltip for them names the real 1.12 spell, so [`super::ui`] turns it off) and over the
-//! level-up screen's row of spells, drawn above the level-up screen.
+//! A spell's tooltip in WoW's look: what it does now with every bonus applied, what its upgrades
+//! add up to, its augments, its next milestone and its crit. It shows by the cursor over the
+//! action bar's spells (WoW's own tooltip for them names the real 1.12 spell, so [`super::ui`]
+//! turns it off), over the level-up screen's row of spells and over a spell card's icon, drawn
+//! above the level-up screen. Holding Shift adds each augment's description.
 
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use together_sim::{
     milestone_rank, AbilityKind, Augment, Cone, Milestone, Owned, Stat, Tag, Targeting, World,
-    MAX_RANK,
+    BURN_SECS, MAX_RANK,
 };
 
 use super::{Phase, Sim};
@@ -43,6 +44,18 @@ pub(super) struct TipBody;
 /// A spell on the level-up screen's row: its index among the hero's spells.
 #[derive(Component)]
 pub(super) struct SpellSlot(pub usize);
+
+/// A spell card's icon: the ability it learns or upgrades.
+#[derive(Component)]
+pub(super) struct TipAbility(pub usize);
+
+/// What the mouse is over.
+enum Hover {
+    /// One of the hero's spells, by its index.
+    Slot(usize),
+    /// A card's spell, which the hero may not know yet.
+    Ability(usize),
+}
 
 #[derive(Resource)]
 pub(super) struct TipFont(Handle<Font>);
@@ -134,8 +147,9 @@ fn school(tags: together_sim::Tags) -> &'static str {
     }
 }
 
-/// The tooltip of hero `h`'s spell `owned` in `world`.
-fn lines(world: &World, h: usize, owned: &Owned) -> Vec<Line> {
+/// The tooltip of hero `h`'s spell `owned` in `world`; `extended` (Shift held) with each
+/// augment's description.
+fn lines(world: &World, h: usize, owned: &Owned, extended: bool) -> Vec<Line> {
     let content = world.content();
     let def = &content.abilities[owned.ability];
     let hero = &world.heroes[h];
@@ -209,7 +223,11 @@ fn lines(world: &World, h: usize, owned: &Owned) -> Vec<Line> {
         ),
     };
     if s.chill > 0.0 {
-        what.push_str(" Chills (40% slower for 3 sec).");
+        what.push_str(&format!(
+            " Chills ({:.0}% slower for {:.0} sec).",
+            s.slow * 100.0,
+            s.chill
+        ));
     }
     if s.freeze > 0.0 {
         what.push_str(&format!(" Freezes for {:.1} sec.", s.freeze));
@@ -222,8 +240,9 @@ fn lines(world: &World, h: usize, owned: &Owned) -> Vec<Line> {
     }
     if s.burn > 0.0 {
         what.push_str(&format!(
-            " Leaves them Burning for {:.0}% more over 4 sec.",
-            s.burn * s.dot_mult * 100.0
+            " Leaves them Burning for {:.0}% more over {:.1} sec.",
+            s.burn * s.dot_mult * s.dot_secs * 100.0,
+            BURN_SECS * s.dot_secs / s.dot_speed
         ));
     }
     if def.kind == AbilityKind::Nova && s.ground > 0.0 {
@@ -249,9 +268,28 @@ fn lines(world: &World, h: usize, owned: &Owned) -> Vec<Line> {
             GREEN,
         ));
     }
+    let upgrades: Vec<String> = owned
+        .mods
+        .totals()
+        .into_iter()
+        .map(|(b, v)| b.describe(v))
+        .collect();
+    if !upgrades.is_empty() {
+        out.push(Line::one(
+            format!("Upgrades: {}", upgrades.join(", ")),
+            GREEN,
+        ));
+    }
     if !owned.augments.is_empty() {
-        let names: Vec<&str> = owned.augments.iter().map(|a| a.name()).collect();
-        out.push(Line::one(format!("Augments: {}", names.join(", ")), BLUE));
+        if extended {
+            for a in &owned.augments {
+                out.push(Line::one(a.name(), BLUE));
+                out.push(Line::one(a.description(), WHITE));
+            }
+        } else {
+            let names: Vec<&str> = owned.augments.iter().map(|a| a.name()).collect();
+            out.push(Line::one(format!("Augments: {}", names.join(", ")), BLUE));
+        }
     }
     let capstones = !Augment::capstones_of(&def.key).is_empty();
     match owned.awaiting(capstones) {
@@ -289,27 +327,35 @@ fn lines(world: &World, h: usize, owned: &Owned) -> Vec<Line> {
     }
     let tags: Vec<&str> = s.tags.iter().map(|t| t.name()).collect();
     out.push(Line::one(tags.join("  ·  "), GREY));
+    if !owned.augments.is_empty() && !extended {
+        out.push(Line::one("Hold Shift for its augments' details", GREY));
+    }
     out
 }
 
 /// The spell under the mouse, by its index among the hero's spells: on the level-up screen's
 /// row, or on WoW's action bar (whose buttons hold the spells in order from the first).
 /// `TOGETHER_TIP_SLOT=<n>` holds button `n` for a test shot.
-fn hovered(slots: &Query<(&SpellSlot, &Interaction)>, script: Option<&UiScript>) -> Option<usize> {
-    if let Some((slot, _)) = slots
-        .iter()
-        .find(|(_, i)| matches!(i, Interaction::Hovered | Interaction::Pressed))
-    {
-        return Some(slot.0);
+fn hovered(
+    slots: &Query<(&SpellSlot, &Interaction)>,
+    cards: &Query<(&TipAbility, &Interaction)>,
+    script: Option<&UiScript>,
+) -> Option<Hover> {
+    let over = |i: &Interaction| matches!(i, Interaction::Hovered | Interaction::Pressed);
+    if let Some((slot, _)) = slots.iter().find(|(_, i)| over(i)) {
+        return Some(Hover::Slot(slot.0));
+    }
+    if let Some((card, _)) = cards.iter().find(|(_, i)| over(i)) {
+        return Some(Hover::Ability(card.0));
     }
     if let Some(n) = std::env::var("TOGETHER_TIP_SLOT")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
     {
-        return n.checked_sub(1);
+        return n.checked_sub(1).map(Hover::Slot);
     }
     let id = script?.eval::<i64>(HOVER_LUA).ok()?;
-    (id >= 1).then(|| id as usize - 1)
+    (id >= 1).then(|| Hover::Slot(id as usize - 1))
 }
 
 /// Show the tooltip by the cursor while a spell is under it, rebuilt when its text changes.
@@ -320,6 +366,8 @@ pub(super) fn show_tip(
     sim: Option<Res<Sim>>,
     script: Option<NonSend<UiScript>>,
     slots: Query<(&SpellSlot, &Interaction)>,
+    cards: Query<(&TipAbility, &Interaction)>,
+    keys: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     scale: Res<UiScale>,
     font: Option<Res<TipFont>>,
@@ -334,10 +382,21 @@ pub(super) fn show_tip(
         .then_some(())
         .and(sim.as_ref())
         .and_then(|sim| {
-            let slot = hovered(&slots, script.as_deref())?;
+            let hover = hovered(&slots, &cards, script.as_deref())?;
             let h = sim.world.heroes.iter().position(|x| x.player == sim.me)?;
-            let owned = sim.world.heroes[h].abilities.get(slot)?;
-            Some(lines(&sim.world, h, owned))
+            let known = &sim.world.heroes[h].abilities;
+            // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
+            let extended = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
+                || std::env::var_os("TOGETHER_TIP_SHIFT").is_some();
+            let owned = match hover {
+                Hover::Slot(i) => known.get(i)?.clone(),
+                Hover::Ability(a) => known
+                    .iter()
+                    .find(|o| o.ability == a)
+                    .cloned()
+                    .unwrap_or_else(|| Owned::new(a, 0.0)),
+            };
+            Some(lines(&sim.world, h, &owned, extended))
         });
     let Some(tip) = tip else {
         if *vis != Visibility::Hidden {

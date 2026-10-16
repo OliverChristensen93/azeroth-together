@@ -79,6 +79,14 @@ worktree (`.claude/worktrees/sweet-noyce-99e61b`) with `WOW_DATA` pointing at th
 > **Agreed: upgrades scale with rarity, as in Megabonk.** A duplicate or upgrade raises the existing
 > tome or item, by how much depending on the card's rarity: "+5% damage" upgraded by a Common card
 > goes to 10%, by a Legendary card to 21%.
+>
+> **Built: spell upgrades work the Megabonk way.** An upgrade card shows only what it gives
+> ("Cooldown -9%"), rolled from what the spell's tags allow: damage and cooldown always, range for
+> single-target spells, area for Area/Cone/Ground, duration for Ground and DoT, tick speed for DoT,
+> shield size for Shield, projectiles for Projectile (Rare and up), crit chance and crit damage for
+> Direct, slow for Slow, freeze length for Freeze. Common and Uncommon cards give one line, Rare and
+> Epic two, Legendary three, each bigger the rarer. Hovering a card's spell icon shows the spell's
+> tooltip with its upgrades so far; holding Shift over any spell adds its augments' descriptions.
 
 **Tomes** are numbers and stack freely; **items** are effects and compete for slots.
 

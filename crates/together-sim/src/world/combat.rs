@@ -15,6 +15,7 @@
 
 use super::*;
 use crate::augments::{Augment, Milestone};
+use crate::cards::{boost_lines, Boost};
 use crate::spell::{
     control_secs, CastSpec, Cone, Tag, Tags, Targeting, BURN_SECS, CHILL_SECS, CHILL_SLOW,
     CONE_HALF_ANGLE, FREEZE_SECS,
@@ -92,6 +93,8 @@ pub(super) struct Trigger {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
     pub chill: f32,
+    /// How much the Chill slows (the strongest that hit it).
+    pub slow: f32,
     pub freeze: f32,
     pub stun: f32,
     /// Who froze it, for Frostbite.
@@ -242,9 +245,10 @@ impl HeroSpells {
     }
 }
 
-/// A shield's size at `rank` with a card `bonus`, as a share of max health: 10% more per rank.
-pub fn shield_size(base: f32, rank: u8, bonus: f32) -> f32 {
-    base * (1.0 + 0.1 * f32::from(rank.max(1) - 1)) * (1.0 + bonus)
+/// A shield's size with its learning card's `bonus`, as a share of max health; upgrades' Shield
+/// boosts come on top.
+pub fn shield_size(base: f32, bonus: f32) -> f32 {
+    base * (1.0 + bonus)
 }
 
 /// Whether `pos` lies in an area of `spec` around `center`, pointing `facing` for a cone.
@@ -326,6 +330,7 @@ impl World {
             crit: CRIT_CHANCE + hero.stats.get(Stat::Crit),
             crit_mult: 2.0,
             chill: if tags.has(Tag::Slow) { CHILL_SECS } else { 0.0 },
+            slow: CHILL_SLOW,
             freeze: if tags.has(Tag::Freeze) {
                 def.freeze
             } else {
@@ -342,6 +347,7 @@ impl World {
             burn: def.burn,
             dot_mult: 1.0,
             dot_speed: 1.0,
+            dot_secs: 1.0,
             contagion: false,
             ground: if def.kind == AbilityKind::Ground {
                 def.duration
@@ -357,9 +363,10 @@ impl World {
             vs_frozen: 0.0,
             execute: 0.0,
             shatter: 0.0,
-            shield: shield_size(def.shield, owned.level, owned.bonus),
+            shield: shield_size(def.shield, owned.bonus),
             charges: 1,
         };
+        owned.mods.apply(&mut s);
         for &a in &owned.augments {
             a.shape(&mut s);
         }
@@ -1006,6 +1013,7 @@ impl World {
             st.chill = st
                 .chill
                 .max(control_secs(spec.chill, elite, boss).max(spec.chill * 0.5));
+            st.slow = st.slow.max(spec.slow);
         }
         let freeze = if freeze_roll {
             spec.freeze.max(FREEZE_SECS * 0.5)
@@ -1026,7 +1034,7 @@ impl World {
                 by,
                 ability: spec.ability,
                 dps: damage * spec.burn * spec.dot_mult / BURN_SECS * speed,
-                left: BURN_SECS / speed,
+                left: BURN_SECS * spec.dot_secs / speed,
                 tick: 1.0,
                 contagion: spec.contagion,
             };
@@ -1229,6 +1237,9 @@ impl World {
         for e in &mut self.enemies {
             let st = &mut e.status;
             st.chill = (st.chill - DT).max(0.0);
+            if st.chill == 0.0 {
+                st.slow = 0.0;
+            }
             st.stun = (st.stun - DT).max(0.0);
             st.exposed = (st.exposed - DT).max(0.0);
             if st.freeze > 0.0 {
@@ -1581,6 +1592,39 @@ impl World {
         }
     }
 
+    /// The boosts an upgrade card of `rarity` for hero `h`'s spell `ability` gives: as many as the
+    /// rarity allows, different, each one the spell's tags make sense of.
+    pub(super) fn roll_boosts(
+        &mut self,
+        h: usize,
+        ability: usize,
+        rarity: Rarity,
+    ) -> [Option<Boost>; 3] {
+        let mut out = [None; 3];
+        let Some(owned) = self.heroes[h]
+            .abilities
+            .iter()
+            .find(|o| o.ability == ability)
+            .cloned()
+        else {
+            return out;
+        };
+        let spec = self.spell_spec(h, &owned);
+        let kind = self.content.abilities[ability].kind;
+        let mut pool: Vec<Boost> = Boost::ALL
+            .into_iter()
+            .filter(|b| b.fits(&spec, kind, rarity))
+            .collect();
+        for slot in out.iter_mut().take(boost_lines(rarity)) {
+            if pool.is_empty() {
+                break;
+            }
+            let i = self.rng.index(pool.len());
+            *slot = Some(pool.swap_remove(i));
+        }
+        out
+    }
+
     /// The augment screen for hero `h`'s spell `ability`, if it waits at a milestone: its three
     /// capstones, or three general augments that fit it, leaning toward the tags the hero's other
     /// spells share.
@@ -1681,7 +1725,7 @@ pub(super) struct Death {
 /// The slowed speed of a Chilled enemy.
 pub(super) fn chilled(speed: f32, status: &Status) -> f32 {
     if status.chill > 0.0 {
-        speed * (1.0 - CHILL_SLOW)
+        speed * (1.0 - status.slow.max(CHILL_SLOW))
     } else {
         speed
     }
@@ -1795,11 +1839,15 @@ mod tests {
         w.take_card(
             0,
             Card {
-                kind: CardKind::Upgrade(bolt),
+                kind: CardKind::Upgrade(bolt, [Some(Boost::Damage), None, None]),
                 rarity: Rarity::Common,
             },
         );
         assert_eq!(w.heroes[0].abilities[0].level, 5);
+        assert!(
+            w.heroes[0].abilities[0].mods.damage > 0.0,
+            "the boost was not applied"
+        );
         let offer = w.heroes[0].offers[0].clone();
         assert_eq!(offer.source, Source::Augment(bolt));
         assert_eq!(offer.cards.len(), 3);
@@ -1811,7 +1859,10 @@ mod tests {
         w.set_input(0, input(None, false, true));
         w.step();
         assert!(w.heroes[0].offers.is_empty());
-        assert!(!w.spells(0).contains(&CardKind::Upgrade(bolt)));
+        assert!(!w
+            .spells(0)
+            .iter()
+            .any(|k| matches!(k, CardKind::Upgrade(a, _) if *a == bolt)));
         // The next level-up brings it back, after the level-up's own hand.
         w.xp = xp_to_next(w.level);
         w.set_input(0, PlayerInput::default());
@@ -1828,7 +1879,7 @@ mod tests {
         w.take_card(
             0,
             Card {
-                kind: CardKind::Upgrade(bolt),
+                kind: CardKind::Upgrade(bolt, [None; 3]),
                 rarity: Rarity::Common,
             },
         );

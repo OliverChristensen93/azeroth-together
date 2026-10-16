@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 use together_sim::{
-    ability_stats, fallback_gold, shield_size, AbilityKind, Augment, Card, CardKind, Hero,
+    ability_stats, fallback_gold, shield_size, AbilityKind, Augment, Boost, Card, CardKind, Hero,
     InteractableKind, Item, Offer, Rarity, Source, Stat, MAX_ABILITIES,
 };
 
@@ -56,10 +56,6 @@ pub(super) enum HandButton {
 
 #[derive(Component)]
 pub(super) struct RerollText;
-
-/// How much of the screen's bottom the level-up screen leaves clear for WoW's action bar, in
-/// the 768-unit canvas.
-const BAR_CLEAR: f32 = 64.0;
 
 /// The Skip button's caption: Hold on an augment screen.
 #[derive(Component)]
@@ -119,13 +115,10 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands
         .spawn((
             LevelUpRoot,
-            // Short of the bottom: WoW's action bar (drawn under our screens) stays undimmed.
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                top: Val::Px(0.0),
-                bottom: Val::Px(BAR_CLEAR),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
@@ -350,8 +343,14 @@ struct Face {
     footer: String,
 }
 
-/// The face of a spell card: what the spell does, and what this card changes.
-fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face {
+/// The face of a spell card: a new spell's numbers, or just what an upgrade's `boosts` give.
+fn spell_face(
+    hero: &Hero,
+    ability: usize,
+    upgrade: Option<[Option<Boost>; 3]>,
+    rarity: Rarity,
+) -> Face {
+    let learn = upgrade.is_none();
     let content = content();
     let def = &content.abilities[ability];
     let reach = |count: u32| match def.kind {
@@ -363,9 +362,9 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
     let shield = def.kind == AbilityKind::Shield;
     let mut lines = Vec::new();
     let (badge, sub, bonus, footer) = if learn {
-        let s = ability_stats(def, 1, rarity.learn_bonus()).with(&hero.stats);
+        let s = ability_stats(def, rarity.learn_bonus()).with(&hero.stats);
         if shield {
-            let size = shield_size(def.shield, 1, rarity.learn_bonus());
+            let size = shield_size(def.shield, rarity.learn_bonus());
             lines.push(text(format!(
                 "A shield of {:.0}% of your health every {:.1} sec",
                 size * 100.0,
@@ -398,28 +397,9 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
         )
     } else {
         let owned = hero.abilities.iter().find(|o| o.ability == ability);
-        let (rank, bonus) = owned.map_or((1, 0.0), |o| (o.level, o.bonus));
-        let now = ability_stats(def, rank, bonus).with(&hero.stats);
-        let next = ability_stats(def, rank + 1, bonus + rarity.upgrade_bonus()).with(&hero.stats);
-        if shield {
-            lines.push(text(format!(
-                "Shield {:.0}% » {:.0}% of health",
-                shield_size(def.shield, rank, bonus) * 100.0,
-                shield_size(def.shield, rank + 1, bonus + rarity.upgrade_bonus()) * 100.0
-            )));
-        } else {
-            lines.push(text(format!(
-                "Damage {:.0} » {:.0}",
-                now.damage.round(),
-                next.damage.round()
-            )));
-        }
-        lines.push(text(format!(
-            "Cooldown {:.1} » {:.1} sec",
-            now.cooldown, next.cooldown
-        )));
-        if next.count != now.count {
-            lines.push(text(format!("Targets {} » {}", now.count, next.count)));
+        let rank = owned.map_or(1, |o| o.level);
+        for boost in upgrade.into_iter().flatten().flatten() {
+            lines.push((boost.describe(boost.amount(rarity)), GREEN));
         }
         let milestone = match rank + 1 {
             5 | 15 => Some("an augment"),
@@ -428,13 +408,13 @@ fn spell_face(hero: &Hero, ability: usize, learn: bool, rarity: Rarity) -> Face 
             _ => None,
         };
         if let Some(what) = milestone {
-            lines.push((format!("Rank {} brings {what}", rank + 1), GREEN));
+            lines.push((format!("Rank {} brings {what}", rank + 1), GOLD));
         }
         (
             format!("RANK {}", rank + 1),
             format!("Rank {rank} » {}", rank + 1),
-            rarity.upgrade_bonus(),
-            "Improves a spell you know".to_string(),
+            0.0,
+            "Hover the icon for the spell".to_string(),
         )
     };
     if bonus > 0.0 {
@@ -461,8 +441,8 @@ fn stat_now(hero: &Hero, stat: Stat) -> String {
 /// The face of any card, at the party's `level`.
 fn face(hero: &Hero, level: u32, card: &Card) -> Face {
     match card.kind {
-        CardKind::Learn(a) => spell_face(hero, a, true, card.rarity),
-        CardKind::Upgrade(a) => spell_face(hero, a, false, card.rarity),
+        CardKind::Learn(a) => spell_face(hero, a, None, card.rarity),
+        CardKind::Upgrade(a, boosts) => spell_face(hero, a, Some(boosts), card.rarity),
         CardKind::Tome(stat) => {
             let rules = &content().rules;
             let rank = hero.tome_rank(stat);
@@ -698,6 +678,10 @@ fn build_card(
             Icon::Spell(visual) => icon.insert(SpellIcon(visual)),
             Icon::Texture(name) => icon.insert(TextureIcon(name)),
         };
+        // A spell card's icon shows the spell's tooltip, as it stands now, under the mouse.
+        if let Some(ability) = card.ability() {
+            icon.insert((super::tooltip::TipAbility(ability), Interaction::default()));
+        }
         c.spawn((
             label(
                 &fonts.text,

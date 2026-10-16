@@ -229,6 +229,8 @@ pub struct CastSpec {
     pub crit_mult: f32,
     /// Seconds of Chill on a hit, 0 for none.
     pub chill: f32,
+    /// How much its Chill slows (0.4 is 40%).
+    pub slow: f32,
     /// Seconds of Freeze on a hit, 0 for none.
     pub freeze: f32,
     /// Chance a Chill also Freezes.
@@ -241,9 +243,11 @@ pub struct CastSpec {
     pub knockback: f32,
     /// Share of each hit dealt again as Burning over [`BURN_SECS`].
     pub burn: f32,
-    /// How much harder this spell's damage over time hits, and how much faster it runs out.
+    /// How much harder this spell's damage over time hits, how much faster it ticks, and how much
+    /// longer it lasts.
     pub dot_mult: f32,
     pub dot_speed: f32,
+    pub dot_secs: f32,
     /// A Burning effect jumps to a nearby enemy when its target dies.
     pub contagion: bool,
     /// Seconds a lasting ground area stays.

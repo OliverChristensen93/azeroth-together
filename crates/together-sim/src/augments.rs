@@ -640,7 +640,7 @@ impl Augment {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::spell::Tags;
 
@@ -662,6 +662,7 @@ mod tests {
             crit: 0.05,
             crit_mult: 2.0,
             chill: 0.0,
+            slow: crate::spell::CHILL_SLOW,
             freeze: 0.0,
             freeze_chance: 0.0,
             permafrost: false,
@@ -670,6 +671,7 @@ mod tests {
             burn: 0.0,
             dot_mult: 1.0,
             dot_speed: 1.0,
+            dot_secs: 1.0,
             contagion: false,
             ground: 0.0,
             follows: false,

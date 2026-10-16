@@ -23,7 +23,9 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::augments::{milestone_rank, Augment, Milestone};
-use crate::cards::{ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, MAX_RANK};
+use crate::cards::{
+    ability_stats, fallback_gold, AbilityStats, Card, CardKind, Rarity, SpellMods, MAX_RANK,
+};
 use crate::content::{AbilityKind, Content};
 use crate::interact::{
     chest_price, escort_time, scatter, spot, InteractState, Interactable, InteractableKind,
@@ -293,6 +295,9 @@ pub struct Owned {
     /// Casts made in the current burst of its charges.
     #[serde(default)]
     pub burst: u32,
+    /// What its upgrade cards have added up to.
+    #[serde(default)]
+    pub mods: SpellMods,
 }
 
 impl Owned {
@@ -306,6 +311,7 @@ impl Owned {
             augments: Vec::new(),
             casts: 0,
             burst: 0,
+            mods: SpellMods::default(),
         }
     }
 
@@ -331,7 +337,7 @@ impl Owned {
     /// Its numbers now, from its rank and bonus alone; [`AbilityStats::with`] adds the hero's
     /// stats.
     pub fn stats(&self, def: &crate::content::AbilityDef) -> AbilityStats {
-        ability_stats(def, self.level, self.bonus)
+        ability_stats(def, self.bonus)
     }
 }
 
@@ -1031,10 +1037,12 @@ impl World {
                 // A spell learned at a milestone's rank (a test run's) shows its screen next.
                 self.queue_augments(h, true);
             }
-            CardKind::Upgrade(ability) => {
+            CardKind::Upgrade(ability, boosts) => {
                 if let Some(owned) = hero.abilities.iter_mut().find(|o| o.ability == ability) {
                     owned.level = (owned.level + 1).min(MAX_RANK);
-                    owned.bonus += card.rarity.upgrade_bonus();
+                    for boost in boosts.into_iter().flatten() {
+                        owned.mods.add(boost, boost.amount(card.rarity));
+                    }
                 }
                 // A milestone reached: its augment screen comes next.
                 self.queue_augments(h, true);
@@ -1726,7 +1734,7 @@ impl World {
             } else {
                 self.rng.index(options.len())
             };
-            let kind = options.swap_remove(i);
+            let mut kind = options.swap_remove(i);
             let rolled = Rarity::roll(&mut self.rng, luck);
             let rarity = match (kind, source) {
                 (CardKind::Item(item), _) => item.rarity(),
@@ -1736,6 +1744,9 @@ impl World {
                 }
                 _ => rolled,
             };
+            if let CardKind::Upgrade(ability, _) = kind {
+                kind = CardKind::Upgrade(ability, self.roll_boosts(h, ability, rarity));
+            }
             cards.push(Card { kind, rarity });
         }
         // Nothing left worth dealing: something useful rather than a short hand.
@@ -1849,7 +1860,7 @@ impl World {
                 let key = &self.content.abilities[o.ability].key;
                 o.awaiting(!Augment::capstones_of(key).is_empty()).is_none()
             })
-            .map(|o| CardKind::Upgrade(o.ability))
+            .map(|o| CardKind::Upgrade(o.ability, [None; 3]))
             .collect();
         if hero.abilities.len() < MAX_ABILITIES {
             for &ability in &class.pool_ix {
@@ -2243,7 +2254,7 @@ mod tests {
         let card = offer.cards[0];
         let (want_level, want_bonus) = match card.kind {
             CardKind::Learn(_) => (1, card.rarity.learn_bonus()),
-            CardKind::Upgrade(_) => (2, card.rarity.upgrade_bonus()),
+            CardKind::Upgrade(..) => (2, 0.0),
             CardKind::Tome(stat) => {
                 assert!((hero.stats.get(stat) - stat.tome_amount(card.rarity)).abs() < 1e-6);
                 return;
@@ -3223,10 +3234,10 @@ mod tests {
     fn berserk_bloodlust_shield_and_fortune_do_their_work() {
         let mut w = world();
         let def = w.content().abilities[0].clone();
-        let plain = w.sharpen(ability_stats(&def, 1, 0.0));
+        let plain = w.sharpen(ability_stats(&def, 0.0));
         grab(&mut w, PickupKind::PowerUp(PowerUp::Berserk));
         grab(&mut w, PickupKind::PowerUp(PowerUp::Bloodlust));
-        let sharp = w.sharpen(ability_stats(&def, 1, 0.0));
+        let sharp = w.sharpen(ability_stats(&def, 0.0));
         assert!((sharp.damage - plain.damage * 2.0).abs() < 1e-3);
         assert!((sharp.cooldown - plain.cooldown * BLOODLUST).abs() < 1e-3);
         grab(&mut w, PickupKind::PowerUp(PowerUp::DivineShield));

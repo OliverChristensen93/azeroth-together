@@ -14,7 +14,11 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
     circle, placement), `items.rs` (passive items and their copy limits), `powerups.rs` (party
     power-ups, health shards, pot loot), `world/arena.rs` (the arena's upkeep: shrines and pots
     coming back, elite camps, pickups, power-ups running out). Cards (`cards.rs`) are spells,
-    tomes (4 slots, rank 5), pacts, items or the gold/heal/reroll fallback. Gold: every coin goes
+    tomes (4 slots, rank 5), pacts, items or the gold/heal/reroll fallback. A spell's upgrade card
+    carries 1-3 rolled `Boost`s (damage, cooldown, range, area, duration, tick speed, shield,
+    projectiles, crit, crit damage, slow, freeze), only those its tags allow, more and bigger the
+    rarer; they add up in `Owned::mods` (`SpellMods`), applied in `spell_spec` before augments.
+    Rank only counts upgrades toward the augment milestones (5, 10, 15). Gold: every coin goes
     into every hero's own purse; each hero pays for their own chests.
 - `content/*.ron` — classes, abilities, enemies, zones, and `rules.ron` (tome slots and ranks, item
   copies, shrine and elite-camp timers: what a game mode may set its own way). Read from disk at
