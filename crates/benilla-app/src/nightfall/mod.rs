@@ -9,6 +9,7 @@
 //! (`rogue` or `mage`), `NIGHTFALL_NAME`, `NIGHTFALL_CONTENT` (a folder with the RON files; default
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
+mod atmosphere;
 mod dress;
 mod menu;
 mod run;
@@ -144,6 +145,25 @@ impl Plugin for NightfallPlugin {
                     .run_if(in_state(Phase::Menu)),
             )
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
+            .add_systems(OnExit(GameMode::Nightfall), atmosphere::leave)
+            .add_systems(
+                Update,
+                (
+                    atmosphere::enter,
+                    atmosphere::night,
+                    atmosphere::follow_map,
+                    atmosphere::hero_lights,
+                )
+                    .in_set(NightfallSet),
+            )
+            .add_systems(
+                Update,
+                atmosphere::menu_camera
+                    .in_set(benilla_world::schedule::WorldStage::Input)
+                    .after(crate::player::PlayerControlSet)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Menu)),
+            )
             .add_systems(
                 Update,
                 (
