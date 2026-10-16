@@ -44,6 +44,9 @@ pub(super) struct Sim {
     /// The enemies our hero sees (spec §4.3): worked out here alone or hosting, the host's word
     /// when joined. Sub-project 3 hides the others from the interface.
     pub seen: Vec<u32>,
+    /// Hosting: how many of the world's warnings (content the map could not give, paths that found
+    /// nothing) are in the log already; they keep coming while the run is stepped.
+    warned: usize,
 }
 
 impl Sim {
@@ -63,6 +66,7 @@ impl Sim {
             playing: false,
             stepped: false,
             seen: Vec::new(),
+            warned: 0,
         }
     }
 
@@ -77,7 +81,17 @@ impl Sim {
             playing: false,
             stepped: false,
             seen: Vec::new(),
+            warned: 0,
         }
+    }
+
+    /// Hosting: the world's warnings not yet in the log, once each.
+    fn log_new_warnings(&mut self) {
+        let all = self.world.warnings();
+        for w in &all[self.warned.min(all.len())..] {
+            warn!("nightfall: {w}");
+        }
+        self.warned = all.len();
     }
 
     /// How far between the last two states the present lies, 0..1.
@@ -272,6 +286,7 @@ pub(super) fn step_sim(
     input: Res<LocalInput>,
     mut net: ResMut<Net>,
     mut end: ResMut<EndRun>,
+    terrain: Res<super::terrain::Terrain>,
 ) {
     sim.stepped = false;
     let sim = &mut *sim;
@@ -289,6 +304,13 @@ pub(super) fn step_sim(
         return;
     }
     session::host_receive(&mut net, &mut sim.world);
+    // The host's world learns the map's walls once the bake is done; its enemies come with them.
+    if sim.world.map().is_none() {
+        if let Some(map) = terrain.ready() {
+            sim.world.attach_map(map.clone());
+            sim.log_new_warnings();
+        }
+    }
     let Some(pose) = input.pose else {
         return;
     };
@@ -305,6 +327,8 @@ pub(super) fn step_sim(
         session::host_send(&mut net, &sim.world);
         sim.stepped = true;
     }
+    // Paths that found nothing are warned of during a step, not at the attach.
+    sim.log_new_warnings();
 }
 
 /// Leave Run: alone or hosting, the run ends (a host takes its party back to the lobby); joined,

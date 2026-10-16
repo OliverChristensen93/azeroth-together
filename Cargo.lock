@@ -727,6 +727,7 @@ dependencies = [
  "kira",
  "libc",
  "mint",
+ "nightfall-bake",
  "nightfall-sim",
  "num-bigint",
  "objc2 0.5.2",

@@ -15,6 +15,7 @@ mod grade;
 mod menu;
 mod run;
 mod session;
+mod terrain;
 mod ui;
 mod units;
 mod view;
@@ -166,11 +167,18 @@ impl Plugin for NightfallPlugin {
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
+            .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
             .add_plugins(grade::plugin)
-            .add_systems(Startup, menu::spawn_roots)
+            .add_systems(Startup, (menu::spawn_roots, terrain::spawn_line))
             // Ungated: hides Nightfall's screens whenever another game is up.
             .add_systems(Update, menu::show_roots)
+            // Ungated: hides the bake's line whenever another game is up.
+            .add_systems(Update, terrain::show_line)
+            .add_systems(
+                Update,
+                (terrain::begin, terrain::poll).chain().in_set(NightfallSet),
+            )
             .add_systems(
                 Update,
                 (
