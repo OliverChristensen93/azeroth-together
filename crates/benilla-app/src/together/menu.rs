@@ -93,7 +93,7 @@ pub(super) enum MenuAction {
     PlaySolo,
     HostCoop,
     JoinCoop,
-    Exit,
+    Back,
 }
 
 /// The screen's root; [`build_menu`] fills it once the glue art is in.
@@ -392,7 +392,7 @@ pub(super) fn build_menu(
                 1.0,
             );
         });
-        // `CharacterSelectExitButton`'s corner.
+        // Back to the pick-game screen, where Exit now lives.
         ui.spawn(Node {
             position_type: PositionType::Absolute,
             right: Val::Px(20.0),
@@ -404,8 +404,8 @@ pub(super) fn build_menu(
                 c,
                 &art,
                 f,
-                MenuAction::Exit,
-                "Exit",
+                MenuAction::Back,
+                "Back",
                 120.0,
                 32.0,
                 GlueBtnKind::Small,
@@ -926,7 +926,7 @@ pub(super) fn menu_clicks(
     mut start: ResMut<super::StartRequest>,
     mut net: ResMut<super::session::Net>,
     mut dialog: ResMut<super::lobby::JoinDialog>,
-    mut exit: MessageWriter<AppExit>,
+    mut next_mode: ResMut<NextState<crate::game_pick::GameMode>>,
     mut seed: Local<u64>,
 ) {
     let Some(char_create) = char_create.as_deref() else {
@@ -967,8 +967,11 @@ pub(super) fn menu_clicks(
                 dialog.open = true;
             }
         }
-        MenuAction::Exit => {
-            exit.write(AppExit::Success);
+        MenuAction::Back => {
+            // Hosting or joined: the session ends with the menu.
+            net.leave("");
+            dialog.open = false;
+            next_mode.set(crate::game_pick::GameMode::Pick);
         }
         MenuAction::Randomize => {
             let picks: Vec<(usize, usize)> = all
@@ -1353,12 +1356,18 @@ pub(super) fn apply_ui_scale(
     }
 }
 
-/// The menu's root shows only at the menu.
+/// Whether Survivors' menu shows: in Survivors, at the menu.
+pub(super) fn menu_visible(mode: crate::game_pick::GameMode, phase: Phase) -> bool {
+    mode == crate::game_pick::GameMode::Survivors && phase == Phase::Menu
+}
+
+/// The menu's root shows only at Survivors' menu.
 pub(super) fn show_menu(
+    mode: Res<State<crate::game_pick::GameMode>>,
     phase: Res<State<Phase>>,
     mut roots: Query<&mut Visibility, With<MenuRoot>>,
 ) {
-    let want = if *phase.get() == Phase::Menu {
+    let want = if menu_visible(*mode.get(), *phase.get()) {
         Visibility::Inherited
     } else {
         Visibility::Hidden
@@ -1374,5 +1383,19 @@ pub(super) fn show_menu(
 pub(super) fn clear_preview(mut commands: Commands, heroes: Query<Entity, With<PreviewHero>>) {
     for e in &heroes {
         commands.entity(e).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game_pick::GameMode;
+
+    #[test]
+    fn the_menu_shows_only_in_survivors_at_the_menu() {
+        assert!(menu_visible(GameMode::Survivors, Phase::Menu));
+        assert!(!menu_visible(GameMode::Survivors, Phase::Playing));
+        assert!(!menu_visible(GameMode::Pick, Phase::Menu));
+        assert!(!menu_visible(GameMode::Nightfall, Phase::Menu));
     }
 }

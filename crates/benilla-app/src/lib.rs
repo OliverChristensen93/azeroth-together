@@ -108,6 +108,8 @@ mod sound;
 mod spell;
 /// Warcraft Survivors: the top-down survival mode the `warcraft-survivors` launcher boots.
 mod survivors;
+/// The launcher's pick-game screen and the `GameMode` state each game's systems run under.
+mod game_pick;
 /// Azeroth Together: the co-op survivors mode the `azeroth-together` launcher boots.
 mod together;
 /// The melee swing refusal's latch + 4 s repeat (`SMSG_ATTACKSWING_*`).
@@ -464,6 +466,7 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
         app.add_plugins(survivors::SurvivorsPlugin);
     }
     if together {
+        app.add_plugins(game_pick::GamePickPlugin);
         app.add_plugins(together::TogetherPlugin);
     }
 

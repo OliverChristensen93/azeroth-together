@@ -264,6 +264,11 @@ impl Sim {
 #[derive(Component)]
 pub(super) struct TogetherEntity;
 
+/// Every Survivors system that runs each frame; they run only while Survivors is the game picked,
+/// so its daylight, its map and its menu never fight Nightfall's.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct SurvivorsSet;
+
 /// What the local player sends the next step: the hero's pose as the controller left it, and a
 /// card pick, reroll or skip, each used once.
 #[derive(Resource, Default)]
@@ -286,6 +291,10 @@ impl Plugin for TogetherPlugin {
     fn build(&self, app: &mut App) {
         let playing = || in_state(Phase::Playing).and(resource_exists::<Sim>);
         app.init_state::<Phase>()
+            .configure_sets(
+                Update,
+                SurvivorsSet.run_if(in_state(crate::game_pick::GameMode::Survivors)),
+            )
             .insert_resource(menu::Selection::new(&content()))
             .init_resource::<StartRequest>()
             .init_resource::<EndRun>()
@@ -303,7 +312,6 @@ impl Plugin for TogetherPlugin {
                     daylight,
                     follow_map,
                     menu::apply_ui_scale,
-                    menu::show_menu,
                     menu::fill_icons,
                     levelup::fill_texture_icons,
                     hud::show_hud,
@@ -313,8 +321,10 @@ impl Plugin for TogetherPlugin {
                     ui::tune_ui,
                     session::close_on_exit,
                     party::feed.before(crate::ui_script::UiFeed),
-                ),
+                )
+                    .in_set(SurvivorsSet),
             )
+            .add_systems(Update, menu::show_menu)
             // The menu.
             .add_systems(
                 Update,
@@ -331,16 +341,22 @@ impl Plugin for TogetherPlugin {
                     start_run,
                 )
                     .chain()
+                    .in_set(SurvivorsSet)
                     .run_if(in_state(Phase::Menu)),
             )
             .add_systems(
                 Update,
                 menu::menu_camera
+                    .in_set(SurvivorsSet)
                     .in_set(WorldStage::Input)
                     .after(crate::player::PlayerControlSet)
                     .run_if(in_state(Phase::Menu)),
             )
             .add_systems(OnExit(Phase::Menu), menu::clear_preview)
+            .add_systems(
+                OnExit(crate::game_pick::GameMode::Survivors),
+                menu::clear_preview,
+            )
             // The run.
             .add_systems(
                 Update,
@@ -356,6 +372,7 @@ impl Plugin for TogetherPlugin {
                     view::place,
                 )
                     .chain()
+                    .in_set(SurvivorsSet)
                     .in_set(WorldStage::Input)
                     // The controller has moved the hero this frame before its pose is read.
                     .after(crate::player::PlayerControlSet)
@@ -371,6 +388,7 @@ impl Plugin for TogetherPlugin {
                     back_to_menu,
                 )
                     .chain()
+                    .in_set(SurvivorsSet)
                     .after(WorldStage::Input)
                     .run_if(playing()),
             );
