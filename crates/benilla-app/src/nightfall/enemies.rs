@@ -110,6 +110,7 @@ fn entry_of(kind: usize) -> u32 {
 /// query) find the name by it, and the enemy's id fills the low 24 bits.
 pub(super) fn enemy_guid_serial(entry: u32, id: u32) -> u64 {
     debug_assert!(id < 1 << 24, "enemy id {id} overflows the guid's counter");
+    debug_assert!(entry < 1 << 24, "entry {entry} overflows the guid's entry field");
     u64::from(entry) << 24 | u64::from(id)
 }
 
@@ -317,9 +318,12 @@ mod tests {
 
     #[test]
     fn an_enemys_guid_carries_its_entry_and_is_never_a_heros() {
-        for (entry, id) in [(1, 0), (3, 17), (200, (1 << 24) - 1)] {
+        // The largest entry and id the guid holds are the boundary: neither spills into the other.
+        let top = (1 << 24) - 1;
+        for (entry, id) in [(1, 0), (3, 17), (200, top), (top, top), (top, 0)] {
             let guid = units::unit_guid(UnitKind::Creature { entry }, enemy_guid_serial(entry, id));
             assert_eq!(benilla_protocol::guid::entry(guid), Some(entry));
+            assert_eq!(guid & 0xFF_FFFF, u64::from(id));
             for player in 0..4 {
                 let hero = units::unit_guid(UnitKind::Player, HERO_SERIAL_BASE + player);
                 assert_ne!(guid, hero);

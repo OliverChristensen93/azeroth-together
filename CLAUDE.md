@@ -42,8 +42,9 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   could not give, paths that found no way) are logged as `nightfall: …` as they arise. Each
   player's snapshot carries the enemies near their hero and which they see (`World::seen_by`),
   kept in the client's `Sim::seen`. The client (`nightfall/enemies.rs`) draws each enemy near the
-  hero as a WoW creature whose guid carries its kind's template entry (`enemy_guid_serial`), on
-  the floor the host says it stands on.
+  hero as a WoW creature whose guid carries its kind's template entry (`enemy_guid_serial`); on
+  open ground the client's own terrain height wins, and only an upper storey or a bridge takes
+  the host's floor.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
@@ -137,7 +138,9 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `cargo run -p nightfall-bake --example buildings -- <x> <y> [radius]` lists the buildings around
   a point, for placing enemies. `NIGHTFALL_TRACE_SEEN=1` logs how many enemies the hero sees.
   Enemy groups in `spawns.ron` marked `measure:` still sit near the entry: move each to its place
-  once measured in the game (`NIGHTFALL_TRACE_POS=1`); a group whose point no path reaches is left
-  out and named in the log as `nightfall: spawns.ron: …`.
+  once measured in the game (`NIGHTFALL_TRACE_POS=1`). A group whose point has no floor is left
+  out; where no path reaches, a sentry stays and retries ("no path to its post"), a patrol skips
+  that point, and a wanderer gives up ("finds no ground to walk to"). Each is named in the log as
+  `nightfall: spawns.ron: …`.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
