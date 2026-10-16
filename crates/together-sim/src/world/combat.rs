@@ -13,6 +13,8 @@
 //! the hero's rank and augments, ignoring its cooldown. Mechanics that could set each other off
 //! forever have an internal cooldown ([`ICD`]).
 
+mod talents;
+
 use super::*;
 use crate::augments::{Augment, Milestone};
 use crate::cards::{boost_lines, Boost};
@@ -346,6 +348,7 @@ impl World {
             s.cooldown *= 0.5;
             s.damage *= 1.0 + (0.15 * sp.still).min(0.6);
         }
+        self.talent_spec(h, &mut s);
         s
     }
 
@@ -891,6 +894,8 @@ impl World {
         if st.exposed > 0.0 {
             damage *= 1.2;
         }
+        damage *= self.talent_hit_scale(h, ei, spec);
+        let st = &self.enemies[ei].status;
         let mut chance = spec.crit + 0.02 * f32::from(st.winters);
         if frozen {
             chance += spec.shatter;
@@ -917,6 +922,7 @@ impl World {
         self.enemies[ei].status.last_ability = Some(spec.ability);
         self.damage_enemy(by, spec.ability, id, damage, crit);
         self.afflict(ei, by, spec, damage, from);
+        self.talent_after_hit(h, ei, spec, damage, crit);
         if winters {
             let st = &mut self.enemies[ei].status;
             st.winters = (st.winters + 1).min(5);
@@ -1617,8 +1623,14 @@ impl World {
                     });
                 let mut pool: Vec<(Augment, f32)> = Augment::GENERAL
                     .into_iter()
-                    .filter(|a| a.fits(&spec, &owned.augments))
-                    .map(|a| (a, 1.0 + 0.5 * a.synergy(others) as f32))
+                    .filter(|&a| {
+                        a.fits(&spec, &owned.augments)
+                            || self.talent_unlocks(h, a, &spec, &owned.augments)
+                    })
+                    .map(|a| {
+                        let weight = 1.0 + 0.5 * a.synergy(others) as f32;
+                        (a, weight * self.talent_augment_weight(h, a))
+                    })
                     .collect();
                 let mut cards = Vec::new();
                 while cards.len() < HAND && !pool.is_empty() {

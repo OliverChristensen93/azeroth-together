@@ -396,6 +396,9 @@ pub struct Hero {
     /// What its spells' augments keep track of: a shield, streaks, charges, timers.
     #[serde(default)]
     pub spell: HeroSpells,
+    /// What its talents from the web between runs give ([`World::apply_talents`]).
+    #[serde(default)]
+    pub talents: crate::talents::HeroTalents,
 }
 
 impl Hero {
@@ -732,6 +735,7 @@ impl World {
             damage_done: 0.0,
             damage_by: Vec::new(),
             spell: HeroSpells::default(),
+            talents: Default::default(),
         });
         Ok(())
     }
@@ -1591,6 +1595,7 @@ impl World {
         let Some(h) = self.heroes.iter().position(|x| x.player == by) else {
             return;
         };
+        self.talent_on_kill(h);
         let hero = &mut self.heroes[h];
         if hero.alive {
             let heal = FANG_HEAL * f32::from(hero.stacks(Item::VampiricFang));
@@ -1765,7 +1770,7 @@ impl World {
             let i = if treasure {
                 self.lucky_item(&options, luck)
             } else {
-                self.rng.index(options.len())
+                self.offer_index(h, &options)
             };
             let mut kind = options.swap_remove(i);
             let rolled = Rarity::roll(&mut self.rng, luck);
