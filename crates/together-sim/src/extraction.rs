@@ -462,6 +462,9 @@ pub struct Extraction {
 pub struct ExitState {
     /// Seconds into the run its next flight departs: the map's timetable, as the host tuned it.
     pub departs: f32,
+    /// Seconds each flight waits on the ground before it departs, as the host tuned it (a guest
+    /// plays the content as shipped, so it reads this, not the map's).
+    pub window: f32,
     /// The next flight is on the ground, boarding.
     pub boarding: bool,
     /// Whether the next departure draws an ambush has been rolled; it does; the party has been
@@ -473,9 +476,9 @@ pub struct ExitState {
 }
 
 impl ExitState {
-    /// Seconds until the next flight lands at `def`'s exit; zero or less once it is down.
-    pub fn lands_in(&self, def: &ExitDef, now: f32) -> f32 {
-        self.departs - def.window - now
+    /// Seconds until the next flight lands; zero or less once it is down.
+    pub fn lands_in(&self, now: f32) -> f32 {
+        self.departs - self.window - now
     }
 }
 
@@ -495,6 +498,7 @@ impl Extraction {
                 .iter()
                 .map(|e| ExitState {
                     departs: e.first,
+                    window: e.window,
                     ..ExitState::default()
                 })
                 .collect(),

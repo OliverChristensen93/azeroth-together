@@ -325,7 +325,7 @@ fn extraction_status(world: &together_sim::World, hero: &together_sim::Hero) -> 
     for (i, (exit, state)) in def.exits.iter().zip(&x.exits).enumerate() {
         let to = def.exit_pos(i) - hero.pos;
         let way = format!("{:.0} yd {}", to.length(), compass(to));
-        let lands = state.lands_in(exit, world.elapsed);
+        let lands = state.lands_in(world.elapsed);
         let mut line = if lands <= 0.0 {
             let left = (state.departs - world.elapsed).max(0.0);
             format!("{}: flight boarding, leaves in {}   {way}", exit.name, clock(left))

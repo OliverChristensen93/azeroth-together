@@ -499,7 +499,7 @@ impl World {
         };
         for (i, (exit, state)) in def.exits.iter().zip(x.exits.iter_mut()).enumerate() {
             let tag = i as u8;
-            let lands = state.lands_in(exit, now);
+            let lands = state.lands_in(now);
             if state.ambush && !state.warned && lands <= def.ambush.warn {
                 state.warned = true;
                 events.push(Event::AmbushWarned { exit: tag });
@@ -534,6 +534,7 @@ impl World {
             events.push(Event::FlightDeparted { exit: tag });
             *state = ExitState {
                 departs: state.departs + exit.every,
+                window: state.window,
                 ..ExitState::default()
             };
         }
@@ -1166,6 +1167,26 @@ pub(super) mod tests {
         assert!(!state(&w).ambushers.is_empty());
         secs(&mut w, 6.0);
         assert!(state(&w).ambushers.is_empty());
+    }
+
+    #[test]
+    fn a_guest_counts_down_to_the_landing_the_host_tuned() {
+        let base = test_content("");
+        let tuned = base.tuned(&crate::content::Tuning {
+            flight: 2.0,
+            ..Default::default()
+        });
+        let mut host = World::new(Arc::new(tuned.clone()), "goldshire", 7).unwrap();
+        host.add_hero(0, "mage").unwrap();
+        hush(&mut host);
+        secs(&mut host, 1.0);
+        // The guest plays the content as shipped; the host's tuning reaches it only by snapshot.
+        let mut guest = World::new(Arc::new(base), "goldshire", 7).unwrap();
+        guest.add_hero(0, "mage").unwrap();
+        guest.apply_snapshot(host.snapshot(), host.drain_events());
+        let on_host = state(&host).exits[0].lands_in(host.elapsed);
+        let on_guest = state(&guest).exits[0].lands_in(guest.elapsed);
+        assert!((on_host - on_guest).abs() < 0.01, "{on_host} vs {on_guest}");
     }
 
     #[test]

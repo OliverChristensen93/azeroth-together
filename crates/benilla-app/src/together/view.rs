@@ -812,7 +812,7 @@ fn sync_extraction(
     }
     for (i, state) in x.exits.iter().enumerate() {
         let at = def.exit_pos(i);
-        let lands = state.lands_in(&def.exits[i], world.elapsed);
+        let lands = state.lands_in(world.elapsed);
         match (lands <= BEAM_LEAD, view.beams[i]) {
             (true, None) => {
                 let serial = EXTRACTION_SERIAL_BASE + 2 + 2 * i as u64;
