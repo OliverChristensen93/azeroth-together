@@ -413,7 +413,9 @@ impl Unique {
             ],
             Unique::MantleOfTheBlackwingCabal => &[(Stat::Damage, 0.5), (Stat::Crit, 0.5)],
             Unique::GlacialCloak => &[(Stat::Armor, 0.4), (Stat::Area, 0.3), (Stat::Health, 0.3)],
-            Unique::FrostfireSandals => &[(Stat::Speed, 0.5), (Stat::Crit, 0.3), (Stat::Damage, 0.2)],
+            Unique::FrostfireSandals => {
+                &[(Stat::Speed, 0.5), (Stat::Crit, 0.3), (Stat::Damage, 0.2)]
+            }
             Unique::GlovesOfTheHypnoticFlame => &[
                 (Stat::Damage, 0.4),
                 (Stat::Crit, 0.3),
@@ -692,16 +694,37 @@ fn armor_noun(slot: Slot, armor: Armor) -> &'static str {
             "Hood", "Mantle", "Cloak", "Robe", "Cuffs", "Gloves", "Cord", "Pants", "Sandals",
         ],
         Armor::Leather => [
-            "Cap", "Shoulderpads", "Cloak", "Tunic", "Bracers", "Gloves", "Belt", "Leggings",
+            "Cap",
+            "Shoulderpads",
+            "Cloak",
+            "Tunic",
+            "Bracers",
+            "Gloves",
+            "Belt",
+            "Leggings",
             "Boots",
         ],
         Armor::Mail => [
-            "Coif", "Spaulders", "Cape", "Hauberk", "Wristguards", "Gauntlets", "Girdle",
-            "Leggings", "Greaves",
+            "Coif",
+            "Spaulders",
+            "Cape",
+            "Hauberk",
+            "Wristguards",
+            "Gauntlets",
+            "Girdle",
+            "Leggings",
+            "Greaves",
         ],
         Armor::Plate => [
-            "Helm", "Pauldrons", "Cape", "Breastplate", "Bracers", "Gauntlets", "Girdle",
-            "Legplates", "Sabatons",
+            "Helm",
+            "Pauldrons",
+            "Cape",
+            "Breastplate",
+            "Bracers",
+            "Gauntlets",
+            "Girdle",
+            "Legplates",
+            "Sabatons",
         ],
     };
     row.get(slot.index()).copied().unwrap_or("Charm")
@@ -978,7 +1001,10 @@ mod tests {
         let other = GearPiece { seed: 99, ..a };
         // Different seeds usually differ somewhere.
         let differs = (0..20u32).any(|s| {
-            let b = GearPiece { seed: s * 7919, ..a };
+            let b = GearPiece {
+                seed: s * 7919,
+                ..a
+            };
             b.stats() != a.stats()
         });
         assert!(differs, "{other:?}");
@@ -1121,7 +1147,10 @@ mod tests {
     #[test]
     fn stat_lines_read_with_tenths() {
         assert_eq!(describe_line(Stat::Damage, 0.024), "+2.4% damage");
-        assert_eq!(describe_line(Stat::Crit, 0.006), "+0.6% critical strike chance");
+        assert_eq!(
+            describe_line(Stat::Crit, 0.006),
+            "+0.6% critical strike chance"
+        );
         assert_eq!(describe_line(Stat::Regen, 0.15), "+0.15 health a second");
     }
 }

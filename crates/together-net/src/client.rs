@@ -163,6 +163,7 @@ mod tests {
             class: "shaman".into(),
             race: 2,
             sex: 0,
+            gear: Vec::new(),
         }
     }
 

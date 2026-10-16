@@ -76,7 +76,8 @@ impl Locker {
 
     /// Put newly found pieces in the stash, unseen, and keep it within [`STASH_MAX`].
     pub fn add(&mut self, found: &[GearPiece]) {
-        self.stash.extend(found.iter().copied().filter(GearPiece::valid));
+        self.stash
+            .extend(found.iter().copied().filter(GearPiece::valid));
         self.unseen = self.unseen.saturating_add(found.len() as u32);
         while self.stash.len() > STASH_MAX {
             // The weakest, oldest first: a unique is never the one to go while anything else
@@ -170,7 +171,10 @@ mod tests {
     #[test]
     fn equipping_swaps_with_what_was_worn() {
         let mut l = Locker::default();
-        l.add(&[piece(Slot::Head, Rarity::Common), piece(Slot::Head, Rarity::Rare)]);
+        l.add(&[
+            piece(Slot::Head, Rarity::Common),
+            piece(Slot::Head, Rarity::Rare),
+        ]);
         assert!(l.equip(0));
         assert_eq!(l.in_slot(Slot::Head).unwrap().rarity, Rarity::Common);
         assert_eq!(l.stash.len(), 1);
@@ -207,9 +211,17 @@ mod tests {
         a.shared = true;
         assert!(a.locker("mage").stash.is_empty());
         a.add_found("warrior", &[piece(Slot::Feet, Rarity::Common)]);
-        assert_eq!(a.locker("mage").stash.len(), 1, "shared: every class sees it");
+        assert_eq!(
+            a.locker("mage").stash.len(),
+            1,
+            "shared: every class sees it"
+        );
         a.shared = false;
-        assert_eq!(a.locker("mage").stash[0].slot, Slot::Head, "nothing was lost");
+        assert_eq!(
+            a.locker("mage").stash[0].slot,
+            Slot::Head,
+            "nothing was lost"
+        );
     }
 
     #[test]
@@ -233,7 +245,10 @@ mod tests {
         l.unseen = 0;
         l.add(&[piece(Slot::Chest, Rarity::Common)]);
         assert_eq!(l.stash.len(), STASH_MAX);
-        assert!(l.stash.iter().any(|p| p.unique.is_some()), "the unique stays");
+        assert!(
+            l.stash.iter().any(|p| p.unique.is_some()),
+            "the unique stays"
+        );
         assert!(l.is_new(l.stash.len() - 1) && !l.is_new(0));
     }
 }

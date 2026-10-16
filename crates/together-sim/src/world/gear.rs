@@ -4,8 +4,10 @@
 
 use super::{Event, PlayerId, World};
 use crate::content::AbilityDef;
-use crate::gear::{item_level, roll_drop, Armor, GearPiece, HeroGear, Slot, Unique, ATIESH_PULL,
-    ATIESH_REACH, BOSS_DROP, ELITE_DROP};
+use crate::gear::{
+    item_level, roll_drop, Armor, GearPiece, HeroGear, Slot, Unique, ATIESH_PULL, ATIESH_REACH,
+    BOSS_DROP, ELITE_DROP,
+};
 use crate::math::V2;
 use crate::spell::CastSpec;
 use crate::stats::Stat;
@@ -145,7 +147,11 @@ impl World {
             if d > ATIESH_REACH || d <= 1.5 {
                 continue;
             }
-            let pull = if e.elite { ATIESH_PULL * 0.5 } else { ATIESH_PULL };
+            let pull = if e.elite {
+                ATIESH_PULL * 0.5
+            } else {
+                ATIESH_PULL
+            };
             e.pos = center + off.normalize_or_zero() * (d - pull).max(1.5);
         }
     }
@@ -226,10 +232,13 @@ mod tests {
         assert_ne!(w.heroes[0].stats, before);
         assert!(w.gear_price(0, Slot::Head).is_none(), "on already");
         assert!(!w.switch_on(0, Slot::Head));
-        assert!(w
-            .drain_events()
-            .iter()
-            .any(|e| matches!(e, Event::GearOn { player: 0, slot: Slot::Head })));
+        assert!(w.drain_events().iter().any(|e| matches!(
+            e,
+            Event::GearOn {
+                player: 0,
+                slot: Slot::Head
+            }
+        )));
     }
 
     #[test]
@@ -237,6 +246,12 @@ mod tests {
         let mut w = world();
         w.equip(0, &[hood()]);
         w.heroes[0].gold = 1000;
+        // A card screen is up: the run waits, but the purse can still be spent.
+        w.heroes[0].offers.push(crate::world::Offer {
+            cards: Vec::new(),
+            source: crate::world::Source::LevelUp,
+        });
+        assert!(w.paused());
         w.set_input(
             0,
             PlayerInput {
@@ -246,10 +261,50 @@ mod tests {
         );
         w.step();
         assert!(w.heroes[0].gear.worn[0].on);
+        w.heroes[0].offers.clear();
         // Each switch is used once: a second piece is not switched on by the same input.
         w.equip(0, &[hood()]);
         w.step();
         assert!(!w.heroes[0].gear.worn[0].on);
+    }
+
+    #[test]
+    fn a_guests_switch_survives_a_newer_movement_input() {
+        // A co-op guest's inputs arrive faster than steps: the switch must not be lost.
+        let mut w = world();
+        w.equip(0, &[hood()]);
+        w.heroes[0].gold = 1000;
+        w.queue_input(
+            0,
+            PlayerInput {
+                gear_on: Some(Slot::Head.index() as u8),
+                ..Default::default()
+            },
+        );
+        w.queue_input(
+            0,
+            PlayerInput {
+                move_dir: V2::new(1.0, 0.0),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert!(w.heroes[0].gear.worn[0].on);
+    }
+
+    #[test]
+    fn a_mirror_sees_what_each_hero_wears_and_found() {
+        let mut host = world();
+        host.equip(0, &[hood(), GearPiece::unique(Unique::Atiesh, 30, 2)]);
+        host.switch_all_on(0);
+        host.drop_gear(true);
+        host.drop_gear(true);
+        host.drop_gear(true);
+        let mut mirror = world();
+        mirror.apply_snapshot(host.snapshot(), host.drain_events());
+        let (h, m) = (&host.heroes[0].gear, &mirror.heroes[0].gear);
+        assert_eq!(m, h);
+        assert_eq!(m.active().count(), 2);
     }
 
     #[test]

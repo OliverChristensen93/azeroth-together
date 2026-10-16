@@ -16,19 +16,20 @@ mod invite;
 mod wire;
 
 use serde::{Deserialize, Serialize};
-use together_sim::{Event, PlayerId, PlayerInput, Snapshot};
+use together_sim::{Event, GearPiece, PlayerId, PlayerInput, Snapshot};
 
 pub use client::{Client, ClientEvent};
 pub use host::{ConnId, Host, HostEvent, Invite};
 pub use invite::{code_for, new_host_key, parse_code};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// The port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;
 
-/// The hero a player brings: their name and pick.
+/// The hero a player brings: their name and pick, and the equipment it wears into the run
+/// (from the player's own stash; the host's world checks it and starts it dormant).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeroPick {
     pub name: String,
@@ -36,6 +37,8 @@ pub struct HeroPick {
     pub class: String,
     pub race: u8,
     pub sex: u8,
+    #[serde(default)]
+    pub gear: Vec<GearPiece>,
 }
 
 /// A player in the host's lobby.
