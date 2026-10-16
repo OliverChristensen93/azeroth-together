@@ -139,6 +139,8 @@ fn burning(e: &mut Enemy, dps: f32) {
         tick: 1.0,
         every: 1.0,
         contagion: false,
+        tags: Tags::default(),
+        leech: 0.0,
     });
 }
 

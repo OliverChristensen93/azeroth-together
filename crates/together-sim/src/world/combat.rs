@@ -17,8 +17,8 @@ use super::*;
 use crate::augments::{Augment, Milestone};
 use crate::cards::{boost_lines, Boost};
 use crate::spell::{
-    control_secs, CastSpec, Cone, Tag, Tags, Targeting, BURN_SECS, CHILL_SECS, CHILL_SLOW,
-    CONE_HALF_ANGLE, FREEZE_SECS,
+    control_secs, CastSpec, Cone, Tag, Tags, Targeting, CHILL_SECS, CHILL_SLOW, CONE_HALF_ANGLE,
+    FREEZE_SECS,
 };
 
 /// Seconds between the casts of a spell's charges.
@@ -101,7 +101,7 @@ pub struct Status {
     frozen_by: Option<PlayerId>,
     /// It stays Chilled when its Freeze thaws.
     permafrost: bool,
-    burns: Vec<Burn>,
+    pub(super) burns: Vec<Burn>,
     /// Winter's Chill: stacks of +2% crit chance taken, and seconds before they fade.
     winters: u8,
     winters_time: f32,
@@ -109,7 +109,9 @@ pub struct Status {
     /// Inside a Whiteout: takes more from every source while above 0.
     exposed: f32,
     /// The spell that hit it last, for Inferno.
-    last_ability: Option<usize>,
+    pub(super) last_ability: Option<usize>,
+    /// The other classes' effects on it: Fear, Root, Weakened, Marks, Sunder.
+    pub fx: super::classes::StatusFx,
 }
 
 /// A status's flags as a snapshot carries them, for a client to show.
@@ -158,6 +160,11 @@ impl Status {
         }
     }
 
+    /// Whether one of `by`'s damage over time effects tagged `tag` is on it.
+    pub(super) fn has_dot(&self, by: PlayerId, tag: Tag) -> bool {
+        self.burns.iter().any(|b| b.by == by && b.tags.has(tag))
+    }
+
     /// The damage its burns would still deal.
     fn burn_left(&self) -> f32 {
         self.burns
@@ -167,18 +174,22 @@ impl Status {
     }
 }
 
-/// Fire damage over time from one spell of one hero.
+/// Damage over time from one spell of one hero: Burning, a Bleed, a Poison.
 #[derive(Clone, Debug, PartialEq)]
-struct Burn {
-    by: PlayerId,
-    ability: usize,
+pub(super) struct Burn {
+    pub by: PlayerId,
+    pub ability: usize,
     /// Damage a tick, every `every` seconds while `left` lasts.
-    dps: f32,
-    left: f32,
+    pub dps: f32,
+    pub left: f32,
     /// Seconds to its next tick, and between ticks.
-    tick: f32,
-    every: f32,
-    contagion: bool,
+    pub tick: f32,
+    pub every: f32,
+    pub contagion: bool,
+    /// The tags of the spell that left it (a Bleed, a Poison), and the share of each tick that
+    /// heals its caster.
+    pub tags: Tags,
+    pub leech: f32,
 }
 
 /// A Living Bomb, waiting to go off.
@@ -194,12 +205,14 @@ struct Bomb {
 
 /// A lasting area on the ground: a Blizzard, Flamestrike's burning ground, a Frozen Orb.
 #[derive(Clone, Debug)]
-pub(super) struct Ground {
-    by: PlayerId,
-    spec: CastSpec,
+pub struct Ground {
+    pub by: PlayerId,
+    pub spec: CastSpec,
     pub pos: V2,
-    left: f32,
+    pub left: f32,
     tick: f32,
+    /// A trap still waiting for an enemy to step in.
+    armed: bool,
     /// Flamestrike's burning ground, dealing a share of the nova each second.
     burning: bool,
     /// A Frozen Orb's travel, yards per second.
@@ -235,14 +248,17 @@ pub struct HeroSpells {
     pub phoenix: f32,
     /// Internal cooldowns of augments that cast spells.
     pub icds: Vec<(Augment, f32)>,
+    /// The other classes' state: wards, buffs, combo points, the defensive button.
+    #[serde(default)]
+    pub fx: super::classes::HeroFx,
 }
 
 impl HeroSpells {
-    fn ready(&self, a: Augment) -> bool {
+    pub(super) fn ready(&self, a: Augment) -> bool {
         !self.icds.iter().any(|&(x, t)| x == a && t > 0.0)
     }
 
-    fn spend(&mut self, a: Augment, secs: f32) {
+    pub(super) fn spend(&mut self, a: Augment, secs: f32) {
         match self.icds.iter_mut().find(|(x, _)| *x == a) {
             Some((_, t)) => *t = secs,
             None => self.icds.push((a, secs)),
@@ -298,7 +314,7 @@ impl World {
     }
 
     /// Whether `player`'s spell `ability` holds augment `a`.
-    fn spell_has(&self, player: PlayerId, ability: usize, a: Augment) -> bool {
+    pub(super) fn spell_has(&self, player: PlayerId, ability: usize, a: Augment) -> bool {
         self.hero(player).is_some_and(|hero| {
             hero.abilities
                 .iter()
@@ -350,6 +366,7 @@ impl World {
             s.cooldown *= 0.5;
             s.damage *= 1.0 + (0.15 * sp.still).min(0.6);
         }
+        self.class_spec(h, owned, &mut s);
         s
     }
 
@@ -371,6 +388,7 @@ impl World {
                         .iter()
                         .any(|x| matches!(x, Augment::Frostfire | Augment::Spellfrost));
                 let rate = if floes && frost { 1.0 / 0.75 } else { 1.0 };
+                let rate = rate * self.cast_rate(h, &owned);
                 let o = &mut self.heroes[h].abilities[a];
                 o.cd -= DT * rate;
                 if o.cd > 0.0 {
@@ -382,6 +400,7 @@ impl World {
                     spec.damage *= 3.0;
                     spec.freeze = spec.freeze.max(FREEZE_SECS);
                 }
+                self.before_cast(h, &owned, &mut spec);
                 let fired = self.fire(h, &spec, Shot::plain());
                 let o = &mut self.heroes[h].abilities[a];
                 if !fired {
@@ -389,6 +408,8 @@ impl World {
                     o.cd = 0.0;
                     continue;
                 }
+                self.after_cast(h, &owned, &spec);
+                let o = &mut self.heroes[h].abilities[a];
                 o.casts += 1;
                 o.burst += 1;
                 if o.burst < u32::from(spec.charges) {
@@ -425,6 +446,10 @@ impl World {
         let facing = shot.facing.unwrap_or(hero.facing);
         let def = &self.content.abilities[spec.ability];
         let kind = def.kind;
+        if spec.fx.skip {
+            // A capstone gave the cast up for something else (Demonic Sacrifice).
+            return true;
+        }
         let mut spec = spec.clone();
         spec.damage *= shot.scale;
         let potent = spec.tags.has(Tag::Arcane) && hero.spell.potency;
@@ -440,6 +465,8 @@ impl World {
         }
         let fired = match kind {
             AbilityKind::Shield => self.raise_shield(h, &spec),
+            AbilityKind::Ward => self.bank_charge(h, &spec),
+            AbilityKind::Buff => self.buff(h, &spec),
             AbilityKind::Ground => self.place_ground(h, &spec, origin, facing),
             AbilityKind::Nova => self.nova(h, &spec, origin, facing, shot),
             AbilityKind::Bolt | AbilityKind::Strike => {
@@ -488,7 +515,7 @@ impl World {
 
     /// The `count` enemies nearest `from` within `range`, elites and bosses first when
     /// `elites_first`, never `exclude`; nearest first.
-    fn pick_targets(
+    pub(super) fn pick_targets(
         &self,
         from: V2,
         range: f32,
@@ -513,7 +540,7 @@ impl World {
 
     /// The middle of the thickest crowd within `range` of `from`, judged by how many enemies stand
     /// within `radius` of each; `None` when nobody is in range.
-    fn densest(&self, from: V2, range: f32, radius: f32) -> Option<V2> {
+    pub(super) fn densest(&self, from: V2, range: f32, radius: f32) -> Option<V2> {
         let near: Vec<V2> = self
             .enemies
             .iter()
@@ -531,13 +558,32 @@ impl World {
     /// Missiles and strikes: each target gets its volley, landing after the flight.
     fn launch(&mut self, h: usize, spec: &CastSpec, origin: V2, shot: Shot, bolt: bool) -> bool {
         let elites_first = spec.targeting == Targeting::ElitesFirst;
-        let targets = self.pick_targets(
-            origin,
-            spec.range,
-            spec.count as usize,
-            elites_first,
-            shot.exclude,
-        );
+        let targets = if spec.targeting == Targeting::Weakest {
+            self.pick_weakest(origin, spec.range, spec.count as usize, shot.exclude)
+        } else if spec.fx.fresh {
+            self.pick_fresh(h, spec, origin)
+        } else if spec.targeting == Targeting::Ahead {
+            let facing = shot.facing.unwrap_or(self.heroes[h].facing);
+            let mut cone = spec.clone();
+            cone.radius = spec.range;
+            let mut near: Vec<(u32, f32)> = self
+                .enemies
+                .iter()
+                .filter(|e| e.hp > 0.0 && in_area(&cone, origin, facing, e.pos))
+                .map(|e| (e.id, origin.distance(e.pos)))
+                .collect();
+            near.sort_by(|a, b| a.1.total_cmp(&b.1));
+            near.truncate(spec.count as usize);
+            near
+        } else {
+            self.pick_targets(
+                origin,
+                spec.range,
+                spec.count as usize,
+                elites_first,
+                shot.exclude,
+            )
+        };
         if targets.is_empty() {
             return false;
         }
@@ -597,6 +643,9 @@ impl World {
             let crit = self
                 .strike(hit.caster, &hit.spec, hit.target, 1.0, hit.from, Crit::Roll)
                 .unwrap_or(false);
+            if hit.primary && hit.spec.fx.jumps > 0 {
+                self.chain(hit.caster, &hit.spec, hit.target, at);
+            }
             if hit.spec.radius > 0.0 {
                 let burst = if crit
                     && self.spell_has(hit.caster, hit.spec.ability, Augment::CriticalMass)
@@ -647,11 +696,17 @@ impl World {
                 None => return false,
             }
         }
-        if self.spell_has(player, spec.ability, Augment::Implosion) {
+        let implosion = self.spell_has(player, spec.ability, Augment::Implosion);
+        if implosion || spec.fx.pull > 0.0 {
+            let reach = if implosion {
+                IMPLOSION_REACH
+            } else {
+                spec.fx.pull
+            };
             for e in self.enemies.iter_mut().filter(|e| !e.boss) {
                 let off = e.pos - center;
                 let d = off.length();
-                if d <= IMPLOSION_REACH && d > IMPLOSION_CLOSE {
+                if d <= reach && d > IMPLOSION_CLOSE {
                     e.pos = center + off.normalize_or_zero() * IMPLOSION_CLOSE;
                 }
             }
@@ -660,6 +715,7 @@ impl World {
             .enemies
             .iter()
             .filter(|e| e.hp > 0.0 && in_area(spec, center, facing, e.pos))
+            .filter(|e| !spec.fx.only_dotted || e.status.burning())
             .map(|e| (e.id, center.distance(e.pos)))
             .collect();
         if hit.is_empty() {
@@ -686,6 +742,8 @@ impl World {
             }
         }
         let count = hit.len();
+        let ids: Vec<u32> = hit.iter().map(|&(id, _)| id).collect();
+        self.after_nova(h, spec, center, &ids);
         if count >= 10
             && self.spell_has(player, spec.ability, Augment::ColdSnap)
             && self.heroes[h].spell.ready(Augment::ColdSnap)
@@ -709,7 +767,8 @@ impl World {
                 spec: spec.clone(),
                 pos: center,
                 left: spec.ground,
-                tick: 1.0,
+                tick: 1.0 / spec.tick_rate.max(0.1),
+                armed: false,
                 burning: true,
                 vel: V2::ZERO,
                 final_gale: false,
@@ -773,6 +832,8 @@ impl World {
         }
         let pos = if spec.follows || orb {
             origin
+        } else if let Some(p) = self.ground_spot(h, spec, origin) {
+            p
         } else {
             match self.densest(origin, spec.range, spec.radius) {
                 Some(p) => p,
@@ -784,8 +845,13 @@ impl World {
             by: player,
             spec: spec.clone(),
             pos,
-            left: spec.ground,
+            left: if spec.fx.trap {
+                Self::trap_wait()
+            } else {
+                spec.ground
+            },
             tick: 0.0,
+            armed: spec.fx.trap,
             burning: false,
             vel: if orb {
                 facing.normalize_or_zero() * ORB_SPEED
@@ -797,6 +863,44 @@ impl World {
             visual,
         });
         true
+    }
+
+    /// A plain lasting area of `spec` by `player` at `pos` for `secs`, hitting what stands in it on
+    /// its beat: a capstone's cloud (Toxic Cloud, Smoke Bomb).
+    pub(super) fn add_ground(&mut self, player: PlayerId, spec: &CastSpec, pos: V2, secs: f32) {
+        let visual = self.content.abilities[spec.ability].visual;
+        self.grounds.push(Ground {
+            by: player,
+            spec: spec.clone(),
+            pos,
+            left: secs,
+            tick: 0.0,
+            armed: false,
+            burning: false,
+            vel: V2::ZERO,
+            final_gale: false,
+            whiteout: false,
+            visual,
+        });
+    }
+
+    /// An armed trap of `spec` by `player` at `pos`, waiting for an enemy (a capstone's extra
+    /// trap).
+    pub(super) fn add_trap(&mut self, player: PlayerId, spec: &CastSpec, pos: V2) {
+        let visual = self.content.abilities[spec.ability].visual;
+        self.grounds.push(Ground {
+            by: player,
+            spec: spec.clone(),
+            pos,
+            left: Self::trap_wait(),
+            tick: 0.0,
+            armed: true,
+            burning: false,
+            vel: V2::ZERO,
+            final_gale: false,
+            whiteout: false,
+            visual,
+        });
     }
 
     /// A shield on hero `h`, ending any shield it still had.
@@ -896,13 +1000,14 @@ impl World {
         if frozen {
             damage *= 1.0 + spec.vs_frozen;
         }
-        if e.hp < 0.3 * e.max_hp {
+        if e.hp < spec.fx.execute_at * e.max_hp {
             damage *= 1.0 + spec.execute;
         }
+        damage *= self.hit_scale(h, ei, spec);
         if st.exposed > 0.0 {
             damage *= 1.2;
         }
-        let mut chance = spec.crit + 0.02 * f32::from(st.winters);
+        let mut chance = spec.crit + 0.02 * f32::from(st.winters) + self.class_crit(h, ei, spec);
         if frozen {
             chance += spec.shatter;
             if shatterbolt {
@@ -926,8 +1031,17 @@ impl World {
             damage += left * 2.0;
         }
         self.enemies[ei].status.last_ability = Some(spec.ability);
-        self.damage_enemy(by, spec.ability, id, damage, crit);
+        // A damage over time spell that is not Direct has no hit: it all comes over time.
+        let direct = spec.tags.has(Tag::Direct) || spec.burn <= 0.0;
+        if direct {
+            self.damage_enemy(by, spec.ability, id, damage, crit);
+        }
         self.afflict(ei, by, spec, damage, from);
+        self.afflict_fx(ei, spec, from);
+        self.on_strike(h, ei, id, spec, damage, crit, scale);
+        let Some(ei) = self.enemies.iter().position(|e| e.id == id) else {
+            return Some(crit);
+        };
         if winters {
             let st = &mut self.enemies[ei].status;
             st.winters = (st.winters + 1).min(5);
@@ -973,6 +1087,7 @@ impl World {
     /// The status effects one hit of `spec` leaves on enemy `ei`.
     fn afflict(&mut self, ei: usize, by: PlayerId, spec: &CastSpec, damage: f32, from: V2) {
         let freeze_roll = spec.chill > 0.0 && self.rng.f32() < spec.freeze_chance;
+        let dot_leech = self.dot_leech(by, spec);
         let e = &mut self.enemies[ei];
         let (elite, boss) = (e.elite, e.boss);
         let st = &mut e.status;
@@ -993,29 +1108,40 @@ impl World {
             st.permafrost |= spec.permafrost;
         }
         if spec.stun > 0.0 && !boss {
+            let elite = elite && !spec.fx.full_control;
             st.stun = st.stun.max(control_secs(spec.stun, elite, false));
         }
         if spec.burn > 0.0 {
             // A faster burn (Quickened) ticks sooner for the same total; a faster tick rate
             // (an upgrade) adds ticks of the same size.
             let speed = spec.dot_speed.max(0.1);
+            let secs = spec.fx.dot_time;
             let every = 1.0 / (spec.tick_rate.max(0.1) * speed);
             let burn = Burn {
                 by,
                 ability: spec.ability,
-                dps: damage * spec.burn * spec.dot_mult / BURN_SECS,
-                left: BURN_SECS * spec.dot_secs / speed,
+                dps: damage * spec.burn * spec.dot_mult / secs,
+                left: secs * spec.dot_secs / speed,
                 tick: every,
                 every,
                 contagion: spec.contagion,
+                tags: spec.tags,
+                leech: spec.fx.leech + dot_leech,
             };
-            match st
+            let mine = st
+                .burns
+                .iter()
+                .filter(|b| b.by == by && b.ability == spec.ability)
+                .count();
+            if mine < usize::from(spec.fx.stacks.max(1)) {
+                st.burns.push(burn);
+            } else if let Some(old) = st
                 .burns
                 .iter_mut()
-                .find(|b| b.by == by && b.ability == spec.ability)
+                .filter(|b| b.by == by && b.ability == spec.ability)
+                .min_by(|a, b| a.left.total_cmp(&b.left))
             {
-                Some(old) => *old = burn,
-                None => st.burns.push(burn),
+                *old = burn;
             }
         }
         if spec.knockback > 0.0 && !boss {
@@ -1145,6 +1271,7 @@ impl World {
     /// Each step's spell upkeep on the heroes: standing still, Blazing Speed and Frozen Core
     /// fading, internal cooldowns, the shield running out, and Missile Storm's beat.
     pub(super) fn tend_spells(&mut self) {
+        self.tend_heroes_fx();
         for h in 0..self.heroes.len() {
             if !self.heroes[h].alive {
                 continue;
@@ -1203,7 +1330,8 @@ impl World {
     /// Each step's status upkeep on the enemies: control effects running out, burns ticking,
     /// Living Bombs going off, Winter's Chill fading.
     pub(super) fn tend_statuses(&mut self) {
-        let mut ticks: Vec<(PlayerId, usize, u32, f32)> = Vec::new();
+        self.tend_status_fx();
+        let mut ticks: Vec<(PlayerId, usize, u32, f32, f32, f32)> = Vec::new();
         let mut blasts: Vec<(V2, u32, Bomb)> = Vec::new();
         for e in &mut self.enemies {
             let st = &mut e.status;
@@ -1238,7 +1366,7 @@ impl World {
                     let share = (b.left / b.every).min(1.0);
                     b.tick += b.every;
                     b.left -= b.every;
-                    ticks.push((b.by, b.ability, e.id, b.dps * share));
+                    ticks.push((b.by, b.ability, e.id, b.dps * share, b.leech, b.left));
                 }
             }
             if let Some(bomb) = &mut st.bomb {
@@ -1249,8 +1377,14 @@ impl World {
                 }
             }
         }
-        for (by, ability, id, dps) in ticks {
+        for (by, ability, id, dps, leech, left) in ticks {
             self.damage_enemy(by, ability, id, dps, false);
+            if leech > 0.0 {
+                if let Some(h) = self.hero_index(by) {
+                    self.leech(h, dps * leech, 0.0);
+                }
+            }
+            self.class_tick(by, ability, id, dps, left);
         }
         for (pos, source, bomb) in blasts {
             self.detonate(pos, source, bomb);
@@ -1306,6 +1440,43 @@ impl World {
             if g.spec.follows {
                 pos = self.heroes[h].pos;
             }
+            let pos = self.ground_pos(&g, pos);
+            if g.armed {
+                // A trap waits for an enemy to step in, then goes off and starts its own clock.
+                if self.trap_sprung(&g.spec, pos) {
+                    let ground = &mut self.grounds[i];
+                    ground.armed = false;
+                    ground.left = g.spec.ground.max(DT);
+                    ground.tick = 1.0 / g.spec.tick_rate.max(0.1);
+                    let hit: Vec<u32> = self
+                        .enemies
+                        .iter()
+                        .filter(|e| e.hp > 0.0 && e.pos.distance(pos) <= g.spec.radius)
+                        .map(|e| e.id)
+                        .collect();
+                    self.events.push(Event::Cast {
+                        caster: g.by,
+                        ability: g.spec.ability,
+                        visual: g.visual,
+                        targets: hit.iter().map(|&id| Target::Enemy(id)).collect(),
+                        dest: Some(pos),
+                        cooldown: 0.0,
+                    });
+                    self.trap_sprung_fx(&g, pos, &hit);
+                    for id in hit {
+                        self.strike(g.by, &g.spec, id, 1.0, pos, Crit::Roll);
+                    }
+                    i += 1;
+                    continue;
+                }
+                self.grounds[i].left -= DT;
+                if self.grounds[i].left <= 0.0 {
+                    self.grounds.remove(i);
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
             let tick = g.tick - DT;
             let left = g.left - DT;
             let r = g.spec.radius;
@@ -1334,7 +1505,9 @@ impl World {
                     tick
                 };
             }
-            if ticking {
+            if ticking && self.ground_beat(g.by, &g.spec, pos) {
+                // A summon, totem or healing ground did its own work.
+            } else if ticking {
                 let hit: Vec<u32> = self
                     .enemies
                     .iter()
@@ -1349,9 +1522,17 @@ impl World {
                     dest: Some(pos),
                     cooldown: 0.0,
                 });
-                let scale = if g.burning { BURNING_GROUND } else { 1.0 };
+                let scale = if g.spec.fx.trap {
+                    crate::world::classes::TRAP_TICK
+                } else if g.burning && g.spec.fx.ground_share > 0.0 {
+                    g.spec.fx.ground_share
+                } else if g.burning {
+                    BURNING_GROUND
+                } else {
+                    1.0
+                };
                 let mut spec = g.spec.clone();
-                if g.burning {
+                if g.burning && !g.spec.fx.ground_control {
                     // The ground burns; it does not chill or freeze again.
                     spec.chill = 0.0;
                     spec.freeze = 0.0;
@@ -1364,6 +1545,7 @@ impl World {
             }
             if left <= 0.0 {
                 self.grounds.remove(i);
+                self.ground_ended(&g, pos);
                 if g.final_gale {
                     if let Some(nova) = self.content.ability("frost_nova") {
                         self.triggers.push(Trigger {
@@ -1387,6 +1569,7 @@ impl World {
     /// What a dying enemy's statuses set off: Frostbite's shatter, Contagion's jump, Living
     /// Wave's blast, Inferno's next Fire Blast.
     pub(super) fn spell_deaths(&mut self, deaths: Vec<Death>) {
+        self.class_deaths(&deaths);
         let fire_blast = self.content.ability("fire_blast");
         let blast_wave = self.content.ability("blast_wave");
         let nova = self.content.ability("frost_nova");
@@ -1503,6 +1686,7 @@ impl World {
             }
         }
         if broke {
+            self.class_shield_broke(h);
             self.end_shield(h);
         }
         amount - taken

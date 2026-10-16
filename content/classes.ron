@@ -1,7 +1,8 @@
 // Playable classes, ported from benilla-app's survivors/data.rs. `looks` are CreatureDisplayInfo
 // ids of the class's trainers (the bodies a hero can wear); `weapons` are the virtual item slots
 // (slot 0 main hand, 1 off hand, 2 ranged); `start` is the ability every run begins with; `pool` is
-// what level-up cards offer. Plate and mail classes start tougher, cloth starts quicker.
+// what level-up cards offer; `defensive` is the ability on the defensive button (F). Plate and mail
+// classes start tougher, cloth starts quicker.
 [
     (
         key: "warrior",
@@ -24,9 +25,11 @@
         speed: 7.0,
         start: "cleave",
         pool: [
-            "cleave", "heroic_strike", "whirlwind", "thunder_clap", "sweeping_strikes",
-            "demoralizing_shout", "execute", "mortal_strike",
+            "cleave", "heroic_strike", "mortal_strike", "whirlwind", "thunder_clap", "rend",
+            "execute", "bloodthirst", "shield_block", "demoralizing_shout", "intimidating_shout",
+            "sunder_armor",
         ],
+        defensive: "charge",
     ),
     (
         key: "paladin",
@@ -47,9 +50,11 @@
         speed: 7.0,
         start: "hammer_of_wrath",
         pool: [
-            "hammer_of_wrath", "consecration", "holy_shock", "exorcism", "holy_wrath",
-            "hammer_of_justice", "judgement",
+            "hammer_of_wrath", "judgement", "exorcism", "holy_shock", "consecration", "holy_wrath",
+            "hammer_of_justice", "holy_shield", "holy_light", "retribution_aura", "seal_of_command",
+            "lay_on_hands",
         ],
+        defensive: "divine_shield",
     ),
     (
         key: "hunter",
@@ -72,9 +77,11 @@
         speed: 7.0,
         start: "arcane_shot",
         pool: [
-            "arcane_shot", "multi_shot", "serpent_sting", "volley", "explosive_trap",
-            "concussive_shot", "aimed_shot",
+            "arcane_shot", "multi_shot", "aimed_shot", "serpent_sting", "concussive_shot", "volley",
+            "explosive_trap", "frost_trap", "call_pet", "scatter_shot", "hunters_mark",
+            "rapid_fire",
         ],
+        defensive: "disengage",
     ),
     (
         key: "rogue",
@@ -95,7 +102,11 @@
         base_hp: 135.0,
         speed: 7.0,
         start: "sinister_strike",
-        pool: ["sinister_strike", "eviscerate", "blade_flurry", "rupture", "gouge", "kidney_shot"],
+        pool: [
+            "sinister_strike", "backstab", "eviscerate", "rupture", "blade_flurry", "fan_of_knives",
+            "deadly_poison", "gouge", "kidney_shot", "slice_and_dice", "riposte", "blind",
+        ],
+        defensive: "vanish",
     ),
     (
         key: "priest",
@@ -116,7 +127,11 @@
         base_hp: 120.0,
         speed: 7.5,
         start: "smite",
-        pool: ["smite", "shadow_word_pain", "holy_fire", "mind_blast", "holy_nova", "psychic_scream"],
+        pool: [
+            "smite", "holy_fire", "mind_blast", "shadow_word_pain", "mind_flay", "devouring_plague",
+            "holy_nova", "starshards", "renew", "power_word_shield", "lightwell", "hex_of_weakness",
+        ],
+        defensive: "psychic_scream",
     ),
     (
         key: "shaman",
@@ -138,8 +153,10 @@
         start: "lightning_bolt",
         pool: [
             "lightning_bolt", "chain_lightning", "earth_shock", "flame_shock", "frost_shock",
-            "searing_totem", "magma_totem", "lightning_shield",
+            "searing_totem", "magma_totem", "earthbind_totem", "healing_stream_totem",
+            "lightning_shield", "healing_wave", "stormstrike",
         ],
+        defensive: "ghost_wolf",
     ),
     (
         key: "mage",
@@ -165,6 +182,7 @@
             "blizzard", "flamestrike", "fire_blast", "cone_of_cold", "blast_wave", "pyroblast",
             "ice_barrier",
         ],
+        defensive: "blink",
     ),
     (
         key: "warlock",
@@ -186,8 +204,10 @@
         start: "shadow_bolt",
         pool: [
             "shadow_bolt", "corruption", "curse_of_agony", "immolate", "rain_of_fire", "hellfire",
-            "death_coil", "searing_pain", "shadowburn",
+            "death_coil", "drain_life", "howl_of_terror", "summon_imp", "summon_voidwalker",
+            "searing_pain",
         ],
+        defensive: "soulstone",
     ),
     (
         key: "druid",
@@ -207,6 +227,10 @@
         base_hp: 135.0,
         speed: 7.0,
         start: "wrath",
-        pool: ["wrath", "moonfire", "starfire", "hurricane", "insect_swarm", "entangling_roots"],
+        pool: [
+            "wrath", "moonfire", "starfire", "insect_swarm", "hurricane", "entangling_roots",
+            "rejuvenation", "tranquility", "thorns", "swipe", "rake", "faerie_fire",
+        ],
+        defensive: "barkskin",
     ),
 ]

@@ -69,11 +69,17 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   relays): the host logs `together: invite code <code>` and `TOGETHER_JOIN=<code>` joins with it; the
   key behind the code is `benilla-config/together-host-key.txt`. `cargo test -p together-net -- --ignored`
   runs the online invite test.
-  Spells and augments (`together-sim`: `spell.rs` tags/targeting/statuses, `augments.rs` the 32
-  general augments and the mage's 36 capstones, `world/combat.rs` casting and every mechanic):
+  Spells and augments (`together-sim`: `spell.rs` tags/targeting/statuses, `augments.rs` the 66
+  general augments and every class's 36 capstones, `world/combat.rs` casting and the mage's
+  mechanics, `world/classes.rs` what the other classes share (wards and charges, buffs, fear,
+  roots, summons, totems, traps, combo points, the defensive button) with each class's capstones in
+  `world/<class>.rs`; designs in `docs/<CLASS>-DRAFT.md`):
   `TOGETHER_XP_RATE=<n>` multiplies experience; `TOGETHER_LOADOUT=frostbolt@4,fireball@9+frostfire`
   starts the host's hero with those spells, ranks and augments (names as on the cards, any case);
-  `TOGETHER_CLASS` beats the menu's saved pick. The mage's movement ability is Blink on F (30 s).
+  `TOGETHER_CLASS` beats the menu's saved pick. Every class has a defensive button on F, named by
+  its `defensive` in `classes.ron` (mage Blink, warrior Charge, rogue Vanish, priest Psychic Scream,
+  warlock Soulstone, hunter Disengage, shaman Ghost Wolf, paladin Divine Shield, druid Barkskin);
+  the world owns its cooldown and effect, the client moves the hero first for a leap.
   The menu's Dev panel (`together/dev.rs`, saved in `benilla-config/together-dev-run.txt`) sets
   experience, hero and enemy health, enemy damage, horde size and the rank new spells start at, for
   runs this player starts or hosts; `TOGETHER_DEV_PANEL=1` opens it. Spell tooltips are
