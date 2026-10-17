@@ -57,6 +57,14 @@ pub(super) fn ms(secs: f32) -> u32 {
     (secs * 1000.0).round().max(0.0) as u32
 }
 
+/// Whether a stopped cast must release its caster's precast pose and glow. A cast that stopped
+/// before going off never did; a channel holds its pose to the end, and its ticks go off on
+/// another spell, so even its normal finish leaves the hold up. (A `Fail` is a quiet release,
+/// with no flash.)
+pub(super) fn releases_hold(channel: bool, why: Stop) -> bool {
+    channel || why != Stop::Finished
+}
+
 /// The `Damage` a melee `Swing` at `events[swing]` dealt: the next damage to its victim by its
 /// attacker, before the same pair swings again (the sim pushes a blow's damage right after its
 /// swing). `None` for any other event, or a swing that did none, which WoW's portrait reads as a
@@ -163,9 +171,10 @@ pub(super) fn show_events(
                 }
             }
             Event::CastStop { by, ability, why } => {
-                let spell = content.abilities[usize::from(*ability)].spell;
-                if let (Some(e), false) = (body(*by), *why == Stop::Finished) {
-                    fx.fail(e, spell);
+                let a = &content.abilities[usize::from(*ability)];
+                // The hold is on the ability's own spell, whatever spell its ticks play.
+                if let (Some(e), true) = (body(*by), releases_hold(a.channel > 0.0, *why)) {
+                    fx.fail(e, a.spell);
                 }
                 if *by == me {
                     bar.0.push(stop_edge(*why));
@@ -319,6 +328,22 @@ mod tests {
         assert!(matches!(stop_edge(Stop::Moved), CastBarEdge::Interrupted));
         assert_eq!(ms(2.5), 2500);
         assert_eq!(ms(-1.0), 0);
+    }
+
+    #[test]
+    fn a_channel_that_finishes_still_lets_go_of_its_hold() {
+        // A channel releases at every end, its normal one too; any other cast only when it died.
+        for why in [
+            Stop::Finished,
+            Stop::Moved,
+            Stop::Cancelled,
+            Stop::Interrupted,
+        ] {
+            assert!(releases_hold(true, why), "channel, {why:?}");
+        }
+        assert!(!releases_hold(false, Stop::Finished));
+        assert!(releases_hold(false, Stop::TargetLost));
+        assert!(releases_hold(false, Stop::Moved));
     }
 
     fn damage(to: UnitRef, by: Option<UnitRef>, amount: f32) -> Event {
