@@ -181,6 +181,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<marks::MarkViews>()
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
+            .init_resource::<conceal::TargetGrace>()
             .add_plugins(grade::plugin)
             .add_systems(Startup, (menu::spawn_roots, terrain::spawn_line))
             // Ungated: hides Nightfall's screens whenever another game is up.

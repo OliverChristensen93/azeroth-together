@@ -73,15 +73,33 @@ fn clear_selection(selection: &mut Selection) {
     selection.guid = None;
 }
 
+/// How long a selected enemy may stay out of sight before the selection lets go of it, in real
+/// seconds. A fight's target steps behind a tree or a pillar all the time (and on a joined client
+/// the seen set only changes at snapshot rate), and dropping it on the first hidden frame would
+/// cost the hero their target every time; but a target that stays hidden is no longer one.
+pub(super) const TARGET_GRACE: f32 = 3.0;
+
+/// When the selected enemy was first found out of sight, if it is out of sight now. Reset when it
+/// is seen again, or when the selection moves to something else.
+#[derive(Resource, Default)]
+pub(super) struct TargetGrace {
+    entity: Option<Entity>,
+    since: f32,
+}
+
 /// Every drawn enemy our hero does not see is concealed and untrackable; one they see is neither.
-/// A sleeper at its post lies down. An enemy that drops out of sight while selected is deselected.
+/// A sleeper at its post lies down. A selected enemy that stays out of sight for [`TARGET_GRACE`]
+/// is deselected.
 pub(super) fn enemies(
     mut commands: Commands,
     sim: Res<Sim>,
     views: Res<EnemyViews>,
+    time: Res<Time<Real>>,
+    mut grace: ResMut<TargetGrace>,
     mut selection: ResMut<Selection>,
     mut bodies: Query<(&mut ObjectStore, Has<Concealed>)>,
 ) {
+    let now = time.elapsed_secs();
     for enemy in &sim.world.enemies {
         let Some(&e) = views.drawn.get(&enemy.id) else {
             continue;
@@ -98,8 +116,18 @@ pub(super) fn enemies(
             }
         }
         // Read through the shared reference: only a real clear may mark the resource changed.
-        if hide && selection.target == Some(e) {
-            clear_selection(&mut selection);
+        if selection.target == Some(e) {
+            if !hide {
+                grace.entity = None;
+            } else if grace.entity != Some(e) {
+                *grace = TargetGrace {
+                    entity: Some(e),
+                    since: now,
+                };
+            } else if now - grace.since >= TARGET_GRACE {
+                clear_selection(&mut selection);
+                grace.entity = None;
+            }
         }
         let stand = if enemy.asleep { STAND_SLEEP } else { STAND };
         let now = bytes_1(
@@ -114,6 +142,10 @@ pub(super) fn enemies(
                 .0
                 .merge(ObjectFields::from_pairs(&[(FIELD_UNIT_BYTES_1, want)]));
         }
+    }
+    // The selection moved on (or was cleared elsewhere): the old target's clock is not the new one's.
+    if grace.entity.is_some() && grace.entity != selection.target {
+        grace.entity = None;
     }
 }
 
@@ -224,7 +256,27 @@ mod tests {
         world.insert_resource(views);
         world.insert_resource(sim);
         world.init_resource::<Selection>();
+        world.init_resource::<TargetGrace>();
+        // A clock's first update only starts it; after that, `pass` moves it.
+        let mut time = Time::<Real>::default();
+        time.update_with_duration(std::time::Duration::ZERO);
+        world.insert_resource(time);
         (world, body)
+    }
+
+    /// Lets `secs` of real time pass for the next run of [`enemies`].
+    fn pass(world: &mut World, secs: f32) {
+        world
+            .resource_mut::<Time<Real>>()
+            .update_with_duration(std::time::Duration::from_secs_f32(secs));
+    }
+
+    fn select(world: &mut World, body: Entity) {
+        *world.resource_mut::<Selection>() = Selection {
+            target: Some(body),
+            guid: Some(7),
+            last: Some(3),
+        };
     }
 
     #[test]
@@ -252,19 +304,53 @@ mod tests {
     }
 
     #[test]
-    fn an_enemy_that_drops_out_of_sight_leaves_the_selection() {
+    fn a_target_out_of_sight_for_a_moment_stays_selected() {
         use bevy::ecs::system::RunSystemOnce;
 
         let (mut world, body) = world_with_an_enemy();
-        *world.resource_mut::<Selection>() = Selection {
-            target: Some(body),
-            guid: Some(7),
-            last: Some(3),
-        };
+        select(&mut world, body);
+        world.run_system_once(enemies).unwrap();
+        pass(&mut world, 1.0);
+        world.run_system_once(enemies).unwrap();
+        assert!(world.get::<Concealed>(body).is_some(), "it is concealed");
+        assert_eq!(world.resource::<Selection>().target, Some(body));
+    }
+
+    #[test]
+    fn a_target_out_of_sight_past_the_grace_leaves_the_selection() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (mut world, body) = world_with_an_enemy();
+        select(&mut world, body);
+        world.run_system_once(enemies).unwrap();
+        pass(&mut world, 3.5);
         world.run_system_once(enemies).unwrap();
         let sel = world.resource::<Selection>();
         assert_eq!((sel.target, sel.guid), (None, None));
         assert_eq!(sel.last, Some(3), "the last-target pair stays");
+    }
+
+    #[test]
+    fn seeing_the_target_again_restarts_the_grace() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (mut world, body) = world_with_an_enemy();
+        select(&mut world, body);
+        world.run_system_once(enemies).unwrap();
+        pass(&mut world, 2.0);
+        world.run_system_once(enemies).unwrap();
+        // Seen again, then hidden again: 4 s since the first loss, but only 2 s since the second.
+        world.resource_mut::<Sim>().seen = vec![ENEMY];
+        world.run_system_once(enemies).unwrap();
+        world.resource_mut::<Sim>().seen = vec![];
+        world.run_system_once(enemies).unwrap();
+        pass(&mut world, 2.0);
+        world.run_system_once(enemies).unwrap();
+        assert_eq!(world.resource::<Selection>().target, Some(body));
+        // And the restarted grace still runs out.
+        pass(&mut world, 1.5);
+        world.run_system_once(enemies).unwrap();
+        assert_eq!(world.resource::<Selection>().target, None);
     }
 
     /// The target frame redraws only when `Selection` changed, so a frame that clears nothing must
