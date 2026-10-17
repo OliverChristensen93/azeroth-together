@@ -72,3 +72,10 @@ may not be what you pictured. Each line says what was decided, why, and how to c
     in play, require line of sight or the same floor.
 19. **A friend can fight while reviving.** The spec only asks the reviver to stand next to the downed
     hero for 5 s, so pressing abilities doesn't interrupt it; stepping out of reach or being downed does.
+20. **A downed hero who crawls looks like they're walking.** The downed hero kneels when still, but
+    WoW has no crawl animation and movement beats the kneel, so crawling (at the slow crawl speed)
+    plays the normal walk. Options: root a downed hero (no crawl), slow the walk animation down, or
+    accept it. The spec says a downed hero "can crawl".
+21. **The death screen has no "Release Spirit".** WoW's death popup is kept hidden (Nightfall has no
+    spirit to release); a dead hero sees "Your body lies where you fell" instead. Sub-project 5 decides
+    what happens next (spectating the others, the end screen).
