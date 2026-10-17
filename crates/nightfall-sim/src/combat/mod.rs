@@ -4,8 +4,12 @@
 //! client's mirror takes each hero's and enemy's fight from the snapshot, the telegraphs beside
 //! them, and what happened from the [`Event`]s that travel with it.
 
+mod effects;
 mod rules;
+#[cfg(test)]
+mod tests;
 
+pub(crate) use effects::MANA;
 pub use rules::Charges;
 #[allow(unused_imports)]
 pub(crate) use rules::{allowance, in_range, stands_right, within_arc, Dice};

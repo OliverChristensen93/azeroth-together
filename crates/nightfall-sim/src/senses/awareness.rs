@@ -166,6 +166,27 @@ impl Mind {
         self.there = false;
     }
 
+    /// `player` slipped away (Vanish, spec §6.3): alerted to them, it searches where it last saw
+    /// them instead, as if it had lost them; seeing them again finds them again.
+    pub(crate) fn lose(&mut self, player: PlayerId, r: &AwarenessRules) {
+        if let State::Alerted {
+            player: p,
+            last_seen,
+            ..
+        } = self.state
+        {
+            if p == player {
+                self.state = State::Searching {
+                    player,
+                    place: last_seen,
+                    left: r.search_for,
+                };
+                self.there = false;
+                self.entry(player).level = r.check;
+            }
+        }
+    }
+
     /// A hero left the run: nothing of them stays, and a state about them ends.
     pub(crate) fn forget(&mut self, player: PlayerId) {
         self.of.retain(|s| s.player != player);

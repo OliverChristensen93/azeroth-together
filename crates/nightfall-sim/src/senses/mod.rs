@@ -24,7 +24,7 @@ use noise::step_radius;
 use react::Way;
 use visibility::{visibility, Light};
 
-use crate::{Behaviour, Content, Hero, PlayerId, PlayerInput, World, DT, V3};
+use crate::{AwarenessRules, Behaviour, Content, Hero, PlayerId, PlayerInput, World, DT, V3};
 
 /// What the host keeps of one hero's senses: never sent.
 #[derive(Clone, Debug, Default)]
@@ -82,6 +82,18 @@ impl Senses {
         for m in &mut self.minds {
             m.forget(player);
         }
+    }
+
+    /// `player` slipped away (Vanish): every enemy after them searches instead.
+    pub(crate) fn lose(&mut self, player: PlayerId, r: &AwarenessRules) {
+        for m in &mut self.minds {
+            m.lose(player, r);
+        }
+    }
+
+    /// Whether enemy `i` is alerted to anyone.
+    pub(crate) fn alerted(&self, i: usize) -> bool {
+        self.minds.get(i).is_some_and(Mind::is_alerted)
     }
 
     /// A calm mind for each enemy placed from these spawn lines: a sentry's wide front cone, a
