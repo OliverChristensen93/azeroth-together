@@ -227,13 +227,15 @@ impl World {
     }
 
     /// Enemy `ei` dies (by `by`'s hand, when a hero's): what held it and what it was about to do
-    /// go, heroes stop swinging at it and lose their combo points on it, and the death is heard
+    /// go, its senses go quiet (no "!" over a corpse, no shout it raised), heroes stop swinging at it and lose their combo points on it, and the death is heard
     /// 15 yards off. Its body stays where it fell, for sub-project 5 to search.
     pub(crate) fn kill_enemy(&mut self, ei: usize, by: Option<PlayerId>) {
         let e = &mut self.enemies[ei];
         e.hp = 0.0;
         e.speed = 0.0;
+        e.asleep = false;
         let (id, at) = (e.id, V3::at(e.pos, e.z));
+        self.senses.clear_enemy(ei);
         let ec = &mut self.combat.enemies[ei];
         ec.held = None;
         ec.slow = None;

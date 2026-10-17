@@ -187,6 +187,14 @@ impl Mind {
         }
     }
 
+    /// Its thoughts end (it died): calm, and suspicious of nobody. It keeps its cone and whether
+    /// it sleeps.
+    pub(crate) fn calm(&mut self) {
+        self.of.clear();
+        self.state = State::Calm;
+        self.there = false;
+    }
+
     /// A hero left the run: nothing of them stays, and a state about them ends.
     pub(crate) fn forget(&mut self, player: PlayerId) {
         self.of.retain(|s| s.player != player);

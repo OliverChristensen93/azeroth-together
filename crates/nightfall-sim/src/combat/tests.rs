@@ -517,3 +517,23 @@ fn a_hold_with_no_number_for_its_time_is_not_applied() {
         .iter()
         .any(|e| matches!(e, Event::Blinked { to, .. } if to.ground() == V2::new(28.0, 30.0))));
 }
+
+#[test]
+fn a_killed_alerted_enemy_keeps_no_mark_and_its_shout_reaches_no_ally() {
+    let spawns = format!(
+        "{}{}",
+        post("brute", 30.0, 30.0, 180.0),
+        post("brute", 30.0, 34.0, 180.0)
+    );
+    let mut w = world(&spawns);
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    let dead = w.enemies[0].id;
+    // Alerting queues a shout for the next step; the kill comes before it.
+    w.alert(dead, 0);
+    assert_eq!(w.marks_for(0).len(), 1);
+    w.strike(0, 0, 5000.0, false, true, false);
+    assert!(w.marks_for(0).is_empty());
+    w.step();
+    assert!(w.marks_for(0).is_empty(), "{:?}", w.marks_for(0));
+    assert!(!w.senses.alerted(1));
+}

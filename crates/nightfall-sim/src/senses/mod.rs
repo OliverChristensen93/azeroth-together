@@ -96,6 +96,18 @@ impl Senses {
         self.minds.get(i).is_some_and(Mind::is_alerted)
     }
 
+    /// Enemy `i` died: it thinks of nobody, follows no way, and a shout it raised this step is
+    /// never heard. The row stays, so the lists stay beside the world's enemies.
+    pub(crate) fn clear_enemy(&mut self, i: usize) {
+        if let Some(m) = self.minds.get_mut(i) {
+            m.calm();
+        }
+        if let Some(w) = self.ways.get_mut(i) {
+            *w = Way::default();
+        }
+        self.shouts.retain(|(e, _)| *e != i);
+    }
+
     /// A calm mind for each enemy placed from these spawn lines: a sentry's wide front cone, a
     /// sleeper's closed eyes, everyone else's own cone.
     pub(crate) fn place(&mut self, content: &Content, spawns: impl IntoIterator<Item = usize>) {
@@ -198,6 +210,7 @@ impl World {
         self.enemies
             .iter()
             .zip(&self.senses.minds)
+            .filter(|(e, _)| e.hp > 0.0)
             .filter_map(|(e, m)| m.mark(player, r).map(|alert| Mark { enemy: e.id, alert }))
             .collect()
     }
