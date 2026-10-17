@@ -14,6 +14,7 @@ mod conceal;
 mod dress;
 mod enemies;
 mod grade;
+mod marks;
 mod menu;
 mod run;
 mod session;
@@ -176,6 +177,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
             .init_resource::<enemies::EnemyViews>()
+            .init_resource::<marks::MarkViews>()
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
             .add_plugins(grade::plugin)
@@ -254,7 +256,7 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
-                (conceal::enemies, conceal::heroes, stance::trace)
+                (conceal::enemies, conceal::heroes, stance::trace, marks::draw)
                     .chain()
                     .after(enemies::place)
                     // Its commands land before the run can end and despawn the bodies.
