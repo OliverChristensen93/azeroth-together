@@ -232,6 +232,10 @@ impl World {
     /// A noise `by`'s hero made at `at` (the floor it came from), as loud as `loudness` (spec
     /// §5.2): heard by the enemies at the next step and shown in the maker's rings. The seam the
     /// abilities, chests, graves and exits of later sub-projects make their noise through.
+    ///
+    /// Call it between steps, or inside [`World::step`] before the senses listen (before
+    /// `senses::step_enemies`): `World::step` clears the noises once the enemies have listened, so a
+    /// noise made after that, still inside the step, is dropped unheard.
     pub fn make_noise(&mut self, by: PlayerId, at: V3, loudness: Loudness) {
         if self.hero(by).is_none() || !at.is_finite() {
             return;
