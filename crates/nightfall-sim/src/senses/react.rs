@@ -446,6 +446,12 @@ impl Senses {
     pub(crate) fn suspicion_of(&self, i: usize, player: crate::PlayerId) -> f32 {
         self.minds.get(i).map_or(0.0, |m| m.level(player))
     }
+
+    /// Shouts raised and not yet given out, forgotten: a test's alert of one enemy then wakes
+    /// none of its allies.
+    pub(crate) fn drop_shouts(&mut self) {
+        self.shouts.clear();
+    }
 }
 
 #[cfg(test)]

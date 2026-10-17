@@ -99,7 +99,33 @@ impl World {
             by: UnitRef::Enemy(id),
             to: UnitRef::Hero(player),
         });
-        self.wound(player, amount, Some(UnitRef::Enemy(id)));
+        self.blow_lands(id, player, amount);
+    }
+
+    /// An enemy's blow of `amount` lands on `player`'s hero: the damage, and the noise of the hit
+    /// (spec §5.2), made where they stand and before the senses listen. Nothing is heard of a blow
+    /// that does no harm (a hero not up, an amount that is no number).
+    pub(super) fn blow_lands(&mut self, enemy: u32, player: PlayerId, amount: f32) {
+        let Some(hi) = self.hero_slot(player) else {
+            return;
+        };
+        let (up, at) = (
+            self.heroes[hi].fight.up(),
+            V3::at(self.heroes[hi].pos, self.heroes[hi].z),
+        );
+        self.wound(player, amount, Some(UnitRef::Enemy(enemy)));
+        if up && amount.is_finite() && amount > 0.0 {
+            self.make_noise(player, at, Loudness::Hit);
+        }
+    }
+
+    /// Enemy `ei` makes the noise of its ability `a` where it stands, as loud as the ability's
+    /// sound (a stomp is loud), credited to the hero it is after, `player`.
+    fn ability_sounds(&mut self, ei: usize, a: usize, player: PlayerId) {
+        if let Some(loud) = self.content.abilities[a].sound.loudness() {
+            let e = &self.enemies[ei];
+            self.make_noise(player, V3::at(e.pos, e.z), loud);
+        }
     }
 
     /// Whether enemy `ei` has a clear line to hero `hi`, at every range: a blow struck through a
@@ -222,9 +248,10 @@ impl World {
         let mut hits = Vec::new();
         if hit.is_some() {
             let amount = self.enemy_damage(ei, a);
-            self.wound(player, amount, Some(UnitRef::Enemy(id)));
+            self.blow_lands(id, player, amount);
             hits.push(UnitRef::Hero(player));
         }
+        self.ability_sounds(ei, a, player);
         self.events.push(Event::CastGo {
             by: UnitRef::Enemy(id),
             ability: a as u16,
@@ -258,8 +285,11 @@ impl World {
         let Some(ei) = self.enemies.iter().position(|e| e.id == t.enemy) else {
             return;
         };
+        // The noise of its own sound is credited to the hero it was cast at, else the first inside.
+        let mut target = None;
         if let Some(c) = &self.combat.enemies[ei].cast {
             if c.telegraph == Some(t.id) {
+                target = Some(c.player);
                 self.combat.enemies[ei].cast = None;
             }
         }
@@ -273,7 +303,7 @@ impl World {
             .map(|hi| self.heroes[hi].player)
             .collect();
         let mut hits = Vec::new();
-        for p in inside {
+        for &p in &inside {
             let ci = self.combat.hero_index(p);
             if self.combat.heroes[ci].immune > 1e-4 {
                 self.events.push(Event::Evaded {
@@ -283,8 +313,11 @@ impl World {
                 continue;
             }
             let amount = self.enemy_damage(ei, usize::from(t.ability));
-            self.wound(p, amount, Some(UnitRef::Enemy(t.enemy)));
+            self.blow_lands(t.enemy, p, amount);
             hits.push(UnitRef::Hero(p));
+        }
+        if let Some(p) = target.or(inside.first().copied()) {
+            self.ability_sounds(ei, usize::from(t.ability), p);
         }
         self.events.push(Event::CastGo {
             by: UnitRef::Enemy(t.enemy),

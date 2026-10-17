@@ -2247,3 +2247,72 @@ fn what_enemies_roll_is_the_same_every_run() {
     assert!(events.iter().any(|e| matches!(e, Event::Swing { .. })));
     assert_eq!(events, run());
 }
+
+/// A brute at (30, 30) after a rogue at (28, 30), and a calm brute 12 yards west of the rogue,
+/// facing away. The first is alerted (its shout dropped, so the calm one is not woken by it) when
+/// `fight` is set. One step; the calm one's suspicion of the rogue.
+fn suspicion_after_a_step(fight: bool) -> f32 {
+    let spawns = format!(
+        "{}{}",
+        post("brute", 30.0, 30.0, 180.0),
+        post("brute", 16.0, 30.0, 90.0)
+    );
+    let mut w = world(&spawns);
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    if fight {
+        w.alert(w.enemies[0].id, 0);
+        w.senses.drop_shouts();
+    }
+    w.step();
+    assert_eq!(
+        damage_to(&w.drain_events(), UnitRef::Hero(0)).len(),
+        usize::from(fight)
+    );
+    w.senses.suspicion_of(1, 0)
+}
+
+#[test]
+fn a_blow_landing_on_a_hero_is_heard_fifteen_yards_around() {
+    let noise = world("").content().rules.senses.awareness.noise;
+    // It sees a little of the rogue either way; only the blow adds a noise's worth.
+    let (quiet, struck) = (suspicion_after_a_step(false), suspicion_after_a_step(true));
+    assert!(
+        (struck - quiet - noise).abs() < 1e-3,
+        "{quiet} then {struck}"
+    );
+}
+
+#[test]
+fn a_telegraphed_blow_makes_its_own_noise_as_it_lands() {
+    let mut w = world(&post("elite", 40.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 36.0, 30.0);
+    w.telegraphs.push(Telegraph {
+        id: 99,
+        enemy: w.enemies[0].id,
+        ability: ability(&w, "cleave") as u16,
+        shape: Shape::Cone {
+            length: 8.0,
+            angle: 120.0,
+        },
+        at: V3::new(40.0, 30.0, 0.0),
+        facing: V2::new(-1.0, 0.0),
+        left: DT,
+        total: 1.2,
+    });
+    steps(&mut w, 2);
+    let events = w.drain_events();
+    assert_eq!(damage_to(&events, UnitRef::Hero(0)), vec![200.0]);
+    // The cleave's own Loud (40 yards), not just the hit's 15.
+    assert_eq!(w.hero(0).unwrap().noise, 40.0);
+}
+
+#[test]
+fn a_blow_that_misses_or_does_no_harm_is_not_heard() {
+    let mut w = world(&post("brute", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.blow_lands(w.enemies[0].id, 0, f32::NAN);
+    w.hurt_hero(0, 5000.0);
+    w.blow_lands(w.enemies[0].id, 0, 40.0);
+    steps(&mut w, 2);
+    assert_eq!(w.hero(0).unwrap().noise, 0.0);
+}
