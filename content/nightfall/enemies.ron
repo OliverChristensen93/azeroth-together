@@ -1,18 +1,37 @@
 // Nightfall's enemy kinds: Duskwood's own creatures (spec §7.1). `display` is the
-// CreatureDisplayInfo id, the same models the survivors content uses for them. `hp`, `walk_speed`
-// and `run_speed` are starting values that combat (sub-project 4) tunes; speeds are yards a
-// second (WoW's creatures walk at about 2.5 and run at 7).
+// CreatureDisplayInfo id, the same models the survivors content uses for them. Speeds are yards a
+// second (WoW's creatures walk at about 2.5 and run at 7). `creature` is Humanoid (the default),
+// Beast or Undead, for Sap and Polymorph. `swing` is its melee blow (damage from min to max, every
+// so many seconds), struck from `reach` yards (2.5 when left out). `moves` are abilities from
+// abilities.ron it uses in a fight, each at most every so many seconds: a caster's bolt, an
+// elite's telegraphed blow (spec §6.1). `elite` marks the rares that guard the best loot.
 [
     (key: "skeletal_warrior", name: "Skeletal Warrior", display: 200, scale: 1.2, level: 28,
-     hp: 980.0, walk_speed: 2.5, run_speed: 7.0),
+     hp: 980.0, walk_speed: 2.5, run_speed: 7.0, creature: Undead,
+     swing: Some((min: 38.0, max: 52.0, every: 2.0))),
     (key: "nightbane_worgen", name: "Nightbane Worgen", display: 657, level: 27,
-     hp: 940.0, walk_speed: 2.5, run_speed: 8.0),
+     hp: 940.0, walk_speed: 2.5, run_speed: 8.0,
+     swing: Some((min: 36.0, max: 50.0, every: 2.0))),
     (key: "nightbane_shadow_weaver", name: "Nightbane Shadow Weaver", display: 203, level: 28,
-     hp: 900.0, walk_speed: 2.5, run_speed: 7.5),
+     hp: 900.0, walk_speed: 2.5, run_speed: 7.5,
+     swing: Some((min: 22.0, max: 30.0, every: 2.0)),
+     moves: [(ability: "shadow_bolt", every: 7.0)]),
     (key: "venom_web_spider", name: "Venom Web Spider", display: 955, level: 26,
-     hp: 860.0, walk_speed: 2.2, run_speed: 7.0),
+     hp: 860.0, walk_speed: 2.2, run_speed: 7.0, creature: Beast,
+     swing: Some((min: 32.0, max: 44.0, every: 1.8))),
     (key: "black_ravager", name: "Black Ravager", display: 741, level: 25,
-     hp: 820.0, walk_speed: 3.0, run_speed: 8.0),
+     hp: 820.0, walk_speed: 3.0, run_speed: 8.0, creature: Beast,
+     swing: Some((min: 30.0, max: 42.0, every: 1.6))),
     (key: "fetid_corpse", name: "Fetid Corpse", display: 559, scale: 1.3, level: 30,
-     hp: 1100.0, walk_speed: 1.8, run_speed: 5.0),
+     hp: 1100.0, walk_speed: 1.8, run_speed: 5.0, creature: Undead,
+     swing: Some((min: 45.0, max: 60.0, every: 2.4))),
+    // Duskwood's rares: elites with a telegraphed big move.
+    (key: "fenros", name: "Fenros", display: 657, scale: 1.35, level: 32, hp: 2900.0,
+     walk_speed: 2.5, run_speed: 8.0, elite: true,
+     swing: Some((min: 70.0, max: 95.0, every: 2.2)),
+     moves: [(ability: "rending_cleave", every: 9.0)]),
+    (key: "naraxis", name: "Naraxis", display: 955, scale: 1.6, level: 30, hp: 3100.0,
+     walk_speed: 2.2, run_speed: 7.0, creature: Beast, elite: true,
+     swing: Some((min: 60.0, max: 85.0, every: 2.0)),
+     moves: [(ability: "war_stomp", every: 11.0)]),
 ]

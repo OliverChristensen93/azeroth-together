@@ -656,6 +656,7 @@ mod tests {
             rules: &rules,
             enemies: ENEMIES,
             spawns,
+            abilities: "[]",
         })
         .unwrap();
         World::new(Arc::new(content))

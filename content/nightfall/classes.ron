@@ -1,7 +1,10 @@
 // Nightfall's classes. `race` and `sex` are the body every hero of the class wears for now
 // (ChrRaces ids: 1 human; sex 0 male, 1 female). `weapons` are the virtual item slots (slot 0 main
-// hand, 1 off hand, 2 ranged), the same looks the survivors classes use. Abilities come in
-// sub-project 4; the Rogue's Stealth toggle is here already (sub-project 3).
+// hand, 1 off hand, 2 ranged), the same looks the survivors classes use. Heroes are level 30
+// (rules.ron); `base_hp`, `power_max` (mana, or the rogue's 100 energy) and `swing` (the weapon's
+// blow: damage from min to max, every so many seconds) are a level-30 hero's in modest gear.
+// `bar` puts abilities (abilities.ron) on WoW's action bar: action ids 1 to 12 are the main bar
+// (keys 1 to =), 73 to 84 the bar a stealthed rogue sees instead.
 [
     (
         key: "rogue",
@@ -17,10 +20,22 @@
             (slot: 1, display: 6443, class: 2, subclass: 15, material: 1, inventory_type: 13, sheath: 3),
         ],
         sheath: 1,
-        base_hp: 135.0,
+        base_hp: 1050.0,
         speed: 7.0,
         // Stealth on its key (spec §6.3): sneaking at stealth_speed, nearly unseen.
         stealth: true,
+        power_max: 100.0,
+        // WoW's 20 energy every 2 seconds.
+        power_regen: 10.0,
+        swing: Some((min: 26.0, max: 46.0, every: 1.8)),
+        bar: [
+            (1, "stealth"), (2, "sinister_strike"), (3, "eviscerate"), (4, "gouge"),
+            (5, "sprint"), (6, "distract"), (7, "vanish"), (11, "throw_stone"),
+            (12, "eat_and_drink"),
+            (73, "stealth"), (74, "ambush"), (75, "garrote"), (76, "cheap_shot"), (77, "sap"),
+            (78, "sprint"), (79, "distract"), (80, "vanish"), (83, "throw_stone"),
+            (84, "eat_and_drink"),
+        ],
     ),
     (
         key: "mage",
@@ -35,7 +50,13 @@
             (slot: 0, display: 1927, class: 2, subclass: 10, material: 2, inventory_type: 17, sheath: 2),
         ],
         sheath: 1,
-        base_hp: 120.0,
+        base_hp: 880.0,
         speed: 7.0,
+        power_max: 1300.0,
+        bar: [
+            (1, "frostbolt"), (2, "fireball"), (3, "fire_blast"), (4, "frost_nova"),
+            (5, "arcane_missiles"), (6, "polymorph"), (7, "blink"), (8, "conjure_water"),
+            (11, "throw_stone"), (12, "eat_and_drink"),
+        ],
     ),
 ]

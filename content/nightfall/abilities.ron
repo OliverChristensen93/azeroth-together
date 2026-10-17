@@ -1,0 +1,93 @@
+// Nightfall's abilities (spec §6): the Mage's and the Rogue's kits, the moves every hero has, and
+// the moves enemies use. Heroes' bars (classes.ron) and enemies' moves (enemies.ron) name them by
+// key, so anyone can be given any of them.
+//
+// Numbers start from vanilla's rank at level 30, and `spell` is that rank's Spell.dbc id, so the
+// button's icon, WoW's own tooltip and the cast bar's name fit; where the spec says otherwise
+// (Frostbolt's 2.5 s and Fireball's 3 s casts, Polymorph's 20 s and Sap's 30 s, Sprint's 8 s) the
+// spec wins. `range` is yards to the target's centre (its size is added in rules.ron); `cast`,
+// `channel`, `cooldown` and `gcd` are seconds; `cost` is mana or energy. `moving` is what the
+// caster may do meanwhile: Free, Slowed (at rules.ron's cast_move_speed) or Rooted. `sound` is
+// Silent, Quiet (8 yd), Normal (20 yd) or Loud (40 yd), heard where the ability goes off (a spot,
+// for one aimed at the ground). `tags` are what an AI may use an ability for.
+[
+    // --- The Mage (spec §6.2) ---
+    (key: "frostbolt", name: "Frostbolt", spell: 8406, aim: Enemy, range: 30.0, cost: 100.0,
+     cast: 2.5, gcd: 1.5, moving: Slowed, sound: Normal, facing: Front,
+     effects: [Damage(min: 126.0, max: 138.0), Slow(by: 0.4, secs: 7.0)], tags: [Nuke, Control]),
+    (key: "fireball", name: "Fireball", spell: 8401, aim: Enemy, range: 35.0, cost: 185.0,
+     cast: 3.0, gcd: 1.5, moving: Rooted, sound: Loud, flash: true, facing: Front,
+     effects: [Damage(min: 199.0, max: 265.0), Dot(amount: 7.0, every: 2.0, secs: 8.0)],
+     tags: [Nuke]),
+    (key: "fire_blast", name: "Fire Blast", spell: 8412, aim: Enemy, range: 20.0, cost: 165.0,
+     cooldown: 8.0, gcd: 1.5, sound: Loud, flash: true, facing: Front,
+     effects: [Damage(min: 168.0, max: 202.0)], tags: [Nuke]),
+    (key: "frost_nova", name: "Frost Nova", spell: 865, aim: Me, radius: 10.0, cost: 85.0,
+     cooldown: 25.0, gcd: 1.5, sound: Normal,
+     effects: [Damage(min: 33.0, max: 37.0), Control(kind: Root, secs: 8.0)],
+     tags: [Control, Escape]),
+    (key: "arcane_missiles", name: "Arcane Missiles", spell: 5145, tick_spell: Some(7270),
+     aim: Enemy, range: 30.0, cost: 235.0, channel: 5.0, ticks: 5, gcd: 1.5, moving: Rooted,
+     sound: Normal, facing: Front, effects: [Damage(min: 56.0, max: 56.0)], tags: [Nuke]),
+    (key: "polymorph", name: "Polymorph", spell: 12824, aim: Enemy, range: 30.0, cost: 90.0,
+     cast: 1.5, gcd: 1.5, moving: Slowed, sound: Quiet, facing: Front,
+     needs: (creatures: [Humanoid, Beast]), effects: [Control(kind: Polymorph, secs: 20.0)],
+     tags: [Control]),
+    // 35% of a level-30 mage's base mana.
+    (key: "blink", name: "Blink", spell: 1953, aim: Me, cost: 160.0, cooldown: 15.0, gcd: 1.5,
+     sound: Quiet, effects: [Blink(distance: 20.0)], tags: [Escape]),
+    (key: "conjure_water", name: "Conjure Water", spell: 6127, aim: Me, cost: 285.0, cast: 3.0,
+     gcd: 1.5, moving: Rooted, sound: Quiet, needs: (out_of_combat: true),
+     effects: [ConjureWater(count: 2)], tags: [Utility]),
+
+    // --- The Rogue (spec §6.3) ---
+    (key: "stealth", name: "Stealth", spell: 1785, aim: Me, cooldown: 10.0, sound: Silent,
+     keeps_stealth: true, needs: (out_of_combat: true), effects: [Stealth], tags: [Utility]),
+    (key: "sap", name: "Sap", spell: 2070, aim: Enemy, range: 5.0, cost: 65.0, gcd: 1.0,
+     sound: Quiet, alerts: false, keeps_stealth: true,
+     needs: (stealth: true, unaware: true, creatures: [Humanoid]),
+     effects: [Control(kind: Sap, secs: 30.0)], tags: [Opener, Control]),
+    (key: "cheap_shot", name: "Cheap Shot", spell: 1833, aim: Enemy, range: 5.0, cost: 60.0,
+     gcd: 1.0, sound: Quiet, attack: true, needs: (stealth: true, unaware: true),
+     effects: [Control(kind: Stun, secs: 4.0), Combo(2)], tags: [Opener, Control]),
+    (key: "garrote", name: "Garrote", spell: 8632, aim: Enemy, range: 5.0, cost: 50.0, gcd: 1.0,
+     sound: Silent, facing: Behind, attack: true, needs: (stealth: true, unaware: true),
+     effects: [Dot(amount: 47.0, every: 3.0, secs: 18.0), Combo(1)], tags: [Opener]),
+    (key: "ambush", name: "Ambush", spell: 8724, aim: Enemy, range: 5.0, cost: 60.0, gcd: 1.0,
+     sound: Quiet, facing: Behind, attack: true, needs: (stealth: true, unaware: true),
+     effects: [Weapon(percent: 250.0, bonus: 40.0), Combo(1)], tags: [Opener, Nuke]),
+    (key: "sinister_strike", name: "Sinister Strike", spell: 1760, aim: Enemy, range: 5.0,
+     cost: 45.0, gcd: 1.0, sound: Normal, facing: Front, attack: true,
+     effects: [Weapon(bonus: 22.0), Combo(1)], tags: [Builder]),
+    (key: "eviscerate", name: "Eviscerate", spell: 6762, aim: Enemy, range: 5.0, cost: 35.0,
+     gcd: 1.0, sound: Normal, facing: Front, attack: true, needs: (combo: true),
+     effects: [Damage(min: 10.0, max: 30.0, per_combo: 31.0)], tags: [Finisher]),
+    (key: "gouge", name: "Gouge", spell: 1777, aim: Enemy, range: 5.0, cost: 45.0,
+     cooldown: 10.0, gcd: 1.0, sound: Normal, facing: Front,
+     effects: [Damage(min: 20.0, max: 20.0), Control(kind: Incapacitate, secs: 4.0), Combo(1)],
+     tags: [Control]),
+    (key: "sprint", name: "Sprint", spell: 2983, aim: Me, cooldown: 300.0, sound: Silent,
+     keeps_stealth: true, effects: [Sprint(by: 0.5, secs: 8.0)], tags: [Escape]),
+    (key: "distract", name: "Distract", spell: 1725, aim: Ground, range: 30.0, radius: 10.0,
+     cost: 30.0, cooldown: 30.0, gcd: 1.0, sound: Loud, alerts: false, keeps_stealth: true,
+     effects: [Distract(secs: 10.0)], tags: [Utility]),
+    (key: "vanish", name: "Vanish", spell: 1856, aim: Me, cooldown: 300.0, sound: Quiet,
+     keeps_stealth: true, effects: [Vanish], tags: [Escape]),
+
+    // --- Every hero (spec §6.1) ---
+    (key: "throw_stone", name: "Throw a Stone", spell: 4164, aim: Ground, range: 25.0,
+     cooldown: 20.0, sound: Normal, alerts: false, keeps_stealth: true, effects: [],
+     tags: [Utility]),
+    (key: "eat_and_drink", name: "Eat and Drink", spell: 2639, aim: Me, sound: Quiet,
+     needs: (out_of_combat: true, still: true), effects: [Eat(secs: 15.0)], tags: [Heal]),
+
+    // --- Enemies (spec §7.1) ---
+    (key: "shadow_bolt", name: "Shadow Bolt", spell: 1106, aim: Enemy, range: 30.0, cast: 2.5,
+     sound: Normal, facing: Front, effects: [Damage(min: 75.0, max: 95.0)], tags: [Nuke]),
+    (key: "rending_cleave", name: "Rending Cleave", spell: 845, aim: Enemy, range: 8.0,
+     sound: Loud, telegraph: Some((shape: Cone(length: 8.0, angle: 120.0), windup: 1.2)),
+     effects: [Damage(min: 190.0, max: 230.0)], tags: [Nuke]),
+    (key: "war_stomp", name: "War Stomp", spell: 45, aim: Me, radius: 8.0, sound: Loud,
+     telegraph: Some((shape: Circle(radius: 8.0), windup: 1.4, on_self: true)),
+     effects: [Damage(min: 150.0, max: 180.0)], tags: [Control]),
+]

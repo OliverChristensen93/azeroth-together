@@ -9,6 +9,7 @@ pub fn shipped() -> Content {
         rules: include_str!("../../../content/nightfall/rules.ron"),
         enemies: include_str!("../../../content/nightfall/enemies.ron"),
         spawns: include_str!("../../../content/nightfall/spawns.ron"),
+        abilities: include_str!("../../../content/nightfall/abilities.ron"),
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }
@@ -75,4 +76,72 @@ fn the_shipped_senses_are_the_specs_and_the_rogue_stealths() {
         .spawns
         .iter()
         .any(|sp| matches!(sp.behaviour, nightfall_sim::Behaviour::Sleeper { .. })));
+}
+
+#[test]
+fn the_shipped_kits_are_on_their_bars_and_enemies_fight_back() {
+    use nightfall_sim::{Aim, ClassDef, Effect, Moving};
+
+    let c = shipped();
+    let rogue = &c.classes[c.class("rogue").unwrap()];
+    let mage = &c.classes[c.class("mage").unwrap()];
+    let on_bar =
+        |class: &ClassDef, key: &str| class.kit.iter().any(|&(_, a)| c.abilities[a].key == key);
+    for key in [
+        "stealth",
+        "sap",
+        "cheap_shot",
+        "garrote",
+        "ambush",
+        "sinister_strike",
+        "eviscerate",
+        "gouge",
+        "sprint",
+        "distract",
+        "vanish",
+        "throw_stone",
+        "eat_and_drink",
+    ] {
+        assert!(on_bar(rogue, key), "rogue: {key}");
+    }
+    for key in [
+        "frostbolt",
+        "fireball",
+        "fire_blast",
+        "frost_nova",
+        "arcane_missiles",
+        "polymorph",
+        "blink",
+        "conjure_water",
+        "throw_stone",
+        "eat_and_drink",
+    ] {
+        assert!(on_bar(mage, key), "mage: {key}");
+    }
+    let a = |key: &str| &c.abilities[c.ability(key).unwrap()];
+    assert_eq!(a("frostbolt").cast, 2.5);
+    assert_eq!(a("frostbolt").moving, Moving::Slowed);
+    assert_eq!(a("fireball").moving, Moving::Rooted);
+    assert_eq!(a("arcane_missiles").moving, Moving::Rooted);
+    assert_eq!(a("blink").cooldown, 15.0);
+    assert_eq!(a("throw_stone").range, 25.0);
+    assert_eq!(a("throw_stone").cooldown, 20.0);
+    assert_eq!(a("throw_stone").aim, Aim::Ground);
+    assert!(a("vanish").has(|e| matches!(e, Effect::Vanish)));
+    assert_eq!(c.rules.combat.downed_for, 45.0);
+    assert_eq!(rogue.power_max, 100.0);
+    assert!(rogue.swing.is_some());
+    assert!(mage.power_max > 0.0);
+    let weaver = &c.enemies[c.enemy("nightbane_shadow_weaver").unwrap()];
+    assert!(!weaver.kit.is_empty());
+    assert!(c.enemies.iter().filter(|e| e.elite).count() >= 2);
+    for e in c.enemies.iter().filter(|e| e.elite) {
+        assert!(
+            e.kit
+                .iter()
+                .any(|&(m, _)| c.abilities[m].telegraph.is_some()),
+            "{}",
+            e.key
+        );
+    }
 }

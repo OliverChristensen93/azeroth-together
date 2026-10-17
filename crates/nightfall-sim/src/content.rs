@@ -6,7 +6,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
-use crate::{Bounds, V2};
+use crate::{AbilityDef, Bounds, Creature, V2};
 
 /// One of the class's weapons as WoW's virtual item fields want it.
 #[derive(Clone, Debug, Deserialize)]
@@ -20,6 +20,24 @@ pub struct WeaponDef {
     pub material: u8,
     pub inventory_type: u8,
     pub sheath: u8,
+}
+
+/// A weapon's or a claw's blow: damage from `min` to `max`, one every `every` seconds.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub struct Swing {
+    pub min: f32,
+    pub max: f32,
+    pub every: f32,
+}
+
+impl Swing {
+    /// Whether the numbers can be struck with: finite, `max` no less than `min`, a real interval.
+    fn works(&self) -> bool {
+        non_negative(self.min)
+            && non_negative(self.max)
+            && self.max >= self.min
+            && positive(self.every)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -50,6 +68,23 @@ pub struct ClassDef {
     /// The class can stealth (spec §6.3's Rogue toggle, the stealthed rows of §5.1).
     #[serde(default)]
     pub stealth: bool,
+    /// Mana for a mage, energy (100) for a rogue, at its fullest (spec §6).
+    #[serde(default)]
+    pub power_max: f32,
+    /// Power back a second, in combat or not: a rogue's energy. Mana comes back by drinking.
+    #[serde(default)]
+    pub power_regen: f32,
+    /// The weapon's blow, for auto-attack and weapon abilities; a class without one does not
+    /// melee.
+    #[serde(default)]
+    pub swing: Option<Swing>,
+    /// The action bar (spec §6.1): WoW action ids (1 to 12 the main bar, 73 to 84 the bar a
+    /// stealthed rogue sees) and the ability on each, by key.
+    #[serde(default)]
+    pub bar: Vec<(u8, String)>,
+    /// `bar` with each ability as its index into [`Content::abilities`], filled as content loads.
+    #[serde(skip)]
+    pub kit: Vec<(u8, usize)>,
 }
 
 fn white() -> u32 {
@@ -128,6 +163,9 @@ pub struct Rules {
     /// The senses (spec §5); the spec's values when `rules.ron` leaves any out.
     #[serde(default)]
     pub senses: SenseRules,
+    /// The fight (spec §6); its defaults when `rules.ron` leaves it out.
+    #[serde(default)]
+    pub combat: CombatRules,
 }
 
 /// How the host uses what it knows of the world.
@@ -502,6 +540,160 @@ pub struct EnemyDef {
     pub walk_speed: f32,
     /// Running, for the chases of later sub-projects, yards a second.
     pub run_speed: f32,
+    #[serde(default)]
+    pub creature: Creature,
+    /// Guards the best loot and uses telegraphs (spec §7.1); shown with WoW's elite dragon.
+    #[serde(default)]
+    pub elite: bool,
+    /// Its melee blow; without one it does not melee.
+    #[serde(default)]
+    pub swing: Option<Swing>,
+    /// Yards it strikes from in melee: a little past the senses' `chase_reach`, where it stops.
+    #[serde(default = "melee_reach")]
+    pub reach: f32,
+    /// The abilities it uses in a fight, each at most every so many seconds.
+    #[serde(default)]
+    pub moves: Vec<MoveDef>,
+    /// `moves` as (ability index, seconds), filled as content loads.
+    #[serde(skip)]
+    pub kit: Vec<(usize, f32)>,
+}
+
+fn melee_reach() -> f32 {
+    2.5
+}
+
+/// An ability an enemy uses, and how often at most.
+#[derive(Clone, Debug, Deserialize)]
+pub struct MoveDef {
+    pub ability: String,
+    pub every: f32,
+}
+
+/// The dodge (spec §6.1).
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default)]
+pub struct DodgeRules {
+    pub charges: u8,
+    /// Seconds for each charge to come back, one at a time.
+    pub recharge: f32,
+    /// Seconds after a dodge in which telegraphed blows miss.
+    pub immune: f32,
+    /// Yards the hop goes (the client's own).
+    pub distance: f32,
+}
+
+impl Default for DodgeRules {
+    fn default() -> Self {
+        Self {
+            charges: 2,
+            recharge: 8.0,
+            immune: 0.3,
+            distance: 6.0,
+        }
+    }
+}
+
+/// The fight's rules (spec §6, §8.1, §11).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct CombatRules {
+    /// Speed while casting a `Slowed` ability (§11's `cast_move_speed`).
+    pub cast_move_speed: f32,
+    /// Yards a cast may drift (a nudge, a slope) before moving breaks it.
+    pub cast_slack: f32,
+    /// Seconds a slowed cast allows full speed while the slow reaches the client.
+    pub speed_grace: f32,
+    /// Yards added to every range: the target's size.
+    pub reach: f32,
+    /// Degrees either side of straight ahead that count as in front (WoW's 180° arc).
+    pub front: f32,
+    pub crit_chance: f32,
+    pub crit_times: f32,
+    pub dodge: DodgeRules,
+    /// Seconds a hero stays in combat after the last blow they dealt or took.
+    pub combat_linger: f32,
+    /// Health and mana back a second out of combat; eating and drinking do the rest.
+    pub regen: (f32, f32),
+    /// Seconds a downed hero has before they die (§11's `downed_for`).
+    pub downed_for: f32,
+    /// Seconds a teammate stands by a downed hero to get them up.
+    pub revive_for: f32,
+    /// Yards that teammate stands within.
+    pub revive_reach: f32,
+    /// The share of their health a revived hero gets up with.
+    pub revive_health: f32,
+    /// The share of their speed a downed hero crawls at.
+    pub crawl_speed: f32,
+    /// Yards a second a sheep wanders.
+    pub sheep_speed: f32,
+    pub combo_max: u8,
+    /// Conjured drinks a hero may carry.
+    pub max_drinks: u8,
+}
+
+impl Default for CombatRules {
+    fn default() -> Self {
+        Self {
+            cast_move_speed: 0.5,
+            cast_slack: 0.5,
+            speed_grace: 0.3,
+            reach: 1.5,
+            front: 90.0,
+            crit_chance: 0.05,
+            crit_times: 1.5,
+            dodge: DodgeRules::default(),
+            combat_linger: 5.0,
+            regen: (0.0, 0.0),
+            downed_for: 45.0,
+            revive_for: 5.0,
+            revive_reach: 3.0,
+            revive_health: 0.3,
+            crawl_speed: 0.3,
+            sheep_speed: 1.0,
+            combo_max: 5,
+            max_drinks: 20,
+        }
+    }
+}
+
+impl CombatRules {
+    /// Whether the numbers can be fought with. `positive` and `non_negative` also refuse NaN and
+    /// infinity, which a bare `>= 0.0` would let through (infinity) or pass only by luck (NaN).
+    fn check(&self) -> Result<(), String> {
+        let d = &self.dodge;
+        let unit = |x: f32| x.is_finite() && (0.0..=1.0).contains(&x);
+        let fine = positive(self.cast_move_speed)
+            && self.cast_move_speed <= 1.0
+            && non_negative(self.cast_slack)
+            && non_negative(self.speed_grace)
+            && non_negative(self.reach)
+            && positive(self.front)
+            && self.front <= 180.0
+            && unit(self.crit_chance)
+            && self.crit_times.is_finite()
+            && self.crit_times >= 1.0
+            && d.charges >= 1
+            && positive(d.recharge)
+            && non_negative(d.immune)
+            && positive(d.distance)
+            && non_negative(self.combat_linger)
+            && non_negative(self.regen.0)
+            && non_negative(self.regen.1)
+            && positive(self.downed_for)
+            && positive(self.revive_for)
+            && positive(self.revive_reach)
+            && positive(self.revive_health)
+            && self.revive_health <= 1.0
+            && unit(self.crawl_speed)
+            && non_negative(self.sheep_speed)
+            && (1..=5).contains(&self.combo_max);
+        if fine {
+            Ok(())
+        } else {
+            Err("rules.ron: combat's numbers cannot work (see CombatRules)".into())
+        }
+    }
 }
 
 fn one_f32() -> f32 {
@@ -559,6 +751,7 @@ pub struct ContentSources<'a> {
     pub rules: &'a str,
     pub enemies: &'a str,
     pub spawns: &'a str,
+    pub abilities: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -568,6 +761,7 @@ pub struct Content {
     pub rules: Rules,
     pub enemies: Vec<EnemyDef>,
     pub spawns: Vec<SpawnDef>,
+    pub abilities: Vec<AbilityDef>,
 }
 
 /// Content that does not load, and why.
@@ -589,12 +783,12 @@ impl fmt::Display for ContentError {
 impl std::error::Error for ContentError {}
 
 /// A finite number above zero (NaN and infinity are not).
-fn positive(x: f32) -> bool {
+pub(crate) fn positive(x: f32) -> bool {
     x.is_finite() && x > 0.0
 }
 
 /// A finite number, zero or more.
-fn non_negative(x: f32) -> bool {
+pub(crate) fn non_negative(x: f32) -> bool {
     x.is_finite() && x >= 0.0
 }
 
@@ -609,11 +803,12 @@ impl Content {
     // The float checks are negated comparisons on purpose, so a NaN fails them.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn from_ron(src: ContentSources) -> Result<Self, ContentError> {
-        let classes: Vec<ClassDef> = parse("classes.ron", src.classes)?;
+        let mut classes: Vec<ClassDef> = parse("classes.ron", src.classes)?;
         let map: MapFile = parse("map.ron", src.map)?;
         let rules: Rules = parse("rules.ron", src.rules)?;
-        let enemies: Vec<EnemyDef> = parse("enemies.ron", src.enemies)?;
+        let mut enemies: Vec<EnemyDef> = parse("enemies.ron", src.enemies)?;
         let spawns: Vec<SpawnDef> = parse("spawns.ron", src.spawns)?;
+        let abilities: Vec<AbilityDef> = parse("abilities.ron", src.abilities)?;
         let invalid = |why: String| Err(ContentError::Invalid(why));
 
         if classes.is_empty() {
@@ -765,6 +960,63 @@ impl Content {
         if let Some(why) = rules.senses.problem() {
             return invalid(format!("rules.ron: senses: {why}"));
         }
+        for (i, a) in abilities.iter().enumerate() {
+            if abilities[..i].iter().any(|b| b.key == a.key) {
+                return invalid(format!("ability \"{}\" is listed twice", a.key));
+            }
+            a.check()
+                .map_err(|why| ContentError::Invalid(format!("abilities.ron: {why}")))?;
+        }
+        let ability = |key: &str| abilities.iter().position(|a| a.key == key);
+        for c in &mut classes {
+            if !(non_negative(c.power_max) && non_negative(c.power_regen))
+                || c.swing.is_some_and(|s| !s.works())
+            {
+                return invalid(format!(
+                    "classes.ron: \"{}\" needs power_max and power_regen of 0 or more and a swing that works",
+                    c.key
+                ));
+            }
+            for (i, (slot, key)) in c.bar.iter().enumerate() {
+                if !(1..=120).contains(slot) || c.bar[..i].iter().any(|(s, _)| s == slot) {
+                    return invalid(format!(
+                        "classes.ron: \"{}\"'s bar slot {slot} is not 1 to 120, or is used twice",
+                        c.key
+                    ));
+                }
+                let Some(a) = ability(key) else {
+                    return invalid(format!(
+                        "classes.ron: \"{}\"'s bar names no ability \"{key}\"",
+                        c.key
+                    ));
+                };
+                c.kit.push((*slot, a));
+            }
+        }
+        for e in &mut enemies {
+            if !positive(e.reach) || e.swing.is_some_and(|s| !s.works()) {
+                return invalid(format!(
+                    "enemies.ron: \"{}\" needs a reach above 0 and a swing that works",
+                    e.key
+                ));
+            }
+            for m in &e.moves {
+                let Some(a) = ability(&m.ability) else {
+                    return invalid(format!(
+                        "enemies.ron: \"{}\" moves with no ability \"{}\"",
+                        e.key, m.ability
+                    ));
+                };
+                if !positive(m.every) {
+                    return invalid(format!(
+                        "enemies.ron: \"{}\"'s \"{}\" needs an every above 0",
+                        e.key, m.ability
+                    ));
+                }
+                e.kit.push((a, m.every));
+            }
+        }
+        rules.combat.check().map_err(ContentError::Invalid)?;
         Ok(Self {
             classes,
             map: MapDef {
@@ -785,7 +1037,13 @@ impl Content {
             rules,
             enemies,
             spawns,
+            abilities,
         })
+    }
+
+    /// The ability with this key, by index.
+    pub fn ability(&self, key: &str) -> Option<usize> {
+        self.abilities.iter().position(|a| a.key == key)
     }
 
     /// The enemy kind with this key, by index.
@@ -802,6 +1060,7 @@ impl Content {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Creature, Moving, Sound};
 
     const CLASSES: &str = r#"[
         (key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0, base_hp: 100.0, speed: 7.0),
@@ -824,6 +1083,39 @@ mod tests {
         (place: "Nest", kind: "spider", count: 3, z: Some(1.0), behaviour: Wander(center: (30.0, 70.0), radius: 10.0)),
     ]"#;
 
+    const ABILITIES: &str = r#"[
+        (key: "bolt", name: "Bolt", spell: 116, aim: Enemy, range: 30.0, cost: 50.0, cast: 2.0,
+         gcd: 1.5, moving: Slowed, effects: [Damage(min: 100.0, max: 110.0)]),
+        (key: "nova", name: "Nova", spell: 122, aim: Me, radius: 10.0, cooldown: 25.0,
+         effects: [Control(kind: Root, secs: 8.0)]),
+    ]"#;
+    const KIT_CLASSES: &str = r#"[
+        (key: "mage", name: "Mage", class_id: 8, power: 0, race: 1, sex: 1, base_hp: 880.0,
+         speed: 7.0, power_max: 1300.0, bar: [(1, "bolt"), (4, "nova")]),
+    ]"#;
+    const KIT_ENEMIES: &str = r#"[
+        (key: "weaver", name: "Weaver", display: 203, level: 28, hp: 900.0, walk_speed: 2.5,
+         run_speed: 7.0, swing: Some((min: 20.0, max: 30.0, every: 2.0)),
+         moves: [(ability: "bolt", every: 6.0)]),
+    ]"#;
+
+    /// Content with `abilities`, a bar and enemy moves, on the tests' map with no spawns.
+    fn load_kit(
+        classes: &str,
+        abilities: &str,
+        rules: &str,
+        enemies: &str,
+    ) -> Result<Content, ContentError> {
+        Content::from_ron(ContentSources {
+            classes,
+            map: MAP,
+            rules,
+            enemies,
+            spawns: "[]",
+            abilities,
+        })
+    }
+
     fn load(classes: &str, map: &str, rules: &str) -> Result<Content, ContentError> {
         load_all(classes, map, rules, ENEMIES, SPAWNS)
     }
@@ -841,6 +1133,7 @@ mod tests {
             rules,
             enemies,
             spawns,
+            abilities: "[]",
         })
     }
 
@@ -1263,6 +1556,142 @@ mod tests {
         ));
         assert!(matches!(
             load("[]", MAP, RULES),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn a_bar_resolves_to_its_abilities_and_moves_to_theirs() {
+        let c = load_kit(KIT_CLASSES, ABILITIES, RULES, KIT_ENEMIES).unwrap();
+        assert_eq!(c.ability("nova"), Some(1));
+        assert_eq!(c.classes[0].kit, vec![(1, 0), (4, 1)]);
+        assert_eq!(c.classes[0].power_max, 1300.0);
+        assert_eq!(c.enemies[0].kit, vec![(0, 6.0)]);
+        assert_eq!(c.enemies[0].reach, 2.5);
+        assert_eq!(c.enemies[0].creature, Creature::Humanoid);
+        assert!(!c.enemies[0].elite);
+        let bolt = &c.abilities[0];
+        assert_eq!(bolt.moving, Moving::Slowed);
+        assert_eq!(bolt.sound, Sound::Normal);
+        assert_eq!(bolt.ticks, 1);
+        assert!(bolt.alerts);
+        assert_eq!(bolt.windup(), 2.0);
+    }
+
+    #[test]
+    fn a_bar_or_a_move_naming_no_ability_is_refused() {
+        let bad_bar = KIT_CLASSES.replace("(4, \"nova\")", "(4, \"fireball\")");
+        assert!(matches!(
+            load_kit(&bad_bar, ABILITIES, RULES, KIT_ENEMIES),
+            Err(ContentError::Invalid(_))
+        ));
+        let twice = KIT_CLASSES.replace("(4, \"nova\")", "(1, \"nova\")");
+        assert!(matches!(
+            load_kit(&twice, ABILITIES, RULES, KIT_ENEMIES),
+            Err(ContentError::Invalid(_))
+        ));
+        let bad_move = KIT_ENEMIES.replace("ability: \"bolt\"", "ability: \"cleave\"");
+        assert!(matches!(
+            load_kit(KIT_CLASSES, ABILITIES, RULES, &bad_move),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn abilities_that_cannot_work_are_refused() {
+        for (from, to) in [
+            ("cost: 50.0", "cost: -5.0"),
+            ("range: 30.0, cost", "range: 0.0, cost"),
+            (
+                "Damage(min: 100.0, max: 110.0)",
+                "Damage(min: 100.0, max: 90.0)",
+            ),
+            (
+                "Control(kind: Root, secs: 8.0)",
+                "Control(kind: Root, secs: 0.0)",
+            ),
+            ("Damage(min: 100.0, max: 110.0)", "Slow(by: 1.5, secs: 7.0)"),
+            ("cast: 2.0,", "cast: 2.0, channel: 3.0,"),
+        ] {
+            let abilities = ABILITIES.replacen(from, to, 1);
+            assert!(
+                matches!(
+                    load_kit(KIT_CLASSES, &abilities, RULES, KIT_ENEMIES),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{to}"
+            );
+        }
+        let twice = ABILITIES.replace("key: \"nova\"", "key: \"bolt\"");
+        assert!(matches!(
+            load_kit(KIT_CLASSES, &twice, RULES, KIT_ENEMIES),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn the_combat_rules_default_to_the_spec_and_refuse_what_cannot_work() {
+        let c = load(CLASSES, MAP, RULES).unwrap();
+        let r = &c.rules.combat;
+        assert_eq!(r.cast_move_speed, 0.5);
+        assert_eq!(r.downed_for, 45.0);
+        assert_eq!(r.revive_for, 5.0);
+        assert_eq!(
+            (r.dodge.charges, r.dodge.recharge, r.dodge.immune),
+            (2, 8.0, 0.3)
+        );
+        assert_eq!(r.dodge.distance, 6.0);
+        assert_eq!(r.regen, (0.0, 0.0));
+        for bad in [
+            "cast_move_speed: 0.0",
+            "front: 200.0",
+            "crit_chance: 1.5",
+            "dodge: (charges: 0)",
+            "revive_health: 0.0",
+            "combo_max: 9",
+        ] {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, combat: ({bad}),"),
+                1,
+            );
+            assert!(
+                matches!(load(CLASSES, MAP, &rules), Err(ContentError::Invalid(_))),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn combat_numbers_must_be_finite() {
+        // A bare `>= 0.0` lets infinity through; each of these must be refused all the same.
+        for bad in [
+            "regen: (inf, 0.0)",
+            "downed_for: inf",
+            "dodge: (recharge: inf)",
+        ] {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, combat: ({bad}),"),
+                1,
+            );
+            assert!(
+                matches!(load(CLASSES, MAP, &rules), Err(ContentError::Invalid(_))),
+                "{bad}"
+            );
+        }
+        let abilities = ABILITIES.replacen(
+            "Damage(min: 100.0, max: 110.0)",
+            "Damage(min: 100.0, max: inf)",
+            1,
+        );
+        assert!(matches!(
+            load_kit(KIT_CLASSES, &abilities, RULES, KIT_ENEMIES),
+            Err(ContentError::Invalid(_))
+        ));
+        let swing = KIT_ENEMIES.replace("every: 2.0", "every: inf");
+        assert!(matches!(
+            load_kit(KIT_CLASSES, ABILITIES, RULES, &swing),
             Err(ContentError::Invalid(_))
         ));
     }

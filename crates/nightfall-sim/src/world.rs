@@ -359,6 +359,7 @@ mod tests {
                     hero_light: (color: (1.0, 0.8, 0.6), intensity: 0.6, range: 9.0)))"#,
                 enemies: "[]",
                 spawns: "[]",
+                abilities: "[]",
             })
             .unwrap(),
         )

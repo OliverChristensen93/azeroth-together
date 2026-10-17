@@ -25,4 +25,13 @@
     // measure: Raven Hill's crypt, where the dead lie until woken.
     (place: "Near the entry: a sleeper", kind: "fetid_corpse",
      behaviour: Sleeper(at: (-10062.0, -805.0), facing: 45.0)),
+    // measure: a shadow weaver at Raven Hill's chapel door: a caster that fights from range.
+    (place: "Near the entry: a caster", kind: "nightbane_shadow_weaver",
+     behaviour: Sentry(at: (-10010.0, -830.0), facing: 0.0)),
+    // measure: Fenros's den by the Brightwood road.
+    (place: "Near the entry: Fenros", kind: "fenros",
+     behaviour: Sentry(at: (-10100.0, -840.0), facing: 45.0)),
+    // measure: Naraxis's lair in Twilight Grove.
+    (place: "Near the entry: Naraxis", kind: "naraxis",
+     behaviour: Wander(center: (-10110.0, -760.0), radius: 8.0)),
 ]

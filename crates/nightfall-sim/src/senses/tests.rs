@@ -35,6 +35,7 @@ pub(super) fn world(spawns: &str) -> World {
         rules: RULES,
         enemies: ENEMIES,
         spawns: &spawns,
+        abilities: "[]",
     })
     .unwrap();
     World::new(Arc::new(content))

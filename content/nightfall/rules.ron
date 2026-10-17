@@ -72,4 +72,33 @@
         vignette_seen: (0.45, 0.35),
         vignette_hidden: (0.85, 0.1),
     ),
+    // The fight (spec §6, §8.1). A slowed cast moves at cast_move_speed, after speed_grace seconds
+    // at full speed (while the slow reaches a joined client); a cast breaks past cast_slack yards
+    // beyond that. Every range has `reach` yards (the target's size) added; `front` is degrees
+    // either side of straight ahead. The dodge: charges, seconds each takes to come back, seconds
+    // in which telegraphed blows miss, yards the hop goes. A hero is in combat while an enemy is
+    // after them and combat_linger seconds after a blow; out of it, `regen` gives health and mana a
+    // second (eating and drinking do the rest). Falling: downed_for seconds to be revived by a
+    // teammate within revive_reach for revive_for seconds, getting up with revive_health of their
+    // health; downed heroes crawl at crawl_speed.
+    combat: (
+        cast_move_speed: 0.5,
+        cast_slack: 0.5,
+        speed_grace: 0.3,
+        reach: 1.5,
+        front: 90.0,
+        crit_chance: 0.05,
+        crit_times: 1.5,
+        dodge: (charges: 2, recharge: 8.0, immune: 0.3, distance: 6.0),
+        combat_linger: 5.0,
+        regen: (0.0, 0.0),
+        downed_for: 45.0,
+        revive_for: 5.0,
+        revive_reach: 3.0,
+        revive_health: 0.3,
+        crawl_speed: 0.3,
+        sheep_speed: 1.0,
+        combo_max: 5,
+        max_drinks: 20,
+    ),
 )

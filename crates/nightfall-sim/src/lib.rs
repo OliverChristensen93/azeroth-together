@@ -8,6 +8,7 @@
 //! sub-project 2 adds the baked height map (walls, floors, sight and paths) and enemies that walk it; senses,
 //! combat and loot come in later sub-projects (`docs/superpowers/specs/2026-10-16-nightfall-design.md`).
 
+mod abilities;
 mod bounds;
 mod content;
 mod enemies;
@@ -18,11 +19,15 @@ mod senses;
 mod sight;
 mod world;
 
+pub use abilities::{
+    AbilityDef, Aim, ControlKind, Creature, Effect, Facing, Moving, Needs, Shape, Sound, Tag,
+    TelegraphDef,
+};
 pub use bounds::Bounds;
 pub use content::{
-    Atmosphere, AwarenessRules, Behaviour, ClassDef, Content, ContentError, ContentSources,
-    EnemyDef, HeroLight, LitArea, LoudnessTable, MapDef, Rules, SenseRules, SpawnDef, StanceTable,
-    StepNoise, WeaponDef, WorldRules,
+    Atmosphere, AwarenessRules, Behaviour, ClassDef, CombatRules, Content, ContentError,
+    ContentSources, DodgeRules, EnemyDef, HeroLight, LitArea, LoudnessTable, MapDef, MoveDef,
+    Rules, SenseRules, SpawnDef, StanceTable, StepNoise, Swing, WeaponDef, WorldRules,
 };
 pub use enemies::{Enemy, PATROL_BUDGET, STEP_FLOORS, WANDER_BUDGET};
 pub use heightmap::{
