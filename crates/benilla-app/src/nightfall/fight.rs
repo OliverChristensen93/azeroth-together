@@ -57,6 +57,35 @@ pub(super) fn ms(secs: f32) -> u32 {
     (secs * 1000.0).round().max(0.0) as u32
 }
 
+/// The `Damage` a melee `Swing` at `events[swing]` dealt: the next damage to its victim by its
+/// attacker, before the same pair swings again (the sim pushes a blow's damage right after its
+/// swing). `None` for any other event, or a swing that did none, which WoW's portrait reads as a
+/// miss.
+pub(super) fn swing_blow(events: &[Event], swing: usize) -> Option<usize> {
+    let Some(Event::Swing { by, to }) = events.get(swing) else {
+        return None;
+    };
+    events[swing + 1..]
+        .iter()
+        .take_while(|e| !matches!(e, Event::Swing { by: b, to: t } if b == by && t == to))
+        .position(|e| matches!(e, Event::Damage { to: t, by: Some(b), .. } if t == to && b == by))
+        .map(|p| swing + 1 + p)
+}
+
+/// Whether `events[damage]` is the damage of a melee blow (some swing's [`swing_blow`]), not a
+/// spell's.
+pub(super) fn is_blow(events: &[Event], damage: usize) -> bool {
+    (0..damage).any(|s| swing_blow(events, s) == Some(damage))
+}
+
+/// The amount of a `Damage` event; 0 for any other.
+fn damage_of(event: &Event) -> f32 {
+    match event {
+        Event::Damage { amount, .. } => *amount,
+        _ => 0.0,
+    }
+}
+
 /// This frame's events, shown: every hero's and drawn enemy's casts, swings and numbers; ours
 /// also on our cast bar, in WoW's red error text, and (a Blink) in our controller's teleport.
 /// An event about a unit not drawn (an enemy past the view distance) shows only what it can.
@@ -81,7 +110,7 @@ pub(super) fn show_events(
         .world
         .hero(sim.me)
         .map_or(MANA, |h| content.classes[h.class].power);
-    for event in &sim.events {
+    for (i, event) in sim.events.iter().enumerate() {
         match event {
             Event::CastStart {
                 by, ability, secs, ..
@@ -150,9 +179,10 @@ pub(super) fn show_events(
                 ..
             } => {
                 let Some(e) = body(*to) else { continue };
+                // A hero's own melee is white in WoW, their spells yellow.
                 let color = if *to == me {
                     COLOR_HURT
-                } else if matches!(by, Some(UnitRef::Hero(_))) {
+                } else if matches!(by, Some(UnitRef::Hero(_))) && !is_blow(&sim.events, i) {
                     COLOR_SPELL
                 } else {
                     COLOR_HIT
@@ -161,7 +191,9 @@ pub(super) fn show_events(
             }
             Event::Swing { by, to } => {
                 if let (Some(a), Some(v)) = (body(*by), body(*to)) {
-                    fx.swing(a, v);
+                    let dealt =
+                        swing_blow(&sim.events, i).map_or(0.0, |d| damage_of(&sim.events[d]));
+                    fx.swing(a, v, dealt);
                 }
             }
             Event::Evaded { player, .. } => {
@@ -287,5 +319,62 @@ mod tests {
         assert!(matches!(stop_edge(Stop::Moved), CastBarEdge::Interrupted));
         assert_eq!(ms(2.5), 2500);
         assert_eq!(ms(-1.0), 0);
+    }
+
+    fn damage(to: UnitRef, by: Option<UnitRef>, amount: f32) -> Event {
+        Event::Damage {
+            to,
+            by,
+            amount,
+            crit: false,
+            ambush: false,
+        }
+    }
+
+    #[test]
+    fn a_swing_takes_the_damage_its_blow_dealt() {
+        let (hero, enemy) = (UnitRef::Hero(0), UnitRef::Enemy(4));
+        let events = [
+            // A spell of ours lands first, then our swing and its blow.
+            damage(enemy, Some(hero), 90.0),
+            Event::Swing {
+                by: hero,
+                to: enemy,
+            },
+            damage(enemy, Some(hero), 33.0),
+            // The enemy swings back.
+            Event::Swing {
+                by: enemy,
+                to: hero,
+            },
+            damage(hero, Some(enemy), 12.0),
+        ];
+        assert_eq!(swing_blow(&events, 1), Some(2));
+        assert_eq!(swing_blow(&events, 3), Some(4));
+        assert_eq!(swing_blow(&events, 0), None, "a damage is no swing");
+        // The spell's damage is a spell's, the swings' blows are melee.
+        assert!(!is_blow(&events, 0));
+        assert!(is_blow(&events, 2) && is_blow(&events, 4));
+        assert_eq!(damage_of(&events[2]), 33.0);
+    }
+
+    #[test]
+    fn a_swing_that_did_no_harm_is_a_miss_and_never_takes_the_next_swings_blow() {
+        let (hero, enemy) = (UnitRef::Hero(0), UnitRef::Enemy(4));
+        let swing = || Event::Swing {
+            by: enemy,
+            to: hero,
+        };
+        // The first swing found the hero down (no damage); the next landed.
+        let events = [swing(), swing(), damage(hero, Some(enemy), 12.0)];
+        assert_eq!(swing_blow(&events, 0), None);
+        assert_eq!(swing_blow(&events, 1), Some(2));
+        // Damage by someone else, or to someone else, is not this swing's.
+        let events = [
+            swing(),
+            damage(hero, Some(UnitRef::Enemy(5)), 12.0),
+            damage(UnitRef::Hero(1), Some(enemy), 12.0),
+        ];
+        assert_eq!(swing_blow(&events, 0), None);
     }
 }

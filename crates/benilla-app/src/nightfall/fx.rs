@@ -73,16 +73,17 @@ impl Fx<'_> {
         });
     }
 
-    /// A melee swing: the attack animation, the victim's flinch, blood and the hit sound. Its
-    /// number comes with the blow's own damage event.
-    pub fn swing(&mut self, attacker: Entity, victim: Entity) {
+    /// A melee swing: the attack animation, the victim's flinch, blood and the hit sound, and
+    /// WoW's own portrait feedback for `damage` (a swing that did none reads "MISS" there). Its
+    /// floating number comes with the blow's own damage event.
+    pub fn swing(&mut self, attacker: Entity, victim: Entity, damage: f32) {
         let seq = self.seq.next();
         self.swings.write(SwingMessage {
             attacker,
             victim: Some(victim),
             hit_info: 0x2,
             victim_state: 1,
-            damage: 0,
+            damage: damage.max(0.0).ceil() as u32,
             displayed: false,
             seq,
         });
