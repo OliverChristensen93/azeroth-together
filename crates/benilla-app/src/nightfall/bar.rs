@@ -41,16 +41,19 @@ pub(super) fn slot_ability(kit: &[(u8, usize)], action: u32) -> Option<usize> {
 }
 
 /// The main bar's actions that strike an enemy and need no stealth, in bar order: what the
-/// autofight presses. With `walking` (autoplay never stands still) the abilities that root their
-/// caster are left out, as the host would refuse them "Can't do that while moving".
+/// autofight presses. With `walking` (autoplay never stands still) the abilities the host would
+/// refuse "Can't do that while moving" are left out: those that need the caster still, and the
+/// rooted ones that take time to cast or channel (a rooted instant is no hindrance).
 pub(super) fn attacks(kit: &[(u8, usize)], abilities: &[AbilityDef], walking: bool) -> Vec<u8> {
     kit.iter()
         .filter(|&&(s, a)| {
             let ability = &abilities[a];
+            let rooted =
+                ability.moving == Moving::Rooted && (ability.cast > 0.0 || ability.channel > 0.0);
             s <= 12
                 && ability.aim == Aim::Enemy
                 && !ability.needs.stealth
-                && !(walking && ability.moving == Moving::Rooted)
+                && !(walking && (rooted || ability.needs.still))
         })
         .map(|&(s, _)| s)
         .collect()
@@ -144,11 +147,14 @@ fn cursor_ground(
 /// This frame's `UseAction` presses, taken before the engine's cast path sees them: each ability
 /// on the hero's bar becomes the next [`LocalInput::press`], at the current target (WoW's own
 /// selection, Tab included) or, aimed at the ground, at the spot under the mouse; Stealth's
-/// button counts a Stealth press. A press of an empty button does nothing.
+/// button counts a Stealth press. A press of an empty button does nothing. A ground press whose
+/// cursor is over the interface (a bar button clicked), or whose ray finds no ground, goes to
+/// [`ahead`] instead: never to the terrain under the bar.
 pub(super) fn presses(
     script: Option<NonSendMut<UiScript>>,
     sim: Res<Sim>,
     selection: Res<Selection>,
+    over_ui: Res<crate::ui_script::PointerOverUi>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     world_point: WorldPoint,
@@ -173,7 +179,10 @@ pub(super) fn presses(
             continue;
         }
         let at = (a.aim == Aim::Ground).then(|| {
-            cursor_ground(&windows, &cameras, &world_point).unwrap_or_else(|| ahead(hero, a.range))
+            (!over_ui.0)
+                .then(|| cursor_ground(&windows, &cameras, &world_point))
+                .flatten()
+                .unwrap_or_else(|| ahead(hero, a.range))
         });
         let target = selection.guid.and_then(units::unit_of);
         input.press(u.action as u8, target, at);
@@ -247,7 +256,8 @@ mod tests {
         Content::from_ron(ContentSources {
             classes: r#"[(key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0,
                 base_hp: 1000.0, speed: 7.0, power_max: 100.0,
-                bar: [(1, "stealth"), (2, "strike"), (3, "bolt"), (11, "stone"), (74, "ambush")])]"#,
+                bar: [(1, "stealth"), (2, "strike"), (3, "bolt"), (4, "snap"), (5, "stand"),
+                (11, "stone"), (74, "ambush")])]"#,
             map: r#"(key: "t", name: "T", map: 0,
                 bounds: [(0.0, 0.0), (50.0, 0.0), (50.0, 50.0), (0.0, 50.0)],
                 entries: [(5.0, 5.0, 0.0)])"#,
@@ -265,6 +275,10 @@ mod tests {
                 (key: "stone", name: "Stone", spell: 4164, aim: Ground, range: 25.0, effects: []),
                 (key: "ambush", name: "Ambush", spell: 8724, aim: Enemy, range: 5.0,
                  needs: (stealth: true), effects: [Weapon(percent: 250.0)]),
+                (key: "snap", name: "Snap", spell: 5, aim: Enemy, range: 30.0, moving: Rooted,
+                 effects: []),
+                (key: "stand", name: "Stand", spell: 6, aim: Enemy, range: 30.0,
+                 needs: (still: true), effects: []),
             ]"#,
         })
         .unwrap()
@@ -276,10 +290,80 @@ mod tests {
         let kit = &c.classes[0].kit;
         assert_eq!(slot_ability(kit, 2), Some(1));
         assert_eq!(slot_ability(kit, 74), Some(4));
-        assert_eq!(slot_ability(kit, 5), None);
-        // Walking, a rooted cast would be refused, so the autofight leaves it out.
-        assert_eq!(attacks(kit, &c.abilities, false), vec![2, 3]);
-        assert_eq!(attacks(kit, &c.abilities, true), vec![2]);
+        assert_eq!(slot_ability(kit, 6), None);
+        // Walking, the host refuses a rooted cast and one that needs the caster still, so the
+        // autofight leaves them out; a rooted instant (slot 4) costs the caster nothing.
+        assert_eq!(attacks(kit, &c.abilities, false), vec![2, 3, 4, 5]);
+        assert_eq!(attacks(kit, &c.abilities, true), vec![2, 4]);
+    }
+
+    /// A one-hero world with a Selection, an empty bar and the presses' other inputs.
+    fn press_world(selected: Option<u64>) -> bevy::prelude::World {
+        let mut world = bevy::prelude::World::new();
+        benilla_world::world_point::init_world_point_resources(&mut world);
+        let mut sim = nightfall_sim::World::new(std::sync::Arc::new(content()));
+        sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        world.insert_resource(Sim::for_test(sim));
+        world.insert_resource(Selection {
+            guid: selected,
+            ..Default::default()
+        });
+        world.insert_resource(crate::ui_script::PointerOverUi(true));
+        world.init_resource::<LocalInput>();
+        world.insert_non_send_resource(UiScript::new().unwrap());
+        world
+    }
+
+    fn use_action(world: &mut bevy::prelude::World, n: u32) {
+        let script = world.non_send_resource_mut::<UiScript>();
+        script.run(&format!("UseAction({n})")).unwrap();
+    }
+
+    #[test]
+    fn a_queued_use_action_becomes_one_fresh_press_and_leaves_the_engines_calls() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let serial = super::super::enemies::enemy_guid_serial(3, 7);
+        let guid = units::unit_guid(units::UnitKind::Creature { entry: 3 }, serial);
+        let mut world = press_world(Some(guid));
+
+        use_action(&mut world, 2);
+        world.run_system_once(presses).unwrap();
+        let first = world.resource::<LocalInput>().cast.unwrap();
+        assert_eq!(
+            (first.slot, first.target, first.at),
+            (2, Some(UnitRef::Enemy(7)), None)
+        );
+        assert!(
+            world
+                .non_send_resource_mut::<UiScript>()
+                .take_action_uses()
+                .is_empty(),
+            "the engine's cast path must not see the press"
+        );
+
+        // The same button again is the next press, not a repeat of the last.
+        use_action(&mut world, 2);
+        world.run_system_once(presses).unwrap();
+        assert_eq!(
+            world.resource::<LocalInput>().cast.unwrap().seq,
+            first.seq.wrapping_add(1)
+        );
+
+        // Stealth's button counts a Stealth press and casts nothing; an empty button does nothing.
+        let cast = world.resource::<LocalInput>().cast;
+        use_action(&mut world, 1);
+        use_action(&mut world, 9);
+        world.run_system_once(presses).unwrap();
+        let input = world.resource::<LocalInput>();
+        assert_eq!((input.stealth_presses, input.cast), (1, cast));
+
+        // A ground press with the pointer over the interface goes straight ahead of the hero.
+        use_action(&mut world, 11);
+        world.run_system_once(presses).unwrap();
+        let sim = world.resource::<Sim>();
+        let want = ahead(sim.world.hero(sim.me).unwrap(), 25.0);
+        assert_eq!(world.resource::<LocalInput>().cast.unwrap().at, Some(want));
     }
 
     #[test]

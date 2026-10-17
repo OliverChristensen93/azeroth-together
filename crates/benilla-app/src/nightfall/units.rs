@@ -30,7 +30,8 @@ const FIELD_BYTES_2: u16 = 164;
 /// `FactionTemplate.dbc`: the Human player template every hero wears (a player template is
 /// enemy-masked against the whole Monster group, so WoW's own Tab and attack checks find enemies
 /// attackable; the all-friendly template 35 made every enemy neutral to them), and the hostile
-/// monster template.
+/// monster template. A side effect of template 1: heroes read as Alliance (Human) in tooltips and
+/// `UnitFactionGroup`, and the zone's PvP type is judged against it.
 pub(super) const FACTION_PLAYER: u32 = 1;
 pub(super) const FACTION_MONSTER: u32 = 14;
 

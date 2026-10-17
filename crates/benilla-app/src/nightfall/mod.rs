@@ -259,7 +259,7 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
-                stance::stealth_key
+                stance::auto_stealth
                     .before(run::feed_pose)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),

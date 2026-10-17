@@ -1,9 +1,9 @@
 //! The local hero's stance as the host needs it (spec §5.1): how they move, read off WoW's own
 //! controller (its walk toggle, `/` on the number pad, and the movement keys held), and the
 //! Rogue's Stealth press, counted into [`LocalInput`]. Stealth is a button on the action bar
-//! ([`super::bar::presses`] counts its presses). `NIGHTFALL_AUTOPLAY_GAIT` (`walk`, `run` or `sneak`) says how the
-//! autoplay walk moves, `sneak` stealthing too; `NIGHTFALL_TRACE_SENSES=1` logs the hero's senses
-//! every 2 seconds.
+//! ([`super::bar::presses`] counts its presses). `NIGHTFALL_AUTOPLAY_GAIT` (`walk`, `run` or
+//! `sneak`) says how the autoplay walk moves, `sneak` stealthing too ([`auto_stealth`]);
+//! `NIGHTFALL_TRACE_SENSES=1` logs the hero's senses every 2 seconds.
 
 use std::sync::OnceLock;
 
@@ -73,7 +73,7 @@ fn trace_on() -> bool {
 
 /// The autoplay `sneak` presses Stealth every [`AUTO_PRESS_EVERY`] seconds until the hero is in
 /// stealth; a player presses Stealth's button on the action bar.
-pub(super) fn stealth_key(
+pub(super) fn auto_stealth(
     sim: Res<Sim>,
     real: Res<Time<Real>>,
     mut input: ResMut<LocalInput>,
