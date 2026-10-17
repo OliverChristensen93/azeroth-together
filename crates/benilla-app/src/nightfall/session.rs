@@ -743,4 +743,45 @@ mod tests {
         assert!(event_for(&no, 1, |_| false));
         assert!(!event_for(&no, 0, |_| true));
     }
+
+    #[test]
+    fn what_our_own_hero_does_or_suffers_is_always_sent() {
+        let me = UnitRef::Hero(0);
+        let at = nightfall_sim::V3::new(1.0, 2.0, 3.0);
+        let events = [
+            Event::CastStart {
+                by: me,
+                ability: 0,
+                target: None,
+                secs: 1.0,
+            },
+            Event::ChannelStart {
+                by: me,
+                ability: 0,
+                target: None,
+                secs: 1.0,
+            },
+            Event::CastStop {
+                by: me,
+                ability: 0,
+                why: nightfall_sim::Stop::Moved,
+            },
+            Event::Blinked { player: 0, to: at },
+            Event::Dodged { player: 0 },
+            Event::Downed { player: 0 },
+            Event::Died { player: 0 },
+            // Revived by a friend far away, or reviving one.
+            Event::Revived { player: 0, by: 1 },
+            Event::Revived { player: 1, by: 0 },
+            Event::Evaded {
+                player: 0,
+                enemy: 9,
+            },
+        ];
+        for e in &events {
+            assert!(event_for(e, 0, |_| false), "{e:?}");
+            // And the same of a hero who is not us and far away is not.
+            assert!(!event_for(e, 2, |_| false), "{e:?} for a stranger");
+        }
+    }
 }

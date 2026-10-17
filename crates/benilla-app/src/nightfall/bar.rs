@@ -17,7 +17,7 @@ use benilla_world::view::WorldCamera;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use nightfall_sim::{AbilityDef, Aim, Effect, Hero, Moving, UnitRef, V3};
+use nightfall_sim::{AbilityDef, Aim, Effect, Hero, HeroFight, Moving, UnitRef, V3};
 
 use super::run::{autoplay, LocalInput, Sim};
 use super::units;
@@ -41,22 +41,46 @@ pub(super) fn slot_ability(kit: &[(u8, usize)], action: u32) -> Option<usize> {
 }
 
 /// The main bar's actions that strike an enemy and need no stealth, in bar order: what the
-/// autofight presses. With `walking` (autoplay never stands still) the abilities the host would
-/// refuse "Can't do that while moving" are left out: those that need the caster still, and the
-/// rooted ones that take time to cast or channel (a rooted instant is no hindrance).
+/// autofight presses. Left out: an ability that hurts nothing (a control-only Polymorph, Slow) or
+/// that only works on some kinds of creature (the enemy at hand may be another kind, and the host
+/// refuses "Invalid target"). With `walking` (autoplay never stands still) the abilities the host
+/// would refuse "Can't do that while moving" are left out too: those that need the caster still,
+/// and the rooted ones that take time to cast or channel (a rooted instant is no hindrance).
 pub(super) fn attacks(kit: &[(u8, usize)], abilities: &[AbilityDef], walking: bool) -> Vec<u8> {
     kit.iter()
         .filter(|&&(s, a)| {
             let ability = &abilities[a];
             let rooted =
                 ability.moving == Moving::Rooted && (ability.cast > 0.0 || ability.channel > 0.0);
+            let hurts = ability.has(|e| {
+                matches!(
+                    e,
+                    Effect::Damage { .. } | Effect::Weapon { .. } | Effect::Dot { .. }
+                )
+            });
             s <= 12
                 && ability.aim == Aim::Enemy
+                && hurts
+                && ability.needs.creatures.is_empty()
                 && !ability.needs.stealth
                 && !(walking && (rooted || ability.needs.still))
         })
         .map(|&(s, _)| s)
         .collect()
+}
+
+/// Whether the hero may press anything: not mid-cast (a press would be refused "Another action is
+/// in progress") and not within the global cooldown.
+pub(super) fn can_press(fight: &HeroFight) -> bool {
+    fight.casting.is_none() && fight.gcd <= 0.0
+}
+
+/// Whether `ability` is still waiting out its own cooldown.
+pub(super) fn on_cooldown(fight: &HeroFight, ability: usize) -> bool {
+    fight
+        .cooldowns
+        .iter()
+        .any(|c| usize::from(c.ability) == ability && c.left > 0.0)
 }
 
 /// The first point along the ray from `origin` the way `dir` goes, within `max` yards, at or
@@ -221,7 +245,7 @@ pub(super) fn autofight(
         let c = super::dodge::COUNTER;
         let _ = script.run(&format!("{c} = ({c} or 0) + 1"));
     }
-    if now - *last < AUTO_EVERY || !hero.fight.up() {
+    if now - *last < AUTO_EVERY || !hero.fight.up() || !can_press(&hero.fight) {
         return;
     }
     *last = now;
@@ -234,11 +258,11 @@ pub(super) fn autofight(
         return;
     }
     let content = sim.world.content();
-    let moves = attacks(
-        &content.classes[hero.class].kit,
-        &content.abilities,
-        autoplay(),
-    );
+    let kit = &content.classes[hero.class].kit;
+    let moves: Vec<u8> = attacks(kit, &content.abilities, autoplay())
+        .into_iter()
+        .filter(|&s| slot_ability(kit, u32::from(s)).is_some_and(|a| !on_cooldown(&hero.fight, a)))
+        .collect();
     if moves.is_empty() {
         return;
     }
@@ -257,7 +281,7 @@ mod tests {
             classes: r#"[(key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0,
                 base_hp: 1000.0, speed: 7.0, power_max: 100.0,
                 bar: [(1, "stealth"), (2, "strike"), (3, "bolt"), (4, "snap"), (5, "stand"),
-                (11, "stone"), (74, "ambush")])]"#,
+                (11, "stone"), (74, "ambush"), (7, "poly"), (8, "hold")])]"#,
             map: r#"(key: "t", name: "T", map: 0,
                 bounds: [(0.0, 0.0), (50.0, 0.0), (50.0, 50.0), (0.0, 50.0)],
                 entries: [(5.0, 5.0, 0.0)])"#,
@@ -271,14 +295,18 @@ mod tests {
                 (key: "strike", name: "Strike", spell: 1760, aim: Enemy, range: 5.0,
                  effects: [Weapon(bonus: 22.0)]),
                 (key: "bolt", name: "Bolt", spell: 133, aim: Enemy, range: 30.0, cast: 3.0,
-                 moving: Rooted, effects: []),
+                 moving: Rooted, effects: [Damage(min: 1.0, max: 2.0)]),
                 (key: "stone", name: "Stone", spell: 4164, aim: Ground, range: 25.0, effects: []),
                 (key: "ambush", name: "Ambush", spell: 8724, aim: Enemy, range: 5.0,
                  needs: (stealth: true), effects: [Weapon(percent: 250.0)]),
                 (key: "snap", name: "Snap", spell: 5, aim: Enemy, range: 30.0, moving: Rooted,
-                 effects: []),
+                 effects: [Damage(min: 1.0, max: 2.0)]),
                 (key: "stand", name: "Stand", spell: 6, aim: Enemy, range: 30.0,
-                 needs: (still: true), effects: []),
+                 needs: (still: true), effects: [Damage(min: 1.0, max: 2.0)]),
+                (key: "poly", name: "Poly", spell: 118, aim: Enemy, range: 30.0,
+                 needs: (creatures: [Beast]), effects: [Damage(min: 1.0, max: 2.0)]),
+                (key: "hold", name: "Hold", spell: 119, aim: Enemy, range: 30.0,
+                 effects: [Control(kind: Polymorph, secs: 5.0)]),
             ]"#,
         })
         .unwrap()
@@ -295,6 +323,52 @@ mod tests {
         // autofight leaves them out; a rooted instant (slot 4) costs the caster nothing.
         assert_eq!(attacks(kit, &c.abilities, false), vec![2, 3, 4, 5]);
         assert_eq!(attacks(kit, &c.abilities, true), vec![2, 4]);
+    }
+
+    #[test]
+    fn the_autofight_leaves_out_what_hurts_nothing_and_what_only_some_creatures_take() {
+        let c = content();
+        // Poly (slot 7) needs a beast and Hold (slot 8) only holds: neither is a plain attack,
+        // however the enemy at hand is built.
+        let kit = &c.classes[0].kit;
+        assert_eq!(slot_ability(kit, 7), Some(7));
+        assert_eq!(slot_ability(kit, 8), Some(8));
+        for walking in [false, true] {
+            let moves = attacks(kit, &c.abilities, walking);
+            assert!(!moves.contains(&7) && !moves.contains(&8), "{moves:?}");
+        }
+    }
+
+    #[test]
+    fn the_autofight_waits_out_a_cast_the_gcd_and_cooldowns() {
+        use nightfall_sim::{Casting, Cooldown};
+        let mut fight = HeroFight::default();
+        assert!(can_press(&fight));
+        fight.gcd = 0.4;
+        assert!(!can_press(&fight));
+        fight.gcd = 0.0;
+        fight.casting = Some(Casting {
+            ability: 2,
+            left: 1.0,
+            total: 3.0,
+            channel: false,
+            target: None,
+        });
+        assert!(!can_press(&fight));
+        fight.casting = None;
+        fight.cooldowns = vec![
+            Cooldown {
+                ability: 3,
+                left: 5.0,
+            },
+            Cooldown {
+                ability: 4,
+                left: 0.0,
+            },
+        ];
+        assert!(on_cooldown(&fight, 3));
+        assert!(!on_cooldown(&fight, 4), "a spent cooldown is ready");
+        assert!(!on_cooldown(&fight, 1));
     }
 
     /// A one-hero world with a Selection, an empty bar and the presses' other inputs.

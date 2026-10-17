@@ -5,7 +5,7 @@
 //! for our hero. It decides nothing: every event is the host's.
 
 use bevy::prelude::*;
-use nightfall_sim::{Event, Refusal, Stop, UnitRef};
+use nightfall_sim::{Event, Refusal, Stop, UnitRef, V2, V3};
 
 use super::enemies::EnemyViews;
 use super::fx::{Fx, COLOR_EVADE, COLOR_HIT, COLOR_HURT, COLOR_SPELL};
@@ -88,6 +88,15 @@ pub(super) fn ms(secs: f32) -> u32 {
     (secs * 1000.0).round().max(0.0) as u32
 }
 
+/// Yards a Blink must move the hero to be shown as a teleport.
+const BLINK_MIN: f32 = 0.05;
+
+/// Whether a Blink that ended at `to` moves a hero standing at `from`: one a wall stopped at once
+/// ends where it began, and snapping the controller there would only jolt it.
+pub(super) fn blink_moves(from: V2, to: V3) -> bool {
+    from.distance(to.ground()) >= BLINK_MIN
+}
+
 /// Whether a stopped cast must release its caster's precast pose and glow. A cast that stopped
 /// before going off never did; a channel holds its pose to the end, and its ticks go off on
 /// another spell, so even its normal finish leaves the hold up. (A `Fail` is a quiet release,
@@ -155,7 +164,14 @@ pub(super) fn show_events(
             Event::CastStart {
                 by, ability, secs, ..
             } => {
-                let spell = content.abilities[usize::from(*ability)].spell;
+                // An ability index the content lacks (a mismatched host) shows nothing.
+                let Some(spell) = content
+                    .abilities
+                    .get(usize::from(*ability))
+                    .map(|a| a.spell)
+                else {
+                    continue;
+                };
                 if let Some(e) = body(*by) {
                     fx.start(e, spell);
                 }
@@ -169,7 +185,13 @@ pub(super) fn show_events(
             Event::ChannelStart {
                 by, ability, secs, ..
             } => {
-                let spell = content.abilities[usize::from(*ability)].spell;
+                let Some(spell) = content
+                    .abilities
+                    .get(usize::from(*ability))
+                    .map(|a| a.spell)
+                else {
+                    continue;
+                };
                 if let Some(e) = body(*by) {
                     fx.start(e, spell);
                 }
@@ -186,7 +208,9 @@ pub(super) fn show_events(
                 hits,
                 at,
             } => {
-                let a = &content.abilities[usize::from(*ability)];
+                let Some(a) = content.abilities.get(usize::from(*ability)) else {
+                    continue;
+                };
                 let channel = a.channel > 0.0;
                 let spell = if channel {
                     a.tick_spell.unwrap_or(a.spell)
@@ -203,7 +227,9 @@ pub(super) fn show_events(
                 }
             }
             Event::CastStop { by, ability, why } => {
-                let a = &content.abilities[usize::from(*ability)];
+                let Some(a) = content.abilities.get(usize::from(*ability)) else {
+                    continue;
+                };
                 // The hold is on the ability's own spell, whatever spell its ticks play.
                 if let (Some(e), true) = (body(*by), releases_hold(a.channel > 0.0, *why)) {
                     fx.fail(e, a.spell);
@@ -253,6 +279,10 @@ pub(super) fn show_events(
                 let (Some(guid), Some(hero)) = (self_guid.0, sim.world.hero(sim.me)) else {
                     continue;
                 };
+                // A Blink the walls stopped at once ends where it began: nothing to snap to.
+                if !blink_moves(hero.pos, *to) {
+                    continue;
+                }
                 *teleport_counter = teleport_counter.wrapping_add(1);
                 teleports.write(TeleportMessage {
                     guid,
@@ -481,6 +511,33 @@ mod tests {
         fn drain<M: Message>(&mut self) -> Vec<M> {
             self.world.resource_mut::<Messages<M>>().drain().collect()
         }
+    }
+
+    #[test]
+    fn a_blink_snaps_our_controller_unless_a_wall_stopped_it_at_once() {
+        let at = |s: &Stage| s.world.resource::<Sim>().world.hero(0).unwrap().pos;
+        let mut stage = Stage::new(vec![]);
+        let from = at(&stage);
+        let far = V3::new(from.x + 10.0, from.y, 0.0);
+        let same = V3::new(from.x + 0.01, from.y, 0.0);
+        assert!(blink_moves(from, far));
+        assert!(!blink_moves(from, same));
+        stage.world.resource_mut::<Sim>().events = vec![
+            Event::Blinked { player: 0, to: far },
+            Event::Blinked {
+                player: 0,
+                to: same,
+            },
+            // Another hero's Blink is theirs to snap.
+            Event::Blinked { player: 1, to: far },
+        ];
+        stage.show();
+        let snaps: Vec<([f32; 3], u32, u64)> = stage
+            .drain::<TeleportMessage>()
+            .iter()
+            .map(|t| (t.position, t.counter, t.guid))
+            .collect();
+        assert_eq!(snaps, [([far.x, far.y, far.z], 1, 77)]);
     }
 
     #[test]
