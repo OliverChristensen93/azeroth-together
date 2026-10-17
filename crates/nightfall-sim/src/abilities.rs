@@ -201,8 +201,13 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// Whether the ground point `p` is in this shape put at `at`, turned toward `facing`.
+    /// Whether the ground point `p` is in this shape put at `at`, turned toward `facing`. Nothing
+    /// is hit by a shape put or turned at a point that is not finite, and a cone has no hit
+    /// without a direction to face.
     pub fn contains(&self, at: V2, facing: V2, p: V2) -> bool {
+        if !(at.is_finite() && facing.is_finite() && p.is_finite()) {
+            return false;
+        }
         let d = p - at;
         match *self {
             Shape::Circle { radius } => d.length() <= radius,
@@ -211,6 +216,9 @@ impl Shape {
                     return false;
                 }
                 let (f, n) = (facing.normalize_or_zero(), d.normalize_or_zero());
+                if f == V2::ZERO {
+                    return false;
+                }
                 n == V2::ZERO || f.dot(n) >= (angle * 0.5).to_radians().cos() - 1e-5
             }
         }
@@ -417,6 +425,36 @@ mod tests {
         assert!(!s.contains(at, north, V2::from_angle(70f32.to_radians(), 5.0)));
         assert!(!s.contains(at, north, V2::new(9.0, 0.0)));
         assert!(!s.contains(at, north, V2::new(-3.0, 0.0)));
+    }
+
+    #[test]
+    fn no_hit_without_a_finite_point_or_a_direction() {
+        let circle = Shape::Circle { radius: 8.0 };
+        let cone = Shape::Cone {
+            length: 8.0,
+            angle: 120.0,
+        };
+        let at = V2::ZERO;
+        let north = V2::new(1.0, 0.0);
+        let inside = V2::new(3.0, 0.0);
+        let nan = V2::new(f32::NAN, 0.0);
+        let inf = V2::new(f32::INFINITY, 0.0);
+        // A cone needs a direction to face: zero, NaN and infinite facings hit nothing.
+        for facing in [V2::ZERO, nan, inf] {
+            assert!(!cone.contains(at, facing, inside), "{facing:?}");
+        }
+        // A circle does not turn, so a zero facing is no reason to miss it; a facing that is not
+        // a number is still refused.
+        assert!(circle.contains(at, V2::ZERO, inside));
+        assert!(!circle.contains(at, nan, inside));
+        assert!(!circle.contains(at, inf, inside));
+        // A point that is not a number is never in either shape, however it was put.
+        assert!(!circle.contains(at, north, nan));
+        assert!(!cone.contains(at, north, nan));
+        assert!(!cone.contains(at, north, inf));
+        assert!(!circle.contains(nan, north, inside));
+        assert!(!cone.contains(inf, north, inside));
+        assert!(cone.contains(at, north, inside));
     }
 
     #[test]

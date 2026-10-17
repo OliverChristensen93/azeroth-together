@@ -1581,52 +1581,43 @@ mod tests {
     #[test]
     fn a_bar_or_a_move_naming_no_ability_is_refused() {
         let bad_bar = KIT_CLASSES.replace("(4, \"nova\")", "(4, \"fireball\")");
-        assert!(matches!(
+        refused_naming(
             load_kit(&bad_bar, ABILITIES, RULES, KIT_ENEMIES),
-            Err(ContentError::Invalid(_))
-        ));
+            "fireball",
+        );
         let twice = KIT_CLASSES.replace("(4, \"nova\")", "(1, \"nova\")");
-        assert!(matches!(
-            load_kit(&twice, ABILITIES, RULES, KIT_ENEMIES),
-            Err(ContentError::Invalid(_))
-        ));
+        refused_naming(load_kit(&twice, ABILITIES, RULES, KIT_ENEMIES), "slot 1");
         let bad_move = KIT_ENEMIES.replace("ability: \"bolt\"", "ability: \"cleave\"");
-        assert!(matches!(
-            load_kit(KIT_CLASSES, ABILITIES, RULES, &bad_move),
-            Err(ContentError::Invalid(_))
-        ));
+        refused_naming(load_kit(KIT_CLASSES, ABILITIES, RULES, &bad_move), "cleave");
     }
 
     #[test]
     fn abilities_that_cannot_work_are_refused() {
-        for (from, to) in [
-            ("cost: 50.0", "cost: -5.0"),
-            ("range: 30.0, cost", "range: 0.0, cost"),
+        for (from, to, key) in [
+            ("cost: 50.0", "cost: -5.0", "bolt"),
+            ("range: 30.0, cost", "range: 0.0, cost", "bolt"),
             (
                 "Damage(min: 100.0, max: 110.0)",
                 "Damage(min: 100.0, max: 90.0)",
+                "bolt",
             ),
             (
                 "Control(kind: Root, secs: 8.0)",
                 "Control(kind: Root, secs: 0.0)",
+                "nova",
             ),
-            ("Damage(min: 100.0, max: 110.0)", "Slow(by: 1.5, secs: 7.0)"),
-            ("cast: 2.0,", "cast: 2.0, channel: 3.0,"),
+            (
+                "Damage(min: 100.0, max: 110.0)",
+                "Slow(by: 1.5, secs: 7.0)",
+                "bolt",
+            ),
+            ("cast: 2.0,", "cast: 2.0, channel: 3.0,", "bolt"),
         ] {
             let abilities = ABILITIES.replacen(from, to, 1);
-            assert!(
-                matches!(
-                    load_kit(KIT_CLASSES, &abilities, RULES, KIT_ENEMIES),
-                    Err(ContentError::Invalid(_))
-                ),
-                "{to}"
-            );
+            refused_naming(load_kit(KIT_CLASSES, &abilities, RULES, KIT_ENEMIES), key);
         }
         let twice = ABILITIES.replace("key: \"nova\"", "key: \"bolt\"");
-        assert!(matches!(
-            load_kit(KIT_CLASSES, &twice, RULES, KIT_ENEMIES),
-            Err(ContentError::Invalid(_))
-        ));
+        refused_naming(load_kit(KIT_CLASSES, &twice, RULES, KIT_ENEMIES), "bolt");
     }
 
     #[test]
@@ -1675,24 +1666,18 @@ mod tests {
                 &format!("(hero_level: 30, combat: ({bad}),"),
                 1,
             );
-            assert!(
-                matches!(load(CLASSES, MAP, &rules), Err(ContentError::Invalid(_))),
-                "{bad}"
-            );
+            refused_naming(load(CLASSES, MAP, &rules), "combat");
         }
         let abilities = ABILITIES.replacen(
             "Damage(min: 100.0, max: 110.0)",
             "Damage(min: 100.0, max: inf)",
             1,
         );
-        assert!(matches!(
+        refused_naming(
             load_kit(KIT_CLASSES, &abilities, RULES, KIT_ENEMIES),
-            Err(ContentError::Invalid(_))
-        ));
+            "bolt",
+        );
         let swing = KIT_ENEMIES.replace("every: 2.0", "every: inf");
-        assert!(matches!(
-            load_kit(KIT_CLASSES, ABILITIES, RULES, &swing),
-            Err(ContentError::Invalid(_))
-        ));
+        refused_naming(load_kit(KIT_CLASSES, ABILITIES, RULES, &swing), "weaver");
     }
 }
