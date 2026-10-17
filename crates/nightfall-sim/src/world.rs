@@ -282,15 +282,18 @@ impl World {
 
     /// One step: each hero takes its player's input (the gait and Stealth presses first, then the
     /// pose, kept inside the map; a pose that is not a number is dropped, so a broken client
-    /// cannot poison the world), then every hero's senses are worked out; once a map is attached,
+    /// cannot poison the world), then the presses of the fight; every hero's senses are worked out
+    /// and their fight moves on; once a map is attached,
     /// every enemy looks, listens, thinks and goes about its business.
     pub fn step(&mut self) {
         let bounds = &self.content.map.bounds;
-        for (player, input) in self.inputs.drain(..) {
-            let Some(hero) = self.heroes.iter_mut().find(|h| h.player == player) else {
+        let inputs = std::mem::take(&mut self.inputs);
+        for (player, input) in &inputs {
+            let may_stealth = self.may_stealth(*player);
+            let Some(hero) = self.heroes.iter_mut().find(|h| h.player == *player) else {
                 continue;
             };
-            senses::take_input(&mut self.senses, hero, &input, &self.content);
+            senses::take_input(&mut self.senses, hero, input, &self.content, may_stealth);
             let Some(pose) = input.pose else { continue };
             if !pose.pos.is_finite() || !pose.facing.is_finite() {
                 continue;
@@ -305,7 +308,11 @@ impl World {
                 hero.facing = facing;
             }
         }
+        for (player, input) in &inputs {
+            self.take_presses(*player, input);
+        }
         senses::step_heroes(&mut self.senses, &mut self.heroes, &self.content);
+        self.step_fighters();
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
         if let Some(nav) = self
