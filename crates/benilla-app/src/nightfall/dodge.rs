@@ -111,9 +111,17 @@ pub(super) fn setup(
     }
 }
 
+/// Whether the binding's count `now` in UI `session` is a new press, given the `(session, count)`
+/// last seen. A count is only comparable within its session (each VM starts it at 0), so a new
+/// session, or a count that went down, is a new baseline and no press; so is the first count read.
+fn pressed(seen: &mut Option<(u64, u32)>, session: u64, now: u32) -> bool {
+    matches!(seen.replace((session, now)), Some((s, last)) if s == session && now > last)
+}
+
 /// A dodge press (the binding's count went up): when our mirror shows the hero up, free-footed and
 /// with a charge, the controller hops them [`DodgeRules::distance`] yards the way they move, and
-/// the press goes into the input. The first count read is a baseline.
+/// the press goes into the input. The first count read, and the first of a new session, is a
+/// baseline ([`pressed`]).
 ///
 /// [`DodgeRules::distance`]: nightfall_sim::DodgeRules
 pub(super) fn key(
@@ -125,17 +133,24 @@ pub(super) fn key(
     bodies: Query<&Transform>,
     mut knocks: MessageWriter<KnockBackMessage>,
     mut input: ResMut<LocalInput>,
-    mut seen: Local<Option<u32>>,
+    mut seen: Local<Option<(u64, u32)>>,
     mut counter: Local<u32>,
 ) {
     let Some(script) = script else {
         return;
     };
-    let now: u32 = script.lua().globals().get(COUNTER).unwrap_or(0);
-    let Some(last) = seen.replace(now) else {
+    // [`SETUP`] makes the counter a number: until it has run in this session there is none to
+    // read, and nothing to baseline.
+    let Some(now) = script
+        .lua()
+        .globals()
+        .get::<Option<u32>>(COUNTER)
+        .ok()
+        .flatten()
+    else {
         return;
     };
-    if now == last {
+    if !pressed(&mut seen, script.session(), now) {
         return;
     }
     let Some(hero) = sim.world.hero(sim.me) else {
@@ -185,6 +200,24 @@ mod tests {
         let air = 2.0 * -j.zspeed / GRAVITY;
         assert!((j.xy_speed * air - 6.0).abs() < 1e-4);
         assert_eq!((j.cos_angle, j.sin_angle), (0.0, 1.0));
+    }
+
+    #[test]
+    fn a_count_presses_only_when_it_rises_within_its_session() {
+        let mut seen = None;
+        // The first count read is a baseline, wherever it stands.
+        assert!(!pressed(&mut seen, 1, 4));
+        assert!(!pressed(&mut seen, 1, 4));
+        // One more is one press, and several at once are one too.
+        assert!(pressed(&mut seen, 1, 5));
+        assert!(!pressed(&mut seen, 1, 5));
+        assert!(pressed(&mut seen, 1, 8));
+        // A new session starts its count over: no press, even for a count above the last.
+        assert!(!pressed(&mut seen, 2, 0));
+        assert!(!pressed(&mut seen, 3, 9));
+        // A count that went down re-baselines.
+        assert!(!pressed(&mut seen, 3, 2));
+        assert!(pressed(&mut seen, 3, 3));
     }
 
     #[test]
