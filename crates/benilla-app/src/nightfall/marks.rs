@@ -187,6 +187,7 @@ mod tests {
             max_hp: 1.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         });
         let mut app = bevy::app::App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()));

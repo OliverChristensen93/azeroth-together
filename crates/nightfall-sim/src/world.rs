@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::combat::{CastPress, Combat, Event, HeroFight, Telegraph};
 use crate::enemies::{self, Brain, Enemy, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::senses::{self, Gait, Senses, Stance};
@@ -66,6 +67,10 @@ pub struct PlayerInput {
     /// How many times the player has pressed Stealth, counting round past 255: a count rather
     /// than a flag, so a press survives an input replaced before the host steps.
     pub stealth_presses: u8,
+    /// The latest ability press, repeated until the next (spec §6.1).
+    pub cast: Option<CastPress>,
+    /// How many times the player has pressed dodge, counting round past 255.
+    pub dodge_presses: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +99,8 @@ pub struct Hero {
     /// The loudest noise they made in the last `noise_memory` seconds, yards: the rings by the
     /// player frame (spec §5.5).
     pub noise: f32,
+    /// Their side of the fight (spec §6).
+    pub fight: HeroFight,
 }
 
 /// Everything a client needs to draw the world as the host has it.
@@ -103,6 +110,8 @@ pub struct Snapshot {
     pub heroes: Vec<Hero>,
     /// The enemies; a player's own snapshot has those near their hero.
     pub enemies: Vec<Enemy>,
+    /// The telegraphed blows about to land; a player's own snapshot has those near their hero.
+    pub telegraphs: Vec<Telegraph>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -112,7 +121,7 @@ pub enum WorldError {
 }
 
 pub struct World {
-    content: Arc<Content>,
+    pub(crate) content: Arc<Content>,
     pub heroes: Vec<Hero>,
     /// The host's, placed when a map is attached; a client's, from its host's snapshots.
     pub enemies: Vec<Enemy>,
@@ -130,6 +139,12 @@ pub struct World {
     planner: Planner,
     /// Each hero's senses and each enemy's mind: the host's alone, never sent.
     pub(crate) senses: Senses,
+    /// The telegraphed blows about to land (spec §6.1), as every client draws them.
+    pub telegraphs: Vec<Telegraph>,
+    /// What happened in the steps since they were last drained (host) or pushed (mirror).
+    pub(crate) events: Vec<Event>,
+    /// The fight's host-only state.
+    pub(crate) combat: Combat,
 }
 
 impl World {
@@ -146,6 +161,9 @@ impl World {
             warnings: Vec::new(),
             planner: Planner::default(),
             senses: Senses::default(),
+            telegraphs: Vec::new(),
+            events: Vec::new(),
+            combat: Combat::default(),
         }
     }
 
@@ -198,6 +216,7 @@ impl World {
             stealthed: false,
             visibility: self.content.rules.senses.visibility.still,
             noise: 0.0,
+            fight: HeroFight::new(def, &self.content.rules.combat),
         });
         Ok(())
     }
@@ -206,6 +225,7 @@ impl World {
         self.heroes.retain(|h| h.player != player);
         self.inputs.retain(|(p, _)| *p != player);
         self.senses.forget(player);
+        self.combat.forget(player);
     }
 
     pub fn hero(&self, player: PlayerId) -> Option<&Hero> {
@@ -227,6 +247,7 @@ impl World {
         // Every enemy starts calm, with the eyes its behaviour gives it.
         self.senses
             .place(&self.content, self.brains.iter().map(Brain::spawn));
+        self.combat.place(&self.content, &self.enemies);
     }
 
     /// The height map, on the host once attached.
@@ -323,6 +344,7 @@ impl World {
             elapsed: self.elapsed,
             heroes: self.heroes.clone(),
             enemies: self.enemies.clone(),
+            telegraphs: self.telegraphs.clone(),
         }
     }
 
@@ -336,6 +358,7 @@ impl World {
         self.elapsed = snapshot.elapsed;
         self.heroes = snapshot.heroes;
         self.enemies = snapshot.enemies;
+        self.telegraphs = snapshot.telegraphs;
     }
 }
 

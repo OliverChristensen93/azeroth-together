@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
-use nightfall_sim::{Mark, PlayerId, PlayerInput, Snapshot, World, DT};
+use nightfall_sim::{Event, Mark, PlayerId, PlayerInput, Snapshot, World, DT};
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
 
@@ -31,6 +31,9 @@ pub(super) const MAX_PLAYERS: usize = 4;
 pub(super) const SEND_EVERY: u32 = 2;
 /// A connection still writing more snapshots than this is skipped until it catches up.
 const MAX_BACKLOG: usize = 2;
+/// Events a client that keeps falling behind may have waiting; past it the oldest go, so a stalled
+/// connection never grows the host's memory without end.
+const MAX_PENDING: usize = 4096;
 
 #[derive(Resource, Default)]
 pub(super) struct Net {
@@ -65,6 +68,8 @@ pub(super) struct Peer {
     conn: ConnId,
     pub player: PlayerId,
     pub hero: HeroPick,
+    /// The events since this player's last state, sent with the next one it keeps up for.
+    pending: Vec<Event>,
 }
 
 pub(super) struct ClientSide {
@@ -373,7 +378,12 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                             .expect("refusal checked for room");
                         host.send(conn, &ServerMsg::Welcome { you: player });
                         net.status = format!("{} joined", hero.name);
-                        h.peers.push(Peer { conn, player, hero });
+                        h.peers.push(Peer {
+                            conn,
+                            player,
+                            hero,
+                            pending: Vec::new(),
+                        });
                     }
                     HostEvent::Message(conn, ClientMsg::Pick(mut hero)) => {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
@@ -476,14 +486,21 @@ pub(super) fn host_receive(net: &mut Net, world: &mut World) {
     }
 }
 
-/// The host, after a step: every [`SEND_EVERY`] steps, the world to each client whose connection
-/// keeps up.
-pub(super) fn host_send(net: &mut Net, world: &World) {
+/// The host, after a step: the step's events (from `events_from` on) kept for every client, and
+/// every [`SEND_EVERY`] steps each client whose connection keeps up gets the world as its player
+/// sees it, with the events since its last state.
+pub(super) fn host_send(net: &mut Net, world: &World, events_from: usize) {
     let Role::Host(h) = &mut net.role else {
         return;
     };
     if h.peers.is_empty() {
         return;
+    }
+    let events = &world.events()[events_from..];
+    for p in &mut h.peers {
+        p.pending.extend_from_slice(events);
+        let over = p.pending.len().saturating_sub(MAX_PENDING);
+        p.pending.drain(..over);
     }
     h.steps += 1;
     if h.steps % SEND_EVERY != 0 {
@@ -491,7 +508,7 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
     }
     // Each player gets the enemies near their own hero and which of them they see (spec §4.3).
     let host = h.host.lock().unwrap();
-    for p in &h.peers {
+    for p in &mut h.peers {
         if host.backlog(p.conn) > MAX_BACKLOG {
             continue;
         }
@@ -501,6 +518,7 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
                 snapshot: world.snapshot_for(p.player),
                 seen: world.seen_by(p.player),
                 marks: world.marks_for(p.player),
+                events: std::mem::take(&mut p.pending),
             },
         );
     }
@@ -508,8 +526,9 @@ pub(super) fn host_send(net: &mut Net, world: &World) {
 
 /// What a client heard from its host during a run.
 pub(super) enum Heard {
-    /// A state, which enemies in it our hero sees, and what they think of our hero.
-    State(Snapshot, Vec<u32>, Vec<Mark>),
+    /// A state, which enemies in it our hero sees, what they think of our hero, and what
+    /// happened since the last.
+    State(Snapshot, Vec<u32>, Vec<Mark>, Vec<Event>),
     Ended,
     Lost(String),
 }
@@ -533,8 +552,9 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
                 snapshot,
                 seen,
                 marks,
+                events,
             }) => {
-                heard.push(Heard::State(snapshot, seen, marks));
+                heard.push(Heard::State(snapshot, seen, marks, events));
             }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
             ClientEvent::Disconnected(why) => heard.push(Heard::Lost(why)),

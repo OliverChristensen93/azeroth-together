@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::combat::EnemyFight;
 use crate::content::Behaviour;
 use crate::heightmap::{HeightMap, Navigator, PathPlan, MAX_STEP};
 use crate::{Content, DT, V2, V3};
@@ -51,6 +52,8 @@ pub struct Enemy {
     pub speed: f32,
     /// A sleeper lying at its post (spec §7.1), which the client draws lying down.
     pub asleep: bool,
+    /// Its side of the fight (spec §6).
+    pub fight: EnemyFight,
 }
 
 /// A small random number generator (xorshift64*), seeded per enemy, so a run plays the same every
@@ -325,6 +328,7 @@ pub(crate) fn spawn_all(
                 max_hp: def.hp,
                 speed: 0.0,
                 asleep: matches!(s.behaviour, Behaviour::Sleeper { .. }),
+                fight: EnemyFight::default(),
             });
             brains.push(Brain {
                 spawn: si,
@@ -838,6 +842,7 @@ mod tests {
             max_hp: 900.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         }];
         let mut brains = vec![Brain {
             spawn: 0,
@@ -946,6 +951,7 @@ mod tests {
                 max_hp: 900.0,
                 speed: 0.0,
                 asleep: false,
+                fight: Default::default(),
             });
             brains.push(Brain {
                 spawn: 0,

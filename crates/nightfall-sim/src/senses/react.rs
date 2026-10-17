@@ -404,6 +404,7 @@ mod tests {
             max_hp: 900.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         };
         (
             e,
@@ -459,6 +460,7 @@ mod tests {
             max_hp: 900.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         };
         let goal = V3::new(30.5, 25.0, 0.0);
         let mut way = Way::default();

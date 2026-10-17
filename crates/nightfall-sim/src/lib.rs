@@ -25,7 +25,10 @@ pub use abilities::{
     TelegraphDef,
 };
 pub use bounds::Bounds;
-pub use combat::Charges;
+pub use combat::{
+    CastPress, Casting, Charges, Cooldown, EnemyFight, Event, HeroFight, Life, Refusal, Stop,
+    Telegraph, UnitRef,
+};
 pub use content::{
     Atmosphere, AwarenessRules, Behaviour, ClassDef, CombatRules, Content, ContentError,
     ContentSources, DodgeRules, EnemyDef, HeroLight, LitArea, LoudnessTable, MapDef, MoveDef,

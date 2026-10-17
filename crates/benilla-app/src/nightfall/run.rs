@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::messages::LobbyPlayer;
-use nightfall_sim::{Gait, HeroPose, Mark, PlayerId, PlayerInput, Snapshot, World, DT, V2};
+use nightfall_sim::{Event, Gait, HeroPose, Mark, PlayerId, PlayerInput, Snapshot, World, DT, V2};
 
 use super::menu::{LeaveRun, Selection, StartRequest};
 use super::session::{self, Heard, Net, Role};
@@ -35,8 +35,8 @@ pub(super) struct Sim {
     /// Seconds between the states the views glide between: a step, or a host's snapshot.
     span: f32,
     /// Joined: the host's snapshots not yet played, oldest first, each with what our hero sees
-    /// in it and what its enemies think of our hero.
-    inbox: VecDeque<(Snapshot, Vec<u32>, Vec<Mark>)>,
+    /// in it, what its enemies think of our hero and what happened since the last.
+    inbox: VecDeque<(Snapshot, Vec<u32>, Vec<Mark>, Vec<Event>)>,
     /// Joined: playback has begun.
     playing: bool,
     /// A step was taken (or a snapshot applied) this frame.
@@ -47,6 +47,9 @@ pub(super) struct Sim {
     /// What the enemies think of our hero (spec §5.5): worked out here alone or hosting, the
     /// host's word when joined.
     pub marks: Vec<Mark>,
+    /// What happened in the steps taken (or the states played) this frame, oldest first, for
+    /// the fight's look.
+    pub events: Vec<Event>,
     /// Hosting: how many of the world's warnings (content the map could not give, paths that found
     /// nothing) are in the log already; they keep coming while the run is stepped.
     warned: usize,
@@ -76,6 +79,7 @@ impl Sim {
             stepped: false,
             seen: Vec::new(),
             marks: Vec::new(),
+            events: Vec::new(),
             warned: 0,
         }
     }
@@ -92,6 +96,7 @@ impl Sim {
             stepped: false,
             seen: Vec::new(),
             marks: Vec::new(),
+            events: Vec::new(),
             warned: 0,
         }
     }
@@ -109,6 +114,7 @@ impl Sim {
             stepped: false,
             seen: Vec::new(),
             marks: Vec::new(),
+            events: Vec::new(),
             warned: 0,
         }
     }
@@ -158,8 +164,9 @@ impl Sim {
     }
 
     fn apply_next(&mut self) {
-        if let Some((snapshot, seen, marks)) = self.inbox.pop_front() {
+        if let Some((snapshot, seen, marks, events)) = self.inbox.pop_front() {
             self.world.apply_snapshot(snapshot);
+            self.world.push_events(events);
             self.seen = seen;
             self.marks = marks;
             self.stepped = true;
@@ -184,6 +191,7 @@ impl LocalInput {
             pose,
             gait: self.gait,
             stealth_presses: self.stealth_presses,
+            ..Default::default()
         }
     }
 }
@@ -352,8 +360,8 @@ pub(super) fn step_sim(
             end.0 = true;
         }
         for h in heard {
-            if let Heard::State(snapshot, seen, marks) = h {
-                sim.inbox.push_back((snapshot, seen, marks));
+            if let Heard::State(snapshot, seen, marks, events) = h {
+                sim.inbox.push_back((snapshot, seen, marks, events));
             }
         }
         sim.play_back(time.delta_secs());
@@ -378,14 +386,20 @@ pub(super) fn step_sim(
     while sim.acc >= DT {
         sim.acc -= DT;
         sim.world.set_input(sim.me, input.with_pose(Some(pose)));
+        let from = sim.world.events().len();
         sim.world.step();
         sim.seen = sim.world.seen_by(sim.me);
         sim.marks = sim.world.marks_for(sim.me);
-        session::host_send(&mut net, &sim.world);
+        session::host_send(&mut net, &sim.world, from);
         sim.stepped = true;
     }
     // Paths that found nothing are warned of during a step, not at the attach.
     sim.log_new_warnings();
+}
+
+/// This frame's events out of the world, so they are shown once and never pile up.
+pub(super) fn take_events(mut sim: ResMut<Sim>) {
+    sim.events = sim.world.drain_events();
 }
 
 /// Leave Run: alone or hosting, the run ends (a host takes its party back to the lobby); joined,

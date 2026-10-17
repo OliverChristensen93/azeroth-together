@@ -239,6 +239,7 @@ impl Plugin for NightfallPlugin {
                 (
                     run::feed_pose,
                     run::step_sim,
+                    run::take_events,
                     view::sync,
                     view::write_vitals,
                     view::place,

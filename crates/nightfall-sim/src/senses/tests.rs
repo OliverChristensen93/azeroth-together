@@ -69,6 +69,7 @@ pub(super) fn put(w: &mut World, player: PlayerId, x: f32, y: f32, gait: Gait, p
             }),
             gait,
             stealth_presses: presses,
+            ..Default::default()
         },
     );
 }

@@ -257,6 +257,7 @@ mod tests {
             max_hp: 1.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         });
         let mut world = World::new();
         let body = world.spawn(ObjectStore(ObjectFields::from_pairs(&[]))).id();

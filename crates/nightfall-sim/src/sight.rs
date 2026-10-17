@@ -52,6 +52,12 @@ impl World {
                 .filter(|e| near.is_none_or(|p| p.distance(e.pos) <= reach))
                 .cloned()
                 .collect(),
+            telegraphs: self
+                .telegraphs
+                .iter()
+                .filter(|t| near.is_none_or(|p| p.distance(t.at.ground()) <= reach))
+                .copied()
+                .collect(),
         }
     }
 
@@ -212,6 +218,7 @@ mod tests {
             max_hp: 900.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         });
         w.apply_snapshot(s);
         assert_eq!(w.seen_by(0), vec![9]);
@@ -315,6 +322,7 @@ mod tests {
             max_hp: 900.0,
             speed: 0.0,
             asleep: false,
+            fight: Default::default(),
         });
         w.apply_snapshot(s);
         assert!(w.seen_by(0).is_empty());
