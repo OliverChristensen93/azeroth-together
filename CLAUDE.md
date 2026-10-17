@@ -54,8 +54,36 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   `World::{alert, ambush, opener_allowed, make_noise, flash, break_stealth}`. The host sends each
   player their marks (`World::marks_for`) beside their seen set. Client: `nightfall/stance.rs`
   (gait from the controller's walk toggle and keys, Stealth on `1`), `conceal.rs` (unseen enemies
-  get the engine's `target::Concealed`: no Tab, mouseover or plate; stealth's creep bit and aura),
+  get the engine's `target::Concealed`: no Tab, mouseover or plate; a sleeper lies down),
   `marks.rs` ("?"/"!"), `senses_hud.rs` (the eye, rings, heartbeat), `grade.rs` (the vignette).
+- Nightfall's fight (sub-project 4): abilities are content (`content/nightfall/abilities.ron`,
+  `nightfall-sim/src/abilities.rs`): each with its Spell.dbc rank at level 30 (`spell`: icon,
+  tooltip, cast-bar name, visual), cost, cast or channel, cooldown, GCD, range, facing, what its
+  caster may do meanwhile (`moving`: Free, Slowed, Rooted), its `sound`, needs and effects; heroes'
+  bars (`classes.ron`'s `bar`, WoW action ids, 73-84 the rogue's stealth page) and enemies' `moves`
+  name them by key. `nightfall-sim/src/combat/`: `rules.rs` (dice, arcs, ranges, the casting
+  allowance, dodge charges), `effects.rs` (damage with the ambush and crits, holds, slows, bleeds,
+  combos, Vanish, Blink, Distract, meals), `heroes.rs` (presses taken once, WoW's refusals, casts
+  and channels held to their feet, auto-attack, regeneration), `hold.rs` (holds and burns ticking,
+  sheep, what each enemy's senses may do), `falling.rs` (downed 45 s, revived in 5 s, dead),
+  `strikes.rs` (enemy swings, casts and telegraphs; the dodge). Numbers in `rules.ron`'s
+  `combat:`. Every hero's and enemy's fight rides in the snapshot (`HeroFight`, `EnemyFight`),
+  telegraphs beside them, `Event`s in `State` (protocol 4; the host sends each player only the
+  events within their reach). Every blow, a telegraph's too, needs a clear line at every range,
+  melee included; an enemy's blows make a `Hit` noise. Client: `nightfall/bar.rs` (the bar
+  filled; WoW's `UseAction` taken before the engine's cast path and sent as a `CastPress` at the
+  target or the ground under the cursor), `dodge.rs` (the `NIGHTFALL_DODGE` binding, Caps Lock and
+  mouse 5 by default, in WoW's Key Bindings window; a knockback hop), `fight.rs` (events through
+  the engine's cast bar, spell visuals, swings, combat text and error text; power, combo points,
+  cooldown sweeps, the ready stance and WoW's root in the fields), `auras.rs` (buffs, debuffs,
+  stand states, the stealth form, sheep), `telegraphs.rs` (red shapes on the terrain), `fallen.rs`
+  (the downed player's line). For a reader: a refusal reaches the player by WoW's own catalog key
+  (`ERR_OUT_OF_MANA`/`ERR_OUT_OF_ENERGY`, `ERR_SPELL_COOLDOWN`/`ERR_ABILITY_COOLDOWN`,
+  `ERR_GENERIC_NO_TARGET`: `NoPower` and `NotReady` go by the class's power) or, for a cast that
+  fails, through the engine's `CastErrors`, not by one red-text path; a rogue's Stealth look is
+  aura 1786 plus shapeshift form 30 (which turns its bar to the stealth page), written by
+  `auras::heroes`, which replaced `conceal::heroes`; a target that slips out of sight is kept for
+  `conceal::TARGET_GRACE` (3 s), so a fight does not lose it behind a tree.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
@@ -157,5 +185,9 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
 - Nightfall's senses: `NIGHTFALL_AUTOPLAY_GAIT=walk|run|sneak` sets how the autoplay walk moves
   (`sneak` stealths the Rogue); `NIGHTFALL_TRACE_SENSES=1` logs the hero's stance, visibility,
   noise, concealed enemies, marks and the nearest alerted enemy every 2 s.
+- Nightfall's fight: `NIGHTFALL_AUTOFIGHT=1` targets the nearest enemy (WoW's own Tab), presses
+  the hero's attacks in turn and dodges telegraphs; `NIGHTFALL_FRAIL=<player>` drops that hero 15 s
+  into the run (the host's), to see a fall, the line and a revive. The dodge is WoW's key binding
+  `NIGHTFALL_DODGE` (Key Bindings → Nightfall).
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
