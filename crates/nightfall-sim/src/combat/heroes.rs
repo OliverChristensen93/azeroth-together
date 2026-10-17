@@ -432,6 +432,11 @@ impl World {
             at: cs.at,
         };
         if a.channel > 0.0 {
+            // Like a cast's end, every tick needs the target in sight: checked each step, so a
+            // channel breaks the moment its target steps behind cover, before any tick lands.
+            if !self.in_sight_of(hi, aimed.enemy) {
+                return self.stop_cast(hi, Stop::TargetLost);
+            }
             let every = a.channel / a.ticks as f32;
             while cs.ticks < a.ticks && cs.elapsed + 1e-4 >= every * (cs.ticks + 1) as f32 {
                 cs.ticks += 1;

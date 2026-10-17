@@ -1234,3 +1234,35 @@ fn an_ability_breaks_stealth_unless_it_keeps_it() {
     w.step();
     assert!(!w.heroes[0].stealthed);
 }
+
+/// A world with a thin, cell-aligned wall standing from (20, 35) north to the map's edge, and
+/// the hero's class `class` at (10, 30) with the spawns in the open.
+fn world_with_a_wall(spawns: &str, class: &str) -> World {
+    let mut w = world(spawns);
+    let mut b = flat(60.0);
+    b.add_box(V2::new(20.0, 35.0), V2::new(20.5, 60.0), 0.0, 3.0);
+    w.attach_map(Arc::new(b.finish()));
+    join(&mut w, 0, class, 10.0, 30.0);
+    w
+}
+
+#[test]
+fn a_channel_breaks_when_its_target_steps_behind_cover() {
+    let mut w = world_with_a_wall(&post("brute", 30.0, 30.0, 0.0), "mage");
+    let target = foe(&w, 0);
+    press(&mut w, 0, 1, 5, target, None);
+    steps(&mut w, 35);
+    let first = w.drain_events();
+    assert_eq!(damage_to(&first, target.unwrap()).len(), 1);
+    // The brute is moved behind the wall (30, 50 is within range; the line crosses x 20 at y 40).
+    w.enemies[0].pos = V2::new(30.0, 50.0);
+    steps(&mut w, 70);
+    let rest = w.drain_events();
+    assert!(damage_to(&rest, target.unwrap()).is_empty());
+    assert!(rest.contains(&Event::CastStop {
+        by: UnitRef::Hero(0),
+        ability: 3,
+        why: Stop::TargetLost
+    }));
+    assert!(w.hero(0).unwrap().fight.casting.is_none());
+}
