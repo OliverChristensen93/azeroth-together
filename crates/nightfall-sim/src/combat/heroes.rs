@@ -44,15 +44,29 @@ impl World {
         hc.moving = input.gait != Gait::Still;
         let first = !hc.started;
         hc.started = true;
+        // Dodges come as a count, round past 255, as Stealth's presses do; the first input is the
+        // baseline.
+        let dodged = if first {
+            0
+        } else {
+            input.dodge_presses.wrapping_sub(hc.dodges)
+        };
+        hc.dodges = input.dodge_presses;
         let last = hc.seq;
         if let Some(p) = input.cast {
             hc.seq = Some(p.seq);
         }
-        if first {
-            return;
+        if !first {
+            if let Some(p) = input.cast.filter(|p| last != Some(p.seq)) {
+                self.press(hi, p);
+            }
         }
-        if let Some(p) = input.cast.filter(|p| last != Some(p.seq)) {
-            self.press(hi, p);
+        // More presses than a full set of charges are not worth more.
+        let charges = self.content.rules.combat.dodge.charges;
+        for _ in 0..dodged.min(charges) {
+            if !self.dodge(player) {
+                break;
+            }
         }
     }
 
@@ -361,8 +375,8 @@ impl World {
         }
     }
 
-    /// Every hero's fight moves on a step: their clocks and power, their cast, their swing, their
-    /// meal, and their pace.
+    /// Every hero's fight moves on a step: their clocks and power, their cast, their swing
+    /// and their meal. Their pace comes last, once the enemies have struck ([`World::set_pace`]).
     pub(crate) fn step_fighters(&mut self) {
         for hi in 0..self.heroes.len() {
             self.step_fall(hi);
@@ -370,7 +384,6 @@ impl World {
             self.step_cast(hi);
             self.swing(hi);
             self.step_meal(hi);
-            self.set_pace(hi);
         }
     }
 
@@ -397,6 +410,7 @@ impl World {
         }
         f.cooldowns.retain(|c| c.left > 1e-4);
         f.sprint = (f.sprint - DT).max(0.0);
+        f.dodge.tick(DT, &r.dodge);
         f.in_combat = up && (hunted || lingering);
         f.power = (f.power + class.power_regen * DT).min(f.max_power);
         // Stealth's own cooldown starts as stealth ends (WoW's 10 seconds).
@@ -538,8 +552,9 @@ impl World {
 
     /// Hero `hi`'s pace this step: the senses' speed (stealth's) times Sprint, times
     /// `cast_move_speed` while casting a slowed ability, times `crawl_speed` downed; feet held for
-    /// a rooted ability, and for the dead.
-    fn set_pace(&mut self, hi: usize) {
+    /// a rooted ability, and for the dead. [`World::step`] sets it after the enemies have struck:
+    /// a blow breaks stealth, which works the senses' speed out afresh.
+    pub(crate) fn set_pace(&mut self, hi: usize) {
         let content = self.content.clone();
         let r = &content.rules.combat;
         let sprint = 1.0 + self.sprint_by(hi);

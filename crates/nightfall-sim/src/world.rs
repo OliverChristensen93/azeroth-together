@@ -323,6 +323,13 @@ impl World {
         // mirror has no map, and no fight to run).
         if self.nav.is_some() {
             self.hold_enemies();
+            // Before the senses listen, so the noise of these blows is heard this step.
+            self.strike_back();
+        }
+        // Their pace last: a blow just struck broke stealth, which works the senses' speed out
+        // afresh, so the Sprint, the slowed cast and the crawl are laid on after it.
+        for hi in 0..self.heroes.len() {
+            self.set_pace(hi);
         }
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.

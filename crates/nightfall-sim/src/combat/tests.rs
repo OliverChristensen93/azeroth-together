@@ -3,12 +3,12 @@
 
 use std::sync::Arc;
 
-use super::{Hold, Slowed};
+use super::{Hold, Slowed, Telegraph};
 use crate::heightmap::testmap::{flat, house};
 use crate::heightmap::HeightMap;
 use crate::{
     Alert, CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose, Life, Mark,
-    PlayerId, PlayerInput, Refusal, Stop, UnitRef, World, DT, V2, V3,
+    PlayerId, PlayerInput, Refusal, Shape, Stop, UnitRef, World, DT, V2, V3,
 };
 
 const CLASSES: &str = r#"[
@@ -1916,4 +1916,334 @@ fn a_slow_with_no_number_for_its_strength_slows_nothing() {
         "{}",
         w.enemies[0].speed
     );
+}
+
+#[test]
+fn a_brute_in_reach_swings_every_two_seconds_and_breaks_stealth() {
+    let mut w = world(&post("brute", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.heroes[0].stealthed = true;
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, 125);
+    assert_eq!(
+        damage_to(&w.drain_events(), UnitRef::Hero(0)),
+        vec![40.0, 40.0, 40.0]
+    );
+    assert!(!w.hero(0).unwrap().stealthed);
+}
+
+#[test]
+fn a_caster_casts_from_range_and_its_bolt_lands() {
+    let mut w = world(&post("caster", 35.0, 30.0, 180.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    let id = w.enemies[0].id;
+    w.alert(id, 0);
+    steps(&mut w, 150);
+    let events = w.drain_events();
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::CastStart { by: UnitRef::Enemy(i), .. } if *i == id)));
+    assert!(events.contains(&Event::CastGo {
+        by: UnitRef::Enemy(id),
+        ability: ability(&w, "smite") as u16,
+        hits: vec![UnitRef::Hero(0)],
+        at: None
+    }));
+    assert_eq!(w.hero(0).unwrap().hp, 750.0);
+}
+
+#[test]
+fn an_enemys_cast_stops_when_its_hero_falls() {
+    let mut w = world(&post("caster", 35.0, 30.0, 180.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    let id = w.enemies[0].id;
+    w.alert(id, 0);
+    for _ in 0..150 {
+        if w.enemies[0].fight.casting.is_some() {
+            break;
+        }
+        w.step();
+    }
+    assert!(w.enemies[0].fight.casting.is_some());
+    w.hurt_hero(0, 5000.0);
+    w.step();
+    assert!(w.drain_events().contains(&Event::CastStop {
+        by: UnitRef::Enemy(id),
+        ability: ability(&w, "smite") as u16,
+        why: Stop::TargetLost
+    }));
+}
+
+#[test]
+fn a_telegraph_shows_then_lands_on_whoever_stands_in_it() {
+    let mut w = world(&post("stomper", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 25.0, 30.0);
+    join(&mut w, 1, "mage", 10.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    for _ in 0..200 {
+        if !w.telegraphs.is_empty() {
+            break;
+        }
+        w.step();
+    }
+    let t = w.telegraphs[0];
+    assert_eq!(t.shape, Shape::Circle { radius: 8.0 });
+    assert_eq!(t.at.ground(), w.enemies[0].pos);
+    assert!((t.total - 1.5).abs() < 1e-4);
+    assert!(w.combat.enemies[0].cast.is_some());
+    steps(&mut w, 50);
+    let events = w.drain_events();
+    assert_eq!(damage_to(&events, UnitRef::Hero(0)), vec![150.0]);
+    assert!(damage_to(&events, UnitRef::Hero(1)).is_empty());
+    assert!(w.telegraphs.is_empty());
+}
+
+/// An elite's stomp put on the ground under player 0 to land in `steps_to_land` steps, the hero
+/// pressing dodge in the first of them.
+fn stomped_after_a_dodge(steps_to_land: usize) -> Vec<Event> {
+    let mut w = world(&post("elite", 40.0, 40.0, 0.0));
+    join(&mut w, 0, "rogue", 20.0, 30.0);
+    w.telegraphs.push(Telegraph {
+        id: 99,
+        enemy: w.enemies[0].id,
+        ability: ability(&w, "stomp") as u16,
+        shape: Shape::Circle { radius: 8.0 },
+        at: V3::new(20.0, 30.0, 0.0),
+        facing: V2::new(1.0, 0.0),
+        left: steps_to_land as f32 * DT,
+        total: 1.5,
+    });
+    dodging(&mut w, 1);
+    steps(&mut w, steps_to_land);
+    w.drain_events()
+}
+
+#[test]
+fn a_dodge_makes_a_telegraph_miss_only_inside_its_window() {
+    // Landing in the press's step and the 8 after it, 0.3 s: a miss.
+    let inside = stomped_after_a_dodge(9);
+    assert!(inside.contains(&Event::Evaded {
+        player: 0,
+        enemy: 1
+    }));
+    assert!(damage_to(&inside, UnitRef::Hero(0)).is_empty());
+    // One step later: a hit.
+    let late = stomped_after_a_dodge(10);
+    assert_eq!(damage_to(&late, UnitRef::Hero(0)), vec![150.0]);
+}
+
+/// A step with player 0 at (20, 30) and `presses` dodge presses counted so far.
+fn dodging(w: &mut World, presses: u8) {
+    w.set_input(
+        0,
+        PlayerInput {
+            pose: Some(HeroPose {
+                pos: V2::new(20.0, 30.0),
+                facing: V2::new(1.0, 0.0),
+                z: 0.0,
+            }),
+            dodge_presses: presses,
+            ..Default::default()
+        },
+    );
+    w.step();
+}
+
+/// How many dodges the events since the last drain hold.
+fn dodged(w: &mut World) -> usize {
+    w.drain_events()
+        .iter()
+        .filter(|e| matches!(e, Event::Dodged { player: 0 }))
+        .count()
+}
+
+#[test]
+fn dodges_come_back_one_at_a_time_and_are_heard() {
+    let mut w = world("");
+    join(&mut w, 0, "rogue", 20.0, 30.0);
+    for n in 1..=3 {
+        dodging(&mut w, n);
+    }
+    assert_eq!(dodged(&mut w), 2);
+    assert_eq!(w.hero(0).unwrap().fight.dodge.have, 0);
+    assert_eq!(w.hero(0).unwrap().noise, 20.0);
+    steps(&mut w, 8 * 30);
+    assert_eq!(w.hero(0).unwrap().fight.dodge.have, 1);
+    // A count that went round past 255 is one press.
+    let mut w = world("");
+    w.add_hero(0, "rogue", "Hero", 1, 0).unwrap();
+    dodging(&mut w, 255);
+    dodging(&mut w, 0);
+    assert_eq!(dodged(&mut w), 1);
+}
+
+#[test]
+fn the_first_dodge_count_is_a_baseline_not_a_press() {
+    let mut w = world("");
+    w.add_hero(0, "rogue", "Hero", 1, 0).unwrap();
+    dodging(&mut w, 7);
+    assert_eq!(dodged(&mut w), 0);
+    assert_eq!(w.hero(0).unwrap().fight.dodge.have, 2);
+    dodging(&mut w, 8);
+    assert_eq!(dodged(&mut w), 1);
+}
+
+#[test]
+fn a_dodge_while_downed_is_refused() {
+    let mut w = world("");
+    join(&mut w, 0, "rogue", 20.0, 30.0);
+    w.hurt_hero(0, 5000.0);
+    w.drain_events();
+    dodging(&mut w, 1);
+    let events = w.drain_events();
+    assert!(events.contains(&Event::Refused {
+        player: 0,
+        why: Refusal::Down
+    }));
+    assert!(!events.iter().any(|e| matches!(e, Event::Dodged { .. })));
+    assert_eq!(w.hero(0).unwrap().fight.dodge.have, 2);
+}
+
+#[test]
+fn a_dodge_stops_a_cast() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    let target = foe(&w, 0);
+    press(&mut w, 0, 1, 1, target, None);
+    w.step();
+    w.set_input(
+        0,
+        PlayerInput {
+            pose: Some(HeroPose {
+                pos: V2::new(10.0, 30.0),
+                facing: V2::new(1.0, 0.0),
+                z: 0.0,
+            }),
+            dodge_presses: 1,
+            ..Default::default()
+        },
+    );
+    w.step();
+    assert!(w.drain_events().contains(&Event::CastStop {
+        by: UnitRef::Hero(0),
+        ability: 0,
+        why: Stop::Cancelled
+    }));
+}
+
+/// A brute at (11.5, 30) after a rogue at (9.5, 30), 2 yards apart, with a thin wall (a cell
+/// wide, aligned to the grid) between them or not.
+fn brute_across_a_wall(walled: bool) -> World {
+    let mut w = world(&post("brute", 11.5, 30.0, 90.0));
+    if walled {
+        let mut b = flat(60.0);
+        b.add_box(V2::new(10.0, 25.0), V2::new(10.5, 35.0), 0.0, 3.0);
+        w.attach_map(Arc::new(b.finish()));
+    }
+    join(&mut w, 0, "rogue", 9.5, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    w
+}
+
+#[test]
+fn a_brute_does_not_swing_through_a_thin_wall() {
+    let mut w = brute_across_a_wall(true);
+    steps(&mut w, 60);
+    assert!(damage_to(&w.drain_events(), UnitRef::Hero(0)).is_empty());
+    assert_eq!(w.hero(0).unwrap().hp, 1000.0);
+    // The same two yards in the open: it swings.
+    let mut w = brute_across_a_wall(false);
+    steps(&mut w, 60);
+    assert_eq!(damage_to(&w.drain_events(), UnitRef::Hero(0)), vec![40.0]);
+}
+
+/// A stomper at (30, 30) and a rogue 7.5 yards west of it, a thin wall between them or not.
+fn stomper_across_a_wall(walled: bool) -> World {
+    let mut w = world(&post("stomper", 30.0, 30.0, 180.0));
+    if walled {
+        let mut b = flat(60.0);
+        b.add_box(V2::new(26.0, 0.0), V2::new(26.5, 60.0), 0.0, 3.0);
+        w.attach_map(Arc::new(b.finish()));
+    }
+    join(&mut w, 0, "rogue", 22.5, 30.0);
+    w
+}
+
+#[test]
+fn a_telegraph_does_not_reach_through_a_wall() {
+    let land = |walled: bool| {
+        let mut w = stomper_across_a_wall(walled);
+        w.telegraphs.push(Telegraph {
+            id: 99,
+            enemy: w.enemies[0].id,
+            ability: ability(&w, "stomp") as u16,
+            shape: Shape::Circle { radius: 8.0 },
+            at: V3::new(30.0, 30.0, 0.0),
+            facing: V2::new(-1.0, 0.0),
+            left: DT,
+            total: 1.5,
+        });
+        w.step();
+        w.drain_events()
+    };
+    assert!(damage_to(&land(true), UnitRef::Hero(0)).is_empty());
+    assert_eq!(damage_to(&land(false), UnitRef::Hero(0)), vec![150.0]);
+}
+
+#[test]
+fn an_enemy_does_not_begin_a_telegraphed_move_at_a_hero_behind_a_wall() {
+    let mut w = stomper_across_a_wall(true);
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, 120);
+    assert!(w.telegraphs.is_empty());
+    assert!(w.combat.enemies[0].cast.is_none());
+}
+
+#[test]
+fn a_blow_does_not_cost_a_sprinting_hero_her_speed_in_that_step() {
+    let mut w = world(&post("brute", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    press(&mut w, 0, 1, 5, None, None);
+    w.step();
+    assert_eq!(damage_to(&w.drain_events(), UnitRef::Hero(0)), vec![40.0]);
+    assert!(
+        (w.heroes[0].speed - 10.5).abs() < 1e-4,
+        "{}",
+        w.heroes[0].speed
+    );
+}
+
+#[test]
+fn a_hero_downed_by_a_blow_crawls_in_that_step() {
+    let mut w = world(&post("brute", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.heroes[0].hp = 30.0;
+    w.alert(w.enemies[0].id, 0);
+    w.step();
+    assert!(w.drain_events().contains(&Event::Downed { player: 0 }));
+    assert!(
+        (w.heroes[0].speed - 7.0 * 0.3).abs() < 1e-4,
+        "{}",
+        w.heroes[0].speed
+    );
+}
+
+#[test]
+fn what_enemies_roll_is_the_same_every_run() {
+    let run = || {
+        let mut w = world(&format!(
+            "{}{}",
+            post("stomper", 30.0, 30.0, 180.0),
+            post("brute", 25.0, 36.0, 180.0)
+        ));
+        join(&mut w, 0, "rogue", 24.0, 30.0);
+        w.alert(w.enemies[0].id, 0);
+        w.alert(w.enemies[1].id, 0);
+        steps(&mut w, 300);
+        w.drain_events()
+    };
+    let events = run();
+    assert!(events.iter().any(|e| matches!(e, Event::Swing { .. })));
+    assert_eq!(events, run());
 }

@@ -70,7 +70,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{Alert, Content, ContentSources, Enemy, Mark, World, V2};
+    use crate::{
+        Alert, Casting, Content, ContentSources, ControlKind, Cooldown, Enemy, EnemyFight, Event,
+        Mark, Shape, Telegraph, UnitRef, World, V2, V3,
+    };
 
     #[test]
     fn messages_survive_the_wire() {
@@ -112,6 +115,32 @@ mod tests {
             )
             .unwrap();
         }
+        // A busy fight: every hero casting with a handful of cooldowns running, combo points,
+        // and a dodge spent.
+        for h in &mut w.heroes {
+            h.fight.casting = Some(Casting {
+                ability: 3,
+                left: 1.25,
+                total: 2.0,
+                channel: false,
+                target: Some(UnitRef::Enemy(7)),
+            });
+            h.fight.cooldowns = (0..6)
+                .map(|ability| Cooldown {
+                    ability,
+                    left: 4.5 + f32::from(ability),
+                })
+                .collect();
+            h.fight.combo = 3;
+            h.fight.combo_on = Some(7);
+            h.fight.gcd = 0.75;
+            h.fight.in_combat = true;
+            h.fight.attacking = Some(7);
+            h.fight.sprint = 3.5;
+            h.fight.dodge.have = 1;
+            h.fight.dodge.next_in = 5.5;
+            h.fight.drinks = 4;
+        }
         let mut snapshot = w.snapshot();
         snapshot.enemies = (1..=20)
             .map(|id| Enemy {
@@ -124,9 +153,80 @@ mod tests {
                 max_hp: 900.0,
                 speed: 2.5,
                 asleep: false,
-                fight: Default::default(),
+                fight: EnemyFight {
+                    control: Some(ControlKind::Stun),
+                    slowed: true,
+                    casting: Some(Casting {
+                        ability: 1,
+                        left: 1.5,
+                        total: 2.5,
+                        channel: false,
+                        target: Some(UnitRef::Hero(0)),
+                    }),
+                    auras: vec![116, 1833, 8632],
+                },
             })
             .collect();
+        snapshot.telegraphs = (1..=3)
+            .map(|id| Telegraph {
+                id,
+                enemy: id,
+                ability: 2,
+                shape: Shape::Cone {
+                    length: 8.0,
+                    angle: 120.0,
+                },
+                at: V3::new(-10051.8, -792.5, 36.5),
+                facing: V2::new(0.0, 1.0),
+                left: 0.8,
+                total: 1.2,
+            })
+            .collect();
+        // Two steps of events (a state goes out every other step): blows, casts, an evaded
+        // stomp and a dodge.
+        let step = |n: u32| {
+            let mut events: Vec<Event> = (0..4)
+                .map(|i| Event::Damage {
+                    to: UnitRef::Enemy(n * 4 + i),
+                    by: Some(UnitRef::Hero(i as u8)),
+                    amount: 130.5,
+                    crit: i == 0,
+                    ambush: false,
+                })
+                .collect();
+            events.extend([
+                Event::Damage {
+                    to: UnitRef::Hero(1),
+                    by: Some(UnitRef::Enemy(n)),
+                    amount: 61.25,
+                    crit: false,
+                    ambush: false,
+                },
+                Event::Swing {
+                    by: UnitRef::Enemy(n),
+                    to: UnitRef::Hero(1),
+                },
+                Event::CastStart {
+                    by: UnitRef::Enemy(n + 3),
+                    ability: 4,
+                    target: Some(UnitRef::Hero(2)),
+                    secs: 2.5,
+                },
+                Event::CastGo {
+                    by: UnitRef::Enemy(n + 5),
+                    ability: 5,
+                    hits: vec![UnitRef::Hero(0), UnitRef::Hero(2), UnitRef::Hero(3)],
+                    at: Some(V3::new(-10051.8, -792.5, 36.5)),
+                },
+                Event::Evaded {
+                    player: 3,
+                    enemy: n + 5,
+                },
+                Event::Dodged { player: 3 },
+            ]);
+            events
+        };
+        let events: Vec<Event> = (0..2).flat_map(step).collect();
         let msg = ServerMsg::State {
             snapshot,
             seen: (1..=20).collect(),
@@ -136,25 +236,19 @@ mod tests {
                     alert: Alert::Suspicious,
                 })
                 .collect(),
-            events: (0..12)
-                .map(|i| crate::Event::Damage {
-                    to: crate::UnitRef::Enemy(i),
-                    by: Some(crate::UnitRef::Hero(0)),
-                    amount: 130.0,
-                    crit: false,
-                    ambush: false,
-                })
-                .collect(),
+            events,
         };
         let bytes = postcard::to_stdvec(&msg).unwrap().len();
-        // Four heroes with their senses and their fight, the twenty enemies near one of them, all
-        // marked, and a busy step's events, 15 times a second, stay near 35 KB a second.
-        assert!(bytes < 2400, "{bytes} bytes");
+        // Four heroes casting with their cooldowns and their senses, the twenty enemies near one
+        // of them, all marked, casting, held and slowed, three telegraphs and two busy steps of
+        // events (2113 bytes measured, a quarter to spare), 15 times a second, stay near 32 KB a
+        // second.
+        assert!(bytes < 2650, "{bytes} bytes");
     }
 
     #[test]
     fn a_state_with_events_survives_the_wire() {
-        use crate::{Event, Refusal, Snapshot, Stop, UnitRef, V3};
+        use crate::{Refusal, Snapshot, Stop};
         let msg = ServerMsg::State {
             snapshot: Snapshot {
                 elapsed: 1.0,

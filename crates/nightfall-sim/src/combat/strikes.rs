@@ -1,0 +1,325 @@
+//! Enemies striking back (spec §6.1, §7.1) and the dodge. An enemy after an up hero uses a move
+//! of its kind when one is ready and reaches (a caster's bolt from afar; an elite's big move,
+//! shown on the ground as a telegraph before it lands), else swings plainly when in reach. Every
+//! blow needs a clear line to its hero at every range, a telegraph's too: it lands on each up
+//! hero inside its shape that its caster has a clear line to, except one whose dodge's moment
+//! (`immune`, from the press) covers it. A dodge spends a charge (each comes back in turn), makes
+//! a 20-yard noise and stops a cast or a meal; the hop itself is the client's.
+
+use super::{in_range, EnemyCast, Event, Hold, Refusal, Stop, Telegraph, UnitRef};
+use crate::enemies::heading;
+use crate::{Aim, Effect, Loudness, PlayerId, Shape, World, CHEST_HEIGHT, DT, EYE_HEIGHT, V3};
+
+impl World {
+    /// Every enemy after a hero fights for a step; every telegraph that is due lands; and the
+    /// dodges' moments run down.
+    pub(crate) fn strike_back(&mut self) {
+        for ei in 0..self.enemies.len().min(self.combat.enemies.len()) {
+            self.fight_back(ei);
+        }
+        self.land_telegraphs();
+        for hc in &mut self.combat.heroes {
+            hc.immune = (hc.immune - DT).max(0.0);
+        }
+    }
+
+    /// Enemy `ei`'s turn: its clocks run, its cast goes on or lands, else it begins a ready move
+    /// that reaches its hero, else it swings when in reach.
+    fn fight_back(&mut self, ei: usize) {
+        let content = self.content.clone();
+        {
+            let ec = &mut self.combat.enemies[ei];
+            ec.swing_in = (ec.swing_in - DT).max(0.0);
+            for t in &mut ec.moves_in {
+                *t = (*t - DT).max(0.0);
+            }
+        }
+        if self.enemies[ei].hp <= 0.0 || self.combat.enemies[ei].engage.hold == Hold::Out {
+            return;
+        }
+        let id = self.enemies[ei].id;
+        if let Some(mut c) = self.combat.enemies[ei].cast {
+            // A telegraph lands by itself ([`World::land_telegraphs`]).
+            if c.telegraph.is_some() {
+                return;
+            }
+            c.left -= DT;
+            let up = self.hero(c.player).is_some_and(|h| h.fight.up());
+            if !up {
+                self.combat.enemies[ei].cast = None;
+                self.events.push(Event::CastStop {
+                    by: UnitRef::Enemy(id),
+                    ability: c.ability as u16,
+                    why: Stop::TargetLost,
+                });
+            } else if c.left <= 1e-4 {
+                self.combat.enemies[ei].cast = None;
+                self.spell_lands(ei, c.ability, c.player);
+            } else {
+                self.combat.enemies[ei].cast = Some(c);
+            }
+            return;
+        }
+        let Some((player, _)) = self.senses.target_of(ei) else {
+            return;
+        };
+        let Some(hi) = self
+            .hero_slot(player)
+            .filter(|&hi| self.heroes[hi].fight.up())
+        else {
+            return;
+        };
+        let def = &content.enemies[self.enemies[ei].kind];
+        for (m, &(a, every)) in def.kit.iter().enumerate() {
+            let ready = self.combat.enemies[ei]
+                .moves_in
+                .get(m)
+                .is_some_and(|t| *t <= 0.0);
+            if ready && self.move_reaches(ei, hi, a) {
+                self.combat.enemies[ei].moves_in[m] = every;
+                self.begin_move(ei, hi, a);
+                return;
+            }
+        }
+        let Some(blow) = def.swing else {
+            return;
+        };
+        let (e, h) = (&self.enemies[ei], &self.heroes[hi]);
+        if e.pos.distance(h.pos) > def.reach
+            || self.combat.enemies[ei].swing_in > 0.0
+            || !self.line_to(ei, hi)
+        {
+            return;
+        }
+        let to = h.pos;
+        self.enemies[ei].facing = heading(to - self.enemies[ei].pos);
+        self.combat.enemies[ei].swing_in = blow.every;
+        let amount = self.combat.dice.between(blow.min, blow.max);
+        self.events.push(Event::Swing {
+            by: UnitRef::Enemy(id),
+            to: UnitRef::Hero(player),
+        });
+        self.wound(player, amount, Some(UnitRef::Enemy(id)));
+    }
+
+    /// Whether enemy `ei` has a clear line to hero `hi`, at every range: a blow struck through a
+    /// wall, a swing included, is no blow (as for a hero's own).
+    fn line_to(&self, ei: usize, hi: usize) -> bool {
+        let (e, h) = (&self.enemies[ei], &self.heroes[hi]);
+        self.clear_line(
+            V3::at(e.pos, e.z + EYE_HEIGHT),
+            V3::at(h.pos, h.z + CHEST_HEIGHT),
+        )
+    }
+
+    /// Whether enemy `ei`'s move `a` reaches hero `hi` from where it stands, with a clear line: a
+    /// circle around it within its size, else the ability's range.
+    fn move_reaches(&self, ei: usize, hi: usize, a: usize) -> bool {
+        let ab = &self.content.abilities[a];
+        let d = self.enemies[ei].pos.distance(self.heroes[hi].pos);
+        let near = match ab.telegraph {
+            Some(t) if t.on_self => d <= t.shape.reach(),
+            _ if ab.aim == Aim::Me => d <= ab.radius,
+            _ => d <= ab.range,
+        };
+        near && self.line_to(ei, hi)
+    }
+
+    /// Enemy `ei` begins move `a` at hero `hi`: turned to them, a telegraph put down where it
+    /// will land (around itself, from itself for a cone, else under the hero as they stand now),
+    /// and a cast or windup started; an instant lands at once.
+    fn begin_move(&mut self, ei: usize, hi: usize, a: usize) {
+        let content = self.content.clone();
+        let ab = &content.abilities[a];
+        let (id, from, from_z) = (
+            self.enemies[ei].id,
+            self.enemies[ei].pos,
+            self.enemies[ei].z,
+        );
+        let (player, to, to_z) = (
+            self.heroes[hi].player,
+            self.heroes[hi].pos,
+            self.heroes[hi].z,
+        );
+        let facing = heading(to - from);
+        self.enemies[ei].facing = facing;
+        let windup = ab.windup();
+        let mut telegraph = None;
+        if let Some(t) = ab.telegraph {
+            let at = if t.on_self || matches!(t.shape, Shape::Cone { .. }) {
+                V3::at(from, from_z)
+            } else {
+                V3::at(to, to_z)
+            };
+            let tid = self.combat.next_telegraph;
+            self.combat.next_telegraph += 1;
+            self.telegraphs.push(Telegraph {
+                id: tid,
+                enemy: id,
+                ability: a as u16,
+                shape: t.shape,
+                at,
+                facing,
+                left: windup,
+                total: windup,
+            });
+            telegraph = Some(tid);
+        }
+        if windup <= 0.0 {
+            self.spell_lands(ei, a, player);
+            return;
+        }
+        self.combat.enemies[ei].cast = Some(EnemyCast {
+            ability: a,
+            player,
+            left: windup,
+            total: windup,
+            telegraph,
+        });
+        self.events.push(Event::CastStart {
+            by: UnitRef::Enemy(id),
+            ability: a as u16,
+            target: Some(UnitRef::Hero(player)),
+            secs: windup,
+        });
+    }
+
+    /// An enemy's ability does its damage: its `Damage` effects, and `Weapon` as its kind's
+    /// swing. Other effects are heroes' alone for now.
+    fn enemy_damage(&mut self, ei: usize, a: usize) -> f32 {
+        let content = self.content.clone();
+        let swing = content.enemies[self.enemies[ei].kind].swing;
+        let mut total = 0.0;
+        for effect in &content.abilities[a].effects {
+            match *effect {
+                Effect::Damage { min, max, .. } => total += self.combat.dice.between(min, max),
+                Effect::Weapon { percent, bonus } => {
+                    if let Some(s) = swing {
+                        total += self.combat.dice.between(s.min, s.max) * percent / 100.0 + bonus;
+                    }
+                }
+                _ => {}
+            }
+        }
+        total
+    }
+
+    /// Enemy `ei`'s cast of `a` at `player` goes off: it lands if the hero is still up, in range
+    /// and in sight.
+    fn spell_lands(&mut self, ei: usize, a: usize, player: PlayerId) {
+        let id = self.enemies[ei].id;
+        let ab = &self.content.abilities[a];
+        let range = if ab.aim == Aim::Me {
+            ab.radius
+        } else {
+            ab.range
+        };
+        let reach = self.content.rules.combat.clone();
+        let hit = self.hero_slot(player).filter(|&hi| {
+            let (e, h) = (&self.enemies[ei], &self.heroes[hi]);
+            h.fight.up() && in_range(e.pos.distance(h.pos), range, &reach) && self.line_to(ei, hi)
+        });
+        let mut hits = Vec::new();
+        if hit.is_some() {
+            let amount = self.enemy_damage(ei, a);
+            self.wound(player, amount, Some(UnitRef::Enemy(id)));
+            hits.push(UnitRef::Hero(player));
+        }
+        self.events.push(Event::CastGo {
+            by: UnitRef::Enemy(id),
+            ability: a as u16,
+            hits,
+            at: None,
+        });
+    }
+
+    /// Telegraphs run down, and those due land.
+    fn land_telegraphs(&mut self) {
+        for t in &mut self.telegraphs {
+            t.left -= DT;
+        }
+        let due: Vec<Telegraph> = self
+            .telegraphs
+            .iter()
+            .filter(|t| t.left <= 1e-4)
+            .copied()
+            .collect();
+        self.telegraphs.retain(|t| t.left > 1e-4);
+        for t in due {
+            self.telegraph_lands(t);
+        }
+    }
+
+    /// Telegraph `t` lands on every up hero inside its shape that its caster has a clear line to
+    /// (a wall shields what is behind it, an area blow's too), except those whose dodge's moment
+    /// covers it, who see it miss. A caster that is gone leaves nothing to land: a dead enemy's
+    /// telegraphs are taken down with it.
+    fn telegraph_lands(&mut self, t: Telegraph) {
+        let Some(ei) = self.enemies.iter().position(|e| e.id == t.enemy) else {
+            return;
+        };
+        if let Some(c) = &self.combat.enemies[ei].cast {
+            if c.telegraph == Some(t.id) {
+                self.combat.enemies[ei].cast = None;
+            }
+        }
+        let inside: Vec<PlayerId> = (0..self.heroes.len())
+            .filter(|&hi| {
+                let h = &self.heroes[hi];
+                h.fight.up()
+                    && t.shape.contains(t.at.ground(), t.facing, h.pos)
+                    && self.line_to(ei, hi)
+            })
+            .map(|hi| self.heroes[hi].player)
+            .collect();
+        let mut hits = Vec::new();
+        for p in inside {
+            let ci = self.combat.hero_index(p);
+            if self.combat.heroes[ci].immune > 1e-4 {
+                self.events.push(Event::Evaded {
+                    player: p,
+                    enemy: t.enemy,
+                });
+                continue;
+            }
+            let amount = self.enemy_damage(ei, usize::from(t.ability));
+            self.wound(p, amount, Some(UnitRef::Enemy(t.enemy)));
+            hits.push(UnitRef::Hero(p));
+        }
+        self.events.push(Event::CastGo {
+            by: UnitRef::Enemy(t.enemy),
+            ability: t.ability,
+            hits,
+            at: Some(t.at),
+        });
+    }
+
+    /// `player` dodges (spec §6.1): a charge spent if there is one; telegraphed blows miss them
+    /// for `dodge.immune` seconds; a cast or a meal stops; a 20-yard noise. Their client has
+    /// already hopped them away. A hero who is not up is refused (told so), one with no charge
+    /// left does nothing. Whether the dodge was made.
+    pub(crate) fn dodge(&mut self, player: PlayerId) -> bool {
+        let Some(hi) = self.hero_slot(player) else {
+            return false;
+        };
+        if !self.heroes[hi].fight.up() {
+            self.events.push(Event::Refused {
+                player,
+                why: Refusal::Down,
+            });
+            return false;
+        }
+        let r = self.content.rules.combat.dodge;
+        if !self.heroes[hi].fight.dodge.spend(&r) {
+            return false;
+        }
+        let ci = self.combat.hero_index(player);
+        self.combat.heroes[ci].immune = r.immune;
+        self.stop_cast(hi, Stop::Cancelled);
+        self.stop_eating(hi);
+        let at = V3::at(self.heroes[hi].pos, self.heroes[hi].z);
+        self.make_noise(player, at, Loudness::Normal);
+        self.events.push(Event::Dodged { player });
+        true
+    }
+}

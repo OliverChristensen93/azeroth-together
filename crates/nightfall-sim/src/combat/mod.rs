@@ -9,12 +9,12 @@ mod falling;
 pub(crate) mod heroes;
 mod hold;
 mod rules;
+mod strikes;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use effects::MANA;
 pub use rules::Charges;
-#[allow(unused_imports)]
 pub(crate) use rules::{allowance, in_range, stands_right, within_arc, Dice};
 
 use serde::{Deserialize, Serialize};
