@@ -23,9 +23,28 @@ impl World {
         }
     }
 
+    /// Enemy `ei`'s turn ([`World::turn`]), then what the clients see of its fight (its cast) is
+    /// written afresh, and when its cast began or ended what its senses are told too (it stands
+    /// still while it casts), so neither lags a step behind this step's events.
+    fn fight_back(&mut self, ei: usize) {
+        let cast = self.combat.enemies[ei].cast.is_some();
+        self.turn(ei);
+        self.refresh_fight(ei, self.combat.enemies[ei].cast.is_some() != cast);
+    }
+
+    /// Enemy `ei`'s fight for the clients from its state now, and its engage for the senses when
+    /// `engage` (working it out casts a ray for a caster).
+    fn refresh_fight(&mut self, ei: usize, engage: bool) {
+        if engage {
+            let content = self.content.clone();
+            self.combat.enemies[ei].engage = self.engage(ei, &content);
+        }
+        self.enemies[ei].fight = self.enemy_fight(ei);
+    }
+
     /// Enemy `ei`'s turn: its clocks run, its cast goes on or lands, else it begins a ready move
     /// that reaches its hero, else it swings when in reach.
-    fn fight_back(&mut self, ei: usize) {
+    fn turn(&mut self, ei: usize) {
         let content = self.content.clone();
         {
             let ec = &mut self.combat.enemies[ei];
@@ -39,8 +58,17 @@ impl World {
         }
         let id = self.enemies[ei].id;
         if let Some(mut c) = self.combat.enemies[ei].cast {
-            // A telegraph lands by itself ([`World::land_telegraphs`]).
-            if c.telegraph.is_some() {
+            // A telegraph lands by itself ([`World::land_telegraphs`]); one that is gone leaves a
+            // cast with nothing to wait for, so the cast is dropped.
+            if let Some(tid) = c.telegraph {
+                if !self.telegraphs.iter().any(|t| t.id == tid) {
+                    self.combat.enemies[ei].cast = None;
+                    self.events.push(Event::CastStop {
+                        by: UnitRef::Enemy(id),
+                        ability: c.ability as u16,
+                        why: Stop::Interrupted,
+                    });
+                }
                 return;
             }
             c.left -= DT;
@@ -230,26 +258,30 @@ impl World {
         total
     }
 
-    /// Enemy `ei`'s cast of `a` at `player` goes off: it lands if the hero is still up, in range
-    /// and in sight.
+    /// Enemy `ei`'s cast of `a` at `player` goes off. An ability aimed at an enemy's own place
+    /// (`Aim::Me`) lands on every up hero within its radius it has a clear line to, as a telegraph
+    /// does; any other on `player` alone, if they are still up, in range and in sight.
     fn spell_lands(&mut self, ei: usize, a: usize, player: PlayerId) {
         let id = self.enemies[ei].id;
         let ab = &self.content.abilities[a];
-        let range = if ab.aim == Aim::Me {
-            ab.radius
-        } else {
-            ab.range
-        };
-        let reach = self.content.rules.combat.clone();
-        let hit = self.hero_slot(player).filter(|&hi| {
-            let (e, h) = (&self.enemies[ei], &self.heroes[hi]);
-            h.fight.up() && in_range(e.pos.distance(h.pos), range, &reach) && self.line_to(ei, hi)
-        });
+        let area = ab.aim == Aim::Me;
+        let range = if area { ab.radius } else { ab.range };
+        let reach = &self.content.rules.combat;
+        let struck: Vec<PlayerId> = (0..self.heroes.len())
+            .filter(|&hi| {
+                let (e, h) = (&self.enemies[ei], &self.heroes[hi]);
+                (area || h.player == player)
+                    && h.fight.up()
+                    && in_range(e.pos.distance(h.pos), range, reach)
+                    && self.line_to(ei, hi)
+            })
+            .map(|hi| self.heroes[hi].player)
+            .collect();
         let mut hits = Vec::new();
-        if hit.is_some() {
+        for p in struck {
             let amount = self.enemy_damage(ei, a);
-            self.blow_lands(id, player, amount);
-            hits.push(UnitRef::Hero(player));
+            self.blow_lands(id, p, amount);
+            hits.push(UnitRef::Hero(p));
         }
         self.ability_sounds(ei, a, player);
         self.events.push(Event::CastGo {
@@ -292,6 +324,9 @@ impl World {
                 target = Some(c.player);
                 self.combat.enemies[ei].cast = None;
             }
+        }
+        if target.is_some() {
+            self.refresh_fight(ei, true);
         }
         let inside: Vec<PlayerId> = (0..self.heroes.len())
             .filter(|&hi| {

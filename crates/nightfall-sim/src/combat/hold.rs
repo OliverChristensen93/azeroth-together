@@ -145,7 +145,7 @@ impl World {
     }
 
     /// What enemy `ei`'s senses may do this step.
-    fn engage(&self, ei: usize, content: &Content) -> Engage {
+    pub(super) fn engage(&self, ei: usize, content: &Content) -> Engage {
         let (e, ec) = (&self.enemies[ei], &self.combat.enemies[ei]);
         let hold = if e.hp <= 0.0 {
             Hold::Out
@@ -205,7 +205,7 @@ impl World {
     }
 
     /// What every client sees of enemy `ei`'s fight.
-    fn enemy_fight(&self, ei: usize) -> EnemyFight {
+    pub(super) fn enemy_fight(&self, ei: usize) -> EnemyFight {
         let ec = &self.combat.enemies[ei];
         let mut auras: Vec<u32> = Vec::new();
         let spells = ec

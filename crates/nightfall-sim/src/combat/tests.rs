@@ -39,6 +39,8 @@ const ENEMIES: &str = r#"[
      run_speed: 8.0, elite: true, moves: [(ability: "cleave", every: 8.0)]),
     (key: "stomper", name: "Stomper", display: 955, level: 30, hp: 3000.0, walk_speed: 2.2,
      run_speed: 7.0, elite: true, moves: [(ability: "stomp", every: 8.0)]),
+    (key: "shocker", name: "Shocker", display: 203, level: 28, hp: 900.0, walk_speed: 2.5,
+     run_speed: 7.0, moves: [(ability: "shockwave", every: 5.0)]),
 ]"#;
 const ABILITIES: &str = r#"[
     (key: "bolt", name: "Bolt", spell: 116, aim: Enemy, range: 30.0, cost: 50.0, cast: 2.0,
@@ -102,6 +104,8 @@ const ABILITIES: &str = r#"[
     (key: "stomp", name: "Stomp", spell: 45, aim: Me, radius: 8.0,
      telegraph: Some((shape: Circle(radius: 8.0), windup: 1.5, on_self: true)),
      effects: [Damage(min: 150.0, max: 150.0)]),
+    (key: "shockwave", name: "Shockwave", spell: 45, aim: Me, radius: 6.0, cast: 1.0,
+     effects: [Damage(min: 50.0, max: 50.0)]),
 ]"#;
 
 /// The tests' rules: crits off so damage is exact, with `combat` (more `combat:` fields) on top.
@@ -1850,13 +1854,16 @@ fn a_downed_hero_makes_no_footsteps_even_when_the_client_says_run() {
     assert!(w.hero(0).unwrap().noise > 0.0);
 }
 
-/// A rogue downed at (10, 30) and a mage at (50, 30), a calm brute 15 yards from the body (and
-/// facing away from both); the mage walks to the body at `at` seconds. Returns the world.
-fn revive_beside_a_sentry(at: f32) -> World {
+/// A rogue at (10, 30), downed if `downed`, and a mage at (50, 30), a calm brute 15 yards from
+/// the rogue (and facing away from both); the mage walks to the rogue at `at` seconds. Returns
+/// the world with that input set.
+fn mage_arrives_beside_a_sentry(at: f32, downed: bool) -> World {
     let mut w = world(&post("brute", 25.0, 30.0, 0.0));
     join(&mut w, 0, "rogue", 10.0, 30.0);
     join(&mut w, 1, "mage", 50.0, 30.0);
-    w.hurt_hero(0, 5000.0);
+    if downed {
+        w.hurt_hero(0, 5000.0);
+    }
     steps(&mut w, (at * 30.0) as usize);
     stand(
         &mut w,
@@ -1868,6 +1875,10 @@ fn revive_beside_a_sentry(at: f32) -> World {
     w
 }
 
+fn revive_beside_a_sentry(at: f32) -> World {
+    mage_arrives_beside_a_sentry(at, true)
+}
+
 #[test]
 fn a_revive_is_heard_by_a_calm_enemy_within_twenty_yards() {
     let mut w = revive_beside_a_sentry(0.0);
@@ -1875,10 +1886,8 @@ fn a_revive_is_heard_by_a_calm_enemy_within_twenty_yards() {
     assert_eq!(w.senses.suspicion_of(0, 1), 0.0);
     w.step();
     assert_eq!(w.senses.suspicion_of(0, 1), noise);
-    // Without the revive, the mage standing in the same place is not noticed at all.
-    let mut w = world(&post("brute", 25.0, 30.0, 0.0));
-    join(&mut w, 0, "rogue", 10.0, 30.0);
-    join(&mut w, 1, "mage", 12.0, 30.0);
+    // The same jump of the mage to an up rogue, nobody to revive, is not noticed at all.
+    let mut w = mage_arrives_beside_a_sentry(0.0, false);
     steps(&mut w, 10);
     assert_eq!(w.senses.suspicion_of(0, 1), 0.0);
 }
@@ -2315,4 +2324,236 @@ fn a_blow_that_misses_or_does_no_harm_is_not_heard() {
     w.blow_lands(w.enemies[0].id, 0, 40.0);
     steps(&mut w, 2);
     assert_eq!(w.hero(0).unwrap().noise, 0.0);
+}
+
+#[test]
+fn an_enemys_fight_in_the_state_matches_the_events_of_its_step() {
+    let mut w = world(&post("caster", 35.0, 30.0, 180.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    let (mut began, mut landed) = (false, false);
+    for _ in 0..200 {
+        w.step();
+        for e in w.drain_events() {
+            match e {
+                Event::CastStart {
+                    by: UnitRef::Enemy(_),
+                    ..
+                } => {
+                    began = true;
+                    assert!(w.enemies[0].fight.casting.is_some());
+                    assert_eq!(w.combat.enemies[0].engage.hold, Hold::Still);
+                }
+                Event::CastGo {
+                    by: UnitRef::Enemy(_),
+                    ..
+                } => {
+                    landed = true;
+                    assert!(w.enemies[0].fight.casting.is_none());
+                    assert_ne!(w.combat.enemies[0].engage.hold, Hold::Still);
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(began && landed);
+}
+
+#[test]
+fn a_telegraph_landing_frees_its_caster_in_the_same_step() {
+    let mut w = world(&post("stomper", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 25.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    let mut landed = false;
+    for _ in 0..200 {
+        w.step();
+        if w.drain_events().iter().any(|e| {
+            matches!(
+                e,
+                Event::CastGo {
+                    by: UnitRef::Enemy(_),
+                    ..
+                }
+            )
+        }) {
+            landed = true;
+            assert!(w.enemies[0].fight.casting.is_none());
+            assert_ne!(w.combat.enemies[0].engage.hold, Hold::Still);
+            break;
+        }
+    }
+    assert!(landed);
+}
+
+/// A stomper at (30, 30) after a rogue 5 yards west, alerted, run to the step its telegraph shows.
+fn stomper_winding_up() -> World {
+    let mut w = world(&post("stomper", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 25.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    for _ in 0..200 {
+        if !w.telegraphs.is_empty() {
+            break;
+        }
+        w.step();
+    }
+    assert!(!w.telegraphs.is_empty());
+    w.drain_events();
+    w
+}
+
+#[test]
+fn a_caster_killed_in_the_windup_takes_its_telegraph_with_it() {
+    let mut w = stomper_winding_up();
+    w.kill_enemy(0, Some(0));
+    steps(&mut w, 60);
+    assert!(w.telegraphs.is_empty());
+    assert!(w.combat.enemies[0].cast.is_none());
+    assert!(w.enemies[0].fight.casting.is_none());
+    let events = w.drain_events();
+    assert!(events.contains(&Event::EnemyDied {
+        id: w.enemies[0].id,
+        by: Some(0)
+    }));
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        Event::CastGo {
+            by: UnitRef::Enemy(_),
+            ..
+        }
+    )));
+    assert_eq!(w.hero(0).unwrap().hp, 1000.0);
+}
+
+#[test]
+fn a_caster_stunned_or_sapped_in_the_windup_loses_its_telegraph() {
+    for key in ["cheap", "sap"] {
+        let mut w = stomper_winding_up();
+        w.land(0, ability(&w, key), Some(0), None);
+        steps(&mut w, 60);
+        assert!(w.telegraphs.is_empty(), "{key}");
+        assert!(w.combat.enemies[0].cast.is_none(), "{key}");
+        let events = w.drain_events();
+        assert!(
+            events.contains(&Event::CastStop {
+                by: UnitRef::Enemy(w.enemies[0].id),
+                ability: ability(&w, "stomp") as u16,
+                why: Stop::Interrupted
+            }),
+            "{key}"
+        );
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                Event::CastGo {
+                    by: UnitRef::Enemy(_),
+                    ..
+                }
+            )),
+            "{key}"
+        );
+        assert_eq!(w.hero(0).unwrap().hp, 1000.0, "{key}");
+    }
+}
+
+#[test]
+fn a_cast_waiting_for_a_telegraph_that_is_gone_is_dropped() {
+    let mut w = stomper_winding_up();
+    w.telegraphs.clear();
+    w.step();
+    assert!(w.combat.enemies[0].cast.is_none());
+    assert!(w.enemies[0].fight.casting.is_none());
+    assert!(w.drain_events().contains(&Event::CastStop {
+        by: UnitRef::Enemy(w.enemies[0].id),
+        ability: ability(&w, "stomp") as u16,
+        why: Stop::Interrupted
+    }));
+}
+
+#[test]
+fn a_dodge_in_the_input_of_a_press_goes_first_and_the_press_then_begins() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    let target = foe(&w, 0);
+    let h = w.hero(0).unwrap();
+    let pose = HeroPose {
+        pos: h.pos,
+        facing: h.facing,
+        z: h.z,
+    };
+    w.set_input(
+        0,
+        PlayerInput {
+            pose: Some(pose),
+            cast: Some(CastPress {
+                seq: 1,
+                slot: 1,
+                target,
+                at: None,
+            }),
+            dodge_presses: 1,
+            ..Default::default()
+        },
+    );
+    w.step();
+    let events = w.drain_events();
+    let dodge = events
+        .iter()
+        .position(|e| matches!(e, Event::Dodged { .. }))
+        .unwrap();
+    let cast = events
+        .iter()
+        .position(|e| matches!(e, Event::CastStart { .. }))
+        .unwrap();
+    assert!(dodge < cast);
+    assert!(!events.iter().any(|e| matches!(e, Event::CastStop { .. })));
+    assert!(w.hero(0).unwrap().fight.casting.is_some());
+}
+
+#[test]
+fn an_enemy_cast_aimed_at_its_own_place_hits_every_hero_around_it_with_a_clear_line() {
+    let mut w = world(&post("shocker", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 27.0, 30.0);
+    join(&mut w, 1, "mage", 31.0, 30.0);
+    join(&mut w, 2, "mage", 40.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    let mut hits = Vec::new();
+    for _ in 0..300 {
+        w.step();
+        if let Some(Event::CastGo { hits: h, .. }) = w
+            .drain_events()
+            .into_iter()
+            .find(|e| matches!(e, Event::CastGo { .. }))
+        {
+            hits = h;
+            break;
+        }
+    }
+    assert_eq!(hits, vec![UnitRef::Hero(0), UnitRef::Hero(1)]);
+    assert_eq!(w.hero(0).unwrap().hp, 950.0);
+    assert_eq!(w.hero(2).unwrap().hp, 800.0);
+}
+
+#[test]
+fn an_enemy_cast_aimed_at_its_own_place_does_not_reach_through_a_wall() {
+    let mut w = world(&post("shocker", 30.0, 30.0, 180.0));
+    let mut b = flat(60.0);
+    b.add_box(V2::new(27.0, 20.0), V2::new(27.5, 40.0), 0.0, 3.0);
+    w.attach_map(Arc::new(b.finish()));
+    join(&mut w, 0, "rogue", 31.0, 30.0);
+    join(&mut w, 1, "mage", 24.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    let mut hits = None;
+    for _ in 0..300 {
+        w.step();
+        if let Some(Event::CastGo { hits: h, .. }) = w
+            .drain_events()
+            .into_iter()
+            .find(|e| matches!(e, Event::CastGo { .. }))
+        {
+            hits = Some(h);
+            break;
+        }
+    }
+    assert_eq!(hits, Some(vec![UnitRef::Hero(0)]));
+    assert_eq!(w.hero(1).unwrap().hp, 800.0);
 }

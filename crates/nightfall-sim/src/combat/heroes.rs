@@ -56,16 +56,17 @@ impl World {
         if let Some(p) = input.cast {
             hc.seq = Some(p.seq);
         }
-        if !first {
-            if let Some(p) = input.cast.filter(|p| last != Some(p.seq)) {
-                self.press(hi, p);
-            }
-        }
-        // More presses than a full set of charges are not worth more.
+        // The dodges come first, so a press in the same input is checked after them: it begins, or
+        // is refused, as the hero stands then, and is never begun only to be cancelled.
         let charges = self.content.rules.combat.dodge.charges;
         for _ in 0..dodged.min(charges) {
             if !self.dodge(player) {
                 break;
+            }
+        }
+        if !first {
+            if let Some(p) = input.cast.filter(|p| last != Some(p.seq)) {
+                self.press(hi, p);
             }
         }
     }
