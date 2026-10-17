@@ -545,3 +545,136 @@ fn a_killed_alerted_enemy_keeps_no_mark_and_its_shout_reaches_no_ally() {
     assert!(w.marks_for(0).is_empty(), "{:?}", w.marks_for(0));
     assert!(!w.senses.alerted(1));
 }
+
+#[test]
+fn a_finisher_gets_the_bonus_only_from_points_on_its_own_target() {
+    let spawns = format!(
+        "{}{}",
+        post("brute", 30.0, 30.0, 0.0),
+        post("brute", 30.0, 40.0, 0.0)
+    );
+    let mut w = world(&spawns);
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    let (strike, finish) = (ability(&w, "strike"), ability(&w, "finish"));
+    let b = w.enemies[1].id;
+    w.land(0, strike, Some(0), None);
+    w.land(0, strike, Some(0), None);
+    w.drain_events();
+    w.land(0, finish, Some(1), None);
+    // Finish is 10 plus 30 a point, times 1.5 for B being caught unaware: B has no points of its
+    // own, so it gets 15 (not 105), and the points
+    // built on A are spent all the same.
+    assert_eq!(damage_to(&w.drain_events(), UnitRef::Enemy(b)), vec![15.0]);
+    assert_eq!(w.hero(0).unwrap().fight.combo, 0);
+}
+
+#[test]
+fn a_blow_that_does_no_harm_is_no_blow() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.land(0, ability(&w, "sap"), Some(0), None);
+    w.drain_events();
+    for amount in [0.0, -50.0, f32::NAN] {
+        w.strike(0, 0, amount, false, false, true);
+    }
+    assert!(w.drain_events().is_empty());
+    assert!(w.combat.enemies[0].held.is_some());
+    assert_eq!(w.combat.hero(0).unwrap().combat_for, 0.0);
+}
+
+#[test]
+fn an_ambush_too_big_for_a_float_still_kills() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 20.0, 30.0);
+    let mut c = (*w.content).clone();
+    c.rules.senses.ambush = f32::MAX;
+    w.content = Arc::new(c);
+    w.land(0, ability(&w, "bolt"), Some(0), None);
+    assert_eq!(w.enemies[0].hp, 0.0);
+    assert_eq!(
+        w.drain_events()
+            .iter()
+            .filter(|e| matches!(e, Event::EnemyDied { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_dead_enemy_dies_once() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.strike(0, 0, 5000.0, false, true, false);
+    w.strike(0, 0, 5000.0, false, true, false);
+    w.kill_enemy(0, Some(0));
+    w.kill_enemy(99, Some(0));
+    let died = |e: &&Event| matches!(e, Event::EnemyDied { .. });
+    assert_eq!(w.drain_events().iter().filter(died).count(), 1);
+}
+
+#[test]
+fn an_area_ability_hits_each_living_enemy_in_it_once_and_not_the_dead() {
+    let spawns = format!(
+        "{}{}{}",
+        post("brute", 30.0, 35.0, 0.0),
+        post("brute", 30.0, 36.0, 0.0),
+        post("brute", 33.0, 30.0, 0.0)
+    );
+    let mut w = world(&spawns);
+    join(&mut w, 0, "mage", 30.0, 30.0);
+    w.strike(0, 1, 5000.0, false, true, false);
+    w.drain_events();
+    let hits = w.land(0, ability(&w, "nova"), None, None);
+    let (a, c) = (w.enemies[0].id, w.enemies[2].id);
+    assert_eq!(hits, vec![UnitRef::Enemy(a), UnitRef::Enemy(c)]);
+    let events = w.drain_events();
+    for id in [a, c] {
+        assert_eq!(damage_to(&events, UnitRef::Enemy(id)).len(), 1);
+    }
+    assert!(damage_to(&events, UnitRef::Enemy(w.enemies[1].id)).is_empty());
+}
+
+#[test]
+fn an_aimed_ability_ignores_a_dead_target() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 20.0, 30.0);
+    w.strike(0, 0, 5000.0, false, true, false);
+    w.drain_events();
+    assert!(w.land(0, ability(&w, "bolt"), Some(0), None).is_empty());
+    assert!(w.drain_events().is_empty());
+}
+
+#[test]
+fn a_blink_longer_than_the_map_is_cut_to_it_and_a_blocked_one_stays_put() {
+    let mut w = world("");
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    let mut c = (*w.content).clone();
+    for a in &mut c.abilities {
+        if a.key == "blink" {
+            a.effects = vec![crate::Effect::Blink { distance: 1.0e30 }];
+        }
+    }
+    w.content = Arc::new(c);
+    w.land(0, ability(&w, "blink"), None, None);
+    let to = w
+        .drain_events()
+        .into_iter()
+        .find_map(|e| match e {
+            Event::Blinked { to, .. } => Some(to),
+            _ => None,
+        })
+        .unwrap();
+    // The map's edge is the furthest east it goes.
+    assert!(to.x > 10.0 && to.x <= 60.0 + 1e-3, "{to:?}");
+    // Walled in on every side the Blink still happens, where the hero stands.
+    let mut w = world("");
+    let mut b = flat(60.0);
+    house(&mut b, V2::new(11.0, 0.0), V2::new(13.0, 60.0), None, false);
+    w.attach_map(Arc::new(b.finish()));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    w.land(0, ability(&w, "blink"), None, None);
+    let events = w.drain_events();
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Blinked { to, .. } if to.x < 11.0)));
+}

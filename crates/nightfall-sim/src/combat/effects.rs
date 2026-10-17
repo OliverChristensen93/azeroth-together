@@ -8,7 +8,7 @@
 //!
 //! Every number that arrives here may come from content or a client, so none is trusted to be
 //! finite: a blow of a non-finite amount does nothing, and a hold, bleed, slow, sprint, meal or
-//! blink with a non-finite number is not applied, so no health, timer or position goes NaN.
+//! blink with a non-finite number is not applied (a Blink longer than the map is wide is cut to it), so no health, timer or position goes NaN.
 
 use super::{Burn, Event, Held, Meal, Slowed, UnitRef};
 use crate::{Aim, ControlKind, Effect, Loudness, PlayerId, Sound, World, V2, V3};
@@ -19,6 +19,32 @@ const BLINK_CLIMB: f32 = 3.0;
 const BLINK_STEP: f32 = 0.5;
 /// `ClassDef::power` of a class whose power is mana.
 pub(crate) const MANA: u8 = 0;
+
+/// A blow of `amount` with the ambush's multiplier on it; one too big for a float stays as big as
+/// one can be rather than becoming infinity (which `strike` would drop). A blow that is not a
+/// number stays so, for `strike` to drop.
+fn boost(amount: f32, by: f32) -> f32 {
+    let boosted = amount * by;
+    if amount.is_finite() && by.is_finite() && !boosted.is_finite() {
+        f32::MAX.copysign(boosted)
+    } else {
+        boosted
+    }
+}
+
+/// The most distance there is within `points`: the diagonal of the box around them.
+fn diameter(points: &[V2]) -> f32 {
+    let (mut lo, mut hi) = (V2::new(f32::MAX, f32::MAX), V2::new(f32::MIN, f32::MIN));
+    for p in points {
+        lo = V2::new(lo.x.min(p.x), lo.y.min(p.y));
+        hi = V2::new(hi.x.max(p.x), hi.y.max(p.y));
+    }
+    if points.is_empty() {
+        0.0
+    } else {
+        lo.distance(hi)
+    }
+}
 
 /// A length of time a timer can run: a number, and above 0.
 fn span(secs: f32) -> bool {
@@ -48,21 +74,24 @@ impl World {
         let reaches = a.effects.iter().any(Effect::on_enemy);
         let targets: Vec<usize> = match (a.aim, centre) {
             (Aim::Enemy, _) => enemy
-                .filter(|&ei| ei < self.enemies.len())
+                .filter(|&ei| self.enemies.get(ei).is_some_and(|e| e.hp > 0.0))
                 .into_iter()
                 .collect(),
             (_, Some(c)) if reaches && a.radius > 0.0 => self.enemies_within(c, a.radius),
             _ => Vec::new(),
         };
         // A finisher spends every combo point at once.
-        let combo = if a.needs.combo {
+        let (combo, combo_on) = if a.needs.combo {
             let f = &mut self.heroes[hi].fight;
-            f.combo_on = None;
-            std::mem::take(&mut f.combo)
+            let on = f.combo_on.take();
+            (std::mem::take(&mut f.combo), on)
         } else {
-            0
+            (0, None)
         };
         for &ei in &targets {
+            let id = self.enemies[ei].id;
+            // Combo points belong to their target: on any other a finisher gets no bonus.
+            let combo = if combo_on == Some(id) { combo } else { 0 };
             self.land_on(player, ability, ei, combo);
         }
         for effect in &a.effects {
@@ -74,7 +103,9 @@ impl World {
             .collect()
     }
 
-    /// Ability `ability` lands on enemy `ei`, a finisher's `combo` points behind it.
+    /// Ability `ability` lands on enemy `ei`, a finisher's `combo` points behind it. The ambush is
+    /// asked once, before anything lands, and multiplies every damage and weapon effect of the
+    /// ability: one ability is one strike, so an opener's every blow is a blow from the shadows.
     fn land_on(&mut self, player: PlayerId, ability: usize, ei: usize, combo: u8) {
         let content = self.content.clone();
         let a = &content.abilities[ability];
@@ -96,7 +127,14 @@ impl World {
                     per_combo,
                 } => {
                     let amount = self.combat.dice.between(min, max) + per_combo * f32::from(combo);
-                    self.strike(player, ei, amount * ambush, ambush > 1.0, silent, true);
+                    self.strike(
+                        player,
+                        ei,
+                        boost(amount, ambush),
+                        ambush > 1.0,
+                        silent,
+                        true,
+                    );
                 }
                 Effect::Weapon { percent, bonus } => {
                     let Some(blow) = content.classes[self.heroes[hi].class].swing else {
@@ -104,7 +142,14 @@ impl World {
                     };
                     let amount =
                         self.combat.dice.between(blow.min, blow.max) * percent / 100.0 + bonus;
-                    self.strike(player, ei, amount * ambush, ambush > 1.0, silent, true);
+                    self.strike(
+                        player,
+                        ei,
+                        boost(amount, ambush),
+                        ambush > 1.0,
+                        silent,
+                        true,
+                    );
                 }
                 Effect::Dot {
                     amount,
@@ -189,7 +234,10 @@ impl World {
         silent: bool,
         may_crit: bool,
     ) {
-        if !amount.is_finite() || self.enemies.get(ei).is_none_or(|e| e.hp <= 0.0) {
+        // A blow that is not a number, or does no harm, is no blow: no event, no noise, nothing
+        // freed, no combat. Nor is a blow on one already dead.
+        if !amount.is_finite() || amount <= 0.0 || self.enemies.get(ei).is_none_or(|e| e.hp <= 0.0)
+        {
             return;
         }
         let (chance, times, linger) = {
@@ -198,10 +246,14 @@ impl World {
         };
         let crit = may_crit && self.combat.dice.chance(chance);
         // A crit of a huge blow may overflow: it is as deadly as any, and no more.
-        let amount = (if crit { amount * times } else { amount }).clamp(0.0, f32::MAX);
+        let amount = (if crit { amount * times } else { amount }).min(f32::MAX);
         let e = &mut self.enemies[ei];
-        e.hp = (e.hp - amount).max(0.0);
-        let (id, at, dead) = (e.id, V3::at(e.pos, e.z), e.hp <= 0.0);
+        // The killing blow leaves the enemy's health to `kill_enemy`, which ends it once.
+        let dead = amount >= e.hp;
+        if !dead {
+            e.hp -= amount;
+        }
+        let (id, at) = (e.id, V3::at(e.pos, e.z));
         self.events.push(Event::Damage {
             to: UnitRef::Enemy(id),
             by: Some(UnitRef::Hero(by)),
@@ -227,9 +279,14 @@ impl World {
     }
 
     /// Enemy `ei` dies (by `by`'s hand, when a hero's): what held it and what it was about to do
-    /// go, its senses go quiet (no "!" over a corpse, no shout it raised), heroes stop swinging at it and lose their combo points on it, and the death is heard
-    /// 15 yards off. Its body stays where it fell, for sub-project 5 to search.
+    /// go, its senses go quiet (no "!" over a corpse, no shout it raised), heroes stop swinging at
+    /// it and lose their combo points on it, and the death is heard 15 yards off. Its body stays
+    /// where it fell, for sub-project 5 to search. An enemy already dead (or none) is not killed
+    /// twice: one death, one `EnemyDied`.
     pub(crate) fn kill_enemy(&mut self, ei: usize, by: Option<PlayerId>) {
+        if self.enemies.get(ei).is_none_or(|e| e.hp <= 0.0) {
+            return;
+        }
         let e = &mut self.enemies[ei];
         e.hp = 0.0;
         e.speed = 0.0;
@@ -340,7 +397,8 @@ impl World {
         if !(distance.is_finite() && way.is_finite() && from.is_finite()) {
             return from;
         }
-        let mut d = distance;
+        // No Blink goes further than the map is wide: a huge distance is not millions of tries.
+        let mut d = distance.min(diameter(self.content.map.bounds.points()));
         while d > 0.0 {
             let to = self.content.map.bounds.clamp(h.pos + way * d);
             match self.map() {
