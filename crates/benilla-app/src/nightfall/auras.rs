@@ -7,7 +7,7 @@
 //! sheep. Each unit is written only when what is on it changed, ringing the aura watch as a
 //! server's values update would.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use benilla_protocol::field::{FIELD_UNIT_AURA, FIELD_UNIT_AURAFLAGS, FIELD_UNIT_BYTES_1};
 use benilla_protocol::messages::{ObjectFields, ObjectType};
@@ -24,8 +24,8 @@ use crate::net::{FieldChanged, Guid, ObjectStore};
 const FIELD_UNIT_DISPLAYID: u16 = 131;
 /// The sheep Polymorph turns an enemy into.
 const SHEEP_DISPLAY: u32 = 856;
-/// Stealth's aura: Rank 3's, whose kit fades a body (sub-project 3's ruling). The bar's own
-/// Stealth is another rank, whose aura is not known to.
+/// Stealth's aura: Rank 3's, the one whose visual fades a body (sub-project 3's ruling). The
+/// bar's own Stealth is another rank, whose aura would not fade it.
 const STEALTH_AURA: u32 = 1786;
 /// `SpellShapeshiftForm.dbc`'s Stealth: the form whose bonus bar is a rogue's stealth page.
 const STEALTH_FORM: u8 = 30;
@@ -180,8 +180,11 @@ pub(super) fn enemies(
         } else {
             content.enemies[enemy.kind].display
         };
-        let now = (e, enemy.fight.auras.clone(), display);
-        if shown.get(&enemy.id) == Some(&now) {
+        // Compared in place: a steady enemy costs no allocation.
+        if shown
+            .get(&enemy.id)
+            .is_some_and(|(b, auras, d)| *b == e && *auras == enemy.fight.auras && *d == display)
+        {
             continue;
         }
         let Ok((mut store, guid)) = bodies.get_mut(e) else {
@@ -198,7 +201,20 @@ pub(super) fn enemies(
             old: 0,
             new: 1,
         });
-        shown.insert(enemy.id, now);
+        shown.insert(enemy.id, (e, enemy.fight.auras.clone(), display));
+    }
+    // Enemies the world no longer has are forgotten, so the map never outgrows the world's (a
+    // new run's enemy with an old id is written afresh). Counting what is still there costs a
+    // lookup apiece; the pass that prunes runs only when something is stale.
+    let kept = sim
+        .world
+        .enemies
+        .iter()
+        .filter(|e| shown.contains_key(&e.id))
+        .count();
+    if kept < shown.len() {
+        let live: HashSet<u32> = sim.world.enemies.iter().map(|e| e.id).collect();
+        shown.retain(|id, _| live.contains(id));
     }
 }
 
@@ -218,6 +234,31 @@ mod tests {
         assert_eq!(f[48], (FIELD_UNIT_AURAFLAGS, 0x33));
         assert_eq!(f[52], (FIELD_UNIT_AURAFLAGS + 4, 0x2));
         assert!(aura_fields(&[], &[]).iter().all(|&(_, v)| v == 0));
+    }
+
+    #[test]
+    fn more_auras_than_slots_fill_each_half_and_never_spill_into_the_other() {
+        let buffs: Vec<u32> = (1..=33).collect();
+        let debuffs: Vec<u32> = (101..=117).collect();
+        let f = aura_fields(&buffs, &debuffs);
+        assert_eq!(f.len(), 48 + 6, "the same fields, however many auras");
+        // The 32 buff slots hold the first 32 buffs, the 33rd is dropped.
+        for i in 0..BUFF_SLOTS {
+            assert_eq!(f[i], (FIELD_UNIT_AURA + i as u16, i as u32 + 1));
+        }
+        // The 16 debuff slots hold the first 16 debuffs, the 17th is dropped.
+        for j in 0..DEBUFF_SLOTS {
+            let i = BUFF_SLOTS + j;
+            assert_eq!(f[i], (FIELD_UNIT_AURA + i as u16, 101 + j as u32));
+        }
+        assert!(!f.iter().take(48).any(|&(_, v)| v == 33 || v == 117));
+        // Flags: four words of buffs (0x3 a nibble), then two of debuffs (0x2 a nibble).
+        for w in 0..4 {
+            assert_eq!(f[48 + w], (FIELD_UNIT_AURAFLAGS + w as u16, 0x3333_3333));
+        }
+        for w in 4..6 {
+            assert_eq!(f[48 + w], (FIELD_UNIT_AURAFLAGS + w as u16, 0x2222_2222));
+        }
     }
 
     #[test]
@@ -388,5 +429,28 @@ mod tests {
         world.resource_mut::<Sim>().world.enemies[0].hp = 0.0;
         world.run_system(run).unwrap();
         assert_eq!(store(&world, enemy).unit_displayid(), Some(plain as i32));
+    }
+
+    #[test]
+    fn an_enemy_that_left_the_world_is_forgotten_so_a_same_id_one_is_written_afresh() {
+        let (mut world, _, enemy) = stage();
+        let run = world.register_system(enemies);
+        world.resource_mut::<Sim>().world.enemies[0].fight.auras = vec![118];
+        world.run_system(run).unwrap();
+        assert_eq!(store(&world, enemy).unit_auras().count(), 1);
+
+        // It goes; the store is wiped as a new body's would be, and one with its id (and entity)
+        // comes back with the same auras: forgotten, it is written again.
+        let gone = world.resource_mut::<Sim>().world.enemies.remove(0);
+        world.run_system(run).unwrap();
+        world
+            .get_mut::<ObjectStore>(enemy)
+            .unwrap()
+            .0
+            .merge(ObjectFields::from_pairs(&aura_fields(&[], &[])));
+        assert_eq!(store(&world, enemy).unit_auras().count(), 0);
+        world.resource_mut::<Sim>().world.enemies.push(gone);
+        world.run_system(run).unwrap();
+        assert_eq!(store(&world, enemy).unit_auras().count(), 1);
     }
 }

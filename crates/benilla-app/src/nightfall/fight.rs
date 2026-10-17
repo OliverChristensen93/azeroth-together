@@ -474,16 +474,19 @@ pub(super) fn fields(
         }
     }
     if written.attacking != f.attacking {
-        // An enemy not in the world (yet) is waited for, not engaged with nothing.
+        // An enemy not in the world (yet) is waited for, not engaged with nothing: each frame
+        // looks for it again (a lookup), and only when it is there is anything queued. A stance
+        // already written is taken down once, never once a frame.
         match target_guid(&sim, f.attacking) {
             Some(guid) => {
                 commands.entity(body).insert(Engaged(guid));
                 written.attacking = f.attacking;
             }
-            None => {
+            None if written.attacking.is_some() => {
                 commands.entity(body).remove::<Engaged>();
                 written.attacking = None;
             }
+            None => {}
         }
     }
     if written.rooted != f.rooted {
@@ -1122,19 +1125,91 @@ mod tests {
 
     #[test]
     fn a_new_run_starts_the_writes_over() {
-        let (mut world, _) = rogue_stage();
+        let (mut world, first) = rogue_stage();
         let run = world.register_system(fields);
-        fight_of(&mut world).power = 40.0;
-        fight_of(&mut world).max_power = 100.0;
+        let (gouge, gouge_spell) = {
+            let c = world.resource::<Sim>().world.content().clone();
+            let i = c.abilities.iter().position(|a| a.key == "gouge").unwrap();
+            (i, c.abilities[i].spell)
+        };
+        {
+            let f = fight_of(&mut world);
+            f.power = 40.0;
+            f.max_power = 100.0;
+            f.rooted = true;
+            f.attacking = Some(7);
+            f.cooldowns = vec![nightfall_sim::Cooldown {
+                ability: gouge as u16,
+                left: 8.0,
+            }];
+        }
         world.run_system(run).unwrap();
+        assert_eq!(moves(&mut world), [(77, 1, true)]);
+        assert!(world.get::<Engaged>(first).is_some());
+        assert!(sweep(&world, gouge_spell) > 5_000);
 
-        // The next run's body is another entity, with none of it written.
+        // The next run's body is another entity, with none of it written; the engine's
+        // cooldowns are the new run's too (empty).
+        world.resource_mut::<Cooldowns>().clear_spell(gouge_spell);
+        assert_eq!(sweep(&world, gouge_spell), 0);
         let second = world.spawn(ObjectStore(ObjectFields::from_pairs(&[]))).id();
         world.resource_mut::<Views>().heroes.insert(0, second);
         world.run_system(run).unwrap();
         assert_eq!(
             world.get::<ObjectStore>(second).unwrap().0.unit_power(3),
             Some(40)
+        );
+        assert!(
+            sweep(&world, gouge_spell) > 5_000,
+            "the new run's engine gets the sweep again"
+        );
+        assert_eq!(
+            moves(&mut world),
+            [(77, 2, true)],
+            "and the root, as a second message"
+        );
+        assert_eq!(
+            world.get::<Engaged>(second).map(|e| e.0),
+            Some(enemy_guid(0, 7)),
+            "and the ready stance"
+        );
+    }
+
+    #[test]
+    fn an_enemy_the_world_lacks_is_waited_for_not_cleared_every_frame() {
+        let (mut world, body) = rogue_stage();
+        let run = world.register_system(fields);
+        fight_of(&mut world).attacking = Some(99);
+        // A stance seeded on the body: waiting must not queue its removal.
+        world.entity_mut(body).insert(Engaged(1));
+        for _ in 0..3 {
+            world.run_system(run).unwrap();
+        }
+        assert!(
+            world.get::<Engaged>(body).is_some(),
+            "nothing was queued to take the stance off while waiting"
+        );
+        world
+            .resource_mut::<Sim>()
+            .world
+            .enemies
+            .push(nightfall_sim::Enemy {
+                id: 99,
+                kind: 0,
+                pos: V2::new(1.0, 0.0),
+                z: 0.0,
+                facing: V2::new(1.0, 0.0),
+                hp: 10.0,
+                max_hp: 10.0,
+                speed: 0.0,
+                asleep: false,
+                fight: Default::default(),
+            });
+        world.run_system(run).unwrap();
+        assert_eq!(
+            world.get::<Engaged>(body).map(|e| e.0),
+            Some(enemy_guid(0, 99)),
+            "engaged the frame it appears"
         );
     }
 }
