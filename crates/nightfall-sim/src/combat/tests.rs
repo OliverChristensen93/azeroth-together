@@ -1213,6 +1213,7 @@ fn a_finisher_aimed_at_another_enemy_is_refused() {
     let (brute, bones) = (foe(&w, 0), foe(&w, 1));
     let mut seq = 0;
     assert_eq!(attempt(&mut w, &mut seq, 2, brute, None), None);
+    assert!(w.hero(0).unwrap().fight.combo > 0);
     steps(&mut w, 40);
     assert_eq!(
         attempt(&mut w, &mut seq, 3, bones, None),
@@ -1232,6 +1233,13 @@ fn an_ability_breaks_stealth_unless_it_keeps_it() {
     let target = foe(&w, 0);
     press(&mut w, 0, 2, 2, target, None);
     w.step();
+    assert!(w.drain_events().iter().any(|e| matches!(
+        e,
+        Event::CastGo {
+            by: UnitRef::Hero(0),
+            ..
+        }
+    )));
     assert!(!w.heroes[0].stealthed);
 }
 
@@ -1265,4 +1273,125 @@ fn a_channel_breaks_when_its_target_steps_behind_cover() {
         why: Stop::TargetLost
     }));
     assert!(w.hero(0).unwrap().fight.casting.is_none());
+}
+
+#[test]
+fn a_cast_whose_target_steps_behind_cover_stops_and_costs_nothing() {
+    let mut w = world_with_a_wall(&post("brute", 30.0, 30.0, 0.0), "mage");
+    let target = foe(&w, 0);
+    press(&mut w, 0, 1, 1, target, None);
+    w.step();
+    w.enemies[0].pos = V2::new(30.0, 50.0);
+    steps(&mut w, 70);
+    let events = w.drain_events();
+    assert!(events.contains(&Event::CastStop {
+        by: UnitRef::Hero(0),
+        ability: 0,
+        why: Stop::TargetLost
+    }));
+    assert!(!events.iter().any(|e| matches!(e, Event::CastGo { .. })));
+    assert_eq!(w.hero(0).unwrap().fight.power, 1000.0);
+}
+
+#[test]
+fn auto_attack_swings_again_once_the_enemy_is_back_in_reach_and_sight() {
+    let mut w = world_with_a_wall(&post("brute", 22.0, 40.0, 0.0), "rogue");
+    let id = w.enemies[0].id;
+    w.heroes[0].fight.attacking = Some(id);
+    // The brute is held where it stands, so only the hero's place changes; the swings counted
+    // are those of a stay of 70 steps.
+    let stay = |w: &mut World, at: V2, facing: V2| {
+        stand(w, 0, at, facing, Gait::Still);
+        for _ in 0..70 {
+            w.enemies[0].pos = V2::new(22.0, 40.0);
+            w.step();
+        }
+        w.drain_events()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::Swing {
+                        by: UnitRef::Hero(0),
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    let (west, east) = (V2::new(-1.0, 0.0), V2::new(1.0, 0.0));
+    assert!(stay(&mut w, V2::new(24.0, 40.0), west) >= 2);
+    // Out of reach, then through the wall: nothing swings, and the attack is kept.
+    assert_eq!(stay(&mut w, V2::new(40.0, 40.0), west), 0);
+    assert_eq!(stay(&mut w, V2::new(19.0, 40.0), east), 0);
+    assert_eq!(w.hero(0).unwrap().fight.attacking, Some(id));
+    // Back in reach and sight, it swings again.
+    assert!(stay(&mut w, V2::new(24.0, 40.0), west) >= 1);
+}
+
+#[test]
+fn stealth_cools_down_even_when_a_press_breaks_it_in_the_step_it_began() {
+    let mut w = world("");
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    // Stealth and Eat (which breaks stealth) in one input.
+    let h = w.hero(0).unwrap();
+    let pose = HeroPose {
+        pos: h.pos,
+        facing: h.facing,
+        z: h.z,
+    };
+    w.set_input(
+        0,
+        PlayerInput {
+            pose: Some(pose),
+            stealth_presses: 1,
+            cast: Some(CastPress {
+                seq: 1,
+                slot: 12,
+                target: None,
+                at: None,
+            }),
+            ..Default::default()
+        },
+    );
+    w.step();
+    assert!(!w.heroes[0].stealthed);
+    assert!(!w.may_stealth(0));
+    sneak(&mut w, 2);
+    w.step();
+    assert!(!w.heroes[0].stealthed);
+}
+
+#[test]
+fn a_refused_step_into_stealth_is_told_to_its_player() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    // On cooldown: stealth begins and ends, then is pressed again.
+    sneak(&mut w, 1);
+    w.step();
+    assert!(w.heroes[0].stealthed);
+    assert_eq!(refusal(&mut w), None);
+    w.break_stealth(0);
+    w.step();
+    sneak(&mut w, 2);
+    w.step();
+    assert_eq!(refusal(&mut w), Some(Refusal::NotReady));
+    // In combat.
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    w.step();
+    sneak(&mut w, 1);
+    w.step();
+    assert!(!w.heroes[0].stealthed);
+    assert_eq!(refusal(&mut w), Some(Refusal::InCombat));
+    // Stepping out is never refused.
+    let mut w = world("");
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    sneak(&mut w, 1);
+    w.step();
+    sneak(&mut w, 2);
+    w.step();
+    assert!(!w.heroes[0].stealthed);
+    assert_eq!(refusal(&mut w), None);
 }

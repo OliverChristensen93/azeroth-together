@@ -38,6 +38,9 @@ impl World {
         };
         let ci = self.combat.hero_index(player);
         let hc = &mut self.combat.heroes[ci];
+        // Stealth may begin and be broken by a press in this one step: it must still be seen to
+        // have ended, or its cooldown would never start.
+        hc.was_stealthed |= self.heroes[hi].stealthed;
         hc.moving = input.gait != Gait::Still;
         let first = !hc.started;
         hc.started = true;
@@ -327,6 +330,16 @@ impl World {
                 .any(|c| usize::from(c.ability) == s)
         });
         h.fight.up() && !h.fight.in_combat && !cooling
+    }
+
+    /// Why `player`'s hero may not step into stealth, in WoW's own words: down, in combat, or
+    /// Stealth not ready.
+    pub(crate) fn stealth_refusal(&self, player: PlayerId) -> Refusal {
+        match self.hero(player) {
+            Some(h) if !h.fight.up() => Refusal::Down,
+            Some(h) if h.fight.in_combat => Refusal::InCombat,
+            _ => Refusal::NotReady,
+        }
     }
 
     /// The class's Stealth ability, if its bar has one.

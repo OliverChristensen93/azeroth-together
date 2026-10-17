@@ -133,14 +133,15 @@ impl Senses {
 /// A hero takes its player's input: the gait, and the Stealth presses since the last input,
 /// counted round so that a press is never lost when one input replaces another between steps.
 /// Only a class that can stealth does. Stepping into stealth also needs `may_stealth`: not in
-/// combat, Stealth not cooling down; stepping out is always allowed.
+/// combat, Stealth not cooling down; stepping out is always allowed. Returns whether a press to
+/// step in was turned down, for the host to tell its player.
 pub(crate) fn take_input(
     s: &mut Senses,
     hero: &mut Hero,
     input: &PlayerInput,
     content: &Content,
     may_stealth: bool,
-) {
+) -> bool {
     let i = s.hero_index(hero.player);
     let hs = &mut s.heroes[i];
     hs.gait = input.gait;
@@ -148,9 +149,14 @@ pub(crate) fn take_input(
         .presses
         .map_or(0, |last| input.stealth_presses.wrapping_sub(last));
     hs.presses = Some(input.stealth_presses);
-    if pressed % 2 == 1 && content.classes[hero.class].stealth && (hero.stealthed || may_stealth) {
-        hero.stealthed = !hero.stealthed;
+    if pressed.is_multiple_of(2) || !content.classes[hero.class].stealth {
+        return false;
     }
+    if hero.stealthed || may_stealth {
+        hero.stealthed = !hero.stealthed;
+        return false;
+    }
+    true
 }
 
 /// What follows from a hero's gait, Stealth, place and flash: their stance, how visible they are
