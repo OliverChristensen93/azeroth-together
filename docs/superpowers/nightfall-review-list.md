@@ -67,3 +67,8 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 17. **A target that slips out of sight stays selected for 3 s**, then drops. Without the grace, a target
     stepping behind a tree would drop at once in a fight; without the drop, you could follow a hidden
     enemy with the target frame. The 3 s is a constant in `nightfall/conceal.rs`.
+18. **Reviving works through a thin wall.** A friend within 3 yd of a downed hero revives them even
+    with a wall between (the reach is flat distance). The spec just says "next to"; if it feels wrong
+    in play, require line of sight or the same floor.
+19. **A friend can fight while reviving.** The spec only asks the reviver to stand next to the downed
+    hero for 5 s, so pressing abilities doesn't interrupt it; stepping out of reach or being downed does.
