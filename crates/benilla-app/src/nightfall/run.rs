@@ -2,7 +2,8 @@
 //! hero's pose fed to it, and the way back to the menu. Test hooks: `NIGHTFALL_HOST=1` hosts and
 //! `NIGHTFALL_JOIN=<code or address>` joins once the menu is up; `NIGHTFALL_AUTOPLAY=1` starts a
 //! run (hosting: once someone joined) and walks a slow circle; `NIGHTFALL_TRACE_POS=1` logs the
-//! hero's WoW position every 2 seconds, for measuring entry points.
+//! hero's WoW position every 2 seconds, for measuring entry points; `NIGHTFALL_FRAIL=<player>`
+//! drops that hero 15 s into the run (the host's).
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -408,6 +409,13 @@ pub(super) fn step_sim(
         sim.world.set_input(sim.me, input.with_pose(Some(pose)));
         let from = sim.world.events().len();
         sim.world.step();
+        if let Some(p) = super::fallen::frail_player() {
+            if super::fallen::crossed(super::fallen::FRAIL_AT, sim.world.elapsed) {
+                if let Some(blow) = sim.world.hero(p).map(super::fallen::frail_blow) {
+                    sim.world.hurt_hero(p, blow);
+                }
+            }
+        }
         sim.seen = sim.world.seen_by(sim.me);
         sim.marks = sim.world.marks_for(sim.me);
         session::host_send(&mut net, &sim.world, from);
@@ -454,6 +462,7 @@ pub(super) fn back_to_menu(
     mut end: ResMut<EndRun>,
     mut views: ResMut<Views>,
     mut enemy_views: ResMut<super::enemies::EnemyViews>,
+    mut telegraph_views: ResMut<super::telegraphs::TelegraphViews>,
     mut index: ResMut<crate::net::GuidIndex>,
     mut player: ResMut<crate::player::Player>,
     mut cooldowns: ResMut<crate::spell::Cooldowns>,
@@ -471,6 +480,8 @@ pub(super) fn back_to_menu(
     index.0.retain(|_, e| !gone.contains(e));
     *views = Views::default();
     *enemy_views = super::enemies::EnemyViews::default();
+    // The shapes are `NightfallEntity`s, despawned above.
+    *telegraph_views = super::telegraphs::TelegraphViews::default();
     commands.remove_resource::<Sim>();
     player.active = false;
     // Nothing of the fight follows the player out: no sweeps on the bar, no root on their feet.
@@ -529,6 +540,7 @@ mod tests {
         app.insert_resource(EndRun(true));
         app.init_resource::<Views>();
         app.init_resource::<super::super::enemies::EnemyViews>();
+        app.init_resource::<super::super::telegraphs::TelegraphViews>();
         app.init_resource::<crate::net::GuidIndex>();
         app.init_resource::<crate::player::Player>();
         app.init_resource::<NextState<Phase>>();

@@ -16,6 +16,7 @@ mod conceal;
 mod dodge;
 mod dress;
 mod enemies;
+mod fallen;
 mod fight;
 mod fx;
 mod grade;
@@ -25,6 +26,7 @@ mod run;
 mod senses_hud;
 mod session;
 mod stance;
+mod telegraphs;
 mod terrain;
 mod ui;
 mod units;
@@ -234,6 +236,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<view::Views>()
             .init_resource::<enemies::EnemyViews>()
             .init_resource::<marks::MarkViews>()
+            .init_resource::<telegraphs::TelegraphViews>()
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
             .init_resource::<conceal::TargetGrace>()
@@ -371,6 +374,26 @@ impl Plugin for NightfallPlugin {
                     .chain()
                     .after(enemies::place)
                     // Its commands land before the run can end and despawn the bodies.
+                    .before(run::leave_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                // `death_popup` holds the Lua VM, which the engine's schedule test wants after
+                // the UI's input.
+                fallen::death_popup
+                    .after(crate::ui_script::UiInput)
+                    .after(enemies::place)
+                    .before(run::leave_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                (telegraphs::draw, fallen::status_line)
+                    .after(enemies::place)
+                    // Their commands land before the run can end and despawn what they made.
                     .before(run::leave_run)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
