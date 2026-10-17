@@ -10,9 +10,6 @@ use super::NightfallEntity;
 use crate::net::{Guid, NetEntity, ObjectStore};
 
 const FIELD_HEALTH: u16 = 22;
-/// `UNIT_FIELD_POWER1` (mana) and its maximum.
-const FIELD_POWER: u16 = 23;
-const FIELD_MAX_POWER: u16 = 29;
 const FIELD_MAX_HEALTH: u16 = 28;
 /// `PLAYER_BYTES_2` (byte 3 the rest state), `PLAYER_XP` and `PLAYER_NEXT_LEVEL_XP`.
 const FIELD_PLAYER_BYTES_2: u16 = 194;
@@ -168,9 +165,9 @@ pub(super) fn spawn_unit(commands: &mut Commands, spec: &UnitSpec, pos: Vec3, ya
 #[derive(Component, Default, PartialEq)]
 pub(super) struct ShownVitals([u32; 5]);
 
-/// Write a unit's health, power, level and, for a player, experience (`xp` toward `next`) into its
+/// Write a unit's health, level and, for a player, experience (`xp` toward `next`) into its
 /// store when they changed, so WoW's unit frames and XP bar (and their `UNIT_HEALTH` and
-/// `PLAYER_XP_UPDATE` events) see them.
+/// `PLAYER_XP_UPDATE` events) see them. A hero's power is the fight's ([`super::fight::fields`]).
 pub(super) fn set_vitals(
     store: &mut ObjectStore,
     shown: &mut ShownVitals,
@@ -194,9 +191,6 @@ pub(super) fn set_vitals(
         (FIELD_HEALTH, now.0[0]),
         (FIELD_MAX_HEALTH, now.0[1]),
         (FIELD_LEVEL, now.0[2]),
-        // Mana stays full: abilities cost nothing.
-        (FIELD_POWER, 100),
-        (FIELD_MAX_POWER, 100),
     ];
     if xp.is_some() {
         pairs.extend([

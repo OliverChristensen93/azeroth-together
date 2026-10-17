@@ -10,6 +10,7 @@
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
 mod atmosphere;
+mod auras;
 mod bar;
 mod conceal;
 mod dodge;
@@ -154,6 +155,51 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     let _ = CONTENT.set(Arc::new(content));
     let _ = CONTENT_TEXTS.set([classes, map, rules, enemies, spawns, abilities]);
     Ok(())
+}
+
+/// A rogue whose bar holds Stealth (on both bars), a strike that starts the global cooldown, and
+/// a stone: content for the client's tests.
+#[cfg(test)]
+pub(super) fn bar_test_content() -> nightfall_sim::Content {
+    nightfall_sim::Content::from_ron(nightfall_sim::ContentSources {
+        classes: r#"[(key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0,
+            base_hp: 1000.0, speed: 7.0, power_max: 100.0,
+            bar: [(1, "stealth"), (2, "strike"), (11, "stone"), (73, "stealth")])]"#,
+        map: r#"(key: "t", name: "T", map: 0,
+            bounds: [(0.0, 0.0), (50.0, 0.0), (50.0, 50.0), (0.0, 50.0)],
+            entries: [(5.0, 5.0, 0.0)])"#,
+        rules: r#"(hero_level: 30, atmosphere: (night_minute: 0, fog_start: 10.0,
+            fog_end: 40.0, fog_color: (0.1, 0.1, 0.1), view_distance: 120.0,
+            hero_light: (color: (1.0, 0.8, 0.6), intensity: 0.6, range: 9.0)))"#,
+        enemies: "[]",
+        spawns: "[]",
+        abilities: r#"[
+            (key: "stealth", name: "Stealth", spell: 1785, aim: Me, cooldown: 10.0,
+             effects: [Stealth]),
+            (key: "strike", name: "Strike", spell: 1760, aim: Enemy, range: 5.0, gcd: 1.0,
+             effects: [Weapon(bonus: 22.0)]),
+            (key: "stone", name: "Stone", spell: 4164, aim: Ground, range: 25.0,
+             cooldown: 20.0, effects: []),
+        ]"#,
+    })
+    .unwrap()
+}
+
+/// The shipped content (`content/nightfall/`), for tests of what the client makes of the real
+/// classes and enemies.
+#[cfg(test)]
+pub(super) fn shipped_content() -> Arc<Content> {
+    Arc::new(
+        Content::from_ron(ContentSources {
+            classes: include_str!("../../../../content/nightfall/classes.ron"),
+            map: include_str!("../../../../content/nightfall/map.ron"),
+            rules: include_str!("../../../../content/nightfall/rules.ron"),
+            enemies: include_str!("../../../../content/nightfall/enemies.ron"),
+            spawns: include_str!("../../../../content/nightfall/spawns.ron"),
+            abilities: include_str!("../../../../content/nightfall/abilities.ron"),
+        })
+        .expect("the shipped content parses"),
+    )
 }
 
 /// The screen Nightfall is on.
@@ -301,9 +347,21 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
+                fight::fields
+                    // After the vitals and the enemies are written and drawn.
+                    .after(view::write_vitals)
+                    .after(enemies::place)
+                    // Its commands land before the run can end and despawn the bodies.
+                    .before(run::leave_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
                 (
                     conceal::enemies,
-                    conceal::heroes,
+                    auras::heroes,
+                    auras::enemies,
                     stance::trace,
                     marks::draw,
                     senses_hud::spawn_eye,

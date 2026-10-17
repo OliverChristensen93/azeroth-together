@@ -2,17 +2,27 @@
 //! own seams, as a server's packets would: a cast's precast glow and our cast bar, a channel's
 //! bar, the cast's visual with its missile and impacts, a stopped cast, melee swings, floating
 //! combat text, WoW's own red error text for a press the host turned down, and a Blink's teleport
-//! for our hero. It decides nothing: every event is the host's.
+//! for our hero. [`fields`] writes the fight's state into the units' fields: power, combo points,
+//! the bar's cooldown sweeps, the ready stance and the root. It decides nothing: every event and
+//! every number is the host's.
 
+use std::collections::HashMap;
+use std::time::Duration;
+
+use benilla_protocol::messages::ObjectFields;
+use benilla_protocol::MoveMode;
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
-use nightfall_sim::{Event, Refusal, Stop, UnitRef, V2, V3};
+use nightfall_sim::{Event, PlayerId, Refusal, Stop, UnitRef, V2, V3};
 
-use super::enemies::EnemyViews;
+use super::enemies::{enemy_guid, EnemyViews};
 use super::fx::{Fx, COLOR_EVADE, COLOR_HIT, COLOR_HURT, COLOR_SPELL};
 use super::run::Sim;
 use super::units;
 use super::view::Views;
-use crate::net::{SelfGuid, TeleportMessage};
+use crate::creature_anim::Engaged;
+use crate::net::{MoveModeMessage, ObjectStore, SelfGuid, TeleportMessage};
+use crate::spell::Cooldowns;
 use crate::ui_action::{CastErrors, UiError, UiErrorKeys};
 use crate::ui_cast::{CastBarEdge, CastBarFeed};
 
@@ -134,6 +144,54 @@ fn damage_of(event: &Event) -> f32 {
         Event::Damage { amount, .. } => *amount,
         _ => 0.0,
     }
+}
+
+/// `UNIT_FIELD_POWER1` (the first of five power slots: mana, rage, focus, energy, happiness) and
+/// `UNIT_FIELD_MAXPOWER1`.
+const FIELD_POWER1: u16 = 23;
+const FIELD_MAXPOWER1: u16 = 29;
+/// `PLAYER_FIELD_BYTES`, whose byte 1 is the combo points, and `PLAYER_FIELD_COMBO_TARGET`, the
+/// guid they sit on (two words).
+const FIELD_PLAYER_BYTES: u16 = 1222;
+const FIELD_COMBO_TARGET: u16 = 714;
+
+/// A hero's power of type `ty` as its fields hold it.
+pub(super) fn power_pairs(ty: u8, now: f32, max: f32) -> [(u16, u32); 2] {
+    [
+        (FIELD_POWER1 + u16::from(ty), now.max(0.0).round() as u32),
+        (FIELD_MAXPOWER1 + u16::from(ty), max.max(0.0).round() as u32),
+    ]
+}
+
+/// `PLAYER_FIELD_BYTES` with `combo` points in byte 1 and the action bar `toggles` in byte 2,
+/// as they were; byte 0's flags (a ghost's release timer, tracking stealth) a hero never has.
+pub(super) fn combo_bytes(toggles: u8, combo: u8) -> u32 {
+    u32::from(toggles) << 16 | u32::from(combo) << 8
+}
+
+/// Each spell on the bar and the seconds it still waits: its own cooldown, or the global one
+/// for an ability that starts it; a spell on two slots (Stealth on both bars) once.
+pub(super) fn waits(
+    kit: &[(u8, usize)],
+    abilities: &[nightfall_sim::AbilityDef],
+    f: &nightfall_sim::HeroFight,
+) -> Vec<(u32, f32)> {
+    let mut out: Vec<(u32, f32)> = Vec::new();
+    for &(_, a) in kit {
+        let own = f
+            .cooldowns
+            .iter()
+            .find(|c| usize::from(c.ability) == a)
+            .map_or(0.0, |c| c.left);
+        let gcd = if abilities[a].gcd > 0.0 { f.gcd } else { 0.0 };
+        let spell = abilities[a].spell;
+        let wait = own.max(gcd);
+        match out.iter_mut().find(|(s, _)| *s == spell) {
+            Some(w) => w.1 = w.1.max(wait),
+            None => out.push((spell, wait)),
+        }
+    }
+    out
 }
 
 /// This frame's events, shown: every hero's and drawn enemy's casts, swings and numbers; ours
@@ -309,6 +367,135 @@ pub(super) fn show_events(
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// What `fields` last wrote, so it writes only changes.
+#[derive(Default)]
+pub(super) struct Written {
+    /// The body of our hero these were written for: another (a new run) starts them all over.
+    body: Option<Entity>,
+    power: HashMap<PlayerId, (Entity, [(u16, u32); 2])>,
+    combo: Option<(u8, Option<u32>)>,
+    /// When each bar spell's sweep ends, as written into the engine's cooldowns.
+    ready_at: HashMap<u32, Instant>,
+    attacking: Option<u32>,
+    rooted: bool,
+    counter: u32,
+}
+
+/// The guid enemy `id` is drawn under, if the world has it.
+fn target_guid(sim: &Sim, id: Option<u32>) -> Option<u64> {
+    let id = id?;
+    sim.world.enemy(id).map(|e| enemy_guid(e.kind, id))
+}
+
+/// How far a sweep's end may drift before it is written again: the sim's steps and the frames
+/// do not tick in lockstep, and a sweep restarted every frame would flicker.
+const SWEEP_SLACK: Duration = Duration::from_millis(150);
+
+/// Every hero's power into their fields (the player, party and target frames); and for our hero:
+/// combo points on their target (the combo frame), the bar's cooldown sweeps (written into the
+/// engine's own cooldowns when they change by more than a blink), the ready stance while
+/// auto-attacking (`Engaged`), and WoW's root while a rooted cast or death holds their feet.
+pub(super) fn fields(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    views: Res<Views>,
+    self_guid: Res<SelfGuid>,
+    mut stores: Query<&mut ObjectStore>,
+    mut cooldowns: ResMut<Cooldowns>,
+    mut modes: MessageWriter<MoveModeMessage>,
+    mut written: Local<Written>,
+) {
+    let content = sim.world.content();
+    let body = views.heroes.get(&sim.me).copied();
+    if written.body != body {
+        // A new body (a new run) has none of it: nothing of the last is still written.
+        let counter = written.counter;
+        *written = Written {
+            body,
+            counter,
+            ..Written::default()
+        };
+    }
+    for hero in &sim.world.heroes {
+        let Some(&e) = views.heroes.get(&hero.player) else {
+            continue;
+        };
+        let ty = content.classes[hero.class].power;
+        let pairs = power_pairs(ty, hero.fight.power, hero.fight.max_power);
+        if written.power.get(&hero.player) == Some(&(e, pairs)) {
+            continue;
+        }
+        if let Ok(mut store) = stores.get_mut(e) {
+            store.0.merge(ObjectFields::from_pairs(&pairs));
+            written.power.insert(hero.player, (e, pairs));
+        }
+    }
+    let (Some(me), Some(body)) = (sim.world.hero(sim.me), body) else {
+        return;
+    };
+    let f = &me.fight;
+    if written.combo != Some((f.combo, f.combo_on)) {
+        if let Ok(mut store) = stores.get_mut(body) {
+            let toggles = store.0.player_action_bar_toggles().unwrap_or(0);
+            let on = target_guid(&sim, f.combo_on).unwrap_or(0);
+            store.0.merge(ObjectFields::from_pairs(&[
+                (FIELD_PLAYER_BYTES, combo_bytes(toggles, f.combo)),
+                (FIELD_COMBO_TARGET, on as u32),
+                (FIELD_COMBO_TARGET + 1, (on >> 32) as u32),
+            ]));
+            written.combo = Some((f.combo, f.combo_on));
+        }
+    }
+    let now = Instant::now();
+    for (spell, wait) in waits(&content.classes[me.class].kit, &content.abilities, f) {
+        let end = (wait > 0.05).then(|| now + Duration::from_secs_f32(wait));
+        let old = written.ready_at.get(&spell).copied();
+        let moved = match (old, end) {
+            (None, None) => false,
+            (Some(a), Some(b)) => (if a > b { a - b } else { b - a }) > SWEEP_SLACK,
+            _ => true,
+        };
+        if !moved {
+            continue;
+        }
+        cooldowns.clear_spell(spell);
+        match end {
+            Some(end) => {
+                cooldowns.apply_wire_cooldown(spell, ms(wait), None, now);
+                written.ready_at.insert(spell, end);
+            }
+            None => {
+                written.ready_at.remove(&spell);
+            }
+        }
+    }
+    if written.attacking != f.attacking {
+        // An enemy not in the world (yet) is waited for, not engaged with nothing.
+        match target_guid(&sim, f.attacking) {
+            Some(guid) => {
+                commands.entity(body).insert(Engaged(guid));
+                written.attacking = f.attacking;
+            }
+            None => {
+                commands.entity(body).remove::<Engaged>();
+                written.attacking = None;
+            }
+        }
+    }
+    if written.rooted != f.rooted {
+        if let Some(guid) = self_guid.0 {
+            written.counter = written.counter.wrapping_add(1);
+            modes.write(MoveModeMessage {
+                guid,
+                counter: written.counter,
+                mode: MoveMode::Root,
+                apply: f.rooted,
+            });
+            written.rooted = f.rooted;
         }
     }
 }
@@ -752,5 +939,202 @@ mod tests {
             damage(UnitRef::Hero(1), Some(enemy), 12.0),
         ];
         assert_eq!(swing_blow(&events, 0), None);
+    }
+
+    #[test]
+    fn power_and_combo_points_go_in_their_fields() {
+        assert_eq!(power_pairs(3, 72.4, 100.0), [(26, 72), (32, 100)]);
+        assert_eq!(power_pairs(0, 1300.0, 1300.0), [(23, 1300), (29, 1300)]);
+        assert_eq!(combo_bytes(3, 4), 0x0003_0400);
+    }
+
+    #[test]
+    fn a_button_waits_out_its_cooldown_or_the_global_one() {
+        use nightfall_sim::{Cooldown, HeroFight};
+        let c = super::super::bar_test_content();
+        let kit = &c.classes[0].kit;
+        let f = HeroFight {
+            gcd: 1.0,
+            cooldowns: vec![Cooldown {
+                ability: 2,
+                left: 15.0,
+            }],
+            ..HeroFight::default()
+        };
+        // Stealth (no global cooldown), Strike (the global one), Stone (its own 15 s).
+        assert_eq!(
+            waits(kit, &c.abilities, &f),
+            vec![(1785, 0.0), (1760, 1.0), (4164, 15.0)]
+        );
+    }
+
+    /// A rogue (player 0, power energy) on the shipped content, an enemy (id 7, kind 0) in the
+    /// world, and everything `fields` writes to.
+    fn rogue_stage() -> (bevy::prelude::World, Entity) {
+        let mut sim = nightfall_sim::World::new(super::super::shipped_content());
+        sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        sim.enemies.push(nightfall_sim::Enemy {
+            id: 7,
+            kind: 0,
+            pos: V2::new(0.0, 0.0),
+            z: 0.0,
+            facing: V2::new(1.0, 0.0),
+            hp: 10.0,
+            max_hp: 10.0,
+            speed: 0.0,
+            asleep: false,
+            fight: Default::default(),
+        });
+        let mut world = bevy::prelude::World::new();
+        let body = world.spawn(ObjectStore(ObjectFields::from_pairs(&[]))).id();
+        let mut views = Views::default();
+        views.heroes.insert(0, body);
+        world.insert_resource(Sim::for_test(sim));
+        world.insert_resource(views);
+        world.insert_resource(SelfGuid(Some(77)));
+        world.init_resource::<Cooldowns>();
+        world.init_resource::<Messages<MoveModeMessage>>();
+        (world, body)
+    }
+
+    fn fight_of(world: &mut bevy::prelude::World) -> &mut nightfall_sim::HeroFight {
+        &mut world.resource_mut::<Sim>().into_inner().world.heroes[0].fight
+    }
+
+    fn changed_stores(world: &mut bevy::prelude::World) -> usize {
+        world
+            .query_filtered::<Entity, Changed<ObjectStore>>()
+            .iter(world)
+            .count()
+    }
+
+    /// How long a spell's sweep on the bar still has to run, milliseconds.
+    fn sweep(world: &bevy::prelude::World, spell: u32) -> u32 {
+        world
+            .resource::<Cooldowns>()
+            .info(spell, 0, None, Instant::now())
+            .remaining_ms
+    }
+
+    fn moves(world: &mut bevy::prelude::World) -> Vec<(u64, u32, bool)> {
+        world
+            .resource_mut::<Messages<MoveModeMessage>>()
+            .drain()
+            .map(|m| (m.guid, m.counter, m.apply))
+            .collect()
+    }
+
+    #[test]
+    fn our_hero_shows_power_combo_points_and_sweeps_and_a_steady_state_writes_nothing() {
+        let (mut world, body) = rogue_stage();
+        let run = world.register_system(fields);
+        let (gouge, gouge_spell) = {
+            let c = world.resource::<Sim>().world.content().clone();
+            let i = c.abilities.iter().position(|a| a.key == "gouge").unwrap();
+            (i, c.abilities[i].spell)
+        };
+        {
+            let f = fight_of(&mut world);
+            f.power = 72.4;
+            f.max_power = 100.0;
+            f.combo = 3;
+            f.combo_on = Some(7);
+            f.cooldowns = vec![nightfall_sim::Cooldown {
+                ability: gouge as u16,
+                left: 8.0,
+            }];
+        }
+        world.run_system(run).unwrap();
+        let s = &world.get::<ObjectStore>(body).unwrap().0;
+        assert_eq!(s.unit_power(3), Some(72), "energy");
+        assert_eq!(s.unit_max_power(3), Some(100));
+        assert_eq!(s.player_combo_points(), Some(3));
+        assert_eq!(
+            s.player_combo_target(),
+            enemy_guid(0, 7),
+            "the points sit on the enemy's own guid"
+        );
+        let swept = sweep(&world, gouge_spell);
+        assert!((7_000..=8_000).contains(&swept), "{swept}");
+
+        // The second frame: the same state writes nothing at all.
+        world.clear_trackers();
+        let generation = world.resource::<Cooldowns>().generation;
+        world.run_system(run).unwrap();
+        assert_eq!(changed_stores(&mut world), 0);
+        assert_eq!(world.resource::<Cooldowns>().generation, generation);
+        assert!(moves(&mut world).is_empty());
+
+        // A spent cooldown clears its sweep, and the points are spent.
+        {
+            let f = fight_of(&mut world);
+            f.cooldowns.clear();
+            f.combo = 0;
+            f.combo_on = None;
+        }
+        world.run_system(run).unwrap();
+        assert_eq!(sweep(&world, gouge_spell), 0);
+        let s = &world.get::<ObjectStore>(body).unwrap().0;
+        assert_eq!(
+            (s.player_combo_points(), s.player_combo_target()),
+            (Some(0), 0)
+        );
+    }
+
+    #[test]
+    fn the_global_cooldown_sweeps_the_strikes_not_the_spells_that_ignore_it() {
+        let (mut world, _) = rogue_stage();
+        let run = world.register_system(fields);
+        let c = world.resource::<Sim>().world.content().clone();
+        let bar = c.classes[0].kit.iter().map(|&(_, a)| &c.abilities[a]);
+        let strike = bar.clone().find(|a| a.gcd > 0.0).unwrap();
+        let free = bar.clone().find(|a| a.gcd == 0.0).unwrap();
+        fight_of(&mut world).gcd = 1.0;
+        world.run_system(run).unwrap();
+        assert!(sweep(&world, strike.spell) > 500, "{}", strike.key);
+        assert_eq!(sweep(&world, free.spell), 0, "{}", free.key);
+    }
+
+    #[test]
+    fn a_root_and_the_ready_stance_come_once_and_go_once() {
+        let (mut world, body) = rogue_stage();
+        let run = world.register_system(fields);
+        fight_of(&mut world).rooted = true;
+        fight_of(&mut world).attacking = Some(7);
+        world.run_system(run).unwrap();
+        world.run_system(run).unwrap();
+        assert_eq!(
+            moves(&mut world),
+            [(77, 1, true)],
+            "one root, not one a frame"
+        );
+        assert_eq!(
+            world.get::<Engaged>(body).map(|e| e.0),
+            Some(enemy_guid(0, 7))
+        );
+
+        fight_of(&mut world).rooted = false;
+        fight_of(&mut world).attacking = None;
+        world.run_system(run).unwrap();
+        assert_eq!(moves(&mut world), [(77, 2, false)]);
+        assert!(world.get::<Engaged>(body).is_none());
+    }
+
+    #[test]
+    fn a_new_run_starts_the_writes_over() {
+        let (mut world, _) = rogue_stage();
+        let run = world.register_system(fields);
+        fight_of(&mut world).power = 40.0;
+        fight_of(&mut world).max_power = 100.0;
+        world.run_system(run).unwrap();
+
+        // The next run's body is another entity, with none of it written.
+        let second = world.spawn(ObjectStore(ObjectFields::from_pairs(&[]))).id();
+        world.resource_mut::<Views>().heroes.insert(0, second);
+        world.run_system(run).unwrap();
+        assert_eq!(
+            world.get::<ObjectStore>(second).unwrap().0.unit_power(3),
+            Some(40)
+        );
     }
 }

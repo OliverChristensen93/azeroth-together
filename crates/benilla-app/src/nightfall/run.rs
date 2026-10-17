@@ -456,6 +456,8 @@ pub(super) fn back_to_menu(
     mut enemy_views: ResMut<super::enemies::EnemyViews>,
     mut index: ResMut<crate::net::GuidIndex>,
     mut player: ResMut<crate::player::Player>,
+    mut cooldowns: ResMut<crate::spell::Cooldowns>,
+    mut modes: MessageWriter<crate::net::MoveModeMessage>,
     mut next: ResMut<NextState<Phase>>,
     spawned: Query<Entity, With<NightfallEntity>>,
 ) {
@@ -471,6 +473,14 @@ pub(super) fn back_to_menu(
     *enemy_views = super::enemies::EnemyViews::default();
     commands.remove_resource::<Sim>();
     player.active = false;
+    // Nothing of the fight follows the player out: no sweeps on the bar, no root on their feet.
+    cooldowns.wipe();
+    modes.write(crate::net::MoveModeMessage {
+        guid: 0,
+        counter: 0,
+        mode: benilla_protocol::MoveMode::Root,
+        apply: false,
+    });
     next.set(Phase::Menu);
 }
 
@@ -507,5 +517,38 @@ mod tests {
     fn bevy_and_wow_ground_agree() {
         let p = V2::new(-10051.8, -792.5);
         assert_eq!(bevy_to_ground(units::ground_to_bevy(p, 36.5)), p);
+    }
+
+    #[test]
+    fn leaving_a_run_takes_the_fight_out_of_the_engine() {
+        use crate::net::MoveModeMessage;
+        use crate::spell::Cooldowns;
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut app = bevy::prelude::World::new();
+        app.insert_resource(EndRun(true));
+        app.init_resource::<Views>();
+        app.init_resource::<super::super::enemies::EnemyViews>();
+        app.init_resource::<crate::net::GuidIndex>();
+        app.init_resource::<crate::player::Player>();
+        app.init_resource::<NextState<Phase>>();
+        app.init_resource::<Messages<MoveModeMessage>>();
+        let mut cooldowns = Cooldowns::default();
+        cooldowns.apply_wire_cooldown(1777, 8_000, None, bevy::platform::time::Instant::now());
+        assert_eq!(cooldowns.record_count(), 1);
+        app.insert_resource(cooldowns);
+
+        app.run_system_once(back_to_menu).unwrap();
+        assert_eq!(app.resource::<Cooldowns>().record_count(), 0, "no sweeps");
+        let modes: Vec<_> = app
+            .resource_mut::<Messages<MoveModeMessage>>()
+            .drain()
+            .map(|m| (m.mode, m.apply))
+            .collect();
+        assert_eq!(
+            modes,
+            [(benilla_protocol::MoveMode::Root, false)],
+            "no root on the player's feet"
+        );
     }
 }

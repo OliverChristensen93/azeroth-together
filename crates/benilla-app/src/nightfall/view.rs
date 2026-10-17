@@ -137,12 +137,13 @@ pub(super) fn write_vitals(
 ) {
     let world = &sim.world;
     let level = content().rules.hero_level;
+    // The controller's speed is never 0: a rooted hero is held by WoW's root, not by speed.
     if let (Some(hero), Some(&e)) = (world.hero(sim.me), views.heroes.get(&sim.me)) {
         if hero.speed != views.speed {
             views.speed = hero.speed;
             commands
                 .entity(e)
-                .insert(crate::net::UnitSpeeds(run_speeds(hero.speed)));
+                .insert(crate::net::UnitSpeeds(run_speeds(hero.speed.max(0.1))));
         }
     }
     for hero in &world.heroes {
@@ -151,7 +152,12 @@ pub(super) fn write_vitals(
             .get(&hero.player)
             .and_then(|&e| units.get_mut(e).ok())
         {
-            units::set_vitals(&mut store, &mut shown, hero.hp, hero.max_hp, level, None);
+            // A downed hero shows 1 health, so WoW plays no death until they die.
+            let shown_hp = match hero.fight.life {
+                nightfall_sim::Life::Downed { .. } => hero.hp.max(1.0),
+                _ => hero.hp,
+            };
+            units::set_vitals(&mut store, &mut shown, shown_hp, hero.max_hp, level, None);
         }
     }
 }
@@ -200,5 +206,54 @@ pub(super) fn place(
             mv.speed = p.speed;
             mv.flags = flags;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use nightfall_sim::Life;
+
+    /// A one-hero world around a body that has no health written yet.
+    fn world_with_a_hero() -> (World, Entity) {
+        // `write_vitals` reads the hero level from the loaded content.
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let mut sim = nightfall_sim::World::new(super::super::shipped_content());
+        sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        let mut world = World::new();
+        let body = world
+            .spawn((
+                ObjectStore(benilla_protocol::messages::ObjectFields::from_pairs(&[])),
+                ShownVitals::default(),
+            ))
+            .id();
+        let mut views = Views::default();
+        views.heroes.insert(0, body);
+        world.insert_resource(views);
+        world.insert_resource(Sim::for_test(sim));
+        (world, body)
+    }
+
+    fn shown_health(world: &mut World, body: Entity, hp: f32, life: Life) -> Option<u32> {
+        let mut sim = world.resource_mut::<Sim>();
+        sim.world.heroes[0].hp = hp;
+        sim.world.heroes[0].fight.life = life;
+        world.run_system_once(write_vitals).unwrap();
+        world.get::<ObjectStore>(body).unwrap().0.unit_health()
+    }
+
+    #[test]
+    fn a_downed_hero_shows_one_health_and_a_dead_hero_none() {
+        let (mut world, body) = world_with_a_hero();
+        assert_eq!(shown_health(&mut world, body, 40.0, Life::Up), Some(40));
+        // Downed, WoW must not see health 0 (it would play its death).
+        let downed = Life::Downed {
+            left: 20.0,
+            revive: 0.0,
+        };
+        assert_eq!(shown_health(&mut world, body, 0.0, downed), Some(1));
+        // Dead, it reads dead.
+        assert_eq!(shown_health(&mut world, body, 0.0, Life::Dead), Some(0));
     }
 }

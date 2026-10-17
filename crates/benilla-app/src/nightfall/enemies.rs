@@ -114,6 +114,12 @@ pub(super) fn enemy_guid_serial(entry: u32, id: u32) -> u64 {
     u64::from(entry) << 24 | u64::from(id)
 }
 
+/// The guid enemy `id` of template `kind` is drawn under (as [`sync`] files its body).
+pub(super) fn enemy_guid(kind: usize, id: u32) -> u64 {
+    let entry = entry_of(kind);
+    units::unit_guid(UnitKind::Creature { entry }, enemy_guid_serial(entry, id))
+}
+
 fn trace() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_SEEN").is_some())
@@ -164,7 +170,7 @@ pub(super) fn sync(
                     subname: None,
                     creature_type: 0,
                     pet_family: 0,
-                    rank: 0,
+                    rank: u32::from(def.elite),
                     type_flags: 0,
                     civilian: false,
                     racial_leader: false,
@@ -284,6 +290,18 @@ pub(super) fn trace_seen(sim: Res<Sim>, real: Res<Time<Real>>, mut last: Local<f
 mod tests {
     use super::super::view::HERO_SERIAL_BASE;
     use super::*;
+
+    #[test]
+    fn an_enemys_guid_names_it_to_the_units_that_look_it_up() {
+        // The guid the combo frame and the ready stance are given is the body's own.
+        for (kind, id) in [(0, 7), (3, 41)] {
+            assert_eq!(
+                units::unit_of(enemy_guid(kind, id)),
+                Some(nightfall_sim::UnitRef::Enemy(id))
+            );
+        }
+        assert_ne!(enemy_guid(0, 7), enemy_guid(1, 7));
+    }
 
     #[test]
     fn an_enemy_appears_inside_the_view_and_goes_a_little_past_it() {
