@@ -45,6 +45,17 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   hero as a WoW creature whose guid carries its kind's template entry (`enemy_guid_serial`); on
   open ground the client's own terrain height wins, and only an upper storey or a bridge takes
   the host's floor.
+- Nightfall's senses (sub-project 3): `nightfall-sim/src/senses/` — `visibility.rs` (stance from
+  the client's gait and Stealth; light; the facing cone; notice range), `noise.rs` (footsteps by
+  stance, `Loudness`, hearing at half through walls), `awareness.rs` (each enemy's suspicion of
+  each hero: wary "?", checking, alerted "!", searching; sleepers), `react.rs` (enemies turning,
+  checking, chasing to `chase_reach`, shouting to allies within reach, searching, going home).
+  Every number is in `content/nightfall/rules.ron` under `senses:`. Seams for combat:
+  `World::{alert, ambush, opener_allowed, make_noise, flash, break_stealth}`. The host sends each
+  player their marks (`World::marks_for`) beside their seen set. Client: `nightfall/stance.rs`
+  (gait from the controller's walk toggle and keys, Stealth on `1`), `conceal.rs` (unseen enemies
+  get the engine's `target::Concealed`: no Tab, mouseover or plate; stealth's creep bit and aura),
+  `marks.rs` ("?"/"!"), `senses_hud.rs` (the eye, rings, heartbeat), `grade.rs` (the vignette).
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
@@ -143,5 +154,8 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   that point, and a wanderer that finds no ground keeps trying each second and is named once after
   10 failed searches in a row ("finds no ground to walk to"). Each is named in the log as
   `nightfall: spawns.ron: …`.
+- Nightfall's senses: `NIGHTFALL_AUTOPLAY_GAIT=walk|run|sneak` sets how the autoplay walk moves
+  (`sneak` stealths the Rogue); `NIGHTFALL_TRACE_SENSES=1` logs the hero's stance, visibility,
+  noise, concealed enemies, marks and the nearest alerted enemy every 2 s.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).

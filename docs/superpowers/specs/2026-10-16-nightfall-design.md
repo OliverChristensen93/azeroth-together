@@ -1,7 +1,7 @@
 # Nightfall: design
 
 Date: 2026-10-16. Status: approved; revised the same day after research into single-player and co-op
-extraction games (§1.1). Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md). Sub-project 2 built (plan docs/superpowers/plans/2026-10-17-nightfall-world-knowledge.md). Branch: `stealth-extraction`.
+extraction games (§1.1). Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md). Sub-project 2 built (plan docs/superpowers/plans/2026-10-17-nightfall-world-knowledge.md). Sub-project 3 built (plan docs/superpowers/plans/2026-10-17-nightfall-senses.md). Branch: `stealth-extraction`.
 
 *Nightfall* (working title) is a second game inside Azeroth Together: a co-op stealth extraction game
 in Duskwood at night. It shares the engine, the netcode and the launcher with the survivors games and
