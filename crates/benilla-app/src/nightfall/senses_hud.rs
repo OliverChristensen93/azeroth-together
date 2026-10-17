@@ -95,6 +95,8 @@ pub(super) fn spawn_eye(
                 ..default()
             },
             GlobalZIndex(350),
+            // Hidden until the hero exists and the eye is placed; [`drive_eye`] shows it.
+            Visibility::Hidden,
         ))
         .with_children(|root| {
             for (i, d) in RINGS.into_iter().enumerate() {
@@ -168,7 +170,7 @@ pub(super) fn drive_eye(
     ui_scale: Res<UiScale>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut nodes: ParamSet<(
-        Query<&mut Node, With<EyeRoot>>,
+        Query<(&mut Node, &mut Visibility), With<EyeRoot>>,
         Query<(&mut Node, &mut BorderColor), With<EyeWhite>>,
         Query<&mut BackgroundColor, With<EyePupil>>,
         Query<(&EyeRing, &mut Visibility)>,
@@ -180,7 +182,11 @@ pub(super) fn drive_eye(
     };
     let s = ui_scale.0;
     let c = eye_center(window.height());
-    if let Ok(mut root) = nodes.p0().single_mut() {
+    if let Ok((mut root, mut vis)) = nodes.p0().single_mut() {
+        // The eye shows once it has a place: a joined client has no hero before its first snapshot.
+        if *vis != Visibility::Inherited {
+            *vis = Visibility::Inherited;
+        }
         root.left = Val::Px(c.x / s - BOX / 2.0);
         root.top = Val::Px(c.y / s - BOX / 2.0);
     }

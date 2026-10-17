@@ -114,7 +114,11 @@ fn follow_visibility(
     real: Res<Time<Real>>,
     mut grades: Query<&mut NightGrade>,
 ) {
-    let r = &super::content().rules.senses;
+    // The run's own content when there is a run, the loaded content at the menu.
+    let content = sim
+        .as_ref()
+        .map_or_else(super::content, |s| s.world.content().clone());
+    let r = &content.rules.senses;
     let visibility = sim
         .as_ref()
         .and_then(|s| s.world.hero(s.me))
@@ -148,5 +152,50 @@ mod tests {
         assert!((ease(0.0, 1.0, 3.0, 0.1) - 0.3).abs() < 1e-6);
         assert_eq!(ease(0.0, 1.0, 3.0, 1.0), 1.0);
         assert_eq!(ease(0.5, 0.5, 3.0, 0.1), 0.5);
+    }
+
+    /// At the menu there is no `Sim`: the vignette eases back to the content's plain-sight values.
+    #[test]
+    fn with_no_run_the_vignette_eases_back_to_seen() {
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        use bevy::ecs::system::RunSystemOnce;
+        use nightfall_sim::{Content, ContentSources};
+
+        let content = Content::from_ron(ContentSources {
+            classes: include_str!("../../../../content/nightfall/classes.ron"),
+            map: include_str!("../../../../content/nightfall/map.ron"),
+            rules: include_str!("../../../../content/nightfall/rules.ron"),
+            enemies: include_str!("../../../../content/nightfall/enemies.ron"),
+            spawns: include_str!("../../../../content/nightfall/spawns.ron"),
+        })
+        .expect("the shipped content parses");
+        let (strength, from) = content.rules.senses.vignette_seen;
+        // The menu reads the loaded content; a test stands in for `prepare`.
+        let _ = super::super::CONTENT.set(Arc::new(content));
+
+        let mut app = bevy::app::App::new();
+        app.add_plugins(MinimalPlugins);
+        let mut real = Time::<Real>::default();
+        real.advance_by(Duration::from_secs(1));
+        app.insert_resource(real);
+        let cam = app
+            .world_mut()
+            .spawn(NightGrade {
+                vignette: 0.9,
+                vignette_from: 0.0,
+                ..default()
+            })
+            .id();
+        app.world_mut().run_system_once(follow_visibility).unwrap();
+        let g = app.world().get::<NightGrade>(cam).unwrap();
+        // A second at 3 / s closes the whole gap.
+        assert!(
+            (g.vignette - strength).abs() < 1e-6,
+            "{} vs {strength}",
+            g.vignette
+        );
+        assert!((g.vignette_from - from).abs() < 1e-6);
     }
 }
