@@ -134,7 +134,7 @@ pub(super) fn spawn_player_body(
             display,
             scale: 1.0,
             level,
-            faction: super::units::FACTION_FRIENDLY,
+            faction: super::units::FACTION_PLAYER,
             bytes0: u32::from(race)
                 | u32::from(class.class_id) << 8
                 | u32::from(sex) << 16

@@ -4,6 +4,7 @@
 
 use benilla_protocol::messages::ObjectFields;
 use bevy::prelude::*;
+use nightfall_sim::UnitRef;
 
 use super::NightfallEntity;
 use crate::net::{Guid, NetEntity, ObjectStore};
@@ -26,8 +27,11 @@ const FIELD_VIRTUAL_ITEM_DISPLAY: u16 = 37;
 const FIELD_VIRTUAL_ITEM_INFO: u16 = 40;
 const FIELD_BYTES_2: u16 = 164;
 
-/// `FactionTemplate.dbc`: friendly to players, and the hostile monster template.
-pub(super) const FACTION_FRIENDLY: u32 = 35;
+/// `FactionTemplate.dbc`: the Human player template every hero wears (a player template is
+/// enemy-masked against the whole Monster group, so WoW's own Tab and attack checks find enemies
+/// attackable; the all-friendly template 35 made every enemy neutral to them), and the hostile
+/// monster template.
+pub(super) const FACTION_PLAYER: u32 = 1;
 pub(super) const FACTION_MONSTER: u32 = 14;
 
 const HIGH_CREATURE: u64 = 0xF130 << 48;
@@ -82,6 +86,17 @@ pub(super) fn unit_guid(kind: UnitKind, serial: u64) -> u64 {
         UnitKind::Creature { .. } => HIGH_CREATURE | serial,
         UnitKind::Player => serial,
     }
+}
+
+/// The hero or enemy a guid names, as [`unit_guid`] made it: a creature's low 24 bits are its
+/// enemy's id (its template's entry sits above them, [`super::enemies::enemy_guid_serial`]), a
+/// player's guid is its hero's number past [`super::view::HERO_SERIAL_BASE`].
+pub(super) fn unit_of(guid: u64) -> Option<UnitRef> {
+    if guid & 0xFFFF_0000_0000_0000 == HIGH_CREATURE {
+        return Some(UnitRef::Enemy((guid & 0xFF_FFFF) as u32));
+    }
+    let serial = guid.checked_sub(super::view::HERO_SERIAL_BASE)?;
+    (serial < 256).then_some(UnitRef::Hero(serial as u8))
 }
 
 /// Spawn a unit the attach builds a body for; the caller adds its own components.
@@ -190,4 +205,21 @@ pub(super) fn set_vitals(
     }
     store.0.merge(ObjectFields::from_pairs(&pairs));
     *shown = now;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_guid_names_the_hero_or_enemy_it_was_made_for() {
+        // As the enemies' views make it: the template's entry above the enemy's id.
+        let serial = super::super::enemies::enemy_guid_serial(3, 41);
+        let enemy = unit_guid(UnitKind::Creature { entry: 3 }, serial);
+        assert_eq!(unit_of(enemy), Some(UnitRef::Enemy(41)));
+        let hero = unit_guid(UnitKind::Player, super::super::view::HERO_SERIAL_BASE + 2);
+        assert_eq!(unit_of(hero), Some(UnitRef::Hero(2)));
+        assert_eq!(unit_of(3), None);
+        assert_eq!(unit_of(0xF110_0000_0000_0007), None);
+    }
 }

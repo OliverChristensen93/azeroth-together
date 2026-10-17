@@ -1,13 +1,12 @@
 //! The local hero's stance as the host needs it (spec §5.1): how they move, read off WoW's own
 //! controller (its walk toggle, `/` on the number pad, and the movement keys held), and the
-//! Rogue's Stealth key, counted into [`LocalInput`]. Stealth sits on `1` until sub-project 4 puts
-//! it on the action bar. `NIGHTFALL_AUTOPLAY_GAIT` (`walk`, `run` or `sneak`) says how the
+//! Rogue's Stealth press, counted into [`LocalInput`]. Stealth is a button on the action bar
+//! ([`super::bar::presses`] counts its presses). `NIGHTFALL_AUTOPLAY_GAIT` (`walk`, `run` or `sneak`) says how the
 //! autoplay walk moves, `sneak` stealthing too; `NIGHTFALL_TRACE_SENSES=1` logs the hero's senses
 //! every 2 seconds.
 
 use std::sync::OnceLock;
 
-use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 use nightfall_sim::{Alert, Gait};
 
@@ -16,8 +15,6 @@ use super::run::{autoplay, LocalInput, Sim};
 use crate::creature_anim::move_flags;
 use crate::target::Concealed;
 
-/// The key that toggles Stealth until abilities arrive (sub-project 4).
-const STEALTH_KEY: KeyCode = KeyCode::Digit1;
 /// The movement bits that carry the body across the ground.
 const TRANSLATING: u32 =
     move_flags::FORWARD | move_flags::BACKWARD | move_flags::STRAFE_LEFT | move_flags::STRAFE_RIGHT;
@@ -74,27 +71,22 @@ fn trace_on() -> bool {
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_SENSES").is_some())
 }
 
-/// The Stealth key, counted into the next input (not while an edit box has the keyboard); the
-/// autoplay `sneak` presses it every [`AUTO_PRESS_EVERY`] seconds until the hero is in stealth.
+/// The autoplay `sneak` presses Stealth every [`AUTO_PRESS_EVERY`] seconds until the hero is in
+/// stealth; a player presses Stealth's button on the action bar.
 pub(super) fn stealth_key(
-    keys: Res<ButtonInput<KeyCode>>,
-    script: Option<NonSend<UiScript>>,
     sim: Res<Sim>,
     real: Res<Time<Real>>,
     mut input: ResMut<LocalInput>,
     mut last_auto: Local<Option<f32>>,
 ) {
-    let typing = script.as_ref().is_some_and(|s| s.has_keyboard_focus());
-    if keys.just_pressed(STEALTH_KEY) && !typing {
-        input.stealth_presses = input.stealth_presses.wrapping_add(1);
+    if !(autoplay() && auto_gait() == AutoGait::Sneak) {
+        return;
     }
-    if autoplay() && auto_gait() == AutoGait::Sneak {
-        let now = real.elapsed_secs();
-        let out_of_stealth = sim.world.hero(sim.me).is_some_and(|h| !h.stealthed);
-        if out_of_stealth && last_auto.is_none_or(|t| now - t >= AUTO_PRESS_EVERY) {
-            input.stealth_presses = input.stealth_presses.wrapping_add(1);
-            *last_auto = Some(now);
-        }
+    let now = real.elapsed_secs();
+    let out_of_stealth = sim.world.hero(sim.me).is_some_and(|h| !h.stealthed);
+    if out_of_stealth && last_auto.is_none_or(|t| now - t >= AUTO_PRESS_EVERY) {
+        input.stealth_presses = input.stealth_presses.wrapping_add(1);
+        *last_auto = Some(now);
     }
 }
 

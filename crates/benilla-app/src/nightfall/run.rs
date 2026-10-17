@@ -10,7 +10,10 @@ use std::sync::OnceLock;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::messages::LobbyPlayer;
-use nightfall_sim::{Event, Gait, HeroPose, Mark, PlayerId, PlayerInput, Snapshot, World, DT, V2};
+use nightfall_sim::{
+    CastPress, Event, Gait, HeroPose, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World, DT,
+    V2, V3,
+};
 
 use super::menu::{LeaveRun, Selection, StartRequest};
 use super::session::{self, Heard, Net, Role};
@@ -182,6 +185,10 @@ pub(super) struct LocalInput {
     pub gait: Gait,
     /// Stealth presses this session, counted round past 255 ([`PlayerInput::stealth_presses`]).
     pub stealth_presses: u8,
+    /// The latest ability press, repeated in every input until the next ([`PlayerInput::cast`]).
+    pub cast: Option<CastPress>,
+    /// Dodge presses this session, counted round past 255.
+    pub dodge_presses: u8,
 }
 
 impl LocalInput {
@@ -191,8 +198,21 @@ impl LocalInput {
             pose,
             gait: self.gait,
             stealth_presses: self.stealth_presses,
-            ..Default::default()
+            cast: self.cast,
+            dodge_presses: self.dodge_presses,
         }
+    }
+
+    /// A new press of WoW action `slot`, at `target` or the spot `at`: it gets the next number,
+    /// so the host tells it from the last.
+    pub fn press(&mut self, slot: u8, target: Option<UnitRef>, at: Option<V3>) {
+        let seq = self.cast.map_or(1, |c| c.seq.wrapping_add(1));
+        self.cast = Some(CastPress {
+            seq,
+            slot,
+            target,
+            at,
+        });
     }
 }
 
@@ -459,6 +479,21 @@ mod tests {
         assert!((next.distance(entry) - 3.5).abs() < 1e-4);
         let near = autowalk(entry, goal - V2::new(0.1, 0.0), 0.0, 7.0, 1.0);
         assert!(near.distance(goal) < 1e-4);
+    }
+
+    #[test]
+    fn each_press_gets_the_next_number() {
+        let mut input = LocalInput::default();
+        input.press(2, None, None);
+        input.press(2, None, None);
+        assert_eq!(input.cast.map(|c| (c.seq, c.slot)), Some((2, 2)));
+        input.cast = Some(CastPress {
+            seq: 255,
+            ..CastPress::default()
+        });
+        input.press(3, None, None);
+        assert_eq!(input.cast.unwrap().seq, 0);
+        assert_eq!(input.with_pose(None).cast, input.cast);
     }
 
     #[test]

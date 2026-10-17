@@ -10,7 +10,9 @@
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
 mod atmosphere;
+mod bar;
 mod conceal;
+mod dodge;
 mod dress;
 mod enemies;
 mod grade;
@@ -259,6 +261,30 @@ impl Plugin for NightfallPlugin {
                 Update,
                 stance::stealth_key
                     .before(run::feed_pose)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                (bar::presses, dodge::key)
+                    // After the UI's key and click handlers queue `UseAction`, before the engine
+                    // applies the script's calls, and before the input goes out.
+                    .after(crate::ui_script::UiInput)
+                    .before(crate::script_calls::apply_script_calls)
+                    .before(run::feed_pose)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                (bar::fill, bar::autofight, dodge::setup)
+                    // They hold the Lua VM, which the engine's schedule test wants after the
+                    // UI's input.
+                    .after(crate::ui_script::UiInput)
+                    // The autofight's `UseAction` must be queued before `presses` takes the frame's
+                    // presses, or the engine's own cast path would get it.
+                    .before(bar::presses)
+                    .before(dodge::key)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )
