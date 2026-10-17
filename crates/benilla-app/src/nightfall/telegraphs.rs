@@ -58,7 +58,14 @@ pub(super) fn ground_grid(shape: Shape, at: V2, facing: V2) -> (Vec<V2>, Vec<u32
 
 /// The shape's alpha as its blow draws near: faint as it shows, strong as it lands.
 pub(super) fn glow(left: f32, total: f32) -> f32 {
-    0.15 + 0.5 * (1.0 - (left / total.max(1e-3)).clamp(0.0, 1.0))
+    let near = left / total.max(1e-3);
+    if !near.is_finite() {
+        // A NaN alpha would never differ from itself, freezing the shape: show nothing.
+        return 0.0;
+    }
+    0.15 + 0.5 * (1.0 - near.clamp(0.0, 1.0))
+}
+
 /// A telegraph's shape on the ground.
 #[derive(Component)]
 pub(super) struct TelegraphShape;
@@ -309,6 +316,14 @@ mod tests {
         assert_eq!(at_floor + on_ground, positions.len());
     }
 
+    #[test]
+    fn a_glow_that_is_not_a_number_shows_nothing_rather_than_freezing() {
+        assert_eq!(glow(f32::NAN, 1.5), 0.0);
+        assert_eq!(glow(f32::INFINITY, 1.5), 0.0);
+        assert_eq!(glow(0.5, f32::NAN), glow(0.5, 1e-3));
+    }
+
+    #[test]
     fn a_shape_follows_the_client_terrain_where_it_is_the_hosts_floor() {
         let (points, tris) = ground_grid(
             Shape::Circle { radius: 4.0 },

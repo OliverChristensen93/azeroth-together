@@ -25,7 +25,7 @@ const FIELD_UNIT_DISPLAYID: u16 = 131;
 /// The sheep Polymorph turns an enemy into.
 const SHEEP_DISPLAY: u32 = 856;
 /// Stealth's aura: Rank 3's, the one whose visual fades a body (sub-project 3's ruling). The
-/// bar's own Stealth is another rank, whose aura would not fade it.
+/// bar's own Stealth is another rank, whose aura is not known to fade a body.
 const STEALTH_AURA: u32 = 1786;
 /// `SpellShapeshiftForm.dbc`'s Stealth: the form whose bonus bar is a rogue's stealth page.
 const STEALTH_FORM: u8 = 30;

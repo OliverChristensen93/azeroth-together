@@ -149,7 +149,10 @@ pub(super) fn death_popup(
     }
     *last = now;
     if let Some(script) = script {
-        let _ = script.run(HIDE_POPUP);
+        // A failing script would fail the same way every 0.5 s: said once.
+        if let Err(e) = script.run(HIDE_POPUP) {
+            warn_once!("nightfall: closing WoW's death popup failed: {e}");
+        }
     }
 }
 
@@ -376,5 +379,44 @@ mod tests {
             .life = Life::Dead;
         frame(&mut app);
         assert_eq!(closed(&app), 2, "and its own death closes it once");
+    }
+
+    #[test]
+    fn the_death_popup_is_closed_again_every_half_second_while_dead() {
+        use std::time::Duration;
+
+        let mut app = popup_stage(Life::Dead);
+        let id = app.world_mut().register_system(death_popup);
+        let frame = |app: &mut bevy::app::App, advance: f32| {
+            app.world_mut()
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_secs_f32(advance));
+            app.world_mut().run_system(id).unwrap();
+        };
+        frame(&mut app, 0.0);
+        assert_eq!(closed(&app), 1, "closed as they are found dead");
+        frame(&mut app, POPUP_EVERY * 0.4);
+        assert_eq!(closed(&app), 1, "too soon");
+        frame(&mut app, POPUP_EVERY * 0.4);
+        assert_eq!(closed(&app), 1, "still too soon (0.8 of the wait)");
+        frame(&mut app, POPUP_EVERY * 0.4);
+        assert_eq!(closed(&app), 2, "a half second on, closed again");
+        frame(&mut app, POPUP_EVERY * 1.1);
+        assert_eq!(closed(&app), 3, "and again");
+    }
+
+    #[test]
+    fn the_frail_blow_downs_a_hero_who_is_up() {
+        let mut world = nightfall_sim::World::new(super::super::shipped_content());
+        world.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        let blow = frail_blow(world.hero(0).unwrap());
+        assert!(matches!(world.hero(0).unwrap().fight.life, Life::Up));
+        world.hurt_hero(0, blow);
+        assert!(
+            matches!(world.hero(0).unwrap().fight.life, Life::Downed { .. }),
+            "{:?}",
+            world.hero(0).unwrap().fight.life
+        );
+        assert!(world.hero(0).unwrap().hp.is_finite());
     }
 }
