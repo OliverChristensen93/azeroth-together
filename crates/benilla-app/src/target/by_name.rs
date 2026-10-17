@@ -800,7 +800,11 @@ mod tests {
         };
 
         world.entity_mut(mob).insert(crate::target::Concealed);
-        assert_eq!(assist(&mut world), None, "a concealed target is not selected");
+        assert_eq!(
+            assist(&mut world),
+            None,
+            "a concealed target is not selected"
+        );
         world.entity_mut(mob).remove::<crate::target::Concealed>();
         assert_eq!(assist(&mut world), Some(mob), "control: a seen one is");
     }

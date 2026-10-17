@@ -25,7 +25,9 @@ pub(crate) struct Greeting {
 pub(crate) enum Verdict {
     Welcome,
     /// The host plays `host`.
-    OtherGame { host: String },
+    OtherGame {
+        host: String,
+    },
     /// The client's handshake is another version.
     OtherHandshake,
 }
@@ -47,10 +49,9 @@ pub(crate) fn judge(greeting: &Greeting, game: &str) -> Verdict {
 pub(crate) fn refusal(verdict: &Verdict, ours: &str) -> String {
     match verdict {
         Verdict::Welcome => String::new(),
-        Verdict::OtherGame { host } => format!(
-            "That host is playing {host}, not {}.",
-            greeting_name(ours)
-        ),
+        Verdict::OtherGame { host } => {
+            format!("That host is playing {host}, not {}.", greeting_name(ours))
+        }
         Verdict::OtherHandshake => "That host runs another version of the game.".into(),
     }
 }

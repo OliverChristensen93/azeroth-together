@@ -271,16 +271,25 @@ mod tests {
 
         apply(nf::ui_chunk(session, nf::Phase::Menu, nf_last), &mut shown);
         nf_last = Some((session, nf::Phase::Menu));
-        apply(nf::ui_chunk(session, nf::Phase::Playing, nf_last), &mut shown);
+        apply(
+            nf::ui_chunk(session, nf::Phase::Playing, nf_last),
+            &mut shown,
+        );
         nf_last = Some((session, nf::Phase::Playing));
-        assert!(shown, "a Nightfall run has the player frame, bars, chat and minimap");
+        assert!(
+            shown,
+            "a Nightfall run has the player frame, bars, chat and minimap"
+        );
         apply(nf::ui_exit_chunk(nf_last), &mut shown);
         assert!(shown);
 
         apply(sv::ui_chunk(session, sv::Phase::Menu, sv_last), &mut shown);
         sv_last = Some((session, sv::Phase::Menu));
         assert!(!shown, "coming back, Survivors' menu hides the UI again");
-        apply(sv::ui_chunk(session, sv::Phase::Playing, sv_last), &mut shown);
+        apply(
+            sv::ui_chunk(session, sv::Phase::Playing, sv_last),
+            &mut shown,
+        );
         assert!(shown, "and a Survivors run shows it");
     }
 }

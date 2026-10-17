@@ -229,9 +229,18 @@ mod tests {
         ];
         app.world_mut().run_system_once(draw).unwrap();
         let world = app.world();
-        assert!(world.get_entity(ids[&5]).is_ok(), "marked and in the world: kept");
-        assert!(world.get_entity(ids[&6]).is_err(), "marked but gone from the world: despawned");
-        assert!(world.get_entity(ids[&7]).is_err(), "no longer marked: despawned");
+        assert!(
+            world.get_entity(ids[&5]).is_ok(),
+            "marked and in the world: kept"
+        );
+        assert!(
+            world.get_entity(ids[&6]).is_err(),
+            "marked but gone from the world: despawned"
+        );
+        assert!(
+            world.get_entity(ids[&7]).is_err(),
+            "no longer marked: despawned"
+        );
         let views = world.resource::<MarkViews>();
         assert_eq!(views.nodes.keys().copied().collect::<Vec<_>>(), vec![5]);
         // The enemy has no drawn body, so its node is hidden rather than left showing where it was.

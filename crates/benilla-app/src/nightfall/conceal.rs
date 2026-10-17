@@ -29,7 +29,12 @@ const STAND_SLEEP: u8 = 3;
 
 /// `UNIT_FIELD_BYTES_1` as `store` holds it, with the creep and untrackable bits as asked and the
 /// stand state replaced when given; the ghost bit, the loyalty and the form stay.
-pub(super) fn bytes_1(store: &ObjectFields, stand: Option<u8>, creep: bool, untrackable: bool) -> u32 {
+pub(super) fn bytes_1(
+    store: &ObjectFields,
+    stand: Option<u8>,
+    creep: bool,
+    untrackable: bool,
+) -> u32 {
     let mut vis = 0;
     if store.unit_is_ghost_visual() {
         vis |= VIS_GHOST;
@@ -50,7 +55,10 @@ pub(super) fn bytes_1(store: &ObjectFields, stand: Option<u8>, creep: bool, untr
 /// aura yet, so the slot's flag word is ours whole.
 pub(super) fn stealth_aura(on: bool) -> [(u16, u32); 2] {
     if on {
-        [(FIELD_UNIT_AURA, STEALTH_AURA), (FIELD_UNIT_AURAFLAGS, AURA_LIVE)]
+        [
+            (FIELD_UNIT_AURA, STEALTH_AURA),
+            (FIELD_UNIT_AURAFLAGS, AURA_LIVE),
+        ]
     } else {
         [(FIELD_UNIT_AURA, 0), (FIELD_UNIT_AURAFLAGS, 0)]
     }
@@ -210,9 +218,7 @@ mod tests {
             asleep: false,
         });
         let mut world = World::new();
-        let body = world
-            .spawn(ObjectStore(ObjectFields::from_pairs(&[])))
-            .id();
+        let body = world.spawn(ObjectStore(ObjectFields::from_pairs(&[]))).id();
         let mut views = EnemyViews::default();
         views.drawn.insert(ENEMY, body);
         world.insert_resource(views);
@@ -234,8 +240,15 @@ mod tests {
 
         world.resource_mut::<Sim>().seen = vec![ENEMY];
         world.run_system_once(enemies).unwrap();
-        assert!(world.get::<Concealed>(body).is_none(), "seen: no stuck marker");
-        assert!(!world.get::<ObjectStore>(body).unwrap().0.unit_is_untrackable());
+        assert!(
+            world.get::<Concealed>(body).is_none(),
+            "seen: no stuck marker"
+        );
+        assert!(!world
+            .get::<ObjectStore>(body)
+            .unwrap()
+            .0
+            .unit_is_untrackable());
     }
 
     #[test]

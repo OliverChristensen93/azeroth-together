@@ -106,7 +106,9 @@ fn run<Down: DeserializeOwned>(
     match wire::read_capped::<Verdict>(&mut input, handshake::MAX_FRAME) {
         Ok(Verdict::Welcome) => {}
         Ok(refused) => {
-            let _ = events.send(ClientEvent::Disconnected(handshake::refusal(&refused, game)));
+            let _ = events.send(ClientEvent::Disconnected(handshake::refusal(
+                &refused, game,
+            )));
             drop(out);
             close();
             return;
@@ -281,7 +283,10 @@ mod tests {
         });
         assert_eq!(why, "That host is playing Survivors, not Nightfall.");
         thread::sleep(Duration::from_millis(100));
-        assert!(host.poll().is_empty(), "the host announced a refused client");
+        assert!(
+            host.poll().is_empty(),
+            "the host announced a refused client"
+        );
         assert_eq!(host.connections(), 0);
     }
 
@@ -357,10 +362,11 @@ mod tests {
         let mut reply = Vec::new();
         let closed = stray.read_to_end(&mut reply);
         assert!(
-            matches!(closed, Ok(_)) || closed.as_ref().is_err_and(|e| {
-                e.kind() == std::io::ErrorKind::ConnectionReset
-                    || e.kind() == std::io::ErrorKind::ConnectionAborted
-            }),
+            matches!(closed, Ok(_))
+                || closed.as_ref().is_err_and(|e| {
+                    e.kind() == std::io::ErrorKind::ConnectionReset
+                        || e.kind() == std::io::ErrorKind::ConnectionAborted
+                }),
             "the host kept the connection open: {closed:?}"
         );
         assert!(reply.is_empty(), "the host answered an oversized greeting");

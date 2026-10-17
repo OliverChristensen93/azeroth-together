@@ -204,7 +204,9 @@ pub enum Event {
         secs: f32,
     },
     /// A marking went off, or was called off: it goes.
-    TelegraphEnd { id: u32 },
+    TelegraphEnd {
+        id: u32,
+    },
     /// An elite or boss cast `visual` at `targets`, or at the ground at `dest`.
     EnemyCast {
         enemy: u32,
@@ -213,7 +215,10 @@ pub enum Event {
         dest: Option<V2>,
     },
     /// A mechanic threw or pulled hero `hero` to `to`; its own client moves it there.
-    Shoved { hero: PlayerId, to: V2 },
+    Shoved {
+        hero: PlayerId,
+        to: V2,
+    },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -1119,11 +1124,7 @@ impl World {
             hero.frozen_hand.clear();
             return;
         }
-        match hero
-            .offers
-            .iter_mut()
-            .find(|o| o.source == Source::LevelUp)
-        {
+        match hero.offers.iter_mut().find(|o| o.source == Source::LevelUp) {
             Some(next) => next.cards = rest,
             None => hero.frozen_hand = rest,
         }
@@ -2532,9 +2533,21 @@ mod tests {
     fn a_frozen_hand_comes_back_one_card_smaller() {
         let mut w = world();
         w.heroes[0].offers = vec![tome_hand()];
-        press(&mut w, PlayerInput { freeze: true, ..Default::default() });
+        press(
+            &mut w,
+            PlayerInput {
+                freeze: true,
+                ..Default::default()
+            },
+        );
         assert!(w.heroes[0].frozen);
-        press(&mut w, PlayerInput { pick: Some(0), ..Default::default() });
+        press(
+            &mut w,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
         assert!(w.heroes[0].offers.is_empty());
         w.offer(0, Source::LevelUp);
         let kinds: Vec<CardKind> = w.heroes[0].offers[0].cards.iter().map(|c| c.kind).collect();
@@ -2548,10 +2561,28 @@ mod tests {
     fn unfreezing_deals_a_fresh_hand_next_time() {
         let mut w = world();
         w.heroes[0].offers = vec![tome_hand()];
-        press(&mut w, PlayerInput { freeze: true, ..Default::default() });
-        press(&mut w, PlayerInput { freeze: true, ..Default::default() });
+        press(
+            &mut w,
+            PlayerInput {
+                freeze: true,
+                ..Default::default()
+            },
+        );
+        press(
+            &mut w,
+            PlayerInput {
+                freeze: true,
+                ..Default::default()
+            },
+        );
         assert!(!w.heroes[0].frozen);
-        press(&mut w, PlayerInput { pick: Some(0), ..Default::default() });
+        press(
+            &mut w,
+            PlayerInput {
+                pick: Some(0),
+                ..Default::default()
+            },
+        );
         assert!(w.heroes[0].frozen_hand.is_empty());
     }
 
@@ -2573,7 +2604,13 @@ mod tests {
             }],
             source: Source::LevelUp,
         }];
-        press(&mut w, PlayerInput { banish: Some(0), ..Default::default() });
+        press(
+            &mut w,
+            PlayerInput {
+                banish: Some(0),
+                ..Default::default()
+            },
+        );
         assert_eq!(w.heroes[0].banishes, 0);
         assert!(!w.spells(0).contains(&learn));
         assert!(w.heroes[0]
@@ -2582,7 +2619,13 @@ mod tests {
             .all(|o| o.cards.iter().all(|c| c.kind != CardKind::Learn(ability))));
         // None left: a second banish does nothing.
         let before = w.heroes[0].offers.clone();
-        press(&mut w, PlayerInput { banish: Some(0), ..Default::default() });
+        press(
+            &mut w,
+            PlayerInput {
+                banish: Some(0),
+                ..Default::default()
+            },
+        );
         assert_eq!(w.heroes[0].offers, before);
     }
 

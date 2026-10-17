@@ -19,10 +19,8 @@ use crate::target::Concealed;
 /// The key that toggles Stealth until abilities arrive (sub-project 4).
 const STEALTH_KEY: KeyCode = KeyCode::Digit1;
 /// The movement bits that carry the body across the ground.
-const TRANSLATING: u32 = move_flags::FORWARD
-    | move_flags::BACKWARD
-    | move_flags::STRAFE_LEFT
-    | move_flags::STRAFE_RIGHT;
+const TRANSLATING: u32 =
+    move_flags::FORWARD | move_flags::BACKWARD | move_flags::STRAFE_LEFT | move_flags::STRAFE_RIGHT;
 /// Seconds between autoplay's Stealth presses while its rogue is not (yet) in stealth.
 const AUTO_PRESS_EVERY: f32 = 2.0;
 
@@ -68,9 +66,7 @@ impl AutoGait {
 
 pub(super) fn auto_gait() -> AutoGait {
     static GAIT: OnceLock<AutoGait> = OnceLock::new();
-    *GAIT.get_or_init(|| {
-        AutoGait::parse(std::env::var("NIGHTFALL_AUTOPLAY_GAIT").ok().as_deref())
-    })
+    *GAIT.get_or_init(|| AutoGait::parse(std::env::var("NIGHTFALL_AUTOPLAY_GAIT").ok().as_deref()))
 }
 
 fn trace_on() -> bool {
@@ -164,7 +160,10 @@ mod tests {
         );
         // A jump in place carries nobody across the ground.
         assert_eq!(gait_of(move_flags::FALLING), Gait::Still);
-        assert_eq!(gait_of(move_flags::FORWARD | move_flags::FALLING), Gait::Run);
+        assert_eq!(
+            gait_of(move_flags::FORWARD | move_flags::FALLING),
+            Gait::Run
+        );
     }
 
     #[test]

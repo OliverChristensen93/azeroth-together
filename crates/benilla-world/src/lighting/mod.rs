@@ -398,7 +398,10 @@ mod fog_override_tests {
         });
         world.run_system_once(apply_fog_override).unwrap();
         let l = world.resource::<WowLighting>();
-        assert_eq!((l.fog_start, l.fog_end, l.fog_color), (10.0, 40.0, [0.04, 0.07, 0.08]));
+        assert_eq!(
+            (l.fog_start, l.fog_end, l.fog_color),
+            (10.0, 40.0, [0.04, 0.07, 0.08])
+        );
         assert_eq!(
             (l.wmo_fog_start, l.wmo_fog_end, l.wmo_fog_color),
             (10.0, 40.0, [0.04, 0.07, 0.08])

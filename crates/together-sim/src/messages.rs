@@ -67,4 +67,3 @@ pub enum ServerMsg {
     /// The answer to a [`ClientMsg::Ping`].
     Pong(u32),
 }
-

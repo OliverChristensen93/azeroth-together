@@ -42,7 +42,10 @@ const PROMPT_REACH: f32 = 8.0;
 pub(super) fn show_hud(
     phase: Res<State<super::Phase>>,
     mut top: Query<&mut Visibility, (With<HudTop>, Without<CenterPanel>, Without<PromptPanel>)>,
-    mut panel: Query<&mut Visibility, (Or<(With<CenterPanel>, With<PromptPanel>)>, Without<HudTop>)>,
+    mut panel: Query<
+        &mut Visibility,
+        (Or<(With<CenterPanel>, With<PromptPanel>)>, Without<HudTop>),
+    >,
 ) {
     let playing = *phase.get() == super::Phase::Playing;
     let want = if playing {
