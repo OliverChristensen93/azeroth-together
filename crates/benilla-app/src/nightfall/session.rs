@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
-use nightfall_sim::{Event, Mark, PlayerId, PlayerInput, Snapshot, World, DT};
+use nightfall_sim::{Event, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World, DT};
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
 
@@ -486,9 +486,36 @@ pub(super) fn host_receive(net: &mut Net, world: &mut World) {
     }
 }
 
-/// The host, after a step: the step's events (from `events_from` on) kept for every client, and
-/// every [`SEND_EVERY`] steps each client whose connection keeps up gets the world as its player
-/// sees it, with the events since its last state.
+/// Whether `player` (`me`) is told of `event`: it involves their own hero, or a unit `near` them
+/// (within their snapshot's reach, [`World::in_reach`]). An event with several units is told if
+/// any is. A refusal is told only to its own player, whoever is near. So a far-off fight is never
+/// sent, and a modified client learns nothing of it.
+pub(super) fn event_for(event: &Event, me: PlayerId, near: impl Fn(UnitRef) -> bool) -> bool {
+    let me_ref = UnitRef::Hero(me);
+    let involves = |u: UnitRef| u == me_ref || near(u);
+    let hero = |p: PlayerId| involves(UnitRef::Hero(p));
+    match event {
+        Event::Refused { player, .. } => *player == me,
+        Event::CastStart { by, target, .. } | Event::ChannelStart { by, target, .. } => {
+            involves(*by) || target.is_some_and(involves)
+        }
+        Event::CastGo { by, hits, .. } => involves(*by) || hits.iter().any(|&u| involves(u)),
+        Event::CastStop { by, .. } => involves(*by),
+        Event::Damage { to, by, .. } => involves(*to) || by.is_some_and(involves),
+        Event::Swing { by, to } => involves(*by) || involves(*to),
+        Event::Evaded { player, enemy } => hero(*player) || involves(UnitRef::Enemy(*enemy)),
+        Event::Dodged { player }
+        | Event::Blinked { player, .. }
+        | Event::Downed { player }
+        | Event::Died { player } => hero(*player),
+        Event::Revived { player, by } => hero(*player) || hero(*by),
+        Event::EnemyDied { id, by } => involves(UnitRef::Enemy(*id)) || by.is_some_and(hero),
+    }
+}
+
+/// The host, after a step: the step's events (from `events_from` on) kept for each client they
+/// concern ([`event_for`]), and every [`SEND_EVERY`] steps each client whose connection keeps up
+/// gets the world as its player sees it, with the events since its last state.
 pub(super) fn host_send(net: &mut Net, world: &World, events_from: usize) {
     let Role::Host(h) = &mut net.role else {
         return;
@@ -498,7 +525,13 @@ pub(super) fn host_send(net: &mut Net, world: &World, events_from: usize) {
     }
     let events = &world.events()[events_from..];
     for p in &mut h.peers {
-        p.pending.extend_from_slice(events);
+        // Only what happened near their hero, as their snapshot holds only the enemies there.
+        p.pending.extend(
+            events
+                .iter()
+                .filter(|e| event_for(e, p.player, |u| world.in_reach(p.player, u)))
+                .cloned(),
+        );
         let over = p.pending.len().saturating_sub(MAX_PENDING);
         p.pending.drain(..over);
     }
@@ -650,5 +683,64 @@ mod tests {
         let text = roster_lines(&players, Some(1));
         assert!(text.contains("Me  ·  rogue  (you)"));
         assert!(!text.contains("Host  ·  rogue  (you)"));
+    }
+
+    fn damage(to: UnitRef, by: Option<UnitRef>) -> Event {
+        Event::Damage {
+            to,
+            by,
+            amount: 10.0,
+            crit: false,
+            ambush: false,
+        }
+    }
+
+    #[test]
+    fn a_far_enemys_death_is_not_sent_and_a_near_ones_is() {
+        let died = |id| Event::EnemyDied { id, by: None };
+        assert!(!event_for(&died(1), 0, |u| u == UnitRef::Enemy(2)));
+        assert!(event_for(&died(2), 0, |u| u == UnitRef::Enemy(2)));
+        // Credit to a hero other than us does not bring a far death with it, but ours does.
+        let by = |p| Event::EnemyDied { id: 1, by: Some(p) };
+        assert!(!event_for(&by(5), 0, |_| false));
+        assert!(event_for(&by(0), 0, |_| false));
+    }
+
+    #[test]
+    fn our_own_heros_damage_is_always_sent() {
+        let blow = damage(UnitRef::Hero(0), Some(UnitRef::Enemy(9)));
+        assert!(event_for(&blow, 0, |_| false));
+        let ours = damage(UnitRef::Enemy(9), Some(UnitRef::Hero(0)));
+        assert!(event_for(&ours, 0, |_| false));
+        let theirs = damage(UnitRef::Enemy(9), Some(UnitRef::Hero(1)));
+        assert!(!event_for(&theirs, 0, |_| false));
+    }
+
+    #[test]
+    fn an_event_with_several_units_is_sent_if_any_is_near() {
+        let go = Event::CastGo {
+            by: UnitRef::Hero(1),
+            ability: 0,
+            hits: vec![UnitRef::Enemy(3), UnitRef::Enemy(4)],
+            at: None,
+        };
+        assert!(!event_for(&go, 0, |_| false));
+        assert!(event_for(&go, 0, |u| u == UnitRef::Enemy(4)));
+        assert!(event_for(&go, 0, |u| u == UnitRef::Hero(1)));
+        let swing = Event::Swing {
+            by: UnitRef::Enemy(3),
+            to: UnitRef::Hero(1),
+        };
+        assert!(event_for(&swing, 0, |u| u == UnitRef::Enemy(3)));
+    }
+
+    #[test]
+    fn a_refusal_goes_only_to_its_player() {
+        let no = Event::Refused {
+            player: 1,
+            why: nightfall_sim::Refusal::Down,
+        };
+        assert!(event_for(&no, 1, |_| false));
+        assert!(!event_for(&no, 0, |_| true));
     }
 }

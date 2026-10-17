@@ -4,7 +4,7 @@
 //! that holds only the enemies near their own hero. Sub-project 3 hides the others from the
 //! interface (the `Concealed` marker), and enemies' sight of heroes will use the same query.
 
-use crate::{Enemy, Hero, PlayerId, Snapshot, World, V3};
+use crate::{Enemy, Hero, PlayerId, Snapshot, UnitRef, World, V3};
 
 /// How high a unit's eyes are over its floor, yards.
 pub const EYE_HEIGHT: f32 = 1.7;
@@ -37,12 +37,33 @@ impl World {
             .collect()
     }
 
+    /// How far from a player's hero a unit still matters to them: the view distance and
+    /// [`KEEP_EXTRA`] past it, which is also what their snapshot holds.
+    fn reach(&self) -> f32 {
+        self.content().rules.atmosphere.view_distance + KEEP_EXTRA
+    }
+
+    /// Whether `unit` is within `player`'s reach: the same distance [`World::snapshot_for`] keeps
+    /// enemies and telegraphs at, around their hero. A player without a hero reaches every unit
+    /// there is; a unit that is not in the world is out of reach. The host sends a player only
+    /// the events of units in reach, so a modified client learns nothing of far-off fights.
+    pub fn in_reach(&self, player: PlayerId, unit: UnitRef) -> bool {
+        let Some(me) = self.hero(player) else {
+            return true;
+        };
+        let at = match unit {
+            UnitRef::Hero(p) => self.hero(p).map(|h| h.pos),
+            UnitRef::Enemy(id) => self.enemy(id).map(|e| e.pos),
+        };
+        at.is_some_and(|p| me.pos.distance(p) <= self.reach())
+    }
+
     /// `player`'s snapshot: every hero, and the enemies within the view distance of their hero
     /// and [`KEEP_EXTRA`] past it (all of them for a player without one), so a big map's enemies
     /// never crowd a line and the client's margin for those it draws has them.
     pub fn snapshot_for(&self, player: PlayerId) -> Snapshot {
         let near = self.hero(player).map(|h| h.pos);
-        let reach = self.content().rules.atmosphere.view_distance + KEEP_EXTRA;
+        let reach = self.reach();
         Snapshot {
             elapsed: self.elapsed,
             heroes: self.heroes.clone(),
@@ -95,7 +116,9 @@ mod tests {
     use std::sync::Arc;
 
     use crate::heightmap::testmap::{flat, house};
-    use crate::{Content, ContentSources, Enemy, HeroPose, PlayerId, PlayerInput, World, V2};
+    use crate::{
+        Content, ContentSources, Enemy, HeroPose, PlayerId, PlayerInput, UnitRef, World, V2,
+    };
 
     const CLASSES: &str = r#"[
         (key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0, base_hp: 135.0, speed: 7.0),
@@ -238,6 +261,30 @@ mod tests {
         assert_eq!(w.snapshot_for(7).enemies.len(), 3);
         assert_eq!(w.snapshot_for(0).heroes, w.snapshot().heroes);
         assert_eq!(w.snapshot_for(0).elapsed, w.snapshot().elapsed);
+    }
+
+    #[test]
+    fn a_unit_is_in_reach_as_far_as_the_snapshot_holds_it() {
+        // As in the snapshot test: the first post is near, the second 60 yd away (past the view
+        // and its margin), the third 47 yd (inside the margin).
+        let mut w = world(&[(12.0, 10.0), (48.0, 48.0), (48.0, 25.0)], 40.0, true);
+        put(&mut w, 0, 5.0, 5.0);
+        put(&mut w, 1, 90.0, 90.0);
+        w.step();
+        let reach = |u| w.in_reach(0, u);
+        assert!(reach(UnitRef::Hero(0)));
+        assert!(reach(UnitRef::Enemy(1)));
+        assert!(!reach(UnitRef::Enemy(2)));
+        assert!(reach(UnitRef::Enemy(3)));
+        assert!(!reach(UnitRef::Hero(1)), "a far hero is out of reach too");
+        assert!(
+            !reach(UnitRef::Enemy(99)),
+            "a unit not in the world is out of reach"
+        );
+        assert!(
+            w.in_reach(7, UnitRef::Enemy(2)),
+            "no hero: everything is in reach"
+        );
     }
 
     #[test]

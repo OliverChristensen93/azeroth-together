@@ -417,9 +417,16 @@ pub(super) fn step_sim(
     sim.log_new_warnings();
 }
 
-/// This frame's events out of the world, so they are shown once and never pile up.
-pub(super) fn take_events(mut sim: ResMut<Sim>) {
-    sim.events = sim.world.drain_events();
+/// This frame's events out of the world, so they are shown once and never pile up. Alone or
+/// hosting, only those a client would be sent ([`session::event_for`]), so the host sees the
+/// fight as a joined player does; a client's were filtered by its host.
+pub(super) fn take_events(mut sim: ResMut<Sim>, net: Res<Net>) {
+    let mut events = sim.world.drain_events();
+    if !net.is_client() {
+        let me = sim.me;
+        events.retain(|e| session::event_for(e, me, |u| sim.world.in_reach(me, u)));
+    }
+    sim.events = events;
 }
 
 /// Leave Run: alone or hosting, the run ends (a host takes its party back to the lobby); joined,

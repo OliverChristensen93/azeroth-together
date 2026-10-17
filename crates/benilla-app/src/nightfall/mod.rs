@@ -15,6 +15,8 @@ mod conceal;
 mod dodge;
 mod dress;
 mod enemies;
+mod fight;
+mod fx;
 mod grade;
 mod marks;
 mod menu;
@@ -254,6 +256,15 @@ impl Plugin for NightfallPlugin {
                     .in_set(benilla_world::schedule::WorldStage::Input)
                     // The controller has moved the hero this frame before its pose is read.
                     .after(crate::player::PlayerControlSet)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                fight::show_events
+                    // After this frame's events are taken and every body they name is drawn.
+                    .after(run::take_events)
+                    .after(enemies::place)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )
