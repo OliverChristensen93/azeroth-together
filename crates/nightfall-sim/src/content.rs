@@ -649,6 +649,13 @@ impl Content {
         if map.lit.iter().any(|&(_, _, r)| !positive(r)) {
             return invalid("map.ron: a lit area needs a radius above 0".into());
         }
+        if map
+            .lit
+            .iter()
+            .any(|&(x, y, _)| !x.is_finite() || !y.is_finite())
+        {
+            return invalid("map.ron: a lit area needs a finite position".into());
+        }
         if rules.hero_level == 0 {
             return invalid("rules.ron: hero_level must be at least 1".into());
         }
@@ -1219,6 +1226,17 @@ mod tests {
             load(CLASSES, &none, RULES),
             Err(ContentError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn a_lit_area_needs_a_finite_position() {
+        for at in ["(NaN, 30.0, 6.0)", "(20.0, inf, 6.0)", "(-inf, 30.0, 6.0)"] {
+            let map = MAP.replace("entries:", &format!("lit: [{at}], entries:"));
+            assert!(
+                matches!(load(CLASSES, &map, RULES), Err(ContentError::Invalid(_))),
+                "{at} was accepted"
+            );
+        }
     }
 
     #[test]
