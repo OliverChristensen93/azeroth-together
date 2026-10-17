@@ -186,6 +186,13 @@ fn sense(
     fog: f32,
     r: &SenseRules,
 ) -> Sensed {
+    // The downed and the dead are left be (spec §8.1): no sight of them, no sound.
+    if !h.fight.up() {
+        return Sensed {
+            player: h.player,
+            ..Sensed::default()
+        };
+    }
     let feet = V3::at(h.pos, h.z);
     let grid = map.grid();
     // A ray is only cast between points on the map's grid, so none is ever longer than the fog

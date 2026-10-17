@@ -10,7 +10,7 @@
 
 use super::{
     allowance, in_range, stands_right, within_arc, CastPress, CastState, Casting, Cooldown, Event,
-    Refusal, Stop, UnitRef, MANA,
+    Life, Refusal, Stop, UnitRef, MANA,
 };
 use crate::{
     Aim, Effect, Facing, Gait, Moving, PlayerId, PlayerInput, World, CHEST_HEIGHT, DT, EYE_HEIGHT,
@@ -365,6 +365,7 @@ impl World {
     /// meal, and their pace.
     pub(crate) fn step_fighters(&mut self) {
         for hi in 0..self.heroes.len() {
+            self.step_fall(hi);
             self.tick_hero(hi);
             self.step_cast(hi);
             self.swing(hi);
@@ -536,7 +537,8 @@ impl World {
     }
 
     /// Hero `hi`'s pace this step: the senses' speed (stealth's) times Sprint, times
-    /// `cast_move_speed` while casting a slowed ability; feet held for a rooted one.
+    /// `cast_move_speed` while casting a slowed ability, times `crawl_speed` downed; feet held for
+    /// a rooted ability, and for the dead.
     fn set_pace(&mut self, hi: usize) {
         let content = self.content.clone();
         let r = &content.rules.combat;
@@ -551,7 +553,12 @@ impl World {
         } else {
             1.0
         };
-        hero.speed *= sprint * cast;
-        hero.fight.rooted = moving == Some(Moving::Rooted);
+        let life = match hero.fight.life {
+            Life::Up => 1.0,
+            Life::Downed { .. } => r.crawl_speed,
+            Life::Dead => 0.0,
+        };
+        hero.speed *= sprint * cast * life;
+        hero.fight.rooted = moving == Some(Moving::Rooted) || hero.fight.life == Life::Dead;
     }
 }

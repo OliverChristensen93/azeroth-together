@@ -5,6 +5,7 @@
 //! them, and what happened from the [`Event`]s that travel with it.
 
 mod effects;
+mod falling;
 pub(crate) mod heroes;
 mod hold;
 mod rules;
