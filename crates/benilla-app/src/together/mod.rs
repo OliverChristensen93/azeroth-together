@@ -647,17 +647,14 @@ fn give_loadout(world: &mut World) {
     let Ok(list) = std::env::var("TOGETHER_LOADOUT") else {
         return;
     };
-    world
-        .heroes
-        .iter_mut()
-        .filter(|h| h.player == 0)
-        .for_each(|h| h.abilities.clear());
+    world.heroes.iter_mut().filter(|h| h.player == 0).for_each(|h| h.abilities.clear());
     for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
         let mut parts = entry.split('+');
         let head = parts.next().unwrap_or_default();
         let (key, rank) = head.split_once('@').unwrap_or((head, "1"));
-        let augments: Vec<together_sim::Augment> =
-            parts.filter_map(together_sim::Augment::from_name).collect();
+        let augments: Vec<together_sim::Augment> = parts
+            .filter_map(together_sim::Augment::from_name)
+            .collect();
         if !world.give_spell(0, key, rank.parse().unwrap_or(1), &augments) {
             println!("together: TOGETHER_LOADOUT: could not give \"{entry}\"");
         }

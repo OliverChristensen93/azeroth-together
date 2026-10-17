@@ -74,10 +74,7 @@ mod tests {
         };
         let frame = encode(&msg).unwrap();
         assert!(read_capped::<Msg>(&mut frame.as_slice(), 256).is_err());
-        assert_eq!(
-            read_capped::<Msg>(&mut frame.as_slice(), 1024).unwrap(),
-            msg
-        );
+        assert_eq!(read_capped::<Msg>(&mut frame.as_slice(), 1024).unwrap(), msg);
     }
 
     #[test]

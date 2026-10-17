@@ -95,12 +95,8 @@ mod screenshot;
 mod script_calls;
 mod shaders;
 
-/// The launcher's pick-game screen and the `GameMode` state each game's systems run under.
-mod game_pick;
 mod game_tip;
 mod name_persist;
-/// Nightfall: the co-op stealth extraction game, picked on the launcher's first screen.
-mod nightfall;
 mod opaque2d;
 /// Where "the client is going down" is observed, in `Last`; every system that persists state on the
 /// way out registers through it.
@@ -112,6 +108,12 @@ mod sound;
 mod spell;
 /// Warcraft Survivors: the top-down survival mode the `warcraft-survivors` launcher boots.
 mod survivors;
+/// The launcher's pick-game screen and the `GameMode` state each game's systems run under.
+mod game_pick;
+/// Azeroth Together: the co-op survivors mode the `azeroth-together` launcher boots.
+mod together;
+/// Nightfall: the co-op stealth extraction game, picked on the launcher's first screen.
+mod nightfall;
 /// The melee swing refusal's latch + 4 s repeat (`SMSG_ATTACKSWING_*`).
 mod swing_refusal;
 mod target;
@@ -120,8 +122,6 @@ pub(crate) mod test_support;
 mod text_filter;
 mod text_reshape;
 mod textinput;
-/// Azeroth Together: the co-op survivors mode the `azeroth-together` launcher boots.
-mod together;
 mod transport;
 mod tutorial;
 mod ui_action;
