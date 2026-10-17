@@ -47,16 +47,18 @@ const SPELL_IN_PROGRESS: u8 = 0x61;
 const TARGET_AFFECTING_COMBAT: u8 = 0x66;
 const UNIT_NOT_INFRONT: u8 = 0x7C;
 
-/// The way a refusal is shown. Power and the lack of a target are catalog rows with a voice
-/// (`NoPower` by the class's power: mana or energy); a cooldown is the row WoW's `0x3C` picks for
-/// an ability ("Ability is not ready yet."), as the host's refusal names no spell for the engine to
-/// look at; every other is a cast-failure reason. The text of "Out of range." is the engine's own
-/// mapping of [`OUT_OF_RANGE`]. Every refusal has a route: none is silent.
+/// The way a refusal is shown. Power, the lack of a target and a cooldown are catalog rows with a
+/// voice. `NoPower` and `NotReady` go by the class's power, as the host's refusal names no spell
+/// for the engine to look at: a mana class casts spells ("Spell is not ready yet."), an energy
+/// class performs abilities ("Ability is not ready yet."), the two lines WoW's `0x3C` picks. Every
+/// other is a cast-failure reason. The text of "Out of range." is the engine's own mapping of
+/// [`OUT_OF_RANGE`]. Every refusal has a route: none is silent.
 pub(super) fn refusal_route(why: Refusal, power: u8) -> Route {
     match why {
         Refusal::NoPower if power == MANA => Route::Key("ERR_OUT_OF_MANA"),
         Refusal::NoPower => Route::Key("ERR_OUT_OF_ENERGY"),
         Refusal::NoTarget => Route::Key("ERR_GENERIC_NO_TARGET"),
+        Refusal::NotReady if power == MANA => Route::Key("ERR_SPELL_COOLDOWN"),
         Refusal::NotReady => Route::Key("ERR_ABILITY_COOLDOWN"),
         Refusal::Down => Route::Wire(CASTER_DEAD),
         Refusal::Busy => Route::Wire(SPELL_IN_PROGRESS),
@@ -401,9 +403,30 @@ mod tests {
             refusal_route(Refusal::NoPower, 3),
             Route::Key("ERR_OUT_OF_ENERGY")
         );
-        for key in ["ERR_OUT_OF_MANA", "ERR_OUT_OF_ENERGY"] {
+        for key in [
+            "ERR_OUT_OF_MANA",
+            "ERR_OUT_OF_ENERGY",
+            "ERR_SPELL_COOLDOWN",
+            "ERR_ABILITY_COOLDOWN",
+        ] {
             assert!(benilla_ui::messages::by_key(key).is_some(), "{key}");
         }
+    }
+
+    #[test]
+    fn a_mana_class_reads_a_spell_cooldown() {
+        assert_eq!(
+            refusal_route(Refusal::NotReady, 0),
+            Route::Key("ERR_SPELL_COOLDOWN")
+        );
+    }
+
+    #[test]
+    fn an_energy_class_reads_an_ability_cooldown() {
+        assert_eq!(
+            refusal_route(Refusal::NotReady, 3),
+            Route::Key("ERR_ABILITY_COOLDOWN")
+        );
     }
 
     #[test]
@@ -598,7 +621,7 @@ mod tests {
             keys,
             &[
                 UiError::key("ERR_OUT_OF_MANA"),
-                UiError::key("ERR_ABILITY_COOLDOWN")
+                UiError::key("ERR_SPELL_COOLDOWN")
             ]
         );
         assert_eq!(
