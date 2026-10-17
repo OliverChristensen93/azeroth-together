@@ -433,7 +433,36 @@ mod tests {
     fn range_reads_out_of_range_and_the_engine_maps_it_so() {
         assert_eq!(refusal_route(Refusal::OutOfRange, 0), Route::Wire(0x59));
         // The engine gives reason 0x59 its own text, "Out of range.", ahead of the table's.
-        assert!(ENGINE_TABLE.contains(r#"0x59 => return get_display("ERR_SPELL_OUT_OF_RANGE")"#));
+        // (Found loosely, so a line wrap in the engine's source does not break this.)
+        let lines: Vec<&str> = ENGINE_TABLE.lines().collect();
+        assert!(
+            lines.iter().enumerate().any(|(i, l)| {
+                l.contains("0x59 =>")
+                    && lines[i..(i + 4).min(lines.len())]
+                        .iter()
+                        .any(|n| n.contains("ERR_SPELL_OUT_OF_RANGE"))
+            }),
+            "0x59 no longer reads ERR_SPELL_OUT_OF_RANGE"
+        );
+    }
+
+    #[test]
+    fn a_swing_shows_the_damage_the_number_does() {
+        // 0.4 of damage reads 1 in the number; the portrait agrees, and no damage reads MISS.
+        let mut stage = Stage::new(vec![
+            Event::Swing {
+                by: UnitRef::Hero(0),
+                to: UnitRef::Enemy(4),
+            },
+            damage(UnitRef::Enemy(4), Some(UnitRef::Hero(0)), 0.4),
+        ]);
+        stage.show();
+        let dealt: Vec<u32> = stage
+            .drain::<crate::creature_anim::SwingMessage>()
+            .iter()
+            .map(|s| s.damage)
+            .collect();
+        assert_eq!(dealt, [1]);
     }
     #[test]
     fn a_stopped_cast_ends_its_bar_its_way() {
@@ -661,7 +690,7 @@ mod tests {
             .collect();
         assert_eq!(
             swings,
-            [(stage.hero, 33), (stage.enemy, 13), (stage.enemy, 0)]
+            [(stage.hero, 33), (stage.enemy, 12), (stage.enemy, 0)]
         );
         let numbers: Vec<(String, Option<u32>)> = stage
             .drain::<CombatTextSpawn>()

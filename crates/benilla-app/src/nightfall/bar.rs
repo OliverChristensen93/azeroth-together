@@ -83,6 +83,14 @@ pub(super) fn on_cooldown(fight: &HeroFight, ability: usize) -> bool {
         .any(|c| usize::from(c.ability) == ability && c.left > 0.0)
 }
 
+/// Whether the host would not turn `ability` down for what the hero has: the power it costs, and,
+/// for a finisher, combo points on `target` (the host's `NeedCombo`, which wants the points on
+/// that very enemy). The autofight leaves out what fails this, so it presses what lands.
+pub(super) fn affordable(ability: &AbilityDef, fight: &HeroFight, target: u32) -> bool {
+    let combo = !ability.needs.combo || (fight.combo > 0 && fight.combo_on == Some(target));
+    combo && fight.power + 1e-3 >= ability.cost
+}
+
 /// The first point along the ray from `origin` the way `dir` goes, within `max` yards, at or
 /// below the ground `height` gives (Bevy's coordinates, y up): where a cursor ray meets the
 /// terrain.
@@ -249,19 +257,23 @@ pub(super) fn autofight(
         return;
     }
     *last = now;
-    let alive = matches!(
-        selection.guid.and_then(units::unit_of),
-        Some(UnitRef::Enemy(id)) if sim.world.enemy(id).is_some_and(|e| e.hp > 0.0)
-    );
-    if !alive {
-        let _ = script.run("TargetNearestEnemy()");
-        return;
-    }
+    let target = match selection.guid.and_then(units::unit_of) {
+        Some(UnitRef::Enemy(id)) if sim.world.enemy(id).is_some_and(|e| e.hp > 0.0) => id,
+        _ => {
+            let _ = script.run("TargetNearestEnemy()");
+            return;
+        }
+    };
     let content = sim.world.content();
     let kit = &content.classes[hero.class].kit;
     let moves: Vec<u8> = attacks(kit, &content.abilities, autoplay())
         .into_iter()
-        .filter(|&s| slot_ability(kit, u32::from(s)).is_some_and(|a| !on_cooldown(&hero.fight, a)))
+        .filter(|&s| {
+            slot_ability(kit, u32::from(s)).is_some_and(|a| {
+                !on_cooldown(&hero.fight, a)
+                    && affordable(&content.abilities[a], &hero.fight, target)
+            })
+        })
         .collect();
     if moves.is_empty() {
         return;
@@ -369,6 +381,36 @@ mod tests {
         assert!(on_cooldown(&fight, 3));
         assert!(!on_cooldown(&fight, 4), "a spent cooldown is ready");
         assert!(!on_cooldown(&fight, 1));
+    }
+
+    #[test]
+    fn the_autofight_skips_what_it_lacks_the_power_or_the_combo_points_for() {
+        let mut c = content();
+        // A finisher costing 25, and a cheap strike.
+        c.abilities[1].cost = 25.0;
+        let strike = &c.abilities[1];
+        let mut finisher = c.abilities[1].clone();
+        finisher.needs.combo = true;
+        let mut fight = HeroFight {
+            power: 30.0,
+            ..HeroFight::default()
+        };
+        assert!(affordable(strike, &fight, 7));
+        fight.power = 24.0;
+        assert!(!affordable(strike, &fight, 7), "the power falls short");
+        fight.power = 25.0;
+        assert!(affordable(strike, &fight, 7), "exactly its cost");
+
+        // A finisher wants points, and on this very enemy.
+        assert!(!affordable(&finisher, &fight, 7), "no points");
+        fight.combo = 3;
+        assert!(!affordable(&finisher, &fight, 7), "points on no one");
+        fight.combo_on = Some(8);
+        assert!(!affordable(&finisher, &fight, 7), "points on another");
+        fight.combo_on = Some(7);
+        assert!(affordable(&finisher, &fight, 7));
+        fight.power = 10.0;
+        assert!(!affordable(&finisher, &fight, 7), "the points cannot pay");
     }
 
     /// A one-hero world with a Selection, an empty bar and the presses' other inputs.

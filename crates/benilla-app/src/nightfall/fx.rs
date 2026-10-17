@@ -83,7 +83,12 @@ impl Fx<'_> {
             victim: Some(victim),
             hit_info: 0x2,
             victim_state: 1,
-            damage: damage.max(0.0).ceil() as u32,
+            // Rounded as the floating number is, so the portrait and the number agree.
+            damage: if damage > 0.0 {
+                damage.round().max(1.0) as u32
+            } else {
+                0
+            },
             displayed: false,
             seq,
         });
