@@ -56,3 +56,14 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 14. **Sneaking felt very safe in the test runs**: walking past the start drew three alerted enemies
     in ~20 s; sneaking drew one "?" and one "!" in the same time, and none in a 48 s run. Tune
     `visibility`/`notice_range` in `content/nightfall/rules.ron` after you've played it.
+15. **On foot you can't really shake a chase yet.** Enemies run 7–8 yd/s against your 7 (4.9 in
+    stealth), and an alerted one tracks you at any facing out to 40 yd, so a chaser right behind you
+    sees you again at every corner. Only the Fetid Corpse can be outrun. The escapes are sub-project 4's
+    Sprint, Blink and Vanish (with a test that breaking sight with Sprint sends the chaser searching).
+    If that still feels unfair, slow the enemies' run speed in `content/nightfall/enemies.ron`.
+16. **A sleeper woken by a noise stays "blind" until it is alerted.** It gets up and walks to the noise,
+    but can't see you standing right there until something alerts it. It follows the "sleepers are blind
+    until alerted" rule; it may look odd in play. Easy to change (let a woken sleeper see once it stands).
+17. **A target that slips out of sight stays selected for 3 s**, then drops. Without the grace, a target
+    stepping behind a tree would drop at once in a fight; without the drop, you could follow a hidden
+    enemy with the target frame. The 3 s is a constant in `nightfall/conceal.rs`.
