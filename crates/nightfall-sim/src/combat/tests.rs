@@ -1829,3 +1829,91 @@ fn an_enemy_after_a_hero_loses_them_the_moment_they_go_down() {
     assert!(!w.senses.alerted(0));
     assert!(!w.senses.hunted(0));
 }
+
+#[test]
+fn a_downed_hero_makes_no_footsteps_even_when_the_client_says_run() {
+    let mut w = world(&post("brute", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 22.0, 30.0);
+    w.hurt_hero(0, 5000.0);
+    for _ in 0..120 {
+        stand(&mut w, 0, V2::new(22.0, 30.0), V2::new(1.0, 0.0), Gait::Run);
+        w.step();
+        assert_eq!(w.hero(0).unwrap().noise, 0.0);
+    }
+    assert_eq!(w.hero(0).unwrap().stance, crate::Stance::Still);
+    assert!(w.marks_for(0).is_empty());
+    // The same footsteps of a hero who is up are heard from the same spot.
+    let mut w = world(&post("brute", 30.0, 30.0, 180.0));
+    join(&mut w, 0, "rogue", 22.0, 30.0);
+    stand(&mut w, 0, V2::new(22.0, 30.0), V2::new(1.0, 0.0), Gait::Run);
+    w.step();
+    assert!(w.hero(0).unwrap().noise > 0.0);
+}
+
+/// A rogue downed at (10, 30) and a mage at (50, 30), a calm brute 15 yards from the body (and
+/// facing away from both); the mage walks to the body at `at` seconds. Returns the world.
+fn revive_beside_a_sentry(at: f32) -> World {
+    let mut w = world(&post("brute", 25.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    join(&mut w, 1, "mage", 50.0, 30.0);
+    w.hurt_hero(0, 5000.0);
+    steps(&mut w, (at * 30.0) as usize);
+    stand(
+        &mut w,
+        1,
+        V2::new(12.0, 30.0),
+        V2::new(1.0, 0.0),
+        Gait::Still,
+    );
+    w
+}
+
+#[test]
+fn a_revive_is_heard_by_a_calm_enemy_within_twenty_yards() {
+    let mut w = revive_beside_a_sentry(0.0);
+    let noise = w.content().rules.senses.awareness.noise;
+    assert_eq!(w.senses.suspicion_of(0, 1), 0.0);
+    w.step();
+    assert_eq!(w.senses.suspicion_of(0, 1), noise);
+    // Without the revive, the mage standing in the same place is not noticed at all.
+    let mut w = world(&post("brute", 25.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    join(&mut w, 1, "mage", 12.0, 30.0);
+    steps(&mut w, 10);
+    assert_eq!(w.senses.suspicion_of(0, 1), 0.0);
+}
+
+#[test]
+fn a_reviver_arriving_at_forty_seconds_is_in_time_and_one_at_forty_one_is_late() {
+    let mut w = revive_beside_a_sentry(40.0);
+    steps(&mut w, 200);
+    assert!(w.hero(0).unwrap().fight.up());
+    assert!(w
+        .drain_events()
+        .contains(&Event::Revived { player: 0, by: 1 }));
+    let mut w = revive_beside_a_sentry(41.0);
+    steps(&mut w, 200);
+    assert_eq!(w.hero(0).unwrap().fight.life, Life::Dead);
+    let events = w.drain_events();
+    assert!(events.contains(&Event::Died { player: 0 }));
+    assert!(!events.iter().any(|e| matches!(e, Event::Revived { .. })));
+}
+
+#[test]
+fn a_slow_with_no_number_for_its_strength_slows_nothing() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    w.combat.enemies[0].slow = Some(Slowed {
+        by: f32::NAN,
+        left: 7.0,
+        spell: 116,
+    });
+    steps(&mut w, 10);
+    assert_eq!(w.combat.enemies[0].engage.speed, 1.0);
+    assert!(
+        (w.enemies[0].speed - 7.0).abs() < 0.05,
+        "{}",
+        w.enemies[0].speed
+    );
+}

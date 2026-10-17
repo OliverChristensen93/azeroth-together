@@ -175,7 +175,14 @@ pub(crate) fn take_input(
 /// nothing is judged or sent on the old values.
 fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
     let r = &content.rules.senses;
-    hero.stance = Stance::of(hs.gait, hero.stealthed);
+    // The downed and the dead stand still whatever their client says: no footsteps, and a noise
+    // ring that only runs down.
+    let gait = if hero.fight.up() {
+        hs.gait
+    } else {
+        Gait::Still
+    };
+    hero.stance = Stance::of(gait, hero.stealthed);
     let lit_area = content
         .map
         .lit

@@ -441,6 +441,11 @@ impl Senses {
     pub(crate) fn paths_asked(&self, i: usize) -> u32 {
         self.ways.get(i).map_or(0, |w| w.asked)
     }
+
+    /// How suspicious enemy `i` is of `player`, 0 to 100.
+    pub(crate) fn suspicion_of(&self, i: usize, player: crate::PlayerId) -> f32 {
+        self.minds.get(i).map_or(0.0, |m| m.level(player))
+    }
 }
 
 #[cfg(test)]
