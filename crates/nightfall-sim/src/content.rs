@@ -1666,7 +1666,12 @@ mod tests {
                 &format!("(hero_level: 30, combat: ({bad}),"),
                 1,
             );
-            refused_naming(load(CLASSES, MAP, &rules), "combat");
+            // The case's own text goes in the assert message, so a failure says which case failed.
+            let refusal = match load(CLASSES, MAP, &rules) {
+                Err(ContentError::Invalid(why)) => why,
+                other => panic!("{bad}: expected a refusal naming combat: {other:?}"),
+            };
+            assert!(refusal.contains("combat"), "{bad}: {refusal}");
         }
         let abilities = ABILITIES.replacen(
             "Damage(min: 100.0, max: 110.0)",

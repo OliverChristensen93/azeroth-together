@@ -29,8 +29,10 @@ impl Dice {
         (self.next() >> 40) as f32 / (1u64 << 24) as f32
     }
 
-    /// A number from `min` up to `max`, whichever way round they are. A bound that is not a
-    /// number rolls nothing (0), so a broken table never spreads NaN through the damage.
+    /// A number from `min` up to `max`, whichever way round they are. The range is closed: both
+    /// ends can come up, since damage's `max` is inclusive in content. Rounding in the f32 add
+    /// may give `max` exactly, and that is kept, not clamped. A bound that is not a number rolls
+    /// nothing (0), so a broken table never spreads NaN through the damage.
     pub(crate) fn between(&mut self, min: f32, max: f32) -> f32 {
         if !(min.is_finite() && max.is_finite()) {
             return 0.0;
@@ -102,6 +104,8 @@ pub(crate) fn allowance(moving: Moving, run: f32, elapsed: f32, r: &CombatRules)
         Moving::Rooted => r.cast_slack,
         Moving::Slowed if !(run.is_finite() && elapsed.is_finite()) => r.cast_slack,
         Moving::Slowed => {
+            // A negative speed or time is no speed or time: it gives no ground.
+            let (run, elapsed) = (run.max(0.0), elapsed.max(0.0));
             let grace = elapsed.min(r.speed_grace);
             r.cast_slack + run * (grace + (elapsed - grace) * r.cast_move_speed)
         }
@@ -138,10 +142,11 @@ impl Charges {
         true
     }
 
-    /// `dt` seconds pass. A step that is not a finite time passes nothing, so one NaN cannot
-    /// leave `next_in` NaN for good.
+    /// `dt` seconds pass. A step that is not a finite time, or runs backwards, passes nothing: a
+    /// NaN would otherwise leave `next_in` NaN for good, and a negative step would lengthen the
+    /// wait.
     pub(crate) fn tick(&mut self, dt: f32, r: &DodgeRules) {
-        if !dt.is_finite() {
+        if !dt.is_finite() || dt < 0.0 {
             return;
         }
         if self.have >= r.charges {
@@ -172,7 +177,7 @@ mod tests {
         };
         let a = roll();
         assert_eq!(a, roll());
-        assert!(a.iter().all(|x| (10.0..20.0).contains(x)));
+        assert!(a.iter().all(|x| (10.0..=20.0).contains(x)));
         let mut d = Dice::new(7);
         assert_eq!(d.between(5.0, 5.0), 5.0);
         assert!(!(0..100).any(|_| d.chance(0.0)));
@@ -350,6 +355,80 @@ mod tests {
         }
         assert_eq!(d.between(f32::NAN, 10.0), 0.0);
         assert_eq!(d.between(10.0, f32::INFINITY), 0.0);
+    }
+
+    #[test]
+    fn the_dice_roll_the_same_numbers_on_every_platform() {
+        // Pinned from this generator's integer arithmetic: a change here changes every fight, and
+        // integer arithmetic gives the same numbers on every platform.
+        let mut one = Dice::new(1);
+        assert_eq!(
+            [one.next(), one.next(), one.next()],
+            [
+                5180492295206395165,
+                12380297144915551517,
+                13389498078930870103
+            ]
+        );
+        let mut seeded = Dice::new(12345);
+        assert_eq!(
+            [seeded.next(), seeded.next(), seeded.next()],
+            [
+                10977518812293740004,
+                13893246733018840292,
+                1412386850724336324
+            ]
+        );
+    }
+
+    #[test]
+    fn a_negative_speed_or_time_gives_no_ground() {
+        let r = CombatRules::default();
+        // A negative time is no time: the cast has allowed only its nudge.
+        assert_eq!(allowance(Moving::Slowed, 7.0, -1.0, &r), r.cast_slack);
+        // A negative speed is no speed: no slack past the nudge.
+        assert_eq!(allowance(Moving::Slowed, -7.0, 1.0, &r), r.cast_slack);
+    }
+
+    #[test]
+    fn a_step_backwards_in_time_passes_nothing() {
+        let r = DodgeRules::default();
+        let mut c = Charges::full(r.charges);
+        assert!(c.spend(&r));
+        let before = c;
+        c.tick(-3.0, &r);
+        assert_eq!(c, before);
+    }
+
+    #[test]
+    fn spending_and_refilling_keep_the_timer_honest() {
+        let r = DodgeRules::default();
+        // A spend from full starts the timer at a full recharge.
+        let mut c = Charges::full(r.charges);
+        assert!(c.spend(&r));
+        assert_eq!(c.next_in, r.recharge);
+        // A spend below full leaves the timer where it was.
+        c.tick(0.1, &r);
+        let timer = c.next_in;
+        assert!(c.spend(&r));
+        assert_eq!(c.have, 0);
+        assert_eq!(c.next_in, timer);
+        // A step longer than the timer refills one charge and carries the overshoot on: the next
+        // charge's wait is the rest of the recharge less the overshoot.
+        c.tick(10.0, &r);
+        assert_eq!(c.have, 1);
+        assert!(
+            (c.next_in - (timer - 10.0 + r.recharge)).abs() < 1e-4,
+            "{}",
+            c.next_in
+        );
+        // Ticks at full leave the charges at the most there are.
+        let mut full = Charges::full(r.charges);
+        for _ in 0..5 {
+            full.tick(1.0, &r);
+        }
+        assert_eq!(full.have, r.charges);
+        assert_eq!(full.next_in, 0.0);
     }
 
     #[test]
