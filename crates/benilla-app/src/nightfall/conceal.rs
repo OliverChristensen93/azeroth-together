@@ -79,10 +79,14 @@ fn clear_selection(selection: &mut Selection) {
 /// cost the hero their target every time; but a target that stays hidden is no longer one.
 pub(super) const TARGET_GRACE: f32 = 3.0;
 
-/// When the selected enemy was first found out of sight, if it is out of sight now. Reset when it
-/// is seen again, or when the selection moves to something else.
+/// The selected enemy's grace. A target only earns one by being seen while it is selected: a
+/// hidden enemy selected from memory (the last-target keys) is dropped at once.
 #[derive(Resource, Default)]
 pub(super) struct TargetGrace {
+    /// The selected enemy last seen while it was selected.
+    seen: Option<Entity>,
+    /// The selected enemy found out of sight, once its grace has started (since `since`). Reset
+    /// when it is seen again, or when the selection moves to something else.
     entity: Option<Entity>,
     since: f32,
 }
@@ -118,15 +122,16 @@ pub(super) fn enemies(
         // Read through the shared reference: only a real clear may mark the resource changed.
         if selection.target == Some(e) {
             if !hide {
+                grace.seen = Some(e);
                 grace.entity = None;
+            } else if grace.seen != Some(e) {
+                // Never seen while selected: there is no sight to lose.
+                clear_selection(&mut selection);
             } else if grace.entity != Some(e) {
-                *grace = TargetGrace {
-                    entity: Some(e),
-                    since: now,
-                };
+                grace.entity = Some(e);
+                grace.since = now;
             } else if now - grace.since >= TARGET_GRACE {
                 clear_selection(&mut selection);
-                grace.entity = None;
             }
         }
         let stand = if enemy.asleep { STAND_SLEEP } else { STAND };
@@ -146,6 +151,9 @@ pub(super) fn enemies(
     // The selection moved on (or was cleared elsewhere): the old target's clock is not the new one's.
     if grace.entity.is_some() && grace.entity != selection.target {
         grace.entity = None;
+    }
+    if grace.seen.is_some() && grace.seen != selection.target {
+        grace.seen = None;
     }
 }
 
@@ -279,6 +287,17 @@ mod tests {
         };
     }
 
+    /// `body` selected and seen while selected, then out of sight from here on: the state a fight's
+    /// target is in when it steps behind a pillar.
+    fn select_and_see_then_hide(world: &mut World, body: Entity) {
+        use bevy::ecs::system::RunSystemOnce;
+
+        select(world, body);
+        world.resource_mut::<Sim>().seen = vec![ENEMY];
+        world.run_system_once(enemies).unwrap();
+        world.resource_mut::<Sim>().seen = vec![];
+    }
+
     #[test]
     fn an_unseen_enemy_is_concealed_and_seen_again_is_not() {
         use bevy::ecs::system::RunSystemOnce;
@@ -308,7 +327,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
 
         let (mut world, body) = world_with_an_enemy();
-        select(&mut world, body);
+        select_and_see_then_hide(&mut world, body);
         world.run_system_once(enemies).unwrap();
         pass(&mut world, 1.0);
         world.run_system_once(enemies).unwrap();
@@ -321,9 +340,23 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
 
         let (mut world, body) = world_with_an_enemy();
-        select(&mut world, body);
+        select_and_see_then_hide(&mut world, body);
         world.run_system_once(enemies).unwrap();
         pass(&mut world, 3.5);
+        world.run_system_once(enemies).unwrap();
+        let sel = world.resource::<Selection>();
+        assert_eq!((sel.target, sel.guid), (None, None));
+        assert_eq!(sel.last, Some(3), "the last-target pair stays");
+    }
+
+    /// An enemy picked out of memory (the last-target keys) while hidden was never seen as a
+    /// target, so it earns no grace; else pressing the key every 3 s would hold an unseen enemy.
+    #[test]
+    fn a_target_selected_while_out_of_sight_is_dropped_at_once() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (mut world, body) = world_with_an_enemy();
+        select(&mut world, body);
         world.run_system_once(enemies).unwrap();
         let sel = world.resource::<Selection>();
         assert_eq!((sel.target, sel.guid), (None, None));
@@ -335,7 +368,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
 
         let (mut world, body) = world_with_an_enemy();
-        select(&mut world, body);
+        select_and_see_then_hide(&mut world, body);
         world.run_system_once(enemies).unwrap();
         pass(&mut world, 2.0);
         world.run_system_once(enemies).unwrap();
