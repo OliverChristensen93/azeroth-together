@@ -48,3 +48,11 @@ may not be what you pictured. Each line says what was decided, why, and how to c
     never bakes.
 10. **The WoW interface is hidden at Nightfall's menu** (it is a full-screen panel with no hero
     yet) and shown in a run, as Survivors does.
+13. **A "?" can hang in the fog with no enemy visible under it.** Your hero "sees" an enemy out to
+    the fog's end (40 yd), but in the last ~10 yd the fog and the night swallow the model, so the
+    mark floats over what looks like empty ground. I kept it: a "?" in the murk reads as "something
+    out there noticed you", which suits the mood. If you'd rather marks only show for enemies you can
+    make out, shorten the hero's sight to the fog's start or a bit past it (a content number).
+14. **Sneaking felt very safe in the test runs**: walking past the start drew three alerted enemies
+    in ~20 s; sneaking drew one "?" and one "!" in the same time, and none in a 48 s run. Tune
+    `visibility`/`notice_range` in `content/nightfall/rules.ron` after you've played it.
