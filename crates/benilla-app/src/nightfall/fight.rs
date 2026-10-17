@@ -13,32 +13,63 @@ use super::run::Sim;
 use super::units;
 use super::view::Views;
 use crate::net::{SelfGuid, TeleportMessage};
-use crate::ui_action::{UiError, UiErrorKeys};
+use crate::ui_action::{CastErrors, UiError, UiErrorKeys};
 use crate::ui_cast::{CastBarEdge, CastBarFeed};
 
 /// `ClassDef::power` of a class whose power is mana.
 const MANA: u8 = 0;
 
-/// WoW's own GlobalStrings key for a refusal, the one its client shows for the same mistake
-/// (`NoPower` by the class's power). Every refusal has one: none is silent.
-pub(super) fn refusal_key(why: Refusal, power: u8) -> &'static str {
+/// How a refusal is shown, the way WoW's client shows the same mistake.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Route {
+    /// A voiced row of the message catalog, by GlobalStrings key, through `UiErrorKeys`
+    /// (`DisplayError`'s own message ids).
+    Key(&'static str),
+    /// A `SMSG_CAST_RESULT` failure reason of WoW 1.12, through `CastErrors`: the engine turns it
+    /// into its text, the red line and the voice, as it does for the server's own.
+    Wire(u8),
+}
+
+// WoW 1.12's `SpellCastResult` reasons (vmangos `SpellDefines.h`), as the engine's own table
+// `ui_action/cast_fail.rs::CAST_FAIL_KEYS` indexes them. Hard-coded here (that table is private to
+// the engine, which stays untouched); `every_wire_reason_is_its_row_in_the_engines_table` checks
+// each against the engine's source.
+const AFFECTING_COMBAT: u8 = 0x00;
+const BAD_TARGETS: u8 = 0x0A;
+const CASTER_DEAD: u8 = 0x13;
+const LINE_OF_SIGHT: u8 = 0x2A;
+const MOVING: u8 = 0x2E;
+const NOT_BEHIND: u8 = 0x33;
+const NO_COMBO_POINTS: u8 = 0x46;
+const ONLY_STEALTHED: u8 = 0x57;
+const OUT_OF_RANGE: u8 = 0x59;
+const SPELL_IN_PROGRESS: u8 = 0x61;
+const TARGET_AFFECTING_COMBAT: u8 = 0x66;
+const UNIT_NOT_INFRONT: u8 = 0x7C;
+
+/// The way a refusal is shown. Power and the lack of a target are catalog rows with a voice
+/// (`NoPower` by the class's power: mana or energy); a cooldown is the row WoW's `0x3C` picks for
+/// an ability ("Ability is not ready yet."), as the host's refusal names no spell for the engine to
+/// look at; every other is a cast-failure reason. The text of "Out of range." is the engine's own
+/// mapping of [`OUT_OF_RANGE`]. Every refusal has a route: none is silent.
+pub(super) fn refusal_route(why: Refusal, power: u8) -> Route {
     match why {
-        Refusal::Down => "SPELL_FAILED_CASTER_DEAD",
-        Refusal::Busy => "SPELL_FAILED_SPELL_IN_PROGRESS",
-        Refusal::NotReady => "SPELL_FAILED_NOT_READY",
-        Refusal::NoPower if power == MANA => "ERR_OUT_OF_MANA",
-        Refusal::NoPower => "ERR_OUT_OF_ENERGY",
-        Refusal::Moving => "SPELL_FAILED_MOVING",
-        Refusal::NeedStealth => "SPELL_FAILED_ONLY_STEALTHED",
-        Refusal::InCombat => "SPELL_FAILED_AFFECTING_COMBAT",
-        Refusal::NeedCombo => "SPELL_FAILED_NO_COMBO_POINTS",
-        Refusal::NoTarget => "ERR_GENERIC_NO_TARGET",
-        Refusal::BadTarget => "SPELL_FAILED_BAD_TARGETS",
-        Refusal::Aware => "SPELL_FAILED_TARGET_AFFECTING_COMBAT",
-        Refusal::OutOfRange => "SPELL_FAILED_OUT_OF_RANGE",
-        Refusal::Facing => "SPELL_FAILED_UNIT_NOT_INFRONT",
-        Refusal::Behind => "SPELL_FAILED_NOT_BEHIND",
-        Refusal::NotInSight => "SPELL_FAILED_LINE_OF_SIGHT",
+        Refusal::NoPower if power == MANA => Route::Key("ERR_OUT_OF_MANA"),
+        Refusal::NoPower => Route::Key("ERR_OUT_OF_ENERGY"),
+        Refusal::NoTarget => Route::Key("ERR_GENERIC_NO_TARGET"),
+        Refusal::NotReady => Route::Key("ERR_ABILITY_COOLDOWN"),
+        Refusal::Down => Route::Wire(CASTER_DEAD),
+        Refusal::Busy => Route::Wire(SPELL_IN_PROGRESS),
+        Refusal::Moving => Route::Wire(MOVING),
+        Refusal::NeedStealth => Route::Wire(ONLY_STEALTHED),
+        Refusal::InCombat => Route::Wire(AFFECTING_COMBAT),
+        Refusal::NeedCombo => Route::Wire(NO_COMBO_POINTS),
+        Refusal::BadTarget => Route::Wire(BAD_TARGETS),
+        Refusal::Aware => Route::Wire(TARGET_AFFECTING_COMBAT),
+        Refusal::OutOfRange => Route::Wire(OUT_OF_RANGE),
+        Refusal::Facing => Route::Wire(UNIT_NOT_INFRONT),
+        Refusal::Behind => Route::Wire(NOT_BEHIND),
+        Refusal::NotInSight => Route::Wire(LINE_OF_SIGHT),
     }
 }
 
@@ -105,6 +136,7 @@ pub(super) fn show_events(
     mut fx: Fx,
     mut bar: ResMut<CastBarFeed>,
     mut errors: ResMut<UiErrorKeys>,
+    mut cast_errors: ResMut<CastErrors>,
     mut teleports: MessageWriter<TeleportMessage>,
     mut teleport_counter: Local<u32>,
 ) {
@@ -211,7 +243,11 @@ pub(super) fn show_events(
                 }
             }
             Event::Refused { player, why } if *player == sim.me => {
-                errors.0.push(UiError::key(refusal_key(*why, power)));
+                match refusal_route(*why, power) {
+                    Route::Key(key) => errors.0.push(UiError::key(key)),
+                    // Spell 0: the refusal names no ability, so there is no combat-log line.
+                    Route::Wire(reason) => cast_errors.push_local(0, reason),
+                }
             }
             Event::Blinked { player, to } if *player == sim.me => {
                 let (Some(guid), Some(hero)) = (self_guid.0, sim.world.hero(sim.me)) else {
@@ -248,9 +284,10 @@ pub(super) fn show_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_action::CastFail;
 
-    /// Every refusal's place in [`ALL`]; written without a catch-all, so a new `Refusal` fails to
-    /// compile here until it is added to the list and so to the test below.
+    /// Every refusal's place in [`READS`]; written without a catch-all, so a new `Refusal` fails to
+    /// compile here until it is added to that list.
     fn place(why: Refusal) -> usize {
         match why {
             Refusal::Down => 0,
@@ -271,53 +308,80 @@ mod tests {
         }
     }
 
-    const ALL: [Refusal; 15] = [
-        Refusal::Down,
-        Refusal::Busy,
-        Refusal::NotReady,
-        Refusal::NoPower,
-        Refusal::Moving,
-        Refusal::NeedStealth,
-        Refusal::InCombat,
-        Refusal::NeedCombo,
-        Refusal::NoTarget,
-        Refusal::BadTarget,
-        Refusal::Aware,
-        Refusal::OutOfRange,
-        Refusal::Facing,
-        Refusal::Behind,
-        Refusal::NotInSight,
+    /// What every refusal reads as, by the GlobalStrings key of WoW's own line: the catalog key it
+    /// is shown by, or the key of its cast-failure reason's row in the engine's table.
+    const READS: [(Refusal, &str); 15] = [
+        (Refusal::Down, "SPELL_FAILED_CASTER_DEAD"),
+        (Refusal::Busy, "SPELL_FAILED_SPELL_IN_PROGRESS"),
+        (Refusal::NotReady, "ERR_ABILITY_COOLDOWN"),
+        (Refusal::NoPower, "ERR_OUT_OF_ENERGY"),
+        (Refusal::Moving, "SPELL_FAILED_MOVING"),
+        (Refusal::NeedStealth, "SPELL_FAILED_ONLY_STEALTHED"),
+        (Refusal::InCombat, "SPELL_FAILED_AFFECTING_COMBAT"),
+        (Refusal::NeedCombo, "SPELL_FAILED_NO_COMBO_POINTS"),
+        (Refusal::NoTarget, "ERR_GENERIC_NO_TARGET"),
+        (Refusal::BadTarget, "SPELL_FAILED_BAD_TARGETS"),
+        (Refusal::Aware, "SPELL_FAILED_TARGET_AFFECTING_COMBAT"),
+        (Refusal::OutOfRange, "SPELL_FAILED_OUT_OF_RANGE"),
+        (Refusal::Facing, "SPELL_FAILED_UNIT_NOT_INFRONT"),
+        (Refusal::Behind, "SPELL_FAILED_NOT_BEHIND"),
+        (Refusal::NotInSight, "SPELL_FAILED_LINE_OF_SIGHT"),
     ];
 
-    #[test]
-    fn a_refusal_reads_as_wow_says_it() {
-        assert_eq!(refusal_key(Refusal::NoPower, 0), "ERR_OUT_OF_MANA");
-        assert_eq!(refusal_key(Refusal::NoPower, 3), "ERR_OUT_OF_ENERGY");
-        assert_eq!(refusal_key(Refusal::Behind, 3), "SPELL_FAILED_NOT_BEHIND");
-        assert_eq!(
-            refusal_key(Refusal::Aware, 3),
-            "SPELL_FAILED_TARGET_AFFECTING_COMBAT"
-        );
+    /// The engine's cast-failure table, as source: its rows read `"KEY", // 0xNN`.
+    const ENGINE_TABLE: &str = include_str!("../ui_action/cast_fail.rs");
+
+    /// The key the engine's table has at wire reason `reason`.
+    fn engine_key(reason: u8) -> Option<&'static str> {
+        let tag = format!("// {reason:#04x}");
+        ENGINE_TABLE.lines().find_map(|l| {
+            let l = l.trim();
+            let key = l.strip_prefix('"')?.split('"').next()?;
+            (l.ends_with(&tag) && key.starts_with("SPELL_FAILED_")).then_some(key)
+        })
     }
 
     #[test]
     fn no_refusal_is_silent() {
-        for (i, why) in ALL.into_iter().enumerate() {
-            assert_eq!(place(why), i, "{why:?} is out of order in ALL");
-            for power in [0, 1, 3] {
-                let key = refusal_key(why, power);
-                assert!(
-                    key.starts_with("SPELL_FAILED_") || key.starts_with("ERR_"),
-                    "{why:?} has no GlobalStrings key: {key:?}"
-                );
+        for (i, (why, key)) in READS.into_iter().enumerate() {
+            assert_eq!(place(why), i, "{why:?} is out of order in READS");
+            match refusal_route(why, 3) {
+                Route::Key(k) => {
+                    assert_eq!(k, key, "{why:?}");
+                    assert!(
+                        benilla_ui::messages::by_key(k).is_some(),
+                        "{why:?}: {k} is not a voiced catalog row, so the engine would warn"
+                    );
+                }
+                Route::Wire(reason) => {
+                    assert_eq!(
+                        engine_key(reason),
+                        Some(key),
+                        "{why:?}: reason {reason:#04x} is not {key} in the engine's table"
+                    );
+                }
             }
         }
-        let mut keys: Vec<&str> = ALL.iter().map(|&w| refusal_key(w, 3)).collect();
-        keys.sort_unstable();
-        keys.dedup();
-        assert_eq!(keys.len(), ALL.len(), "two refusals read the same");
+        // The two powers.
+        assert_eq!(
+            refusal_route(Refusal::NoPower, 0),
+            Route::Key("ERR_OUT_OF_MANA")
+        );
+        assert_eq!(
+            refusal_route(Refusal::NoPower, 3),
+            Route::Key("ERR_OUT_OF_ENERGY")
+        );
+        for key in ["ERR_OUT_OF_MANA", "ERR_OUT_OF_ENERGY"] {
+            assert!(benilla_ui::messages::by_key(key).is_some(), "{key}");
+        }
     }
 
+    #[test]
+    fn range_reads_out_of_range_and_the_engine_maps_it_so() {
+        assert_eq!(refusal_route(Refusal::OutOfRange, 0), Route::Wire(0x59));
+        // The engine gives reason 0x59 its own text, "Out of range.", ahead of the table's.
+        assert!(ENGINE_TABLE.contains(r#"0x59 => return get_display("ERR_SPELL_OUT_OF_RANGE")"#));
+    }
     #[test]
     fn a_stopped_cast_ends_its_bar_its_way() {
         assert!(matches!(
@@ -354,6 +418,184 @@ mod tests {
             crit: false,
             ambush: false,
         }
+    }
+
+    /// A world with one mage (player 0), one drawn enemy (id 4), the `events` waiting to be shown
+    /// and every resource `show_events` writes to; `show` runs it once.
+    struct Stage {
+        world: bevy::prelude::World,
+        hero: Entity,
+        enemy: Entity,
+    }
+
+    impl Stage {
+        fn new(events: Vec<Event>) -> Self {
+            let content = nightfall_sim::Content::from_ron(nightfall_sim::ContentSources {
+                classes: r#"[(key: "mage", name: "Mage", class_id: 8, power: 0, race: 1, sex: 0,
+                    base_hp: 1000.0, speed: 7.0, power_max: 100.0, bar: [(1, "ray")])]"#,
+                map: r#"(key: "t", name: "T", map: 0,
+                    bounds: [(0.0, 0.0), (50.0, 0.0), (50.0, 50.0), (0.0, 50.0)],
+                    entries: [(5.0, 5.0, 0.0)])"#,
+                rules: r#"(hero_level: 30, atmosphere: (night_minute: 0, fog_start: 10.0,
+                    fog_end: 40.0, fog_color: (0.1, 0.1, 0.1), view_distance: 120.0,
+                    hero_light: (color: (1.0, 0.8, 0.6), intensity: 0.6, range: 9.0)))"#,
+                enemies: "[]",
+                spawns: "[]",
+                abilities: r#"[
+                    (key: "ray", name: "Ray", spell: 11, tick_spell: Some(12), aim: Enemy,
+                     range: 30.0, channel: 3.0, ticks: 3, effects: [Damage(min: 1.0, max: 2.0)]),
+                ]"#,
+            })
+            .unwrap();
+            let mut sim = nightfall_sim::World::new(std::sync::Arc::new(content));
+            sim.add_hero(0, "mage", "Test", 1, 0).unwrap();
+            let mut sim = Sim::for_test(sim);
+            sim.events = events;
+            let mut world = bevy::prelude::World::new();
+            let (hero, enemy) = (world.spawn_empty().id(), world.spawn_empty().id());
+            let mut views = Views::default();
+            views.heroes.insert(0, hero);
+            let mut enemy_views = EnemyViews::default();
+            enemy_views.drawn.insert(4, enemy);
+            world.insert_resource(sim);
+            world.insert_resource(views);
+            world.insert_resource(enemy_views);
+            world.insert_resource(SelfGuid(Some(77)));
+            world.init_resource::<crate::creature_anim::PlaySeq>();
+            world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+            world.init_resource::<Messages<crate::creature_anim::SpellGoTargets>>();
+            world.init_resource::<Messages<crate::creature_anim::SwingMessage>>();
+            world.init_resource::<Messages<crate::combat_text::CombatTextSpawn>>();
+            world.init_resource::<Messages<TeleportMessage>>();
+            world.init_resource::<CastBarFeed>();
+            world.init_resource::<UiErrorKeys>();
+            world.init_resource::<CastErrors>();
+            Self { world, hero, enemy }
+        }
+
+        fn show(&mut self) {
+            use bevy::ecs::system::RunSystemOnce;
+            self.world.run_system_once(show_events).unwrap();
+        }
+
+        fn drain<M: Message>(&mut self) -> Vec<M> {
+            self.world.resource_mut::<Messages<M>>().drain().collect()
+        }
+    }
+
+    #[test]
+    fn a_channel_that_finishes_ends_with_a_quiet_release_of_its_hold() {
+        use crate::creature_anim::{CastEvent, CastEventKind};
+        let by = UnitRef::Hero(0);
+        let mut stage = Stage::new(vec![
+            Event::ChannelStart {
+                by,
+                ability: 0,
+                target: None,
+                secs: 3.0,
+            },
+            Event::CastGo {
+                by,
+                ability: 0,
+                hits: vec![],
+                at: None,
+            },
+            Event::CastStop {
+                by,
+                ability: 0,
+                why: Stop::Finished,
+            },
+        ]);
+        stage.show();
+        let casts: Vec<(CastEventKind, u32)> = stage
+            .drain::<CastEvent>()
+            .iter()
+            .map(|c| (c.kind, c.spell_id))
+            .collect();
+        // The hold is on the channel's own spell (11), its tick plays another (12), and the end
+        // lets the hold go.
+        assert_eq!(
+            casts,
+            [
+                (CastEventKind::Start, 11),
+                (CastEventKind::Go, 12),
+                (CastEventKind::Fail, 11)
+            ]
+        );
+    }
+
+    #[test]
+    fn our_refusals_reach_wows_error_text_each_by_its_route() {
+        let refused = |player, why| Event::Refused { player, why };
+        let mut stage = Stage::new(vec![
+            refused(0, Refusal::NoPower),
+            refused(0, Refusal::NotReady),
+            refused(0, Refusal::OutOfRange),
+            refused(0, Refusal::Down),
+            // Someone else's refusal is not ours to show.
+            refused(1, Refusal::OutOfRange),
+        ]);
+        stage.show();
+        let keys = &stage.world.resource::<UiErrorKeys>().0;
+        assert_eq!(
+            keys,
+            &[
+                UiError::key("ERR_OUT_OF_MANA"),
+                UiError::key("ERR_ABILITY_COOLDOWN")
+            ]
+        );
+        assert_eq!(
+            stage.world.resource::<CastErrors>().0,
+            [CastFail::local(0, 0x59), CastFail::local(0, 0x13)]
+        );
+    }
+
+    #[test]
+    fn a_swing_shows_its_blows_damage_and_numbers_are_white_for_melee_yellow_for_spells() {
+        use crate::combat_text::CombatTextSpawn;
+        use crate::creature_anim::SwingMessage;
+        let (hero, enemy) = (UnitRef::Hero(0), UnitRef::Enemy(4));
+        let mut stage = Stage::new(vec![
+            damage(enemy, Some(hero), 90.0),
+            Event::Swing {
+                by: hero,
+                to: enemy,
+            },
+            damage(enemy, Some(hero), 33.0),
+            Event::Swing {
+                by: enemy,
+                to: hero,
+            },
+            damage(hero, Some(enemy), 12.4),
+            // A swing that did no harm.
+            Event::Swing {
+                by: enemy,
+                to: hero,
+            },
+        ]);
+        stage.show();
+        let swings: Vec<(Entity, u32)> = stage
+            .drain::<SwingMessage>()
+            .iter()
+            .map(|s| (s.attacker, s.damage))
+            .collect();
+        assert_eq!(
+            swings,
+            [(stage.hero, 33), (stage.enemy, 13), (stage.enemy, 0)]
+        );
+        let numbers: Vec<(String, Option<u32>)> = stage
+            .drain::<CombatTextSpawn>()
+            .into_iter()
+            .map(|t| (t.text, t.color))
+            .collect();
+        assert_eq!(
+            numbers,
+            [
+                ("90".to_string(), Some(COLOR_SPELL)),
+                ("33".to_string(), Some(COLOR_HIT)),
+                ("12".to_string(), Some(COLOR_HURT)),
+            ]
+        );
     }
 
     #[test]
