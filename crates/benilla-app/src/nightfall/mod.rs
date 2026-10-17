@@ -17,6 +17,7 @@ mod grade;
 mod marks;
 mod menu;
 mod run;
+mod senses_hud;
 mod session;
 mod stance;
 mod terrain;
@@ -256,7 +257,15 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
-                (conceal::enemies, conceal::heroes, stance::trace, marks::draw)
+                (
+                    conceal::enemies,
+                    conceal::heroes,
+                    stance::trace,
+                    marks::draw,
+                    senses_hud::spawn_eye,
+                    senses_hud::drive_eye,
+                    senses_hud::heartbeat,
+                )
                     .chain()
                     .after(enemies::place)
                     // Its commands land before the run can end and despawn the bodies.
