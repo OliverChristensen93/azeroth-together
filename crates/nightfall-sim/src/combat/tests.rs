@@ -369,7 +369,15 @@ fn vanish_turns_a_chase_into_a_search() {
         }]
     );
     w.land(0, ability(&w, "vanish"), None, None);
-    assert!(w.hero(0).unwrap().stealthed);
+    // At once, with no step between: stealthed, as visible as a stealthed hero standing still,
+    // and as fast as stealth lets the class go.
+    let r = &w.content().rules.senses;
+    let (sneak_still, still) = (r.visibility.sneak_still, r.visibility.still);
+    let speed = w.content().classes[w.hero(0).unwrap().class].speed * r.stealth_speed;
+    let hero = w.hero(0).unwrap();
+    assert!(hero.stealthed);
+    assert_ne!(sneak_still, still);
+    assert_eq!((hero.visibility, hero.speed), (sneak_still, speed));
     assert_eq!(
         w.marks_for(0),
         vec![Mark {

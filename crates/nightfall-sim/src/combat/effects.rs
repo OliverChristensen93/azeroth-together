@@ -269,11 +269,10 @@ impl World {
         let ci = self.combat.hero_index(player);
         match *effect {
             Effect::Vanish => {
-                let hero = &mut self.heroes[hi];
-                hero.stealthed = true;
-                hero.fight.attacking = None;
+                self.heroes[hi].fight.attacking = None;
                 self.combat.heroes[ci].combat_for = 0.0;
                 self.senses.lose(player, &content.rules.senses.awareness);
+                self.enter_stealth(player);
             }
             Effect::Sprint { by, secs } => {
                 if !(by.is_finite() && span(secs)) {

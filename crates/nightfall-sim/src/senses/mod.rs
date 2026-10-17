@@ -296,6 +296,15 @@ impl World {
         }
     }
 
+    /// `player`'s hero goes into stealth (Vanish), their stance, visibility and speed changing at
+    /// once like [`World::break_stealth`]'s, so nothing is judged or sent on the old values.
+    pub fn enter_stealth(&mut self, player: PlayerId) {
+        if let Some(h) = self.heroes.iter_mut().find(|h| h.player == player) {
+            h.stealthed = true;
+            self.rederive(player);
+        }
+    }
+
     /// `player`'s hero's stance, visibility and speed again, after something between steps changed
     /// what they follow from.
     fn rederive(&mut self, player: PlayerId) {
