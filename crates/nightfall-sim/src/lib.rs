@@ -10,6 +10,7 @@
 
 mod abilities;
 mod bounds;
+mod combat;
 mod content;
 mod enemies;
 mod heightmap;
@@ -24,6 +25,7 @@ pub use abilities::{
     TelegraphDef,
 };
 pub use bounds::Bounds;
+pub use combat::Charges;
 pub use content::{
     Atmosphere, AwarenessRules, Behaviour, ClassDef, CombatRules, Content, ContentError,
     ContentSources, DodgeRules, EnemyDef, HeroLight, LitArea, LoudnessTable, MapDef, MoveDef,
