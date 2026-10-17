@@ -169,6 +169,41 @@ fn breaking_stealth_gives_the_speed_back() {
 }
 
 #[test]
+fn breaking_stealth_changes_stance_visibility_and_speed_at_once() {
+    let mut w = world("");
+    put(&mut w, 0, 10.0, 10.0, Gait::Walk, 0);
+    w.step();
+    put(&mut w, 0, 10.0, 10.0, Gait::Walk, 1);
+    w.step();
+    let h = w.hero(0).unwrap();
+    assert!(h.stealthed);
+    assert_eq!(h.stance, Stance::Sneaking);
+    // No step in between: what a snapshot taken now would carry.
+    w.break_stealth(0);
+    let rules = w.content().rules.senses.clone();
+    let speed = w.content().classes[0].speed;
+    let h = w.hero(0).unwrap();
+    assert!(!h.stealthed);
+    assert_eq!(h.stance, Stance::of(Gait::Walk, false));
+    assert_eq!(h.visibility, rules.visibility.walk);
+    assert_eq!(h.speed, speed);
+}
+
+#[test]
+fn a_flash_raises_visibility_at_once() {
+    let mut w = world("");
+    put(&mut w, 0, 10.0, 10.0, Gait::Still, 0);
+    w.step();
+    let rules = w.content().rules.senses.clone();
+    assert_eq!(w.hero(0).unwrap().visibility, rules.visibility.still);
+    w.flash(0);
+    assert_eq!(
+        w.hero(0).unwrap().visibility,
+        rules.visibility.still * rules.flash
+    );
+}
+
+#[test]
 fn a_lit_area_and_a_flash_raise_visibility() {
     let mut w = world("");
     put(&mut w, 0, 40.0, 41.0, Gait::Walk, 0);

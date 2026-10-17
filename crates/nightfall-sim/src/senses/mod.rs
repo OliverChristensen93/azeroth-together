@@ -117,6 +117,28 @@ pub(crate) fn take_input(s: &mut Senses, hero: &mut Hero, input: &PlayerInput, c
     }
 }
 
+/// What follows from a hero's gait, Stealth, place and flash: their stance, how visible they are
+/// and how fast they go. [`step_heroes`] works it out each step, and whatever changes one of its
+/// inputs between steps ([`World::break_stealth`], [`World::flash`]) works it out again at once, so
+/// nothing is judged or sent on the old values.
+fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
+    let r = &content.rules.senses;
+    hero.stance = Stance::of(hs.gait, hero.stealthed);
+    let lit_area = content
+        .map
+        .lit
+        .iter()
+        .any(|l| l.at.distance(hero.pos) <= l.radius);
+    let light = Light {
+        lantern: false,
+        lit_area,
+        flash: hs.flash > 0.0,
+    };
+    hero.visibility = visibility(hero.stance, light, r);
+    let class = &content.classes[hero.class];
+    hero.speed = class.speed * if hero.stealthed { r.stealth_speed } else { 1.0 };
+}
+
 /// Every hero's stance, visibility and speed for this step, and their footsteps: one every
 /// `steps.every` seconds of moving, the first at once, as loud as the stance. The rings remember
 /// the loudest noise of the last `noise_memory` seconds.
@@ -125,21 +147,8 @@ pub(crate) fn step_heroes(s: &mut Senses, heroes: &mut [Hero], content: &Content
     for hero in heroes.iter_mut() {
         let i = s.hero_index(hero.player);
         let hs = &mut s.heroes[i];
-        hero.stance = Stance::of(hs.gait, hero.stealthed);
         hs.flash = (hs.flash - DT).max(0.0);
-        let lit_area = content
-            .map
-            .lit
-            .iter()
-            .any(|l| l.at.distance(hero.pos) <= l.radius);
-        let light = Light {
-            lantern: false,
-            lit_area,
-            flash: hs.flash > 0.0,
-        };
-        hero.visibility = visibility(hero.stance, light, r);
-        let class = &content.classes[hero.class];
-        hero.speed = class.speed * if hero.stealthed { r.stealth_speed } else { 1.0 };
+        derive(hs, hero, content);
         for n in &mut hs.recent {
             n.0 += DT;
         }
@@ -245,13 +254,26 @@ impl World {
         let secs = self.content().rules.senses.flash_for;
         let i = self.senses.hero_index(player);
         self.senses.heroes[i].flash = secs;
+        self.rederive(player);
     }
 
-    /// `player`'s hero drops out of stealth (spec §6.3: attacking or taking damage breaks it);
-    /// their speed comes back at the next step. Sub-project 4's combat calls it.
+    /// `player`'s hero drops out of stealth (spec §6.3: attacking or taking damage breaks it); their
+    /// stance, visibility and speed change at once, so the hit that broke it is judged and sent as
+    /// the unstealthed hero's. Sub-project 4's combat calls it.
     pub fn break_stealth(&mut self, player: PlayerId) {
         if let Some(h) = self.heroes.iter_mut().find(|h| h.player == player) {
             h.stealthed = false;
+            self.rederive(player);
+        }
+    }
+
+    /// `player`'s hero's stance, visibility and speed again, after something between steps changed
+    /// what they follow from.
+    fn rederive(&mut self, player: PlayerId) {
+        let content = self.content().clone();
+        let i = self.senses.hero_index(player);
+        if let Some(h) = self.heroes.iter_mut().find(|h| h.player == player) {
+            derive(&self.senses.heroes[i], h, &content);
         }
     }
 }
