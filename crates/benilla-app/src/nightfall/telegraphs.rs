@@ -59,8 +59,6 @@ pub(super) fn ground_grid(shape: Shape, at: V2, facing: V2) -> (Vec<V2>, Vec<u32
 /// The shape's alpha as its blow draws near: faint as it shows, strong as it lands.
 pub(super) fn glow(left: f32, total: f32) -> f32 {
     0.15 + 0.5 * (1.0 - (left / total.max(1e-3)).clamp(0.0, 1.0))
-}
-
 /// A telegraph's shape on the ground.
 #[derive(Component)]
 pub(super) struct TelegraphShape;
@@ -83,19 +81,30 @@ fn red(alpha: f32) -> Color {
     Color::srgba(0.95, 0.12, 0.08, alpha)
 }
 
-/// The mesh of a telegraph's shape: `points` on the ground of the client's own terrain (`height`
-/// gives each its height, the host's floor where the terrain has no tile), floating [`LIFT`] over.
+/// The mesh of a telegraph's shape: `points` (the first its centre) laid on the ground, floating
+/// [`LIFT`] over. Decided once for the whole shape: if the client's terrain at the centre is the
+/// host's floor ([`enemies::draw_height`]), every point follows the terrain (the host's floor
+/// where a point has no tile), so a slope is draped, not cut; else the whole shape lies flat at
+/// the host's floor `z` (a bridge, an upper storey).
 fn ground_mesh(
     points: &[V2],
     z: f32,
     height: impl Fn(Vec3) -> Option<f32>,
     tris: Vec<u32>,
 ) -> Mesh {
+    let at = |p: &V2| units::wow_to_bevy([p.x, p.y, z]);
+    let on_terrain = points
+        .first()
+        .and_then(|c| height(at(c)))
+        .is_some_and(|t| enemies::draw_height(z, Some(t)) == t);
     let positions: Vec<[f32; 3]> = points
         .iter()
         .map(|p| {
-            let mut b = units::wow_to_bevy([p.x, p.y, z]);
-            b.y = enemies::draw_height(z, height(b)) + LIFT;
+            let mut b = at(p);
+            if on_terrain {
+                b.y = height(b).unwrap_or(z);
+            }
+            b.y += LIFT;
             b.to_array()
         })
         .collect();
@@ -240,7 +249,66 @@ mod tests {
             .all(|p| (p[1] - (12.0 + LIFT)).abs() < 1e-4));
     }
 
+    /// The Y of every vertex of a circle (radius 4 at WoW (3, 4), host floor 12) laid by `height`.
+    fn laid(height: impl Fn(Vec3) -> Option<f32>) -> (Vec<V2>, Vec<[f32; 3]>) {
+        let (points, tris) = ground_grid(
+            Shape::Circle { radius: 4.0 },
+            V2::new(3.0, 4.0),
+            V2::new(1.0, 0.0),
+        );
+        let mesh = ground_mesh(&points, 12.0, height, tris);
+        let positions = mesh
+            .attribute(Mesh::ATTRIBUTE_POSITION)
+            .and_then(|a| a.as_float3())
+            .unwrap()
+            .to_vec();
+        (points, positions)
+    }
+
     #[test]
+    fn a_shape_on_a_slope_is_draped_over_it_not_cut_by_it() {
+        // The ground rises 3 yd across the shape (1.5 yd either side of the centre's, the host's
+        // floor): the outer points are more than a yard off the floor, yet follow the slope.
+        let centre_x = -4.0;
+        let slope = |b: Vec3| Some(12.0 + 0.375 * (b.x - centre_x));
+        let (points, positions) = laid(slope);
+        let (min, max) = positions.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+            (lo.min(p[1]), hi.max(p[1]))
+        });
+        assert!(
+            max - min > 2.9,
+            "the shape rises with the hill: {min}..{max}"
+        );
+        for (p, v) in points.iter().zip(&positions) {
+            let want = slope(Vec3::from(*v)).unwrap() + LIFT;
+            assert!((v[1] - want).abs() < 1e-4, "{p:?}: {} vs {want}", v[1]);
+        }
+    }
+
+    #[test]
+    fn a_shape_whose_centre_is_off_the_terrain_lies_flat_at_the_hosts_floor() {
+        // A bridge: the terrain is 8 yd under the floor, everywhere and more so at the edge.
+        let (_, positions) = laid(|b| Some(4.0 - 0.1 * b.x.abs()));
+        assert!(positions
+            .iter()
+            .all(|p| (p[1] - (12.0 + LIFT)).abs() < 1e-4));
+    }
+
+    #[test]
+    fn a_tile_missing_under_part_of_a_shape_leaves_those_points_at_the_hosts_floor() {
+        let (_, positions) = laid(|b| (b.x > -6.0).then_some(12.5));
+        let at_floor = positions
+            .iter()
+            .filter(|p| (p[1] - (12.0 + LIFT)).abs() < 1e-4)
+            .count();
+        let on_ground = positions
+            .iter()
+            .filter(|p| (p[1] - (12.5 + LIFT)).abs() < 1e-4)
+            .count();
+        assert!(at_floor > 0 && on_ground > 0);
+        assert_eq!(at_floor + on_ground, positions.len());
+    }
+
     fn a_shape_follows_the_client_terrain_where_it_is_the_hosts_floor() {
         let (points, tris) = ground_grid(
             Shape::Circle { radius: 4.0 },
