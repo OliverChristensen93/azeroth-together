@@ -124,6 +124,8 @@ impl World {
         };
         let speed = content.rules.combat.sheep_speed;
         let e = &mut self.enemies[ei];
+        // A sleeper turned into a sheep is awake.
+        e.asleep = false;
         let ec = &mut self.combat.enemies[ei];
         let (home, mut goal) = ec.wander.unwrap_or((e.pos, e.pos));
         if goal.distance(e.pos) <= SHEEP_THERE {
@@ -165,8 +167,15 @@ impl World {
             reach: self
                 .keep_at(ei, content)
                 .unwrap_or(content.rules.senses.chase_reach),
-            // A slow that is not a number slows nothing.
-            speed: 1.0 - ec.slow.map_or(0.0, |s| s.by).clamp(0.0, 1.0),
+            // A slow whose strength is not a number slows nothing; one beyond 0..1 is cut to it.
+            speed: 1.0
+                - ec.slow.map_or(0.0, |s| {
+                    if s.by.is_finite() {
+                        s.by.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    }
+                }),
         }
     }
 

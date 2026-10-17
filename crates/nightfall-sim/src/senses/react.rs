@@ -45,6 +45,9 @@ pub(crate) struct Way {
     /// asked for at once.
     retry: f32,
     failed: Option<V3>,
+    /// How many paths this enemy has asked the navigator for (tests count them).
+    #[cfg(test)]
+    asked: u32,
 }
 
 impl Way {
@@ -279,7 +282,7 @@ fn react(
                 last_seen,
                 def.run_speed * g.speed,
                 g.reach,
-                r.chase_reach + CHASE_SETTLE,
+                g.reach + CHASE_SETTLE,
                 map,
                 nav,
                 asks,
@@ -341,8 +344,9 @@ fn go(
     let to = goal.ground();
     let d = e.pos.distance(to);
     if d <= reach {
+        // It stops, keeping its route: a caster stopping short of a hero who shifts a little goes
+        // on again at once, and asking for a path every other step would be the cost.
         e.speed = 0.0;
-        way.route = None;
         return Progress::There;
     }
     let here = V3::at(e.pos, e.z);
@@ -382,6 +386,10 @@ fn go(
         }
         if *asks > 0 {
             *asks -= 1;
+            #[cfg(test)]
+            {
+                way.asked += 1;
+            }
             match nav.plan_path(here, goal, false, WANDER_BUDGET) {
                 PathPlan::Found(path) => {
                     // A path that ends where the enemy stands cannot be bettered by asking again.
@@ -418,6 +426,14 @@ fn go(
         way.route = None;
     }
     Progress::Going
+}
+
+#[cfg(test)]
+impl Senses {
+    /// How many paths enemy `i`'s senses have asked for while held.
+    pub(crate) fn paths_asked(&self, i: usize) -> u32 {
+        self.ways.get(i).map_or(0, |w| w.asked)
+    }
 }
 
 #[cfg(test)]
@@ -602,5 +618,35 @@ mod tests {
             last = now;
         }
         assert!(waits >= 2, "it waited for a retry {waits} time(s) in 3 s");
+    }
+
+    #[test]
+    fn a_held_enemys_retry_wait_runs_down() {
+        use crate::combat::{Held, Hold};
+        use crate::senses::tests::{put, sentry, world};
+        use crate::{ControlKind, Gait};
+        // A rooted enemy stands (`Hold::Still`) and looks for no path, but its wait for a retry
+        // still counts down, so once freed it asks again on time.
+        let mut w = world(&sentry(10.0, 10.0, 0.0));
+        w.attach_map(Arc::new(flat(50.0).finish()));
+        put(&mut w, 0, 35.0, 35.0, Gait::Still, 0);
+        w.step();
+        w.combat.enemies[0].held = Some(Held {
+            kind: ControlKind::Root,
+            left: 100.0,
+            by: 0,
+            spell: 0,
+        });
+        w.senses.ways[0].retry = 1.0;
+        for _ in 0..15 {
+            w.step();
+        }
+        assert_eq!(w.combat.enemies[0].engage.hold, Hold::Still);
+        let left = w.senses.ways[0].retry;
+        assert!(left < 0.55, "the wait did not run down: {left}");
+        for _ in 0..30 {
+            w.step();
+        }
+        assert_eq!(w.senses.ways[0].retry, 0.0);
     }
 }
