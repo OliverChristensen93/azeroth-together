@@ -6,6 +6,7 @@
 
 mod effects;
 pub(crate) mod heroes;
+mod hold;
 mod rules;
 #[cfg(test)]
 mod tests;

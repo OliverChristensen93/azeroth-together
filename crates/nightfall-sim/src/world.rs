@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::combat::{CastPress, Combat, Event, HeroFight, Telegraph};
+use crate::combat::{CastPress, Combat, Engage, Event, HeroFight, Telegraph};
 use crate::enemies::{self, Brain, Enemy, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::senses::{self, Gait, Senses, Stance};
@@ -319,6 +319,11 @@ impl World {
         }
         senses::step_heroes(&mut self.senses, &mut self.heroes, &self.content);
         self.step_fighters();
+        // Holds, slows and burns tick before the senses read what each enemy may do (a client's
+        // mirror has no map, and no fight to run).
+        if self.nav.is_some() {
+            self.hold_enemies();
+        }
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
         if let Some(nav) = self
@@ -329,6 +334,7 @@ impl World {
             // One budget of floors for the whole step: the senses' searches (chasing, checking,
             // searching) come first, the orders' (posts, patrols, walks) take what is left.
             nav.begin_step(enemies::STEP_FLOORS);
+            let engage: Vec<Engage> = self.combat.enemies.iter().map(|c| c.engage).collect();
             senses::step_enemies(
                 &mut self.senses,
                 &mut self.enemies,
@@ -336,6 +342,7 @@ impl World {
                 &self.heroes,
                 nav,
                 &self.content,
+                &engage,
             );
             enemies::step_planned(
                 &mut self.enemies,

@@ -6,7 +6,10 @@
 //! [`Brain`]: wary, it stops and faces the place; checking, it walks there and stands; alerted, it
 //! runs at its hero to `chase_reach` and faces them (the swing is sub-project 4's); searching, it
 //! walks to where its hero was last seen and looks around. A place no path reaches is looked at
-//! from where it stands. Calm again, its brain finds its way back to its order.
+//! from where it stands. Calm again, its brain finds its way back to its order. What holds it in
+//! the fight (`crate::combat`) comes as an [`Engage`] each step: out of the fight it neither
+//! looks, thinks nor moves; held still, it stands turned to its hero; distracted, it stands turned
+//! to the spot while calm or wary; and a chase stops the engage's reach short, at its speed.
 //!
 //! Every path an enemy's senses ask for goes through [`Navigator::plan_path`], so it shares the
 //! step's floor budget with the orders' searches ([`crate::enemies`]) and a failed search is not
@@ -19,6 +22,7 @@ use super::awareness::{Mind, Sensed, State};
 use super::noise::{hears, Noise};
 use super::visibility::{facing_factor, fill_rate, notice_range};
 use super::Senses;
+use crate::combat::{Engage, Hold};
 use crate::enemies::{self, heading, Brain, Enemy, ARRIVE, WANDER_BUDGET};
 use crate::heightmap::{HeightMap, Navigator, PathPlan};
 use crate::{Content, Hero, SenseRules, CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3};
@@ -76,6 +80,7 @@ pub(crate) fn step_enemies(
     heroes: &[Hero],
     nav: &mut Navigator,
     content: &Content,
+    engage: &[Engage],
 ) {
     if s.minds.len() != enemies.len() || brains.len() != enemies.len() {
         return;
@@ -87,6 +92,9 @@ pub(crate) fn step_enemies(
     let mut shouts = std::mem::take(&mut s.shouts);
     let mut sensed: Vec<Sensed> = Vec::with_capacity(heroes.len());
     for (i, e) in enemies.iter().enumerate() {
+        if engage.get(i).is_some_and(|g| g.hold == Hold::Out) {
+            continue;
+        }
         let mind = &mut s.minds[i];
         let eye = V3::at(e.pos, e.z + EYE_HEIGHT);
         // Every hero, seen or not: an alerted enemy must be told it lost sight of its hero.
@@ -108,7 +116,11 @@ pub(crate) fn step_enemies(
         }
         let from = enemies[i].pos;
         for (j, ally) in enemies.iter().enumerate() {
-            if j != i && ally.pos.distance(from) <= r.awareness.shout && !s.minds[j].is_alerted() {
+            if j != i
+                && ally.pos.distance(from) <= r.awareness.shout
+                && !s.minds[j].is_alerted()
+                && engage.get(j).is_none_or(|g| g.hold != Hold::Out)
+            {
                 s.minds[j].alert(shout.player, shout.at, &r.awareness);
             }
         }
@@ -123,17 +135,39 @@ pub(crate) fn step_enemies(
     for k in 0..n {
         let i = (first + k) % n;
         let e = &mut enemies[i];
+        let g = engage
+            .get(i)
+            .copied()
+            .unwrap_or(Engage::free(r.chase_reach));
         let mind = &mut s.minds[i];
-        let held = mind.state != State::Calm;
+        let held = mind.state != State::Calm || g.hold != Hold::Free;
         brains[i].hold(held);
+        // The wait for a retry runs down whatever holds the enemy, so one freed asks again on time.
+        s.ways[i].tick();
+        match g.hold {
+            // The fight moves it (a sheep) or nothing does.
+            Hold::Out => continue,
+            Hold::Still => {
+                e.speed = 0.0;
+                if let State::Alerted { last_seen, .. } = mind.state {
+                    stand(e, Some(last_seen.ground()));
+                }
+                continue;
+            }
+            Hold::Facing(spot) if matches!(mind.state, State::Calm | State::Wary { .. }) => {
+                e.asleep = false;
+                stand(e, Some(spot));
+                continue;
+            }
+            _ => {}
+        }
         if !held {
             s.ways[i] = Way::default();
             e.asleep = mind.sleeper && brains[i].at_post(e.pos);
             continue;
         }
         e.asleep = false;
-        s.ways[i].tick();
-        react(e, mind, &mut s.ways[i], &map, nav, content, &mut asks);
+        react(e, mind, &mut s.ways[i], &map, nav, content, &mut asks, g);
     }
 }
 
@@ -203,6 +237,7 @@ fn sense(
 }
 
 /// A held enemy acts on its state for a step.
+#[allow(clippy::too_many_arguments)]
 fn react(
     e: &mut Enemy,
     mind: &mut Mind,
@@ -211,6 +246,7 @@ fn react(
     nav: &mut Navigator,
     content: &Content,
     asks: &mut u32,
+    g: Engage,
 ) {
     let def = &content.enemies[e.kind];
     let r = &content.rules.senses;
@@ -223,7 +259,7 @@ fn react(
                 e,
                 way,
                 place,
-                def.walk_speed,
+                def.walk_speed * g.speed,
                 ARRIVE,
                 REPATH,
                 map,
@@ -241,8 +277,8 @@ fn react(
                 e,
                 way,
                 last_seen,
-                def.run_speed,
-                r.chase_reach,
+                def.run_speed * g.speed,
+                g.reach,
                 r.chase_reach + CHASE_SETTLE,
                 map,
                 nav,
@@ -541,5 +577,30 @@ mod tests {
             &mut e, &mut way, goal, 7.0, 2.0, 3.6, &map, &mut nav, &mut asks,
         );
         assert_eq!((p, asks), (Progress::There, 5));
+    }
+
+    #[test]
+    fn an_enemy_that_found_no_path_asks_again_after_the_retry_wait() {
+        use crate::senses::tests::{put, sentry, world};
+        // A sentry outside a sealed house, after a hero inside it: no path, ever. Its wait runs
+        // down each step (`Way::tick`), so it asks again every RETRY seconds; were the wait never
+        // counted down, it would ask once and never again.
+        let mut w = world(&sentry(10.0, 10.0, 0.0));
+        let mut b = flat(50.0);
+        house(&mut b, V2::new(30.0, 30.0), V2::new(40.0, 40.0), None, true);
+        w.attach_map(Arc::new(b.finish()));
+        put(&mut w, 0, 35.0, 35.0, crate::Gait::Still, 0);
+        w.step();
+        w.alert(1, 0);
+        let (mut waits, mut last) = (0, 0.0);
+        for _ in 0..90 {
+            w.step();
+            let now = w.senses.ways[0].retry;
+            if now > last {
+                waits += 1;
+            }
+            last = now;
+        }
+        assert!(waits >= 2, "it waited for a retry {waits} time(s) in 3 s");
     }
 }

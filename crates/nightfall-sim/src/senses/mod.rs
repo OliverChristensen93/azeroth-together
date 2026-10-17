@@ -19,7 +19,7 @@ pub(crate) use noise::Noise;
 pub(crate) use react::step_enemies;
 pub use visibility::{Gait, Stance};
 
-use awareness::{Mind, Shout};
+use awareness::{Mind, Shout, State};
 use noise::step_radius;
 use react::Way;
 use visibility::{visibility, Light};
@@ -99,6 +99,16 @@ impl Senses {
     /// Whether enemy `i` is alerted to anyone.
     pub(crate) fn alerted(&self, i: usize) -> bool {
         self.minds.get(i).is_some_and(Mind::is_alerted)
+    }
+
+    /// The hero enemy `i` is after, and where it last saw them, when it is alerted.
+    pub(crate) fn target_of(&self, i: usize) -> Option<(PlayerId, V3)> {
+        match self.minds.get(i)?.state {
+            State::Alerted {
+                player, last_seen, ..
+            } => Some((player, last_seen)),
+            _ => None,
+        }
     }
 
     /// Enemy `i` died: it thinks of nobody, follows no way, and a shout it raised this step is

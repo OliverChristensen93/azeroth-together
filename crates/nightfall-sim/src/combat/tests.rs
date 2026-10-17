@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use super::Slowed;
 use crate::heightmap::testmap::{flat, house};
 use crate::heightmap::HeightMap;
 use crate::{
@@ -1394,4 +1395,173 @@ fn a_refused_step_into_stealth_is_told_to_its_player() {
     w.step();
     assert!(!w.heroes[0].stealthed);
     assert_eq!(refusal(&mut w), None);
+}
+
+#[test]
+fn a_stunned_enemy_stands_and_a_rooted_one_turns_but_stays() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 20.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    w.land(0, ability(&w, "cheap"), Some(0), None);
+    w.heroes[0].fight.attacking = None;
+    steps(&mut w, 30);
+    assert_eq!(w.enemies[0].pos, V2::new(30.0, 30.0));
+    assert_eq!(w.enemies[0].fight.control, Some(ControlKind::Stun));
+    steps(&mut w, 100);
+    assert_eq!(w.enemies[0].fight.control, None);
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 30.0, 22.0);
+    w.alert(w.enemies[0].id, 0);
+    w.land(0, ability(&w, "nova"), None, None);
+    steps(&mut w, 30);
+    assert_eq!(w.enemies[0].pos, V2::new(30.0, 30.0));
+    let f = w.enemies[0].facing;
+    assert!(f.y < -0.9, "{f:?}");
+}
+
+#[test]
+fn a_sapped_enemy_neither_sees_nor_hears_until_it_wakes() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.land(0, ability(&w, "sap"), Some(0), None);
+    // Running loudly about in front of it.
+    let run_in_front = |w: &mut World, k: usize| {
+        let at = V2::new(35.0 + (k % 20) as f32 * 0.2, 30.0);
+        stand(w, 0, at, V2::new(1.0, 0.0), Gait::Run);
+        w.step();
+    };
+    for k in 0..300 {
+        run_in_front(&mut w, k);
+    }
+    assert!(w.marks_for(0).is_empty());
+    assert_eq!(w.enemies[0].pos, V2::new(30.0, 30.0));
+    for k in 0..700 {
+        run_in_front(&mut w, k);
+    }
+    assert!(!w.marks_for(0).is_empty());
+}
+
+#[test]
+fn bleeds_and_burns_tick_their_count_and_a_silent_one_is_not_heard() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    w.land(0, ability(&w, "garrote"), Some(0), None);
+    w.heroes[0].fight.attacking = None;
+    steps(&mut w, 18 * 30 + 5);
+    let ticks = damage_to(&w.drain_events(), foe(&w, 0).unwrap());
+    assert_eq!(ticks, vec![30.0; 6]);
+    assert_eq!(w.enemies[0].hp, 1000.0 - 180.0);
+    assert_eq!(w.hero(0).unwrap().noise, 0.0);
+    assert!(w.enemies[0].fight.auras.is_empty());
+}
+
+#[test]
+fn a_sheep_wanders_near_where_it_was_turned() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    w.land(0, ability(&w, "sheep"), Some(0), None);
+    let start = w.enemies[0].pos;
+    let mut furthest: f32 = 0.0;
+    for _ in 0..300 {
+        w.step();
+        furthest = furthest.max(w.enemies[0].pos.distance(start));
+    }
+    assert!(furthest > 0.5 && furthest <= 4.5, "{furthest}");
+    assert_eq!(w.enemies[0].fight.control, Some(ControlKind::Polymorph));
+    assert_eq!(w.enemies[0].fight.auras, vec![118]);
+}
+
+#[test]
+fn a_slowed_enemy_chases_slower() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    w.combat.enemies[0].slow = Some(Slowed {
+        by: 0.4,
+        left: 7.0,
+        spell: 116,
+    });
+    steps(&mut w, 10);
+    assert!(
+        (w.enemies[0].speed - 7.0 * 0.6).abs() < 0.05,
+        "{}",
+        w.enemies[0].speed
+    );
+    assert!(w.enemies[0].fight.slowed);
+    assert_eq!(w.enemies[0].fight.auras, vec![116]);
+}
+
+#[test]
+fn a_distracted_enemy_faces_the_spot() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.land(
+        0,
+        ability(&w, "distract"),
+        None,
+        Some(V3::new(30.0, 38.0, 0.0)),
+    );
+    steps(&mut w, 5);
+    let f = w.enemies[0].facing;
+    assert!(f.y > 0.9, "{f:?}");
+    assert_eq!(w.enemies[0].pos, V2::new(30.0, 30.0));
+}
+
+#[test]
+fn a_caster_keeps_its_distance_while_it_sees_its_hero() {
+    let mut w = world(&post("caster", 50.0, 30.0, 180.0));
+    join(&mut w, 0, "mage", 10.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, 150);
+    let d = w.enemies[0].pos.distance(V2::new(10.0, 30.0));
+    assert!((27.0..=29.0).contains(&d), "{d}");
+}
+
+#[test]
+fn a_dead_enemy_stays_where_it_fell() {
+    let patrol = r#"(place: "Road", kind: "brute", behaviour: Patrol(route: [(20.0, 20.0), (40.0, 20.0)])),"#;
+    let mut w = world(patrol);
+    join(&mut w, 0, "mage", 5.0, 50.0);
+    steps(&mut w, 30);
+    w.kill_enemy(0, Some(0));
+    let at = w.enemies[0].pos;
+    steps(&mut w, 60);
+    assert_eq!(w.enemies[0].pos, at);
+    assert_eq!(w.enemies[0].speed, 0.0);
+}
+
+#[test]
+fn a_corpse_with_a_hero_in_its_cone_stays_calm() {
+    // A brute facing the hero 3 yd away, who runs about loudly in front of it.
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "mage", 33.0, 30.0);
+    w.enemies[0].facing = V2::new(1.0, 0.0);
+    w.kill_enemy(0, None);
+    w.drain_events();
+    for k in 0..90 {
+        let at = V2::new(33.0 + (k % 4) as f32 * 0.2, 30.0);
+        stand(&mut w, 0, at, V2::new(-1.0, 0.0), Gait::Run);
+        w.step();
+    }
+    assert!(!w.senses.alerted(0), "the corpse re-alerted");
+    assert!(w.marks_for(0).is_empty());
+    assert_eq!(w.enemies[0].speed, 0.0);
+}
+
+#[test]
+fn a_shout_does_not_wake_a_corpse() {
+    let spawns = format!(
+        "{}{}",
+        post("brute", 30.0, 30.0, 0.0),
+        post("brute", 30.0, 36.0, 0.0)
+    );
+    let mut w = world(&spawns);
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    w.kill_enemy(1, None);
+    // The first is alerted by a blow and shouts at the next step; the second lies dead beside it.
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, 5);
+    assert!(w.senses.alerted(0));
+    assert!(!w.senses.alerted(1), "the corpse heard the shout");
+    assert_eq!(w.marks_for(0).len(), 1);
 }
