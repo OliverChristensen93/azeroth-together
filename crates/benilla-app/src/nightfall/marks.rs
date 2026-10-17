@@ -11,7 +11,7 @@ use nightfall_sim::Alert;
 
 use super::enemies::EnemyViews;
 use super::run::Sim;
-use super::{content, NightfallEntity};
+use super::NightfallEntity;
 use crate::target::Concealed;
 
 /// The glyph's size, UI pixels.
@@ -94,7 +94,8 @@ pub(super) fn draw(
         if concealed {
             continue;
         }
-        let head = tf.translation + Vec3::Y * mark_height(content().enemies[enemy.kind].scale);
+        let scale = sim.world.content().enemies[enemy.kind].scale;
+        let head = tf.translation + Vec3::Y * mark_height(scale);
         let Ok(at) = camera.world_to_viewport(&GlobalTransform::from(*cam_tf), head) else {
             continue;
         };
@@ -233,7 +234,7 @@ mod tests {
         assert!(world.get_entity(ids[&7]).is_err(), "no longer marked: despawned");
         let views = world.resource::<MarkViews>();
         assert_eq!(views.nodes.keys().copied().collect::<Vec<_>>(), vec![5]);
-        // With no camera it is hidden rather than left showing where it was.
+        // The enemy has no drawn body, so its node is hidden rather than left showing where it was.
         assert_eq!(world.get::<Visibility>(ids[&5]), Some(&Visibility::Hidden));
     }
 
