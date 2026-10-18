@@ -18,6 +18,7 @@ mod inventory;
 mod items;
 mod math;
 pub mod messages;
+mod profile;
 mod raid;
 mod senses;
 mod sight;
@@ -49,6 +50,10 @@ pub use items::{
     PlacedContainer, Table, TableEntry,
 };
 pub use math::{V2, V3};
+pub use profile::{
+    free_kit, inventory_of, saved_inventory, Profile, ProfileError, SavedInventory, SavedRecovery,
+    SavedStack, StashError, PROFILE_VERSION,
+};
 pub use raid::{
     burden, Act, ActPress, Carry, ContainerMark, ExitMark, ExitPlan, Fate, HeroOutcome, Holder,
     Loadout, LootView, OpenView, RaidRoll, Recovery,
