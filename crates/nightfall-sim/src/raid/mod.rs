@@ -162,6 +162,9 @@ pub struct HeroOutcome {
     pub kills: u32,
     /// What they keep: everything carried out, or what a death left them.
     pub carried: Inventory,
+    /// Kept things with no slot in `carried` (brought stacks a lost found bag held); the stash
+    /// takes them.
+    pub overflow: Vec<Stack>,
     /// What they took back from their remains, for the stash.
     pub recovered: Vec<Stack>,
     /// The body they left for their next raid.

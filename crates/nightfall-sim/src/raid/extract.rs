@@ -24,18 +24,6 @@ pub(crate) fn exit_at(content: &Content, roll: &RaidRoll, now: f32, pos: V2) -> 
         .map(|(i, _)| i)
 }
 
-/// `spill` (brought stacks a death left the hero but that no longer fit their backpack) filed
-/// with what `carried` keeps: into its backpack where there is room, and past its end where there
-/// is none, so nothing a hero kept is lost with a bag. The stash sorts such an inventory out with
-/// [`Inventory::sanitize`], which hands back what has no room.
-fn file_spill(carried: &mut Inventory, spill: Vec<Stack>, content: &Content) {
-    for s in spill {
-        if let Some(rest) = carried.add(s, content) {
-            carried.pack.push(Some(rest));
-        }
-    }
-}
-
 impl World {
     /// Every enemy killed since the last tally counts for the hero who killed it. Last in a step,
     /// so every kill of the step counts; [`World::drain_events`] tallies what is left and starts
@@ -115,7 +103,7 @@ impl World {
     /// `player` is out by exit `exit`: everything they carry is theirs to keep, and they leave
     /// the world.
     pub(super) fn extract(&mut self, player: PlayerId, exit: usize) {
-        if self.raid.over || self.hero(player).is_none() {
+        if self.raid.over || !self.hero(player).is_some_and(|h| h.fight.up()) {
             return;
         }
         let content = self.content().clone();
@@ -131,7 +119,7 @@ impl World {
                 .get(exit)
                 .map_or_else(String::new, |e| e.name.clone()),
         };
-        let o = self.outcome(player, fate, self.elapsed, carried, None);
+        let o = self.outcome(player, fate, self.elapsed, carried, Vec::new(), None);
         self.raid.outcomes.push(o);
         self.remove_hero(player);
     }
@@ -139,6 +127,9 @@ impl World {
     /// Every hero dead since the last step leaves their body where they fell (spec §8.2),
     /// holding what `death_loss` takes; friends can search it this raid.
     pub(crate) fn step_deaths(&mut self) {
+        if self.raid.mirror.is_some() {
+            return;
+        }
         let content = self.content().clone();
         let mode = content.rules.run.death_loss;
         let dead: Vec<(PlayerId, V2, f32)> = self
@@ -199,6 +190,8 @@ impl World {
         if !self.heroes.iter().all(|h| h.fight.life == Life::Dead) {
             return;
         }
+        // Every hero who has died is on the books before anyone is settled.
+        self.step_deaths();
         self.raid.over = true;
         let dead: Vec<PlayerId> = self.heroes.iter().map(|h| h.player).collect();
         for p in dead {
@@ -215,8 +208,7 @@ impl World {
             .take_pack(player)
             .unwrap_or_else(|| Inventory::new(&content));
         carried.clear_found();
-        let spill = self.raid.take_spilled(player);
-        file_spill(&mut carried, spill, &content);
+        let overflow = self.raid.take_spilled(player);
         // When they fell is when their raid ended, not when the rest of it did.
         let (body, fell) = self
             .raid
@@ -245,7 +237,7 @@ impl World {
         } else {
             None
         };
-        let o = self.outcome(player, Fate::Died, fell, carried, recovery);
+        let o = self.outcome(player, Fate::Died, fell, carried, overflow, recovery);
         self.raid.outcomes.push(o);
     }
 
@@ -256,6 +248,7 @@ impl World {
         fate: Fate,
         time: f32,
         carried: Inventory,
+        overflow: Vec<Stack>,
         recovery: Option<Recovery>,
     ) -> HeroOutcome {
         // A kill made earlier in this very step counts, though the step has not tallied yet.
@@ -275,6 +268,10 @@ impl World {
             time,
             kills: self.raid.kills_of(player),
             carried,
+            overflow: overflow
+                .into_iter()
+                .map(|s| Stack { found: false, ..s })
+                .collect(),
             recovered,
             recovery,
         }
@@ -308,6 +305,8 @@ impl World {
         let content = self.content().clone();
         self.raid.over = true;
         self.raid.had_heroes = true;
+        // A hero who died since the last step has left their body before anyone is settled.
+        self.step_deaths();
         // Kills since the last step still count.
         self.tally_kills();
         let heroes: Vec<(PlayerId, bool)> = self
@@ -327,8 +326,8 @@ impl World {
             // The missing lose what a death would; what was brought stays theirs, as in a death.
             let death = carried.split_for_death(content.rules.run.death_loss, &content);
             carried.clear_found();
-            file_spill(&mut carried, death.spill, &content);
-            let o = self.outcome(p, Fate::Missing, self.elapsed, carried, None);
+            let overflow = death.spill;
+            let o = self.outcome(p, Fate::Missing, self.elapsed, carried, overflow, None);
             self.raid.outcomes.push(o);
         }
     }

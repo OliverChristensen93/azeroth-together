@@ -2195,32 +2195,26 @@ fn a_brought_stack_a_found_bag_no_longer_holds_is_kept_by_the_dead_not_lost() {
     );
     let out = w.take_outcomes();
     assert_eq!(out[0].fate, Fate::Died);
-    let kept = out[0].carried.stacks();
+    let carried = &out[0].carried;
+    assert_eq!(carried.pack.len(), 4, "the backpack is its own size again");
+    assert_eq!(carried.stacks().len(), 4);
     assert_eq!(
-        kept.len(),
-        5,
-        "all five brought stacks are the dead hero's: {kept:?}"
+        out[0].overflow,
+        vec![Stack::new(item(&w, "gem"), 1)],
+        "the brought stack with no slot is kept apart"
     );
     for key in keys {
-        assert_eq!(out[0].carried.count_of(item(&w, key)), 1, "{key}");
+        let n = carried.count_of(item(&w, key));
+        let o: u32 = out[0]
+            .overflow
+            .iter()
+            .filter(|s| usize::from(s.item) == item(&w, key))
+            .map(|s| u32::from(s.count))
+            .sum();
+        assert_eq!(n + o, 1, "{key} is kept, in the pack or beside it");
     }
-    assert!(kept.iter().all(|(_, s)| !s.found));
+    assert!(carried.stacks().iter().all(|(_, s)| !s.found));
     assert_eq!(out[0].recovery, None);
-}
-
-/// Every stack of `key` in the world's packs and containers.
-fn held(w: &World, key: &str) -> u32 {
-    let i = item(w, key);
-    let packs: u32 = w.raid.packs.iter().map(|(_, inv)| inv.count_of(i)).sum();
-    let boxes: u32 = w
-        .raid
-        .containers
-        .iter()
-        .flat_map(|c| c.stacks.iter().flatten())
-        .filter(|s| usize::from(s.item) == i)
-        .map(|s| u32::from(s.count))
-        .sum();
-    packs + boxes
 }
 
 #[test]
@@ -2254,38 +2248,6 @@ fn a_friend_loots_a_fallen_heros_body() {
     assert_eq!(fallen.fate, Fate::Died);
     let left = &fallen.recovery.as_ref().unwrap().items;
     assert_eq!(left, &vec![Stack::new(item(&w, "knife"), 1)]);
-}
-
-#[test]
-fn nothing_is_made_or_lost_between_the_body_the_packs_and_the_outcomes() {
-    let mut w = world();
-    join(&mut w, 0, "rogue", 20.0, 20.0);
-    join(&mut w, 1, "rogue", 21.0, 20.0);
-    stand(&mut w, 0, 20.0, 20.0);
-    stand(&mut w, 1, 21.0, 20.0);
-    w.step();
-    w.give_loadout(
-        0,
-        &loadout(
-            &w,
-            &[("gem", 6), ("rock", 2)],
-            &[("knife", EquipSlot::MainHand)],
-            &[("bread", 1)],
-        ),
-    );
-    w.give_loadout(1, &loadout(&w, &[("bread", 2)], &[], &[]));
-    let keys = ["gem", "rock", "knife", "bread"];
-    let before: Vec<u32> = keys.iter().map(|k| held(&w, k)).collect();
-    die(&mut w, 0);
-    let body = body_of(&w, 0).id;
-    act(&mut w, 1, 1, Act::Open(body));
-    steps(&mut w, (1.7 / DT) as usize);
-    act(&mut w, 1, 2, Act::TakeAll);
-    w.step();
-    act(&mut w, 1, 3, Act::Drop(Place::Pack(0)));
-    w.step();
-    let after: Vec<u32> = keys.iter().map(|k| held(&w, k)).collect();
-    assert_eq!(before, after);
 }
 
 #[test]
@@ -2517,4 +2479,160 @@ fn a_kill_in_the_step_a_hero_extracts_counts() {
     w.step();
     assert!(w.hero(0).is_none());
     assert_eq!(w.take_outcomes()[0].kills, 1);
+}
+
+/// How a conservation scenario ends the hero's raid.
+#[derive(Clone, Copy, Debug)]
+enum End {
+    Extract,
+    Die,
+    /// The raid is abandoned while they are up and about.
+    Missing,
+}
+
+/// Every unit of `key` the raid's settled outcomes, bodies and piles account for.
+fn accounted(w: &World, out: &[HeroOutcome], key: &str) -> u32 {
+    let i = item(w, key);
+    let of = |s: &Stack| {
+        if usize::from(s.item) == i {
+            u32::from(s.count)
+        } else {
+            0
+        }
+    };
+    let mut total = 0;
+    for o in out {
+        total += o.carried.count_of(i);
+        total += o.overflow.iter().map(of).sum::<u32>();
+        total += o.recovered.iter().map(of).sum::<u32>();
+        // The recovery is a copy of the body's remains: the body stands for it, once.
+        if let Some(r) = &o.recovery {
+            total += r.items.iter().map(of).sum::<u32>();
+        }
+    }
+    for c in &w.raid.containers {
+        let remains_counted = matches!(c.holder, Holder::Hero(p)
+            if out.iter().any(|o| o.player == p && o.recovery.is_some()));
+        if matches!(c.holder, Holder::Pile)
+            || (matches!(c.holder, Holder::Hero(_)) && !remains_counted)
+        {
+            total += c.stacks.iter().flatten().map(of).sum::<u32>();
+        }
+    }
+    total
+}
+
+#[test]
+fn nothing_is_made_or_lost_by_the_end_of_a_raid_in_any_death_mode() {
+    for mode in ["everything", "everything_one_recovery", "found_only"] {
+        for end in [End::Extract, End::Die, End::Missing] {
+            let mut w = world_with(&format!("death_loss: {mode}"), "");
+            join(&mut w, 0, "rogue", 11.0, 5.0);
+            // Brought: 3 gems, 2 bread, a worn knife, a potion in the safe slot. Found: 6 gems.
+            w.give_loadout(
+                0,
+                &loadout(
+                    &w,
+                    &[("gem", 3), ("bread", 2)],
+                    &[("knife", EquipSlot::MainHand)],
+                    &[("potion", 1)],
+                ),
+            );
+            let c = chest(&w);
+            act(&mut w, 0, 1, Act::Open(c));
+            steps(&mut w, (2.2 / DT) as usize);
+            act(&mut w, 0, 2, Act::Take(0));
+            w.step();
+            let want = [("gem", 9), ("bread", 2), ("knife", 1), ("potion", 1)];
+            // The missing lose what a death would, with no body to hold it: it is gone by design.
+            let mut gone = [0u32; 4];
+            match end {
+                End::Extract => {
+                    stand(&mut w, 0, 50.0, 49.0);
+                    steps(&mut w, (10.3 / DT) as usize);
+                }
+                End::Die => die(&mut w, 0),
+                End::Missing => {
+                    let content = w.content().clone();
+                    let mut probe = w.pack(0).unwrap().clone();
+                    let death = probe.split_for_death(content.rules.run.death_loss, &content);
+                    for (g, (key, _)) in gone.iter_mut().zip(want) {
+                        *g = death
+                            .lost
+                            .iter()
+                            .filter(|s| usize::from(s.item) == item(&w, key))
+                            .map(|s| u32::from(s.count))
+                            .sum();
+                    }
+                    w.abandon();
+                }
+            }
+            assert!(w.is_over(), "{mode} {end:?}");
+            let out = w.take_outcomes();
+            assert_eq!(out.len(), 1, "{mode} {end:?}");
+            for ((key, n), g) in want.iter().zip(gone) {
+                assert_eq!(
+                    accounted(&w, &out, key),
+                    n - g,
+                    "{key} by {mode}, ended {end:?}"
+                );
+            }
+            if matches!(end, End::Missing) && mode != "found_only" {
+                assert!(
+                    gone.iter().any(|g| *g > 0),
+                    "{mode}: the missing lost things"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn two_heroes_finishing_in_the_same_step_are_both_out() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    join(&mut w, 1, "rogue", 21.0, 20.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 1)], &[], &[]));
+    w.give_loadout(1, &loadout(&w, &[("gem", 2)], &[], &[]));
+    stand(&mut w, 0, 50.0, 49.0);
+    stand(&mut w, 1, 51.0, 49.0);
+    steps(&mut w, (10.3 / DT) as usize);
+    assert!(w.heroes.is_empty());
+    assert!(w.is_over());
+    let out = w.take_outcomes();
+    assert_eq!(out.len(), 2);
+    assert!(out.iter().all(|o| matches!(o.fate, Fate::Extracted { .. })));
+    let a = out.iter().find(|o| o.player == 0).unwrap();
+    let b = out.iter().find(|o| o.player == 1).unwrap();
+    assert_eq!(a.carried.count_of(item(&w, "bread")), 1);
+    assert_eq!(b.carried.count_of(item(&w, "gem")), 2);
+    assert_eq!(a.time, b.time);
+}
+
+#[test]
+fn a_downed_hero_cannot_be_extracted() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.heroes[0].fight.life = Life::Downed {
+        left: 40.0,
+        revive: 0.0,
+    };
+    w.extract(0, 0);
+    assert!(w.hero(0).is_some());
+    assert!(w.take_outcomes().is_empty());
+}
+
+#[test]
+fn a_death_not_yet_noticed_is_settled_with_the_loss_taken() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    w.give_loadout(0, &loadout(&w, &[("gem", 3)], &[], &[]));
+    // Dead, but no step has run to leave the body: abandoning must not settle them whole.
+    w.heroes[0].fight.life = Life::Dead;
+    w.abandon();
+    let out = w.take_outcomes();
+    assert_eq!(out[0].fate, Fate::Died);
+    assert_eq!(out[0].carried.count_of(item(&w, "gem")), 0);
+    assert_eq!(body_of(&w, 0).stacks.iter().flatten().count(), 1);
+    assert_eq!(out[0].recovery.as_ref().unwrap().items.len(), 1);
 }
