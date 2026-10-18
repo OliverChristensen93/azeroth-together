@@ -331,30 +331,85 @@ fn wearing_and_dropping_by_act() {
     assert!(pile.at.distance(V2::new(5.0, 5.0)) < 1e-4);
 }
 
-#[test]
-fn gear_health_comes_whole_only_to_the_whole() {
+const HELM_ON: Act = Act::Move {
+    from: Place::Pack(0),
+    to: Place::Equip(EquipSlot::Head),
+};
+const HELM_OFF: Act = Act::Move {
+    from: Place::Equip(EquipSlot::Head),
+    to: Place::Pack(0),
+};
+
+/// A rogue (1000 health) with a helm (+100) in the backpack, at `hp`.
+fn with_helm(hp: f32) -> World {
     let mut w = world();
     join(&mut w, 0, "rogue", 5.0, 5.0);
     w.give_loadout(0, &loadout(&w, &[("helm", 1)], &[], &[]));
-    let wear = Act::Move {
-        from: Place::Pack(0),
-        to: Place::Equip(EquipSlot::Head),
-    };
-    let off = Act::Move {
-        from: Place::Equip(EquipSlot::Head),
-        to: Place::Pack(0),
-    };
-    act(&mut w, 0, 1, wear);
+    w.heroes[0].hp = hp;
+    w
+}
+
+fn health(w: &World) -> (f32, f32) {
+    (w.heroes[0].max_hp, w.heroes[0].hp)
+}
+
+#[test]
+fn swapping_gear_heals_nobody() {
+    // A hero at 1050/1100 who takes the +100 helm off and puts it back gains nothing.
+    let mut w = with_helm(1000.0);
+    act(&mut w, 0, 1, HELM_ON);
     w.step();
-    assert_eq!((w.heroes[0].max_hp, w.heroes[0].hp), (1100.0, 1100.0));
-    act(&mut w, 0, 2, off);
+    assert_eq!(health(&w), (1100.0, 1100.0));
+    w.heroes[0].hp = 1050.0;
+    act(&mut w, 0, 2, HELM_OFF);
     w.step();
-    assert_eq!((w.heroes[0].max_hp, w.heroes[0].hp), (1000.0, 1000.0));
-    // Wearing it hurt does not heal: no health from taking a helm off and on.
+    assert_eq!(health(&w), (1000.0, 950.0));
+    act(&mut w, 0, 3, HELM_ON);
+    w.step();
+    assert_eq!(health(&w), (1100.0, 1050.0));
+}
+
+#[test]
+fn the_missing_health_stays_the_same_when_gear_changes_the_most() {
+    let mut w = with_helm(1000.0);
+    act(&mut w, 0, 1, HELM_ON);
+    w.step();
     w.heroes[0].hp = 600.0;
-    act(&mut w, 0, 3, wear);
+    act(&mut w, 0, 2, HELM_OFF);
     w.step();
-    assert_eq!((w.heroes[0].max_hp, w.heroes[0].hp), (1100.0, 600.0));
+    assert_eq!(health(&w), (1000.0, 500.0));
+    act(&mut w, 0, 3, HELM_ON);
+    w.step();
+    assert_eq!(health(&w), (1100.0, 600.0));
+}
+
+#[test]
+fn taking_gear_off_never_downs_the_living_but_the_downed_are_unchanged() {
+    let mut w = with_helm(1000.0);
+    act(&mut w, 0, 1, HELM_ON);
+    w.step();
+    w.heroes[0].hp = 50.0;
+    act(&mut w, 0, 2, HELM_OFF);
+    w.step();
+    assert_eq!(health(&w), (1000.0, 1.0));
+    assert!(w.heroes[0].fight.up());
+    // A downed hero's health and state stay as they are through a recount of their gear.
+    let mut w = with_helm(1000.0);
+    act(&mut w, 0, 1, HELM_ON);
+    w.step();
+    w.heroes[0].hp = 0.0;
+    w.heroes[0].fight.life = Life::Downed {
+        left: 40.0,
+        revive: 0.0,
+    };
+    let content = w.content().clone();
+    w.raid.pack_mut(0, &content).equip[EquipSlot::Head.index()] = None;
+    w.refresh_carry(0);
+    assert_eq!(health(&w), (1000.0, 0.0));
+    assert!(matches!(w.heroes[0].fight.life, Life::Downed { .. }));
+    w.heroes[0].fight.life = Life::Dead;
+    w.refresh_carry(0);
+    assert_eq!(health(&w), (1000.0, 0.0));
 }
 
 #[test]

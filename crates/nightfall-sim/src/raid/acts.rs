@@ -199,8 +199,10 @@ impl World {
     }
 
     /// `player`'s carry after a change: the weight, what they wear, their lantern (out once it
-    /// left them), the drinks they carry, and their health with what they wear. More health from
-    /// gear arrives whole only to a hero at full health, so taking gear off and on heals nobody.
+    /// left them), the drinks they carry, and their health with what they wear. A change in the
+    /// most health moves their health by the same amount (as WoW does), so the health they miss
+    /// stays the same and swapping gear heals nobody; the living are held at 1 at the least, so
+    /// taking gear off never downs anyone. The downed and dead keep their health.
     pub(crate) fn refresh_carry(&mut self, player: PlayerId) {
         let content = self.content().clone();
         let Some(hi) = self.hero_slot(player) else {
@@ -239,13 +241,17 @@ impl World {
         h.fight.drinks = drinks.min(u32::from(u8::MAX)) as u8;
         // Never below 1, whatever the gear says, so a hero is never born dead by it.
         let max = (content.classes[h.class].base_hp + bonus.health).max(1.0);
-        if (max - h.max_hp).abs() > f32::EPSILON {
-            let whole = h.hp >= h.max_hp;
+        let change = max - h.max_hp;
+        if change.abs() > f32::EPSILON {
             h.max_hp = max;
-            if whole && h.fight.up() {
-                h.hp = max;
+            if h.fight.up() {
+                // WoW's own rule: health follows the maximum by the same amount, so the health
+                // missing stays the same and taking gear off and on gains nothing. Taking it off
+                // never leaves a living hero below 1.
+                h.hp = (h.hp + change).max(h.hp.min(1.0)).min(max);
+            } else {
+                h.hp = h.hp.min(max);
             }
-            h.hp = h.hp.min(max);
         }
     }
 }
