@@ -117,25 +117,77 @@ pub(super) fn releases_hold(channel: bool, why: Stop) -> bool {
     channel || why != Stop::Finished
 }
 
-/// The `Damage` a melee `Swing` at `events[swing]` dealt: the next damage to its victim by its
-/// attacker, before the same pair swings again (the sim pushes a blow's damage right after its
-/// swing). `None` for any other event, or a swing that did none, which WoW's portrait reads as a
-/// miss.
-pub(super) fn swing_blow(events: &[Event], swing: usize) -> Option<usize> {
-    let Some(Event::Swing { by, to }) = events.get(swing) else {
-        return None;
-    };
-    events[swing + 1..]
-        .iter()
-        .take_while(|e| !matches!(e, Event::Swing { by: b, to: t } if b == by && t == to))
-        .position(|e| matches!(e, Event::Damage { to: t, by: Some(b), .. } if t == to && b == by))
-        .map(|p| swing + 1 + p)
+/// Which damages in a frame's events are melee blows, and which damage each swing dealt, found in
+/// one pass ([`pair_blows`]).
+pub(super) struct Blows {
+    /// At a swing's index, the index of the `Damage` it dealt; `None` elsewhere.
+    dealt: Vec<Option<usize>>,
+    /// Whether the event at an index is some swing's damage.
+    blow: Vec<bool>,
 }
 
-/// Whether `events[damage]` is the damage of a melee blow (some swing's [`swing_blow`]), not a
-/// spell's.
+impl Blows {
+    /// The `Damage` a melee `Swing` at `events[swing]` dealt: the next damage to its victim by its
+    /// attacker, before the same pair swings again (the sim pushes a blow's damage right after its
+    /// swing). `None` for any other event, or a swing that did none, which WoW's portrait reads as
+    /// a miss.
+    pub(super) fn swing_blow(&self, swing: usize) -> Option<usize> {
+        self.dealt.get(swing).copied().flatten()
+    }
+
+    /// Whether `events[damage]` is the damage of a melee blow (some swing's), not a spell's.
+    pub(super) fn is_blow(&self, damage: usize) -> bool {
+        self.blow.get(damage).copied().unwrap_or(false)
+    }
+}
+
+/// A unit as a map key: [`UnitRef`] is not hashable.
+fn unit_key(unit: UnitRef) -> (bool, u32) {
+    match unit {
+        UnitRef::Hero(p) => (false, u32::from(p)),
+        UnitRef::Enemy(id) => (true, id),
+    }
+}
+
+/// Pairs the frame's swings with their damage in one pass over `events`: each (attacker, victim)
+/// remembers its last swing still without damage, the next damage of that pair is its blow, and a
+/// swing by the same pair before any damage did none. (A scan of the events per damage would be
+/// quadratic: a stalled client has thousands pending.)
+pub(super) fn pair_blows(events: &[Event]) -> Blows {
+    let mut blows = Blows {
+        dealt: vec![None; events.len()],
+        blow: vec![false; events.len()],
+    };
+    let mut waiting: HashMap<((bool, u32), (bool, u32)), usize> = HashMap::new();
+    for (i, event) in events.iter().enumerate() {
+        match event {
+            Event::Swing { by, to } => {
+                waiting.insert((unit_key(*by), unit_key(*to)), i);
+            }
+            Event::Damage {
+                to, by: Some(by), ..
+            } => {
+                if let Some(swing) = waiting.remove(&(unit_key(*by), unit_key(*to))) {
+                    blows.dealt[swing] = Some(i);
+                    blows.blow[i] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    blows
+}
+
+/// [`Blows::swing_blow`] for tests that hold only the events.
+#[cfg(test)]
+pub(super) fn swing_blow(events: &[Event], swing: usize) -> Option<usize> {
+    pair_blows(events).swing_blow(swing)
+}
+
+/// [`Blows::is_blow`] for tests that hold only the events.
+#[cfg(test)]
 pub(super) fn is_blow(events: &[Event], damage: usize) -> bool {
-    (0..damage).any(|s| swing_blow(events, s) == Some(damage))
+    pair_blows(events).is_blow(damage)
 }
 
 /// The amount of a `Damage` event; 0 for any other.
@@ -219,6 +271,7 @@ pub(super) fn show_events(
         .world
         .hero(sim.me)
         .map_or(MANA, |h| content.classes[h.class].power);
+    let blows = pair_blows(&sim.events);
     for (i, event) in sim.events.iter().enumerate() {
         match event {
             Event::CastStart {
@@ -309,7 +362,7 @@ pub(super) fn show_events(
                 // A hero's own melee is white in WoW, their spells yellow.
                 let color = if *to == me {
                     COLOR_HURT
-                } else if matches!(by, Some(UnitRef::Hero(_))) && !is_blow(&sim.events, i) {
+                } else if matches!(by, Some(UnitRef::Hero(_))) && !blows.is_blow(i) {
                     COLOR_SPELL
                 } else {
                     COLOR_HIT
@@ -318,8 +371,9 @@ pub(super) fn show_events(
             }
             Event::Swing { by, to } => {
                 if let (Some(a), Some(v)) = (body(*by), body(*to)) {
-                    let dealt =
-                        swing_blow(&sim.events, i).map_or(0.0, |d| damage_of(&sim.events[d]));
+                    let dealt = blows
+                        .swing_blow(i)
+                        .map_or(0.0, |d| damage_of(&sim.events[d]));
                     fx.swing(a, v, dealt);
                 }
             }
@@ -922,6 +976,26 @@ mod tests {
         assert!(!is_blow(&events, 0));
         assert!(is_blow(&events, 2) && is_blow(&events, 4));
         assert_eq!(damage_of(&events[2]), 33.0);
+    }
+
+    #[test]
+    fn swings_of_several_pairs_in_one_frame_each_take_their_own_blow() {
+        let (hero, a, b) = (UnitRef::Hero(0), UnitRef::Enemy(4), UnitRef::Enemy(5));
+        let events = [
+            Event::Swing { by: a, to: hero },
+            Event::Swing { by: b, to: hero },
+            damage(hero, Some(b), 7.0),
+            damage(hero, Some(a), 9.0),
+            // A spell of a third party's, and a second blow of b's with no swing before it.
+            damage(hero, Some(UnitRef::Enemy(6)), 3.0),
+            damage(hero, Some(b), 5.0),
+        ];
+        let blows = pair_blows(&events);
+        assert_eq!(blows.swing_blow(0), Some(3));
+        assert_eq!(blows.swing_blow(1), Some(2));
+        assert!(blows.is_blow(2) && blows.is_blow(3));
+        assert!(!blows.is_blow(4) && !blows.is_blow(5));
+        assert!(!blows.is_blow(99) && blows.swing_blow(99).is_none());
     }
 
     #[test]
