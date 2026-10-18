@@ -100,13 +100,15 @@ pub(super) fn draw(
     }
 }
 
-/// The exits' list under the run bar, and the count in the middle of the screen.
+/// The exits' list under the run bar ([`lines`] sets its text).
 #[derive(Component)]
 pub(super) struct ExitList;
 
+/// The count in the middle of the screen while we stand in a ring ([`lines`] sets its text).
 #[derive(Component)]
 pub(super) struct ExtractLine;
 
+/// Spawns the two lines, hidden: the exits' list under the minimap and the extract count.
 pub(super) fn spawn_lines(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     commands.spawn((
@@ -195,6 +197,10 @@ pub(super) fn remains_marker(
     mut views: ResMut<ExitViews>,
 ) {
     let now = real.elapsed_secs();
+    // The timer first: the loot view is worked out only on the frames the marker is due.
+    if views.marked.is_some_and(|t| now - t < MARK_EVERY) {
+        return;
+    }
     let loot = sim.world.loot_view(Some(sim.me));
     let Some(m) = loot
         .marks
@@ -203,9 +209,6 @@ pub(super) fn remains_marker(
     else {
         return;
     };
-    if views.marked.is_some_and(|t| now - t < MARK_EVERY) {
-        return;
-    }
     views.marked = Some(now);
     let poi = benilla_protocol::messages::GossipPoi {
         flags: 99,

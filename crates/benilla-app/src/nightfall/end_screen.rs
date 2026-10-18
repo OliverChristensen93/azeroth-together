@@ -62,18 +62,23 @@ pub(super) fn carried_line(o: &HeroOutcome, content: &Content) -> String {
     line
 }
 
+/// The dimmed, full-screen layer the end screen is drawn on; hidden while the raid is played.
 #[derive(Component)]
 pub(super) struct EndRoot;
 
+/// The panel in the middle of [`EndRoot`], whose lines [`show`] builds again when the screen changes.
 #[derive(Component)]
 pub(super) struct EndBody;
 
+/// The Continue button (alone or hosting): back to the menu.
 #[derive(Component)]
 pub(super) struct EndContinue;
 
+/// The WoW font, kept so [`show`] can set the lines without asking the asset server each time.
 #[derive(Resource)]
 pub(super) struct EndFont(Handle<Font>);
 
+/// Builds the end screen's layers once, hidden: [`EndRoot`] with an empty [`EndBody`] in it.
 pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     commands
@@ -114,7 +119,9 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Screen {
     None,
-    Waiting(Vec<String>),
+    /// The names still to come out or fall, and whether we are joined (then Abandon Raid leaves
+    /// the session, which the line says).
+    Waiting(Vec<String>, bool),
     Over(Vec<HeroOutcome>, bool),
 }
 
@@ -134,6 +141,7 @@ fn screen_of(sim: Option<&Sim>, joined: bool) -> Screen {
                 .filter(|h| h.fight.life != Life::Dead)
                 .map(|h| h.name.clone())
                 .collect(),
+            joined,
         ),
         None => Screen::None,
     }
@@ -174,7 +182,7 @@ pub(super) fn show(
     commands.entity(body).despawn_related::<Children>();
     commands.entity(body).with_children(|b| match &screen {
         Screen::None => {}
-        Screen::Waiting(names) => {
+        Screen::Waiting(names, joined) => {
             b.spawn(text(font, "You got out.", 22.0, GOLD));
             b.spawn(text(
                 font,
@@ -182,6 +190,14 @@ pub(super) fn show(
                 13.0,
                 GREY,
             ));
+            if *joined {
+                b.spawn(text(
+                    font,
+                    "Abandon Raid now leaves the session.",
+                    11.0,
+                    GREY,
+                ));
+            }
         }
         Screen::Over(all, joined) => {
             b.spawn(text(font, "The raid is over", 22.0, GOLD));
@@ -213,9 +229,11 @@ pub(super) fn continue_click(
 
 /// Out of the raid (extracted, the others still in): WoW's controller lets go of the body that
 /// is no more. Before the first state a joined mirror has no heroes at all, which is not "out".
+/// Once the raid is over the controller stays off too, so no death popup comes up over the end
+/// screen.
 pub(super) fn out_of_raid(sim: Res<Sim>, mut player: ResMut<crate::player::Player>) {
     let out = sim.world.hero(sim.me).is_none() && !sim.world.heroes.is_empty();
-    if out && player.active {
+    if (out || sim.over.is_some()) && player.active {
         player.active = false;
     }
 }
@@ -223,7 +241,56 @@ pub(super) fn out_of_raid(sim: Res<Sim>, mut player: ResMut<crate::player::Playe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nightfall_sim::{Inventory, Stack};
+    use nightfall_sim::{Inventory, RaidRoll, Stack, World};
+
+    /// A hosted raid of three heroes, players 0 (ours), 1 and 2.
+    fn raid_of_three() -> Sim {
+        let content = super::super::shipped_content();
+        let mut world = World::new(content.clone());
+        world
+            .begin_raid(RaidRoll::standard(&content, 1))
+            .expect("the standard roll fits the map");
+        world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+        world.add_hero(1, "mage", "Friend", 1, 0).unwrap();
+        world.add_hero(2, "mage", "Fallen", 1, 0).unwrap();
+        Sim::for_test(world)
+    }
+
+    #[test]
+    fn no_heroes_is_no_screen_not_waiting() {
+        let content = super::super::shipped_content();
+        let sim = Sim::for_test(World::new(content));
+        assert_eq!(screen_of(Some(&sim), false), Screen::None);
+        assert_eq!(screen_of(None, false), Screen::None);
+    }
+
+    #[test]
+    fn out_with_others_still_up_waits_for_the_living() {
+        let mut sim = raid_of_three();
+        assert_eq!(screen_of(Some(&sim), false), Screen::None);
+        // Player 2 has fallen, we (0) have walked out: only 1 is waited for.
+        sim.world.heroes[2].fight.life = Life::Dead;
+        sim.world.heroes.retain(|h| h.player != 0);
+        assert_eq!(
+            screen_of(Some(&sim), false),
+            Screen::Waiting(vec!["Friend".to_string()], false)
+        );
+        // A joined player is told that Abandon leaves the session.
+        assert_eq!(
+            screen_of(Some(&sim), true),
+            Screen::Waiting(vec!["Friend".to_string()], true)
+        );
+    }
+
+    #[test]
+    fn a_finished_raid_shows_every_outcome() {
+        let mut sim = raid_of_three();
+        sim.over = Some(vec![outcome(Fate::Missing, 0)]);
+        assert_eq!(
+            screen_of(Some(&sim), false),
+            Screen::Over(vec![outcome(Fate::Missing, 0)], false)
+        );
+    }
 
     fn outcome(fate: Fate, kills: u32) -> HeroOutcome {
         HeroOutcome {

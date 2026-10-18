@@ -56,6 +56,17 @@ fn every_exit_can_be_walked_to_from_every_entry() {
         props: &[],
     };
     let baked = load_or_bake(&req, Some(&cache), &|_| {}).expect("the bake");
+    // A map missing files, or one that could not be cached, would make the paths below mean less.
+    assert!(
+        baked.failures.is_empty(),
+        "the bake could not read: {:#?}",
+        baked.failures
+    );
+    assert!(
+        baked.cache_error.is_none(),
+        "the bake could not be cached: {:?}",
+        baked.cache_error
+    );
     eprintln!(
         "the map came {} ({} columns hold more than terrain)",
         if baked.from_cache {
