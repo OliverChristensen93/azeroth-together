@@ -51,8 +51,8 @@ pub use items::{
 };
 pub use math::{V2, V3};
 pub use profile::{
-    free_kit, inventory_of, saved_inventory, Profile, ProfileError, SavedInventory, SavedRecovery,
-    SavedStack, StashError, PROFILE_VERSION,
+    free_kit, inventory_of, saved_inventory, Profile, ProfileError, SavedInventory, SavedRaid,
+    SavedRecovery, SavedStack, StashError, PROFILE_VERSION,
 };
 pub use raid::{
     burden, Act, ActPress, Carry, ContainerMark, ExitMark, ExitPlan, Fate, HeroOutcome, Holder,

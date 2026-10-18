@@ -39,6 +39,7 @@ pub struct SavedInventory {
 }
 
 impl SavedInventory {
+    /// Whether nothing at all is worn, carried or kept.
     pub fn is_empty(&self) -> bool {
         self.equip.is_empty()
             && self.bags.is_empty()
@@ -67,6 +68,15 @@ pub struct SavedRecovery {
     pub items: Vec<SavedStack>,
 }
 
+/// The raid under way: where it is and what it was brought.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedRaid {
+    /// The map's key, so settling it touches only that map's body.
+    pub map: String,
+    pub brought: SavedInventory,
+}
+
 /// A player's things between raids.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -82,8 +92,9 @@ pub struct Profile {
     pub loadout: SavedInventory,
     /// What the raid under way brought: present from its start to its end, so a raid that never
     /// ends (a crash, a lost connection) is settled as missing, never kept twice.
-    pub in_raid: Option<SavedInventory>,
-    pub recovery: Option<SavedRecovery>,
+    pub in_raid: Option<SavedRaid>,
+    /// Bodies waiting for their next raid, at most one for each map (spec §8.2).
+    pub recovery: Vec<SavedRecovery>,
     pub raids: u32,
     pub extracted: u32,
 }
@@ -97,7 +108,7 @@ impl Default for Profile {
             stash: Vec::new(),
             loadout: SavedInventory::default(),
             in_raid: None,
-            recovery: None,
+            recovery: Vec::new(),
             raids: 0,
             extracted: 0,
         }
@@ -128,13 +139,21 @@ impl fmt::Display for ProfileError {
 /// Why a stash move was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StashError {
+    /// The player's things are away in a raid.
     InRaid,
+    /// No stack at that index or place.
     NoSuchSlot,
+    /// The content does not know the item (any more).
     Unknown,
+    /// The stash has no room for it.
     StashFull,
+    /// The loadout has no room for it.
     LoadoutFull,
+    /// It does not go in that slot.
     WrongSlot,
+    /// The bag still holds things that would have nowhere to go.
     BagInUse,
+    /// Its value is nothing, so it cannot be sold.
     Worthless,
 }
 
@@ -154,6 +173,13 @@ impl StashError {
     }
 }
 
+/// Whether a body has a place a client can put it: its position is a number.
+fn placed(r: &SavedRecovery) -> bool {
+    r.at.0.is_finite() && r.at.1.is_finite() && r.at.2.is_finite()
+}
+
+/// `s` by key; `None` for a stack naming an item index the content does not have, which the
+/// sim never makes.
 fn saved(s: &Stack, content: &Content) -> Option<SavedStack> {
     Some(SavedStack {
         item: content.items.get(usize::from(s.item))?.key.clone(),
@@ -297,21 +323,32 @@ impl Profile {
         content.class(&self.class)
     }
 
+    /// What the next raid brings, as the content resolves it: the loadout, or the class's free
+    /// kit when nothing of it is left (empty, or all of it unknown to the content), spec §8.3.
+    /// What the content has no room for or does not know comes back to be stashed.
+    fn next_kit(&self, class: usize, content: &Content) -> (Inventory, Vec<SavedStack>) {
+        let (inv, aside) = inventory_of(&self.loadout, content);
+        if inv.is_empty() {
+            (free_kit(class, content), aside)
+        } else {
+            (inv, aside)
+        }
+    }
+
     /// What a hero of `class` brings into a raid now: the raid under way's, else the loadout,
     /// else the class's free kit when the loadout is empty (spec §8.3); and the body from their
     /// last raid on this map. A body whose place is not a number (a hand-edited file) is not
     /// offered, so no client sends it round and round.
     pub fn raid_loadout(&self, class: usize, content: &Content) -> Loadout {
         let inventory = match &self.in_raid {
-            Some(s) => inventory_of(s, content).0,
-            None if self.loadout.is_empty() => free_kit(class, content),
-            None => inventory_of(&self.loadout, content).0,
+            Some(raid) => inventory_of(&raid.brought, content).0,
+            None => self.next_kit(class, content).0,
         };
         let recovery = self
             .recovery
-            .as_ref()
-            .filter(|r| r.map == content.map.key)
-            .filter(|r| r.at.0.is_finite() && r.at.1.is_finite() && r.at.2.is_finite())
+            .iter()
+            .find(|r| r.map == content.map.key)
+            .filter(|r| placed(r))
             .map(|r| Recovery {
                 map: r.map.clone(),
                 at: V3::new(r.at.0, r.at.1, r.at.2),
@@ -333,45 +370,44 @@ impl Profile {
         if self.in_raid.is_some() {
             return;
         }
-        let inv = if self.loadout.is_empty() {
-            free_kit(class, content)
-        } else {
-            let (inv, aside) = inventory_of(&self.loadout, content);
-            for s in aside {
-                self.stash_add(s, content);
-            }
-            inv
-        };
-        self.in_raid = Some(saved_inventory(&inv, content));
+        let (inv, aside) = self.next_kit(class, content);
+        for s in aside {
+            self.stash_add(s, content);
+        }
+        self.in_raid = Some(SavedRaid {
+            map: content.map.key.clone(),
+            brought: saved_inventory(&inv, content),
+        });
         self.loadout = SavedInventory::default();
         self.raids += 1;
     }
 
     /// The raid ended for this player: what came out is the loadout again, what they recovered
     /// and what a death left with no room goes to the stash, and a body left behind waits for the
-    /// next raid on the map. A body from before on this map had its one chance and is gone.
+    /// next raid on its map, replacing that map's older one. The body of the raid's own map had
+    /// its one chance and is gone; the bodies of other maps stay.
     ///
     /// Only a raid under way is settled: an outcome that comes again, or with no raid begun, does
     /// nothing and gives `false`, so a repeat is never a second haul. Whether it was settled.
     pub fn settle(&mut self, o: &HeroOutcome, content: &Content) -> bool {
-        if self.in_raid.take().is_none() {
+        let Some(raid) = self.in_raid.take() else {
             return false;
-        }
+        };
         self.loadout = saved_inventory(&o.carried, content);
         for s in o.recovered.iter().chain(&o.overflow) {
             if let Some(st) = saved(s, content) {
                 self.stash_add(st, content);
             }
         }
-        let older = self.take_body_here(content);
-        self.recovery = match &o.recovery {
-            Some(r) => Some(SavedRecovery {
+        self.use_up_body(&raid.map, content);
+        if let Some(r) = &o.recovery {
+            self.use_up_body(&r.map, content);
+            self.recovery.push(SavedRecovery {
                 map: r.map.clone(),
                 at: (r.at.x, r.at.y, r.at.z),
                 items: r.items.iter().filter_map(|s| saved(s, content)).collect(),
-            }),
-            None => older,
-        };
+            });
+        }
         if matches!(o.fate, Fate::Extracted { .. }) {
             self.extracted += 1;
         }
@@ -379,14 +415,17 @@ impl Profile {
     }
 
     /// A raid that never told this player its end (the game closed, the host went): settled as a
-    /// death with no body, so `death_loss` takes what it would and no recovery is left. What the
-    /// mode lets them keep but no longer has room for goes to the stash. Whether there was a
-    /// raid to settle.
+    /// death with no body, so `death_loss` takes what it would and the raid's map has no body
+    /// left. Whether there was a raid to settle.
+    ///
+    /// What the death rules would let them keep but the content leaves no room for, or no longer
+    /// knows, goes to the stash instead of through the rules: that can only happen after a
+    /// content change.
     pub fn settle_missing(&mut self, content: &Content) -> bool {
-        let Some(brought) = self.in_raid.take() else {
+        let Some(raid) = self.in_raid.take() else {
             return false;
         };
-        let (mut inv, aside) = inventory_of(&brought, content);
+        let (mut inv, aside) = inventory_of(&raid.brought, content);
         for s in aside {
             self.stash_add(s, content);
         }
@@ -398,28 +437,27 @@ impl Profile {
         }
         inv.clear_found();
         self.loadout = saved_inventory(&inv, content);
-        self.recovery = self.take_body_here(content);
+        self.use_up_body(&raid.map, content);
         true
     }
 
-    /// This map's body leaves the profile, its one chance used up; the body of another map is
-    /// handed back to stay. What the chance never covered is not lost with it: items the content
-    /// does not know, or a body whose place is not a number, were never offered, so they go to
-    /// the stash.
-    fn take_body_here(&mut self, content: &Content) -> Option<SavedRecovery> {
-        let body = self.recovery.take()?;
-        if body.map != content.map.key {
-            return Some(body);
-        }
-        let placed = body.at.0.is_finite() && body.at.1.is_finite() && body.at.2.is_finite();
+    /// The body on `map`, if any, leaves the profile: its one chance is used up. What the chance
+    /// never covered is not lost with it: items the content does not know, or a body whose place
+    /// is not a number, were never offered, so they go to the stash.
+    fn use_up_body(&mut self, map: &str, content: &Content) {
+        let Some(at) = self.recovery.iter().position(|r| r.map == map) else {
+            return;
+        };
+        let body = self.recovery.remove(at);
+        let offered = placed(&body);
         for s in body.items {
-            if !placed || content.item(&s.item).is_none() {
+            if !offered || content.item(&s.item).is_none() {
                 self.stash_add(s, content);
             }
         }
-        None
     }
 
+    /// How many slots the stash has before the panel refuses more moves in.
     pub fn stash_capacity(&self, content: &Content) -> usize {
         usize::from(content.rules.run.stash_slots)
     }
@@ -526,6 +564,9 @@ impl Profile {
     /// The stash stack at `index` sold: its value in gold. The purse holds what a `u32` does and
     /// no more; a sale past it fills it and pays no more.
     pub fn sell(&mut self, index: usize, content: &Content) -> Result<u32, StashError> {
+        if self.in_raid.is_some() {
+            return Err(StashError::InRaid);
+        }
         let s = self.stash.get(index).ok_or(StashError::NoSuchSlot)?;
         let item = content.item(&s.item).ok_or(StashError::Unknown)?;
         let value = content.items[item].value.saturating_mul(u32::from(s.count));
@@ -617,9 +658,24 @@ mod tests {
         .unwrap()
     }
 
-    /// A profile to fill in, field by field.
-    fn fresh() -> Profile {
-        Profile::default()
+    /// A body of the profile, on `map`, with these things.
+    fn body(map: &str, at: f32, items: Vec<SavedStack>) -> SavedRecovery {
+        SavedRecovery {
+            map: map.into(),
+            at: (at, 0.0, 0.0),
+            items,
+        }
+    }
+
+    /// The raid under way on the test map, brought with `pack`.
+    fn raid_with(pack: Vec<SavedStack>) -> Option<SavedRaid> {
+        Some(SavedRaid {
+            map: "test".into(),
+            brought: SavedInventory {
+                pack,
+                ..SavedInventory::default()
+            },
+        })
     }
 
     const KNIFE: usize = 0;
@@ -652,24 +708,29 @@ mod tests {
 
     #[test]
     fn a_profile_round_trips() {
-        let mut p = fresh();
-        p.gold = 7;
-        p.class = "rogue".into();
-        p.stash.push(stack("gem", 2));
-        p.loadout.equip.push((EquipSlot::Head, stack("helm", 1)));
-        p.loadout.bags.push((1, stack("pouch", 1)));
-        p.loadout.safe.push((0, stack("bread", 1)));
-        p.in_raid = Some(SavedInventory {
-            pack: vec![stack("gem", 3)],
-            ..SavedInventory::default()
-        });
-        p.recovery = Some(SavedRecovery {
-            map: "test".into(),
-            at: (1.0, 2.5, -3.25),
-            items: vec![stack("bread", 1)],
-        });
-        p.raids = 4;
-        p.extracted = 2;
+        let p = Profile {
+            gold: 7,
+            class: "rogue".into(),
+            stash: vec![stack("gem", 2)],
+            loadout: SavedInventory {
+                equip: vec![(EquipSlot::Head, stack("helm", 1))],
+                bags: vec![(1, stack("pouch", 1))],
+                safe: vec![(0, stack("bread", 1))],
+                ..SavedInventory::default()
+            },
+            in_raid: raid_with(vec![stack("gem", 3)]),
+            recovery: vec![
+                SavedRecovery {
+                    map: "test".into(),
+                    at: (1.0, 2.5, -3.25),
+                    items: vec![stack("bread", 1)],
+                },
+                body("elsewhere", 4.0, vec![stack("gem", 1)]),
+            ],
+            raids: 4,
+            extracted: 2,
+            ..Profile::default()
+        };
         let text = p.to_ron();
         assert_eq!(Profile::from_ron(&text).unwrap(), p);
         assert_eq!(
@@ -784,7 +845,9 @@ mod tests {
         p.loadout.equip.push((EquipSlot::Head, stack("helm", 1)));
         p.begin_raid(0, &c);
         assert!(p.loadout.is_empty());
-        assert_eq!(p.in_raid.as_ref().unwrap().pack, vec![stack("gem", 2)]);
+        let raid = p.in_raid.as_ref().unwrap();
+        assert_eq!(raid.brought.pack, vec![stack("gem", 2)]);
+        assert_eq!(raid.map, "test");
         let mut carried = Inventory::new(&c);
         carried.add(Stack::new(GEM, 5), &c);
         let o = outcome(
@@ -829,9 +892,14 @@ mod tests {
     #[test]
     fn an_outcome_with_no_raid_under_way_changes_nothing() {
         let c = content("");
-        let mut p = Profile::default();
-        p.loadout.pack.push(stack("gem", 2));
-        p.stash.push(stack("bread", 1));
+        let mut p = Profile {
+            loadout: SavedInventory {
+                pack: vec![stack("gem", 2)],
+                ..SavedInventory::default()
+            },
+            stash: vec![stack("bread", 1)],
+            ..Profile::default()
+        };
         let mut carried = Inventory::new(&c);
         carried.add(Stack::new(BREAD, 4), &c);
         let o = outcome(
@@ -908,38 +976,31 @@ mod tests {
     #[test]
     fn a_missing_raid_leaves_no_body_and_takes_the_old_one_on_this_map() {
         let c = content("");
-        let mut p = fresh();
-        p.recovery = Some(SavedRecovery {
-            map: "test".into(),
-            at: (1.0, 2.0, 3.0),
-            items: vec![stack("gem", 1)],
-        });
+        let mut p = Profile {
+            recovery: vec![body("test", 1.0, vec![stack("gem", 1)])],
+            ..Profile::default()
+        };
         p.begin_raid(0, &c);
         assert!(p.settle_missing(&c));
-        assert_eq!(p.recovery, None);
+        assert_eq!(p.recovery, Vec::new());
         // A body on another map is not this raid's to take.
-        p.recovery = Some(SavedRecovery {
-            map: "elsewhere".into(),
-            at: (0.0, 0.0, 0.0),
-            items: vec![stack("gem", 1)],
-        });
+        p.recovery = vec![body("elsewhere", 0.0, vec![stack("gem", 1)])];
         p.begin_raid(0, &c);
         assert!(p.settle_missing(&c));
-        assert_eq!(p.recovery.as_ref().unwrap().map, "elsewhere");
+        assert_eq!(p.recovery.len(), 1);
+        assert_eq!(p.recovery[0].map, "elsewhere");
     }
 
     #[test]
     fn recovered_things_go_to_the_stash_and_the_new_body_replaces_the_old() {
         let c = content("");
-        let mut p = fresh();
-        p.recovery = Some(SavedRecovery {
-            map: "test".into(),
-            at: (1.0, 2.0, 3.0),
-            items: vec![stack("gem", 1)],
-        });
+        let mut p = Profile {
+            recovery: vec![body("test", 1.0, vec![stack("gem", 1)])],
+            ..Profile::default()
+        };
         let r = p.raid_loadout(0, &c).recovery.unwrap();
         assert_eq!(r.items, vec![Stack::new(GEM, 1)]);
-        assert_eq!(r.at, V3::new(1.0, 2.0, 3.0));
+        assert_eq!(r.at, V3::new(1.0, 0.0, 0.0));
         p.begin_raid(0, &c);
         let mut died = outcome(&c, Inventory::new(&c), Vec::new(), Fate::Died);
         died.recovery = Some(Recovery {
@@ -948,9 +1009,9 @@ mod tests {
             items: vec![Stack::new(KNIFE, 1)],
         });
         p.settle(&died, &c);
-        let saved = p.recovery.clone().unwrap();
-        assert_eq!(saved.at, (5.0, 6.0, 7.0));
-        assert_eq!(saved.items, vec![stack("knife", 1)]);
+        assert_eq!(p.recovery.len(), 1, "one body for the map, the new one");
+        assert_eq!(p.recovery[0].at, (5.0, 6.0, 7.0));
+        assert_eq!(p.recovery[0].items, vec![stack("knife", 1)]);
         // Out without reaching it: its one chance is gone.
         p.begin_raid(0, &c);
         let out = outcome(
@@ -960,24 +1021,63 @@ mod tests {
             Fate::Extracted { exit: "x".into() },
         );
         p.settle(&out, &c);
-        assert_eq!(p.recovery, None);
+        assert_eq!(p.recovery, Vec::new());
         // A body on another map waits for that map.
-        p.recovery = Some(SavedRecovery {
-            map: "elsewhere".into(),
-            at: (0.0, 0.0, 0.0),
-            items: vec![stack("gem", 1)],
-        });
+        p.recovery = vec![body("elsewhere", 0.0, vec![stack("gem", 1)])];
         p.begin_raid(0, &c);
         p.settle(&out, &c);
-        assert_eq!(p.recovery.as_ref().unwrap().map, "elsewhere");
+        assert_eq!(p.recovery.len(), 1);
+        assert_eq!(p.recovery[0].map, "elsewhere");
+    }
+
+    #[test]
+    fn a_death_on_another_map_leaves_the_first_maps_body() {
+        let c = content("");
+        let elsewhere = body("elsewhere", 0.0, vec![stack("gem", 1)]);
+        let mut p = Profile {
+            recovery: vec![elsewhere.clone()],
+            ..Profile::default()
+        };
+        let died_with = |at: f32| {
+            let mut o = outcome(&c, Inventory::new(&c), Vec::new(), Fate::Died);
+            o.recovery = Some(Recovery {
+                map: "test".into(),
+                at: V3::new(at, 0.0, 0.0),
+                items: vec![Stack::new(KNIFE, 1)],
+            });
+            o
+        };
+        p.begin_raid(0, &c);
+        assert!(p.settle(&died_with(5.0), &c));
+        assert_eq!(
+            p.recovery,
+            vec![
+                elsewhere.clone(),
+                body("test", 5.0, vec![stack("knife", 1)])
+            ]
+        );
+        // A second death on the same map replaces only that map's body.
+        p.begin_raid(0, &c);
+        assert!(p.settle(&died_with(8.0), &c));
+        assert_eq!(
+            p.recovery,
+            vec![
+                elsewhere.clone(),
+                body("test", 8.0, vec![stack("knife", 1)])
+            ]
+        );
+        // Only the map the player is on offers its body.
+        assert_eq!(p.raid_loadout(0, &c).recovery.unwrap().at.x, 8.0);
     }
 
     #[test]
     fn a_body_that_is_dropped_keeps_what_it_never_offered() {
-        let body = |at: f32| SavedRecovery {
-            map: "test".into(),
-            at: (at, 0.0, 0.0),
-            items: vec![stack("dragon_egg", 1), stack("gem", 2)],
+        let egg_and_gems = |at: f32| {
+            vec![body(
+                "test",
+                at,
+                vec![stack("dragon_egg", 1), stack("gem", 2)],
+            )]
         };
         let c = content("");
         let out = outcome(
@@ -987,28 +1087,36 @@ mod tests {
             Fate::Extracted { exit: "x".into() },
         );
         // Dropped by settle: the egg was never offered, the gems were and had their chance.
-        let mut p = fresh();
-        p.recovery = Some(body(1.0));
+        let mut p = Profile {
+            recovery: egg_and_gems(1.0),
+            ..Profile::default()
+        };
         p.begin_raid(0, &c);
         assert!(p.settle(&out, &c));
-        assert_eq!(p.recovery, None);
+        assert_eq!(p.recovery, Vec::new());
         assert_eq!(p.stash, vec![stack("dragon_egg", 1)]);
         // Dropped by settle_missing: the same.
-        let mut p = fresh();
-        p.recovery = Some(body(1.0));
+        let mut p = Profile {
+            recovery: egg_and_gems(1.0),
+            ..Profile::default()
+        };
         p.begin_raid(0, &c);
         assert!(p.settle_missing(&c));
-        assert_eq!(p.recovery, None);
+        assert_eq!(p.recovery, Vec::new());
         assert_eq!(p.stash, vec![stack("dragon_egg", 1)]);
         // A body with no place was never offered at all: everything in it is kept.
-        let mut p = fresh();
-        p.recovery = Some(body(f32::NAN));
+        let mut p = Profile {
+            recovery: egg_and_gems(f32::NAN),
+            ..Profile::default()
+        };
         p.begin_raid(0, &c);
         assert!(p.settle(&out, &c));
         assert_eq!(p.stash, vec![stack("dragon_egg", 1), stack("gem", 2)]);
         // A body replaced by a new death is dropped the same way.
-        let mut p = fresh();
-        p.recovery = Some(body(1.0));
+        let mut p = Profile {
+            recovery: egg_and_gems(1.0),
+            ..Profile::default()
+        };
         p.begin_raid(0, &c);
         let mut died = outcome(&c, Inventory::new(&c), Vec::new(), Fate::Died);
         died.recovery = Some(Recovery {
@@ -1018,28 +1126,54 @@ mod tests {
         });
         assert!(p.settle(&died, &c));
         assert_eq!(p.stash, vec![stack("dragon_egg", 1)]);
-        assert_eq!(p.recovery.unwrap().items, vec![stack("knife", 1)]);
+        assert_eq!(p.recovery[0].items, vec![stack("knife", 1)]);
     }
 
     #[test]
     fn a_body_with_no_place_is_not_offered() {
         let c = content("");
-        let mut p = fresh();
-        p.recovery = Some(SavedRecovery {
-            map: "test".into(),
-            at: (f32::NAN, 0.0, 0.0),
-            items: vec![stack("gem", 1)],
-        });
+        let mut p = Profile {
+            recovery: vec![body("test", f32::NAN, vec![stack("gem", 1)])],
+            ..Profile::default()
+        };
         assert_eq!(p.raid_loadout(0, &c).recovery, None);
-        p.recovery.as_mut().unwrap().at = (0.0, f32::INFINITY, 0.0);
+        p.recovery[0].at = (0.0, f32::INFINITY, 0.0);
         assert_eq!(p.raid_loadout(0, &c).recovery, None);
+    }
+
+    #[test]
+    fn a_loadout_the_content_knows_nothing_of_raids_with_the_free_kit() {
+        let c = content("");
+        let mut p = Profile {
+            loadout: SavedInventory {
+                pack: vec![stack("dragon_egg", 1)],
+                equip: vec![(EquipSlot::Head, stack("moon_helm", 1))],
+                ..SavedInventory::default()
+            },
+            ..Profile::default()
+        };
+        let kit = free_kit(0, &c);
+        assert_eq!(p.raid_loadout(0, &c).inventory, kit, "what is offered");
+        p.begin_raid(0, &c);
+        assert_eq!(
+            p.raid_loadout(0, &c).inventory,
+            kit,
+            "what the raid then brings is the same"
+        );
+        assert_eq!(
+            p.stash,
+            vec![stack("moon_helm", 1), stack("dragon_egg", 1)],
+            "and the egg and the helm wait in the stash"
+        );
     }
 
     #[test]
     fn stash_moves_respect_room_and_selling_pays() {
         let c = content("");
-        let mut p = fresh();
-        p.stash = vec![stack("gem", 3), stack("knife", 1)];
+        let mut p = Profile {
+            stash: vec![stack("gem", 3), stack("knife", 1)],
+            ..Profile::default()
+        };
         p.take_from_stash(1, &c).unwrap();
         assert_eq!(
             p.loadout.equip,
@@ -1061,14 +1195,18 @@ mod tests {
         assert_eq!(p.stash, vec![stack("knife", 1)]);
         p.begin_raid(0, &c);
         assert_eq!(p.take_from_stash(0, &c), Err(StashError::InRaid));
+        assert_eq!(p.sell(0, &c), Err(StashError::InRaid));
+        assert_eq!(p.stash, vec![stack("knife", 1)], "nothing was sold");
     }
 
     #[test]
     fn selling_never_overflows_the_purse() {
         let c = content("");
-        let mut p = fresh();
-        p.gold = u32::MAX - 5;
-        p.stash = vec![stack("gem", 10), stack("gem", 0)];
+        let mut p = Profile {
+            gold: u32::MAX - 5,
+            stash: vec![stack("gem", 10), stack("gem", 0)],
+            ..Profile::default()
+        };
         assert_eq!(p.sell(0, &c), Ok(400));
         assert_eq!(p.gold, u32::MAX);
         assert_eq!(
@@ -1111,7 +1249,7 @@ mod tests {
         assert_eq!(p.stash, vec![stack("dragon_egg", 1), stack("gem", 5)]);
         let raid = p.in_raid.as_ref().unwrap();
         assert_eq!(
-            raid.pack,
+            raid.brought.pack,
             vec![stack("bread", 5), stack("gem", 10), stack("gem", 10)]
         );
         assert_eq!(p.take_from_stash(0, &c), Err(StashError::InRaid));
@@ -1120,9 +1258,14 @@ mod tests {
     #[test]
     fn a_key_the_content_does_not_know_is_kept_through_every_move_and_the_file() {
         let c = content("");
-        let mut p = fresh();
-        p.stash = vec![stack("dragon_egg", 1), stack("gem", 1)];
-        p.loadout.pack = vec![stack("moon_blade", 1), stack("bread", 1)];
+        let mut p = Profile {
+            stash: vec![stack("dragon_egg", 1), stack("gem", 1)],
+            loadout: SavedInventory {
+                pack: vec![stack("moon_blade", 1), stack("bread", 1)],
+                ..SavedInventory::default()
+            },
+            ..Profile::default()
+        };
         // Moves that touch the loadout set the unknown aside into the stash; none drops it.
         p.loadout_move(Place::Pack(0), Place::Safe(0), &c).unwrap();
         p.take_from_stash(1, &c).unwrap();
@@ -1145,7 +1288,10 @@ mod tests {
         let mut put = |s: &SavedStack| *t.entry(s.item.clone()).or_insert(0) += u32::from(s.count);
         p.stash.iter().for_each(&mut put);
         p.loadout.stacks().for_each(&mut put);
-        p.in_raid.iter().flat_map(|i| i.stacks()).for_each(&mut put);
+        p.in_raid
+            .iter()
+            .flat_map(|r| r.brought.stacks())
+            .for_each(&mut put);
         p.recovery.iter().flat_map(|r| &r.items).for_each(&mut put);
         t.retain(|_, n| *n > 0);
         t
@@ -1173,17 +1319,22 @@ mod tests {
     /// widens the backpack to five, with brought things in four of them and found things in the
     /// rest, so that a found-only death must spill a brought helm.
     fn a_raid_in_the_pack(c: &Content) -> (Profile, Inventory, Vec<Stack>) {
-        let mut p = fresh();
-        p.in_raid = Some(SavedInventory {
-            pack: vec![
-                stack("bread", 5),
-                stack("gem", 10),
-                stack("gem", 4),
-                stack("helm", 1),
-            ],
-            safe: vec![(0, stack("bread", 1))],
-            ..SavedInventory::default()
-        });
+        let p = Profile {
+            in_raid: Some(SavedRaid {
+                map: "test".into(),
+                brought: SavedInventory {
+                    pack: vec![
+                        stack("bread", 5),
+                        stack("gem", 10),
+                        stack("gem", 4),
+                        stack("helm", 1),
+                    ],
+                    safe: vec![(0, stack("bread", 1))],
+                    ..SavedInventory::default()
+                },
+            }),
+            ..Profile::default()
+        };
         // The raid: the same things plus a found pouch and found gems, laid out as played.
         let mut inv = Inventory::new(c);
         inv.bags[0] = Some(Stack::found(POUCH, 1));
@@ -1261,12 +1412,12 @@ mod tests {
             let mut p = before.clone();
             let brought = tally(&p);
             assert!(p.settle_missing(&c));
-            let mut probe = inventory_of(before.in_raid.as_ref().unwrap(), &c).0;
-            let aside_to_stash = inventory_of(before.in_raid.as_ref().unwrap(), &c).1;
+            let mut probe = inventory_of(&before.in_raid.as_ref().unwrap().brought, &c).0;
+            let aside_to_stash = inventory_of(&before.in_raid.as_ref().unwrap().brought, &c).1;
             let death = probe.split_for_death(mode, &c);
             let gone = tally_stacks(&c, &death.lost);
             assert_eq!(sum(&tally(&p), &gone), brought, "missing, {name}");
-            assert_eq!(p.recovery, None);
+            assert_eq!(p.recovery, Vec::new());
             assert_eq!(p.in_raid, None);
             // The four brought stacks do not fit three slots: one went to the stash at once.
             assert_eq!(aside_to_stash.len(), 1);
