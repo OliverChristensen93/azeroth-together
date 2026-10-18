@@ -18,6 +18,7 @@ use nightfall_sim::{
 
 use super::menu::{LeaveRun, Selection, StartRequest};
 use super::session::{self, Heard, Net, Role};
+use super::stash::Stash;
 use super::view::Views;
 use super::{content, units, NightfallEntity, Phase};
 use crate::glue::GlueClicks;
@@ -345,6 +346,7 @@ pub(super) fn start_run(
     mut next: ResMut<NextState<Phase>>,
     mut net: ResMut<Net>,
     mut input: ResMut<LocalInput>,
+    mut stash: ResMut<Stash>,
 ) {
     if net.is_solo() && net.status.is_empty() && time.elapsed_secs() > 8.0 {
         if std::env::var_os("NIGHTFALL_HOST").is_some() {
@@ -358,6 +360,19 @@ pub(super) fn start_run(
             return;
         };
         c.start = false;
+        let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
+        // The host gave our hero the pick it last had of us. A stash that has changed since (a
+        // move the host had not heard of when it started) cannot be committed: it would leave the
+        // stash with something other than what the raid brings. Nothing has left the stash yet,
+        // so leaving costs nothing.
+        if !net.host_holds(&own) {
+            net.leave(
+                "The host started before your loadout change reached it: nothing was taken from \
+                 your stash. Join again.",
+            );
+            return;
+        }
+        begin_raid(&mut stash, &selection, &own);
         commands.insert_resource(Sim::mirror(me));
         player.active = false;
         input.new_run();
@@ -384,13 +399,24 @@ pub(super) fn start_run(
         return;
     }
     start.0 = false;
-    let own = session::own_pick(&selection, session::own_loadout(&selection));
+    let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
     let roster = net.roster(&own);
+    // On disk before the raid starts: whatever happens in it, the stash does not hold it too.
+    begin_raid(&mut stash, &selection, &own);
     net.broadcast_start();
     commands.insert_resource(Sim::hosted(&roster, raid_seed(&time)));
     player.active = false;
     input.new_run();
     next.set(Phase::Playing);
+}
+
+/// The raid begins for our hero: the pick `own` leaves the stash for it, on disk at once. What the
+/// stash commits is what `own` told the host we bring (the pick came from the same
+/// [`session::own_loadout`]); if it somehow is not, the raid still goes, and the log says so.
+fn begin_raid(stash: &mut Stash, selection: &Selection, own: &nightfall_sim::messages::HeroPick) {
+    if !stash.begin_raid(selection.class, &own.loadout, &content()) {
+        warn!("nightfall: the stash committed a loadout other than the one the raid was told");
+    }
 }
 
 /// Before the pose is read: the act in flight is done once our hero says so, and the next goes.

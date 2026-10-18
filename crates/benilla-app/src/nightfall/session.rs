@@ -12,14 +12,14 @@ use std::sync::Mutex;
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
 use nightfall_sim::{
-    free_kit, Event, HeroOutcome, Loadout, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World,
-    DT,
+    Event, HeroOutcome, Loadout, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World, DT,
 };
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
 
 use super::content;
 use super::menu::Selection;
+use super::stash::Stash;
 
 /// This game on the wire.
 pub(super) const GAME: GameTag = "nightfall";
@@ -249,6 +249,25 @@ impl Net {
         out
     }
 
+    /// Joined: whether the host's lobby holds our pick, class and loadout, as `own` has it now.
+    /// The host's last lobby is the only word on what it will give our hero, so a pick that
+    /// differs is one still on its way, or one the host started the run without. Alone or
+    /// hosting there is no host to disagree, and this is true.
+    ///
+    /// Task 10's stash panel freezes moves while this is false; [`super::run::start_run`] refuses
+    /// to enter a raid while it is false, so the loadout the stash commits is the one the host's
+    /// hero is given.
+    pub fn host_holds(&self, own: &HeroPick) -> bool {
+        match &self.role {
+            Role::Client(c) => c
+                .lobby
+                .iter()
+                .find(|p| Some(p.player) == c.me)
+                .is_some_and(|p| p.hero.class == own.class && p.hero.loadout == own.loadout),
+            _ => true,
+        }
+    }
+
     /// The host: the first joined player whose loadout has not come yet (a hello carries none).
     /// A run waits for them, or it would begin with their hands empty.
     pub fn awaiting_pick(&self) -> Option<String> {
@@ -352,14 +371,13 @@ pub(super) fn own_pick(selection: &Selection, loadout: Loadout) -> HeroPick {
     }
 }
 
-/// What the local hero brings into a raid now. One place for the lobby's pick (what a joined
-/// player tells the host) and the host's own run, so the two can never differ. Until the stash
-/// comes in, a hero brings their class's free kit.
-pub(super) fn own_loadout(selection: &Selection) -> Loadout {
-    Loadout {
-        inventory: free_kit(selection.class, &content()),
-        recovery: None,
-    }
+/// What the local hero brings into a raid now: the profile's current
+/// [`nightfall_sim::Profile::raid_loadout`] (the loadout, the class's free kit when it is empty,
+/// and the body waiting on this map). One place for the lobby's pick (what a joined player tells
+/// the host) and the host's own run, so what a hero is told to bring and what
+/// [`super::stash::Stash::begin_raid`] commits are the same.
+pub(super) fn own_loadout(selection: &Selection, stash: &Stash) -> Loadout {
+    stash.profile.raid_loadout(selection.class, &content())
 }
 
 /// The content files' hash, which a client and its host must share.
@@ -370,8 +388,8 @@ fn our_content_hash() -> u64 {
 
 /// At the menu: the host takes players in and keeps their lobby current; a client follows its
 /// host's lobby and tells it its pick.
-pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
-    let own = own_pick(&selection, own_loadout(&selection));
+pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<Stash>) {
+    let own = own_pick(&selection, own_loadout(&selection, &stash));
     let net = &mut *net;
     match &mut net.role {
         Role::Solo => {}

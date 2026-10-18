@@ -25,9 +25,11 @@ pub(super) struct Selection {
 }
 
 impl Selection {
-    pub(super) fn new(content: &Content) -> Self {
+    /// `NIGHTFALL_CLASS`, else the class picked last (the stash keeps it), else the first.
+    pub(super) fn new(content: &Content, stash: &super::stash::Stash) -> Self {
         let class = super::class_key()
             .and_then(|k| content.class(&k))
+            .or_else(|| stash.profile.class_index(content))
             .unwrap_or(0);
         Self { class }
     }
@@ -276,6 +278,7 @@ pub(super) fn menu_clicks(
     mut selection: ResMut<Selection>,
     mut start: ResMut<StartRequest>,
     mut net: ResMut<Net>,
+    mut stash: ResMut<super::stash::Stash>,
     mut next_mode: ResMut<NextState<GameMode>>,
     mut clipboard: NonSendMut<HostClipboard>,
     window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
@@ -289,7 +292,16 @@ pub(super) fn menu_clicks(
     };
     let display = || wayland_display(window.iter().next());
     match action {
-        MenuAction::Class(i) => selection.class = i,
+        MenuAction::Class(i) => {
+            selection.class = i;
+            // The class picked last is kept, so the next start comes up on it.
+            let content = content();
+            let key = &content.classes[i].key;
+            if stash.profile.class != *key {
+                stash.profile.class.clone_from(key);
+                stash.save();
+            }
+        }
         MenuAction::PlaySolo => {
             if net.is_solo() {
                 start.0 = true;
@@ -347,6 +359,7 @@ fn shown(role: &Role) -> &'static [MenuAction] {
 pub(super) fn refresh_menu(
     selection: Res<Selection>,
     net: Res<Net>,
+    stash: Res<super::stash::Stash>,
     mut lines: Query<&mut Text, (With<ClassLine>, Without<StatusText>)>,
     mut status: Query<&mut Text, (With<StatusText>, Without<ClassLine>)>,
     mut buttons: Query<(&MenuAction, &mut Node)>,
@@ -359,7 +372,12 @@ pub(super) fn refresh_menu(
             t.0 = line.clone();
         }
     }
-    let body = net.lobby_text();
+    // What the stash has to say (a file that did not read, a raid counted missing) under the
+    // lobby's lines.
+    let body = match &stash.note {
+        Some(n) => format!("{}\n{n}", net.lobby_text()),
+        None => net.lobby_text(),
+    };
     for mut t in &mut status {
         if t.0 != body {
             t.0 = body.clone();

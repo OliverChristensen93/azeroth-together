@@ -26,6 +26,7 @@ mod run;
 mod senses_hud;
 mod session;
 mod stance;
+mod stash;
 mod telegraphs;
 mod terrain;
 mod ui;
@@ -240,9 +241,13 @@ pub(crate) struct NightfallPlugin;
 
 impl Plugin for NightfallPlugin {
     fn build(&self, app: &mut App) {
+        // Read once, here: a raid the last session never ended is settled as missing and saved
+        // before anything else can look at the stash.
+        let stash = stash::Stash::open();
         app.init_state::<Phase>()
             .configure_sets(Update, NightfallSet.run_if(in_state(GameMode::Nightfall)))
-            .insert_resource(menu::Selection::new(&content()))
+            .insert_resource(menu::Selection::new(&content(), &stash))
+            .insert_resource(stash)
             .init_resource::<menu::StartRequest>()
             .init_resource::<session::Net>()
             .init_resource::<run::LocalInput>()
@@ -277,6 +282,9 @@ impl Plugin for NightfallPlugin {
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Menu)),
             )
+            // Back at the menu with a raid still on the books (we left, the host went): it was
+            // never settled by an outcome, so it is counted missing, once.
+            .add_systems(OnEnter(Phase::Menu), stash::after_raid)
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
             .add_systems(Update, ui::tune_ui.in_set(NightfallSet))
             .add_systems(
@@ -370,6 +378,17 @@ impl Plugin for NightfallPlugin {
                     .after(view::write_vitals)
                     .after(enemies::place)
                     // Its commands land before the run can end and despawn the bodies.
+                    .before(run::leave_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                // Our outcome into the stash and onto disk the frame it comes. Before the run can
+                // end and take the `Sim` with it: a client hears `Outcome` and `Ended` in one poll,
+                // and an outcome lost there would be counted missing by `after_raid`.
+                stash::settle_run
+                    .after(run::step_sim)
                     .before(run::leave_run)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
