@@ -27,6 +27,9 @@ pub(super) struct Loaded {
     pub note: Option<String>,
     /// Whether this session may save over the file.
     pub writable: bool,
+    /// The profile was read from a file the player has (not a fresh default): a session that may
+    /// not save it must not play raids with it, or the haul would be lost and the loadout copied.
+    pub real: bool,
 }
 
 fn backup_of(path: &Path) -> PathBuf {
@@ -134,6 +137,7 @@ fn load_main(path: &Path, backup: Option<Profile>) -> Loaded {
     let fresh = |note: Option<String>, writable: bool| Loaded {
         profile: Profile::default(),
         note,
+        real: false,
         writable,
     };
     let text = match crate::local_state::read_to_string(path) {
@@ -144,6 +148,7 @@ fn load_main(path: &Path, backup: Option<Profile>) -> Loaded {
                     profile,
                     note: Some("Your stash file was missing; it came back from its backup.".into()),
                     writable: true,
+                    real: true,
                 },
                 None => fresh(None, true),
             };
@@ -161,7 +166,8 @@ fn load_main(path: &Path, backup: Option<Profile>) -> Loaded {
         Ok(profile) => Loaded {
             profile,
             note: None,
-            writable: true,
+                    writable: true,
+                    real: true,
         },
         Err(ProfileError::Newer { .. }) => fresh(
             Some(
@@ -186,6 +192,7 @@ fn load_main(path: &Path, backup: Option<Profile>) -> Loaded {
                         "Your stash file was damaged ({why}): it was kept as {kept}, and your stash came back from its backup."
                     )),
                     writable: true,
+                    real: true,
                 },
                 None => fresh(
                     Some(format!(
@@ -244,6 +251,9 @@ pub(super) struct Stash {
     pub profile: Profile,
     path: Option<PathBuf>,
     writable: bool,
+    /// This session may not save, and the profile is the player's real stash (a newer, unreadable or
+    /// unkeepable backup holds the save back): their raids are off, not played unsaved.
+    keeps_real: bool,
     /// What the menu says about the stash: a file that did not read, a raid counted missing, a
     /// move refused.
     pub note: Option<String>,
@@ -284,12 +294,14 @@ impl Stash {
                 profile: Profile::default(),
                 note: None,
                 writable: false,
+                real: false,
             },
         };
         let mut stash = Stash {
             profile: loaded.profile,
             path,
             writable: loaded.writable,
+            keeps_real: loaded.real && !loaded.writable,
             note: loaded.note,
         };
         if stash.profile.settle_missing(content) {
@@ -299,12 +311,23 @@ impl Stash {
         stash
     }
 
-    /// `line` on the menu, under what it already says.
-    fn say(&mut self, line: &str) {
-        self.note = Some(match self.note.take() {
-            Some(old) => format!("{old}\n{line}"),
-            None => line.to_owned(),
-        });
+    /// `line` on the menu, under what it already says (once: asking again adds nothing). Whether
+    /// it was added.
+    fn say(&mut self, line: &str) -> bool {
+        match self.note.take() {
+            Some(old) if old.lines().any(|l| l == line) => {
+                self.note = Some(old);
+                false
+            }
+            Some(old) => {
+                self.note = Some(format!("{old}\n{line}"));
+                true
+            }
+            None => {
+                self.note = Some(line.to_owned());
+                true
+            }
+        }
     }
 
     /// The profile written to disk: whether anything was, or why it could not be. A session that
@@ -337,13 +360,25 @@ impl Stash {
     ///
     /// When this session may save and the save fails, the profile is put back as it was and the
     /// raid must not start: it would be a copy (die, crash, and the loadout is still on disk).
-    /// The error is the note's line.
+    ///
+    /// A session that may not save while holding the real stash refuses, with the same kind of
+    /// error. The error is the note's line.
     pub fn begin_raid(
         &mut self,
         class: usize,
         told: &Loadout,
         content: &Content,
     ) -> Result<bool, String> {
+        // A session that may not save, holding the player's real stash (a newer or unreadable
+        // backup keeps the save back), does not raid: nothing of the raid could be kept, the haul
+        // would be lost with the session and the loadout copied. They still see their stash.
+        if self.keeps_real {
+            let why = "Your stash can't be saved this session (see above), so raids are off; fix the file or remove the backup and restart.";
+            if self.say(why) {
+                warn!("nightfall: {why}");
+            }
+            return Err(why.into());
+        }
         let before = self.profile.clone();
         self.profile.begin_raid(class, content);
         if let Err(e) = self.write() {
@@ -490,6 +525,7 @@ mod tests {
             profile: l.profile,
             path: Some(path.clone()),
             writable: l.writable,
+            keeps_real: l.real && !l.writable,
             note: l.note,
         };
         stash.profile.gold = 1;
@@ -527,6 +563,7 @@ mod tests {
             profile: l.profile,
             path: Some(path.clone()),
             writable: l.writable,
+            keeps_real: l.real && !l.writable,
             note: l.note,
         };
         stash.profile.gold = 4;
@@ -536,6 +573,19 @@ mod tests {
             "(version: 99, gold: 8)"
         );
         assert_eq!(load(&path).profile.gold, 3, "and the file was not touched");
+        // The player still sees their stash, but its raids are off: nothing of one could be kept.
+        assert_eq!(stash.profile.gold, 4);
+        let before = stash.profile.clone();
+        let err = stash
+            .begin_raid(0, &Loadout::default(), &shipped())
+            .unwrap_err();
+        assert!(err.contains("raids are off"), "{err}");
+        assert_eq!(stash.profile, before, "nothing left the stash");
+        assert!(stash.profile.in_raid.is_none() && stash.profile.raids == 0);
+        let note = stash.note.clone().unwrap();
+        assert!(note.contains("newer Nightfall") && note.contains("raids are off"));
+        let _ = stash.begin_raid(0, &Loadout::default(), &shipped());
+        assert_eq!(stash.note.as_deref(), Some(note.as_str()), "said once");
     }
 
     #[test]
@@ -614,6 +664,7 @@ mod tests {
             profile: Profile::default(),
             path: Some(blocker.join("stash.ron")),
             writable: true,
+            keeps_real: false,
             note: Some("old news".into()),
         };
         stash.profile.stash_add(stack("ruby_shard", 3), &content);
