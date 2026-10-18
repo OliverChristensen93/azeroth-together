@@ -91,40 +91,49 @@ fn keep_aside(path: &Path, tag: &str, text: &str) -> Option<String> {
     )
 }
 
-/// The stash at `path`: the backup is looked at first, for a save would replace it. A backup from
-/// a newer Nightfall, or one that cannot be read, or one damaged and not to be kept aside, makes
-/// the session read-only; a damaged one that was kept aside is just said.
+/// The stash at `path`, and its backup, which a save would replace. A backup from a newer
+/// Nightfall, or one that cannot be read, or one damaged and not to be kept aside, makes the
+/// session read-only; a damaged one that was kept aside is just said. When the stash file itself
+/// already makes the session read-only the backup is left alone, so no copy of it piles up at
+/// every launch.
 pub(super) fn load(path: &Path) -> Loaded {
+    let backup = read_backup(path);
+    let good = match &backup {
+        Backup::Good(p) => Some(p.clone()),
+        _ => None,
+    };
+    let mut loaded = load_main(path, good);
+    if !loaded.writable {
+        return loaded;
+    }
+    // The stash file is missing and nothing came back from a backup: a new stash begins.
+    let begins = !loaded.real && loaded.note.is_none();
     let mut notes: Vec<String> = Vec::new();
-    let mut writable = true;
-    let backup = match read_backup(path) {
-        Backup::Good(p) => Some(p),
-        Backup::Absent => None,
+    match backup {
+        Backup::Good(_) | Backup::Absent => {}
         Backup::Newer => {
-            writable = false;
+            loaded.writable = false;
             notes.push("Your stash's backup is from a newer Nightfall: it is left untouched, and this session does not save.".into());
-            None
         }
         Backup::Unreadable(e) => {
-            writable = false;
+            loaded.writable = false;
             notes.push(format!("Your stash's backup could not be read ({e}); it is left as it is, and this session does not save."));
-            None
         }
-        Backup::Damaged { text, why } => {
-            match keep_aside(path, "bak-broken", &text) {
-                Some(kept) => notes.push(format!(
-                    "Your stash's backup was damaged ({why}): it was kept as {kept}."
-                )),
-                None => {
-                    writable = false;
-                    notes.push(format!("Your stash's backup is damaged ({why}) and could not be set aside: it is left as it is, and this session does not save."));
-                }
+        Backup::Damaged { text, why } => match keep_aside(path, "bak-broken", &text) {
+            Some(kept) => notes.push(format!(
+                "Your stash's backup was damaged ({why}): it was kept as {kept}."
+            )),
+            None => {
+                loaded.writable = false;
+                notes.push(format!("Your stash's backup is damaged ({why}) and could not be set aside: it is left as it is, and this session does not save."));
             }
-            None
+        },
+    }
+    if begins {
+        if let Some(last) = notes.last_mut() {
+            last.push_str(" With no stash file, a new, empty stash begins.");
         }
-    };
-    let mut loaded = load_main(path, backup);
-    loaded.writable &= writable;
+    }
     if let Some(n) = loaded.note.take() {
         notes.push(n);
     }
@@ -711,6 +720,54 @@ mod tests {
         );
         let names = std::fs::read_dir(root.join("nightfall")).unwrap().count();
         assert_eq!(names, 1, "no backup or aside appeared");
+    }
+
+    #[test]
+    fn a_read_only_main_file_leaves_a_damaged_backup_alone() {
+        // Already read-only for the main file: copying the backup aside at every launch would pile
+        // `bak-broken-N` files up for nothing.
+        for main in ["(version: 99, gold: 77)"] {
+            let path = dir("ro-main").join("stash.ron");
+            std::fs::write(&path, main).unwrap();
+            std::fs::write(backup_of(&path), "(gold: ").unwrap();
+            for _ in 0..3 {
+                let l = load(&path);
+                assert!(!l.writable);
+                assert!(l.note.unwrap().contains("newer"));
+            }
+            assert!(!path.with_extension("ron.bak-broken").exists());
+            assert_eq!(
+                std::fs::read_to_string(backup_of(&path)).unwrap(),
+                "(gold: "
+            );
+        }
+        // An unreadable main file (a folder in its place) likewise.
+        let path = dir("ro-main-dir").join("stash.ron");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        assert!(!load(&path).writable);
+        assert!(!path.with_extension("ron.bak-broken").exists());
+    }
+
+    #[test]
+    fn a_missing_file_and_a_damaged_backup_say_a_new_stash_begins() {
+        let path = dir("missing-bad-bak").join("stash.ron");
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        let l = load(&path);
+        assert!(l.writable);
+        assert_eq!(l.profile, Profile::default());
+        let note = l.note.unwrap();
+        assert!(note.contains("bak-broken"), "{note}");
+        assert!(note.contains("a new, empty stash begins"), "{note}");
+        // A first run (no files at all) says nothing.
+        let none = load(&dir("first-run").join("stash.ron"));
+        assert!(none.note.is_none());
+        // And a missing file restored from a good backup says that, not a new stash.
+        let path = dir("missing-good-bak").join("stash.ron");
+        save(&path, &with_gold(1)).unwrap();
+        save(&path, &with_gold(2)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(!load(&path).note.unwrap().contains("new, empty"));
     }
 
     #[test]

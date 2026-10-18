@@ -79,8 +79,10 @@ pub enum ClientMsg {
     /// A pick made in the lobby: the first one, sent as soon as the host welcomes the client, says
     /// what the hero brings; a new one follows whenever that changes.
     Pick(HeroPick),
-    /// This step's input, during a run.
-    Input(PlayerInput),
+    /// This step's input, during a run: tagged with the number of the raid it was made in (the
+    /// `raid` of the host's [`ServerMsg::Start`]), so an input still on its way from the last raid
+    /// is never taken for this one's.
+    Input { raid: u32, input: PlayerInput },
 }
 
 /// What the host tells a client.
@@ -92,8 +94,9 @@ pub enum ServerMsg {
     Refused(String),
     /// The lobby as it stands.
     Lobby { players: Vec<LobbyPlayer> },
-    /// The run begins.
-    Start,
+    /// The run begins. `raid` numbers it (each start is the next number), and a client tags its
+    /// inputs with it.
+    Start { raid: u32 },
     /// The world after a step, as this player gets it: the enemies and telegraphs near their
     /// hero, which enemies their hero sees (spec §4.3), what each thinks of their hero (§5.5), and
     /// what happened since the last state this player got (§6).

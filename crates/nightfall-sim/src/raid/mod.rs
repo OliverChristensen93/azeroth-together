@@ -553,6 +553,12 @@ impl World {
         left
     }
 
+    /// Whether `player`'s client has entered this raid: sent an input with a pose (the host's
+    /// world only; see [`World::remove_hero`]).
+    pub fn entered(&self, player: PlayerId) -> bool {
+        self.raid.entered.contains(&player)
+    }
+
     /// `player`'s inventory: the host's, or on a client's mirror its own as the host sent it.
     pub fn pack(&self, player: PlayerId) -> Option<&Inventory> {
         self.raid.pack(player)

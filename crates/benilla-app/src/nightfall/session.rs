@@ -63,6 +63,9 @@ pub(super) struct HostSide {
     sent: Option<Vec<LobbyPlayer>>,
     /// Steps since the run began, which pace the snapshots.
     steps: u32,
+    /// The number of the run begun last ([`Net::broadcast_start`]): 0 before the first. Inputs
+    /// tagged with another are from another raid and are not taken.
+    raid: u32,
     /// The invite code has been written to the log (for test runs to read).
     logged_code: bool,
 }
@@ -87,6 +90,8 @@ pub(super) struct ClientSide {
     pub lobby: Vec<LobbyPlayer>,
     /// The host started a run; [`super::run::start_run`] begins ours.
     pub start: bool,
+    /// The number of the run the host started last, which our inputs are tagged with.
+    raid: u32,
     /// The pick we last told the host.
     sent_pick: Option<HeroPick>,
     /// When our hero's pose last went to the host.
@@ -168,6 +173,7 @@ impl Net {
                     peers: Vec::new(),
                     sent: None,
                     steps: 0,
+                    raid: 0,
                     logged_code: false,
                 });
                 self.status = "Waiting for friends to join".into();
@@ -187,6 +193,7 @@ impl Net {
             me: None,
             lobby: Vec::new(),
             start: false,
+            raid: 0,
             sent_pick: None,
             last_pose: None,
         });
@@ -296,7 +303,9 @@ impl Net {
     pub fn broadcast_start(&mut self) {
         if let Role::Host(h) = &mut self.role {
             h.steps = 0;
-            h.host.lock().unwrap().broadcast(&ServerMsg::Start);
+            h.raid = h.raid.wrapping_add(1);
+            let raid = h.raid;
+            h.host.lock().unwrap().broadcast(&ServerMsg::Start { raid });
         }
     }
 
@@ -460,7 +469,7 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
                             h.peers.remove(i);
                         }
                     }
-                    HostEvent::Message(_, ClientMsg::Input(_)) | HostEvent::Joined(..) => {}
+                    HostEvent::Message(_, ClientMsg::Input { .. }) | HostEvent::Joined(..) => {}
                 }
             }
             let mut players = vec![LobbyPlayer {
@@ -498,7 +507,10 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
                     }
                     ClientEvent::Message(ServerMsg::Refused(why)) => gone = Some(why),
                     ClientEvent::Message(ServerMsg::Lobby { players }) => c.lobby = players,
-                    ClientEvent::Message(ServerMsg::Start) => c.start = true,
+                    ClientEvent::Message(ServerMsg::Start { raid }) => {
+                        c.raid = raid;
+                        c.start = true;
+                    }
                     ClientEvent::Message(
                         ServerMsg::State { .. }
                         | ServerMsg::Ended
@@ -520,6 +532,23 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
     }
 }
 
+/// A client's input into the world, if it was made in this raid (`now`): one tagged with another
+/// raid's number (still on its way when the last raid ended) is dropped, so it can neither move a
+/// hero of this raid nor mark their client as having entered it. Whether it was taken.
+fn take_input(
+    world: &mut World,
+    player: PlayerId,
+    now: u32,
+    sent: u32,
+    input: PlayerInput,
+) -> bool {
+    if sent != now {
+        return false;
+    }
+    world.set_input(player, input);
+    true
+}
+
 /// The host, during a run: the clients' inputs into the world, and a player who leaves out of it.
 /// A newcomer is turned away until the run ends.
 pub(super) fn host_receive(net: &mut Net, world: &mut World) {
@@ -529,9 +558,9 @@ pub(super) fn host_receive(net: &mut Net, world: &mut World) {
     let host = h.host.lock().unwrap();
     for event in host.poll() {
         match event {
-            HostEvent::Message(conn, ClientMsg::Input(input)) => {
+            HostEvent::Message(conn, ClientMsg::Input { raid, input }) => {
                 if let Some(p) = h.peers.iter().find(|p| p.conn == conn) {
-                    world.set_input(p.player, input);
+                    take_input(world, p.player, h.raid, raid, input);
                 }
             }
             HostEvent::Message(conn, ClientMsg::Hello { .. }) => {
@@ -668,7 +697,10 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
     let client = c.client.lock().unwrap();
     let due = input.pose.is_some() && c.last_pose.is_none_or(|t| t.elapsed().as_secs_f32() >= DT);
     if due {
-        client.send(&ClientMsg::Input(input));
+        client.send(&ClientMsg::Input {
+            raid: c.raid,
+            input,
+        });
         c.last_pose = Some(Instant::now());
     }
     let mut heard = Vec::new();
@@ -823,6 +855,33 @@ mod tests {
             Some("B")
         );
         assert_eq!(Net::default().awaiting_pick(), None);
+    }
+
+    #[test]
+    fn an_input_from_the_last_raid_neither_moves_nor_enters_a_hero_of_this_one() {
+        use nightfall_sim::{HeroPose, V2};
+        let content = super::super::shipped_content();
+        let mut world = World::new(content.clone());
+        world.add_hero(1, "rogue", "Joiner", 1, 0).unwrap();
+        let start = world.hero(1).unwrap().pos;
+        let input = PlayerInput {
+            pose: Some(HeroPose {
+                pos: start + V2::new(3.0, 0.0),
+                facing: V2::new(1.0, 0.0),
+                z: 0.0,
+            }),
+            ..PlayerInput::default()
+        };
+        // Raid 2 is on; the input was tagged raid 1.
+        assert!(!take_input(&mut world, 1, 2, 1, input));
+        world.step();
+        assert!(!world.entered(1), "a stale input does not enter");
+        assert_eq!(world.hero(1).unwrap().pos, start, "nor move");
+        // One tagged with this raid does both.
+        assert!(take_input(&mut world, 1, 2, 2, input));
+        world.step();
+        assert!(world.entered(1));
+        assert_ne!(world.hero(1).unwrap().pos, start);
     }
 
     fn damage(to: UnitRef, by: Option<UnitRef>) -> Event {
