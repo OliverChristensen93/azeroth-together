@@ -372,7 +372,12 @@ pub(super) fn start_run(
             );
             return;
         }
-        begin_raid(&mut stash, &selection, &own);
+        // A raid that cannot be saved cannot begin: leaving costs nothing (nothing has left the
+        // stash), and the host drops nothing for a hero that never sent an input.
+        if let Err(why) = begin_raid(&mut stash, &selection, &own) {
+            net.leave(why);
+            return;
+        }
         commands.insert_resource(Sim::mirror(me));
         player.active = false;
         input.new_run();
@@ -401,8 +406,11 @@ pub(super) fn start_run(
     start.0 = false;
     let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
     let roster = net.roster(&own);
-    // On disk before the raid starts: whatever happens in it, the stash does not hold it too.
-    begin_raid(&mut stash, &selection, &own);
+    // On disk before the raid starts: whatever happens in it, the stash does not hold it too. A
+    // begin that cannot be saved starts nothing; the stash's note says why.
+    if begin_raid(&mut stash, &selection, &own).is_err() {
+        return;
+    }
     net.broadcast_start();
     commands.insert_resource(Sim::hosted(&roster, raid_seed(&time)));
     player.active = false;
@@ -412,11 +420,17 @@ pub(super) fn start_run(
 
 /// The raid begins for our hero: the pick `own` leaves the stash for it, on disk at once. What the
 /// stash commits is what `own` told the host we bring (the pick came from the same
-/// [`session::own_loadout`]); if it somehow is not, the raid still goes, and the log says so.
-fn begin_raid(stash: &mut Stash, selection: &Selection, own: &nightfall_sim::messages::HeroPick) {
-    if !stash.begin_raid(selection.class, &own.loadout, &content()) {
+/// [`session::own_loadout`]); if it somehow is not, the raid still goes, and the log says so. A
+/// begin that could not be saved is an error, and the raid must not start.
+fn begin_raid(
+    stash: &mut Stash,
+    selection: &Selection,
+    own: &nightfall_sim::messages::HeroPick,
+) -> Result<(), String> {
+    if !stash.begin_raid(selection.class, &own.loadout, &content())? {
         warn!("nightfall: the stash committed a loadout other than the one the raid was told");
     }
+    Ok(())
 }
 
 /// Before the pose is read: the act in flight is done once our hero says so, and the next goes.

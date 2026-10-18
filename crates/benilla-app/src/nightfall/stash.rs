@@ -220,14 +220,21 @@ impl Stash {
         stash
     }
 
+    /// The profile written to disk: whether anything was, or why it could not be. A session that
+    /// may not save (a newer or unreadable file), or has no folder, writes nothing and is not
+    /// an error.
+    fn write(&self) -> std::io::Result<bool> {
+        match (&self.path, self.writable) {
+            (Some(path), true) => save(path, &self.profile).map(|()| true),
+            _ => Ok(false),
+        }
+    }
+
     /// Written to disk, unless this session may not (a newer or unreadable file). Whether it is
-    /// written, or there was nothing to write to.
+    /// written, or there was nothing to write to; a write that failed is said in the note.
     pub fn save(&mut self) -> bool {
-        let (Some(path), true) = (&self.path, self.writable) else {
-            return false;
-        };
-        match save(path, &self.profile) {
-            Ok(()) => true,
+        match self.write() {
+            Ok(written) => written,
             Err(e) => {
                 warn!("nightfall: stash not saved: {e}");
                 self.note = Some(format!("Your stash could not be saved: {e}"));
@@ -239,16 +246,32 @@ impl Stash {
     /// A raid begins for a hero of `class`: their loadout leaves for it, and the profile says so on
     /// disk at once, before the raid starts. A raid that never ends is then settled as missing at
     /// the next start, never kept twice. `told` is the loadout the raid is told they bring (the
-    /// pick the host got); whether what left the profile is exactly that.
-    pub fn begin_raid(&mut self, class: usize, told: &Loadout, content: &Content) -> bool {
-        // What the stash said about its last session is old news once a new raid begins; a
+    /// pick the host got); `Ok` says whether what left the profile is exactly that.
+    ///
+    /// When this session may save and the save fails, the profile is put back as it was and the
+    /// raid must not start: it would be a copy (die, crash, and the loadout is still on disk).
+    /// The error is the note's line.
+    pub fn begin_raid(
+        &mut self,
+        class: usize,
+        told: &Loadout,
+        content: &Content,
+    ) -> Result<bool, String> {
+        let before = self.profile.clone();
+        self.profile.begin_raid(class, content);
+        if let Err(e) = self.write() {
+            self.profile = before;
+            let why = format!("Your stash could not be saved ({e}): the raid did not start.");
+            warn!("nightfall: {why}");
+            self.note = Some(why.clone());
+            return Err(why);
+        }
+        // What the stash said about its last session is old news once a raid has begun; a
         // standing warning (a file this session may not save over) stays.
         if self.writable {
             self.note = None;
         }
-        self.profile.begin_raid(class, content);
-        self.save();
-        self.profile.raid_loadout(class, content) == *told
+        Ok(self.profile.raid_loadout(class, content) == *told)
     }
 }
 
@@ -389,7 +412,8 @@ mod tests {
             "(version: 99, gold: 77)"
         );
         // Not by beginning a raid or by settling one either, and no backup or aside appears.
-        stash.begin_raid(0, &Loadout::default(), &shipped());
+        // An unwritable session still begins the raid in memory, writing nothing.
+        assert!(stash.begin_raid(0, &Loadout::default(), &shipped()).is_ok());
         stash.profile.settle_missing(&shipped());
         stash.save();
         assert_eq!(
@@ -401,6 +425,38 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["stash.ron"], "no .bak or .broken beside it");
+    }
+
+    #[test]
+    fn a_raid_whose_begin_cannot_be_saved_does_not_start() {
+        let content = shipped();
+        // A file where the `nightfall` folder should be: nothing can be written under it.
+        let root = dir("unwritable");
+        let blocker = root.join("nightfall");
+        std::fs::write(&blocker, "not a folder").unwrap();
+        let mut stash = Stash {
+            profile: Profile::default(),
+            path: Some(blocker.join("stash.ron")),
+            writable: true,
+            note: Some("old news".into()),
+        };
+        stash.profile.stash_add(stack("ruby_shard", 3), &content);
+        stash.profile.loadout = SavedInventory {
+            pack: vec![stack("tough_bread", 2)],
+            ..SavedInventory::default()
+        };
+        let before = stash.profile.clone();
+        let brought = told(&stash, 0, &content);
+        let err = stash.begin_raid(0, &brought, &content).unwrap_err();
+        assert!(err.contains("the raid did not start"), "{err}");
+        assert_eq!(stash.profile, before, "the loadout is where it was");
+        assert!(stash.profile.in_raid.is_none() && stash.profile.raids == 0);
+        assert_eq!(
+            stash.note.as_deref(),
+            Some(err.as_str()),
+            "and the menu says why"
+        );
+        assert_eq!(std::fs::read_to_string(&blocker).unwrap(), "not a folder");
     }
 
     #[test]
@@ -455,7 +511,7 @@ mod tests {
             ..SavedInventory::default()
         };
         let brought = told(&session, 0, &content);
-        assert!(session.begin_raid(0, &brought, &content));
+        assert_eq!(session.begin_raid(0, &brought, &content), Ok(true));
         let at_start = Profile::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(
             at_start.in_raid.is_some() && at_start.raids == 1,
@@ -493,7 +549,7 @@ mod tests {
         let path = dir("left").join("stash.ron");
         let mut stash = Stash::open_at(Some(path.clone()), &content);
         let brought = told(&stash, 0, &content);
-        assert!(stash.begin_raid(0, &brought, &content));
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
         count_missing(&mut stash, &content);
         assert!(stash.profile.in_raid.is_none());
         assert!(stash.note.as_ref().unwrap().contains("missing"));
@@ -526,7 +582,7 @@ mod tests {
         let path = dir("settle").join("stash.ron");
         let mut stash = Stash::open_at(Some(path.clone()), &content);
         let brought = told(&stash, 0, &content);
-        assert!(stash.begin_raid(0, &brought, &content));
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
         // Our hero brings out a ruby shard on top of what they went in with.
         let ruby = content.item("ruby_shard").unwrap();
         let mut carried = brought.inventory.clone();
@@ -572,8 +628,9 @@ mod tests {
                 let mut stash = Stash::open_at(None, &content);
                 stash.profile.loadout = loadout.clone();
                 let brought = told(&stash, class, &content);
-                assert!(
+                assert_eq!(
                     stash.begin_raid(class, &brought, &content),
+                    Ok(true),
                     "class {class}, loadout {loadout:?}"
                 );
             }
@@ -585,7 +642,7 @@ mod tests {
             pack: vec![stack("ruby_shard", 1)],
             ..SavedInventory::default()
         };
-        assert!(!stash.begin_raid(0, &brought, &content));
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(false));
     }
 
     #[test]
