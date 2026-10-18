@@ -18,7 +18,10 @@ pub const MAX_BAGS: usize = 4;
 pub struct Stack {
     /// Index into [`Content::items`].
     pub item: u16,
+    /// How many, at least one in a sound inventory and at most the item's stack size.
     pub count: u16,
+    /// Picked up this raid, so a `found_only` death takes it; found and brought stacks of one
+    /// item do not merge.
     pub found: bool,
 }
 
@@ -44,9 +47,14 @@ impl Stack {
 /// Where in an inventory a stack sits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Place {
+    /// What is worn, one slot for each [`EquipSlot`].
     Equip(EquipSlot),
+    /// A bag worn in one of the [`MAX_BAGS`] bag slots.
     Bag(u8),
+    /// A backpack slot. The backpack is compacted when a bag comes off and by a death, so an
+    /// index is only good until then.
     Pack(u16),
+    /// A safe slot, which a death never takes.
     Safe(u8),
 }
 
@@ -84,13 +92,17 @@ pub struct Death {
     pub spill: Vec<Stack>,
 }
 
+/// What one hero carries: what is worn, the bags, the backpack and the safe slots (see the
+/// module docs). A plain value, so it can be saved, sent and compared whole.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inventory {
     /// By [`EquipSlot::index`].
     pub equip: [Option<Stack>; EquipSlot::COUNT],
+    /// Worn bags, by bag slot.
     pub bags: [Option<Stack>; MAX_BAGS],
     /// As many slots as [`Inventory::pack_size`].
     pub pack: Vec<Option<Stack>>,
+    /// As many slots as the rules give; nothing takes them from a hero.
     pub safe: Vec<Option<Stack>>,
 }
 
@@ -118,6 +130,7 @@ impl Inventory {
         usize::from(content.rules.run.backpack_slots) + bags
     }
 
+    /// The stack at `at`; `None` for an empty slot or one that does not exist.
     pub fn get(&self, at: Place) -> Option<&Stack> {
         match at {
             Place::Equip(s) => self.equip[s.index()].as_ref(),
@@ -146,7 +159,8 @@ impl Inventory {
         }
     }
 
-    /// Every stack and where it sits: worn, bags, backpack, safe slots.
+    /// Every stack and where it sits: worn, bags, backpack, safe slots. In that order,
+    /// with the backpack's slots in their current numbering.
     pub fn stacks(&self) -> Vec<(Place, Stack)> {
         let mut out = Vec::new();
         for s in EquipSlot::ALL {
@@ -172,6 +186,7 @@ impl Inventory {
         out
     }
 
+    /// Whether nothing at all is carried or worn.
     pub fn is_empty(&self) -> bool {
         self.stacks().is_empty()
     }
@@ -192,6 +207,7 @@ impl Inventory {
         )
     }
 
+    /// How many of `item` are carried or worn, found or brought, in any slot.
     pub fn count_of(&self, item: usize) -> u32 {
         self.stacks()
             .iter()
@@ -389,7 +405,7 @@ impl Inventory {
 
     /// The backpack resized to its bags: grown with empty slots, or shrunk by first dropping
     /// empty slots at its end, then packing its stacks to the front; refused when they would not
-    /// fit.
+    /// fit. Shrinking compacts the backpack, which renumbers its slots.
     fn fit_pack(&mut self, content: &Content) -> Result<(), InvError> {
         let size = self.pack_size(content);
         while self.pack.len() > size && self.pack.last() == Some(&None) {
@@ -460,20 +476,19 @@ impl Inventory {
     /// An inventory from elsewhere (a client's loadout, an old stash file) made right for this
     /// content: unknown items and empty stacks go, counts are held to the stack size, things in
     /// slots they do not fit move to the backpack, and the backpack and safe slots take the
-    /// rules' sizes. What has no room is returned, so the caller decides (a host leaves it out;
-    /// the stash keeps it).
+    /// rules' sizes. The backpack is repacked, which renumbers its slots. What has no room is
+    /// returned, so the caller decides (a host leaves it out; the stash keeps it). So is what a
+    /// count held to the stack size cut off, as stacks of their own: an old stash whose stack
+    /// size shrank keeps its items.
     pub fn sanitize(&mut self, content: &Content) -> Vec<Stack> {
         let items = &content.items;
-        let clean = |s: Stack| -> Option<Stack> {
-            let def = items.get(usize::from(s.item))?;
-            (s.count > 0).then(|| Stack {
-                count: s.count.min(def.stack.max(1)),
-                ..s
-            })
-        };
+        let mut excess = Vec::new();
         let mut loose = Vec::new();
         for slot in EquipSlot::ALL {
-            if let Some(st) = self.equip[slot.index()].take().and_then(clean) {
+            if let Some(st) = self.equip[slot.index()]
+                .take()
+                .and_then(|s| clean(items, s, &mut excess))
+            {
                 if items[usize::from(st.item)].slot == Some(slot) && st.count == 1 {
                     self.equip[slot.index()] = Some(st);
                 } else {
@@ -482,7 +497,7 @@ impl Inventory {
             }
         }
         for b in self.bags.iter_mut() {
-            if let Some(st) = b.take().and_then(clean) {
+            if let Some(st) = b.take().and_then(|s| clean(items, s, &mut excess)) {
                 if items[usize::from(st.item)].kind == ItemKind::Bag && st.count == 1 {
                     *b = Some(st);
                 } else {
@@ -490,8 +505,18 @@ impl Inventory {
                 }
             }
         }
-        let pack: Vec<Stack> = self.pack.drain(..).flatten().filter_map(clean).collect();
-        let safe: Vec<Stack> = self.safe.drain(..).flatten().filter_map(clean).collect();
+        let pack: Vec<Stack> = self
+            .pack
+            .drain(..)
+            .flatten()
+            .filter_map(|s| clean(items, s, &mut excess))
+            .collect();
+        let safe: Vec<Stack> = self
+            .safe
+            .drain(..)
+            .flatten()
+            .filter_map(|s| clean(items, s, &mut excess))
+            .collect();
         let safe_size = usize::from(content.rules.run.safe_slots);
         self.safe = vec![None; safe_size];
         let mut out = Vec::new();
@@ -511,8 +536,29 @@ impl Inventory {
                 out.push(s);
             }
         }
+        out.append(&mut excess);
         out
     }
+}
+
+/// `s` held to its item's stack size, the count cut off pushed on `excess` as stacks of their
+/// own. `None` for an item the content does not know and for a stack of none.
+fn clean(items: &[ItemDef], s: Stack, excess: &mut Vec<Stack>) -> Option<Stack> {
+    let def = items.get(usize::from(s.item))?;
+    if s.count == 0 {
+        return None;
+    }
+    let max = def.stack.max(1);
+    let mut cut = s.count.saturating_sub(max);
+    while cut > 0 {
+        let n = cut.min(max);
+        excess.push(Stack { count: n, ..s });
+        cut -= n;
+    }
+    Some(Stack {
+        count: s.count.min(max),
+        ..s
+    })
 }
 
 #[cfg(test)]
@@ -729,7 +775,7 @@ mod tests {
         inv.equip[EquipSlot::Head.index()] = Some(Stack::new(KNIFE, 1));
         inv.bags[0] = Some(Stack::new(GEM, 1));
         inv.pack = vec![
-            Some(Stack::new(BREAD, 99)),
+            Some(Stack::new(BREAD, 7)),
             Some(Stack::new(UNKNOWN, 1)),
             Some(Stack::new(GEM, 0)),
             Some(Stack::new(HELM, 1)),
@@ -744,8 +790,10 @@ mod tests {
         assert_eq!(inv.get(Place::Pack(0)), Some(&Stack::new(BREAD, 5)));
         assert_eq!(inv.get(Place::Safe(0)), Some(&Stack::new(GEM, 1)));
         // The pack keeps bread, helm and gems; the second safe stack, the misplaced knife and
-        // the bag-slot gem have no room left.
-        assert_eq!(left.len(), 3);
+        // the bag-slot gem have no room left, and the 2 bread over the
+        // stack size of 5 come back as a stack of their own.
+        assert_eq!(left.len(), 4);
+        assert!(left.contains(&Stack::new(BREAD, 2)));
         assert!(left.contains(&Stack::new(KNIFE, 1)));
     }
 
@@ -898,5 +946,242 @@ mod tests {
         assert_eq!(inv.sanitize(&c), vec![]);
         assert_eq!(inv, again);
         assert!(inv.weight(&c).is_finite());
+    }
+
+    /// Every item's count carried plus every stack that left the inventory.
+    fn totals(c: &Content, inv: &Inventory, outside: &[Stack]) -> Vec<u32> {
+        (0..c.items.len())
+            .map(|i| {
+                let out: u32 = outside
+                    .iter()
+                    .filter(|s| usize::from(s.item) == i)
+                    .map(|s| u32::from(s.count))
+                    .sum();
+                inv.count_of(i) + out
+            })
+            .collect()
+    }
+
+    fn in_pack(inv: &Inventory, item: usize) -> Place {
+        let i = inv
+            .pack
+            .iter()
+            .position(|s| s.is_some_and(|s| usize::from(s.item) == item))
+            .expect("in the backpack");
+        Place::Pack(i as u16)
+    }
+
+    /// Adds `stack` and records it as wanted, keeping what did not fit outside.
+    fn give(
+        c: &Content,
+        inv: &mut Inventory,
+        outside: &mut Vec<Stack>,
+        want: &mut [u32],
+        stack: Stack,
+    ) {
+        want[usize::from(stack.item)] += u32::from(stack.count);
+        outside.extend(inv.add(stack, c));
+    }
+
+    #[test]
+    fn nothing_is_made_or_lost_by_any_operation() {
+        let c = content("");
+        let mut inv = Inventory::new(&c);
+        let mut outside = Vec::new();
+        let mut want = vec![0u32; c.items.len()];
+        let check = |inv: &Inventory, outside: &[Stack], want: &[u32], what: &str| {
+            assert_eq!(totals(&c, inv, outside), want, "after {what}");
+        };
+        for stack in [
+            Stack::found(POUCH, 1),
+            Stack::new(SACK, 1),
+            Stack::new(HELM, 1),
+            Stack::new(BREAD, 3),
+            Stack::new(BREAD, 4),
+            Stack::found(GEM, 12),
+            Stack::new(KNIFE, 1),
+        ] {
+            give(&c, &mut inv, &mut outside, &mut want, stack);
+        }
+        assert_eq!(outside.len(), 4, "a full backpack hands the rest back");
+        check(&inv, &outside, &want, "adds");
+        // Wearing bags widens the backpack, then what was handed back goes in.
+        inv.move_to(in_pack(&inv, POUCH), Place::Bag(0), &c)
+            .unwrap();
+        inv.move_to(in_pack(&inv, SACK), Place::Bag(1), &c).unwrap();
+        check(&inv, &outside, &want, "wearing bags");
+        for s in std::mem::take(&mut outside) {
+            outside.extend(inv.add(s, &c));
+        }
+        assert!(outside.is_empty());
+        check(&inv, &outside, &want, "re-adding");
+        // Merges: refused when full, partial, then whole.
+        let bread = |inv: &Inventory| {
+            (
+                inv.get(Place::Pack(0)).unwrap().count,
+                inv.get(Place::Pack(1)).map(|s| s.count),
+            )
+        };
+        assert_eq!(bread(&inv), (5, Some(2)));
+        assert_eq!(
+            inv.move_to(Place::Pack(1), Place::Pack(0), &c),
+            Err(InvError::Full)
+        );
+        check(&inv, &outside, &want, "a refused merge");
+        outside.extend(inv.take_one(Place::Pack(0)));
+        inv.move_to(Place::Pack(1), Place::Pack(0), &c).unwrap();
+        assert_eq!(bread(&inv), (5, Some(1)), "a partial merge");
+        check(&inv, &outside, &want, "a partial merge");
+        outside.extend(inv.take_one(Place::Pack(0)));
+        inv.move_to(Place::Pack(1), Place::Pack(0), &c).unwrap();
+        assert_eq!(bread(&inv), (5, None), "a whole merge");
+        check(&inv, &outside, &want, "a whole merge");
+        // The same for the found gems.
+        let gems = in_pack(&inv, GEM);
+        assert_eq!(gems, Place::Pack(3));
+        outside.extend(inv.take_one(gems));
+        inv.move_to(Place::Pack(4), gems, &c).unwrap();
+        outside.extend(inv.take_one(gems));
+        inv.move_to(Place::Pack(4), gems, &c).unwrap();
+        assert!(inv.get(Place::Pack(4)).is_none());
+        check(&inv, &outside, &want, "gem merges");
+        // A swap of worn gear.
+        give(
+            &c,
+            &mut inv,
+            &mut outside,
+            &mut want,
+            Stack::new(TITAN_HELM, 1),
+        );
+        inv.move_to(in_pack(&inv, HELM), Place::Equip(EquipSlot::Head), &c)
+            .unwrap();
+        inv.move_to(in_pack(&inv, TITAN_HELM), Place::Equip(EquipSlot::Head), &c)
+            .unwrap();
+        assert!(inv.pack.iter().flatten().any(|s| s.item == HELM as u16));
+        check(&inv, &outside, &want, "a gear swap");
+        // A bag for a bag: the bigger pouch where the sack was, then back.
+        give(&c, &mut inv, &mut outside, &mut want, Stack::new(POUCH, 1));
+        inv.move_to(in_pack(&inv, POUCH), Place::Bag(1), &c)
+            .unwrap();
+        assert_eq!(inv.pack.len(), 7);
+        check(&inv, &outside, &want, "wearing the pouch over the sack");
+        inv.move_to(in_pack(&inv, SACK), Place::Bag(1), &c).unwrap();
+        assert_eq!(inv.pack.len(), 6);
+        check(&inv, &outside, &want, "the sack back over the pouch");
+        // Fill up so a found bag leaving spills a brought stack, and keep a gem in the safe.
+        give(&c, &mut inv, &mut outside, &mut want, Stack::new(KNIFE, 1));
+        inv.move_to(in_pack(&inv, GEM), Place::Safe(0), &c).unwrap();
+        check(&inv, &outside, &want, "the safe slot");
+        for mode in [
+            DeathLoss::Everything,
+            DeathLoss::EverythingOneRecovery,
+            DeathLoss::FoundOnly,
+        ] {
+            let mut dead = inv.clone();
+            let death = dead.split_for_death(mode, &c);
+            let mut gone = outside.clone();
+            gone.extend(death.lost.iter().chain(&death.spill));
+            assert_eq!(totals(&c, &dead, &gone), want, "death by {mode:?}");
+            assert_eq!(dead.get(Place::Safe(0)), inv.get(Place::Safe(0)));
+            match mode {
+                DeathLoss::FoundOnly => {
+                    assert!(death.lost.iter().all(|s| s.found));
+                    assert_eq!(death.spill.len(), 1, "one brought stack lost its slot");
+                    assert!(death.spill.iter().all(|s| !s.found));
+                }
+                _ => assert!(death.spill.is_empty()),
+            }
+        }
+        // Taking a bag off, then a clean-up pass over the lot.
+        outside.extend(inv.take(in_pack(&inv, KNIFE)));
+        let free = inv.first_empty(false).expect("the knife left a slot");
+        inv.move_to(Place::Bag(1), free, &c).unwrap();
+        check(&inv, &outside, &want, "taking a bag off");
+        let mut cleaned = inv.clone();
+        let left = cleaned.sanitize(&c);
+        let mut gone = outside.clone();
+        gone.extend(left);
+        assert_eq!(totals(&c, &cleaned, &gone), want, "sanitize");
+    }
+
+    #[test]
+    fn dying_by_every_mode_keeps_the_safe_slot_and_takes_the_rest() {
+        let c = content("");
+        let filled = || {
+            let mut inv = Inventory::new(&c);
+            inv.add(Stack::new(KNIFE, 1), &c);
+            inv.move_to(Place::Pack(0), Place::Equip(EquipSlot::MainHand), &c)
+                .unwrap();
+            inv.add(Stack::new(BREAD, 2), &c);
+            inv.add(Stack::found(GEM, 2), &c);
+            inv.move_to(Place::Pack(1), Place::Safe(0), &c).unwrap();
+            inv.add(Stack::found(GEM, 1), &c);
+            inv
+        };
+        // Everything and EverythingOneRecovery both take all but the safe slot: the one-recovery
+        // part (the body waiting in the next raid) is the caller's.
+        for mode in [DeathLoss::Everything, DeathLoss::EverythingOneRecovery] {
+            let mut inv = filled();
+            let death = inv.split_for_death(mode, &c);
+            assert_eq!(death.lost.len(), 3, "{mode:?}");
+            assert!(death.spill.is_empty(), "{mode:?}");
+            assert_eq!(inv.stacks().len(), 1, "{mode:?}");
+            assert_eq!(inv.get(Place::Safe(0)), Some(&Stack::found(GEM, 2)));
+        }
+        let mut inv = filled();
+        let death = inv.split_for_death(DeathLoss::FoundOnly, &c);
+        assert_eq!(death.lost, vec![Stack::found(GEM, 1)]);
+        assert!(death.spill.is_empty());
+        assert_eq!(inv.count_of(KNIFE) + inv.count_of(BREAD), 3);
+    }
+
+    #[test]
+    fn clear_found_clears_it_everywhere() {
+        let c = content("");
+        let mut inv = Inventory::new(&c);
+        inv.equip[EquipSlot::Head.index()] = Some(Stack::found(HELM, 1));
+        inv.bags[0] = Some(Stack::found(POUCH, 1));
+        inv.pack = vec![
+            Some(Stack::found(BREAD, 2)),
+            None,
+            Some(Stack::found(GEM, 1)),
+        ];
+        inv.safe = vec![Some(Stack::found(GEM, 4))];
+        assert_eq!(inv.stacks().len(), 5);
+        assert!(inv.stacks().iter().all(|(_, s)| s.found));
+        inv.clear_found();
+        assert_eq!(inv.stacks().len(), 5);
+        assert!(inv.stacks().iter().all(|(_, s)| !s.found));
+        assert_eq!(inv.get(Place::Safe(0)), Some(&Stack::new(GEM, 4)));
+    }
+
+    #[test]
+    fn sanitize_hands_back_what_a_smaller_stack_size_cuts_off() {
+        // An old stash held 12 bread to a stack and 11 gems; bread now stacks to 5, gems to 10.
+        let c = content("");
+        let mut inv = Inventory::new(&c);
+        inv.pack = vec![Some(Stack::found(BREAD, 12)), Some(Stack::new(GEM, 11))];
+        inv.safe = vec![Some(Stack::new(BREAD, 7))];
+        let before = (inv.count_of(BREAD), inv.count_of(GEM));
+        let left = inv.sanitize(&c);
+        assert_eq!(inv.get(Place::Pack(0)), Some(&Stack::found(BREAD, 5)));
+        assert_eq!(inv.get(Place::Pack(1)), Some(&Stack::new(GEM, 10)));
+        assert_eq!(inv.get(Place::Safe(0)), Some(&Stack::new(BREAD, 5)));
+        assert!(left
+            .iter()
+            .all(|s| s.count <= c.items[usize::from(s.item)].stack));
+        let sum = |item: usize| -> u32 {
+            left.iter()
+                .filter(|s| usize::from(s.item) == item)
+                .map(|s| u32::from(s.count))
+                .sum()
+        };
+        assert_eq!(inv.count_of(BREAD) + sum(BREAD), before.0);
+        assert_eq!(inv.count_of(GEM) + sum(GEM), before.1);
+        assert!(left.contains(&Stack::found(BREAD, 5)));
+        assert!(left.contains(&Stack::found(BREAD, 2)));
+        assert!(left.contains(&Stack::new(BREAD, 2)));
+        assert!(left.contains(&Stack::new(GEM, 1)));
+        assert_eq!(left.len(), 4);
     }
 }
