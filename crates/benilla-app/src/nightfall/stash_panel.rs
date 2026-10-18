@@ -10,10 +10,10 @@
 
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
-use nightfall_sim::{inventory_of, Content, EquipSlot, Place, Stack, StashError};
+use nightfall_sim::{inventory_of, Content, EquipSlot, Inventory, Place, Stack, StashError};
 
 use super::menu::Selection;
-use super::session::{self, Net};
+use super::session::Net;
 use super::stash::Stash;
 use super::widgets::{self, text, EDGE, GOLD, GREY, PANEL, RED, SLOT};
 use super::{content, Phase};
@@ -36,9 +36,14 @@ pub(super) struct StashRoot;
 #[derive(Component)]
 pub(super) struct StashBody;
 
-/// The line under the panel: what the mouse is over, or what just happened.
+/// The line under the panel: what the mouse is over.
 #[derive(Component)]
 pub(super) struct StashInfo;
+
+/// The line under that: what the stash has to say (a refusal's reason, a sale's gold, why it is
+/// read-only). Its own line, so what the mouse is over never hides it.
+#[derive(Component)]
+pub(super) struct StashNote;
 
 #[derive(Component)]
 pub(super) struct StashClose;
@@ -66,11 +71,11 @@ pub(super) enum Lock {
 #[derive(Resource, Default)]
 pub(super) struct StashLock(pub Option<Lock>);
 
-/// Whether a joined player's loadout is out of their hands: they are joined, and their pick has
-/// gone to the host or the host's lobby already lists it. Alone, or hosting (before Start, or
+/// Whether a joined player's loadout is out of their hands: they are joined and the host has
+/// welcomed them, which is when their pick goes to it. Alone, or hosting (before Start, or
 /// after: [`super::run::start_run`] reads the stash in one step), nothing is out.
-pub(super) fn lobby_frozen(joined: bool, pick_sent: bool, host_holds: bool) -> bool {
-    joined && (pick_sent || host_holds)
+pub(super) fn lobby_frozen(joined: bool, welcomed: bool) -> bool {
+    joined && welcomed
 }
 
 /// The lock the session's state puts on the panel; read-only is the more basic of the two.
@@ -84,14 +89,15 @@ pub(super) fn lock_of(read_only: bool, frozen: bool) -> Option<Lock> {
     }
 }
 
-/// The line that tells why moves are off. A read-only stash's own note says why.
-pub(super) fn lock_line(lock: Lock, note: Option<&str>) -> String {
+/// The line that tells why moves are off. A read-only stash's own note, on the line under the
+/// stash, says why it is.
+pub(super) fn lock_line(lock: Lock) -> &'static str {
     match lock {
-        Lock::Lobby => "Your loadout is with the host: leave the lobby to change it.".into(),
-        Lock::ReadOnly => match note {
-            Some(n) => format!("Nothing can be moved: your stash is read-only this session.\n{n}"),
-            None => "Nothing can be moved: your stash is read-only this session.".into(),
-        },
+        Lock::Lobby => {
+            "Your loadout is with the host: leave the lobby to change it. \
+             The class can still be changed."
+        }
+        Lock::ReadOnly => "Nothing can be moved: your stash is read-only this session.",
     }
 }
 
@@ -131,6 +137,15 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
                 BorderColor::all(EDGE),
             ));
             root.spawn((StashInfo, text(&font, "", 12.0, GREY)));
+            root.spawn((
+                StashNote,
+                text(&font, "", 12.0, GOLD),
+                Node {
+                    // Wraps, so a long note never stretches the panel across the window.
+                    width: Val::Px(20.0 * (SLOT + 3.0)),
+                    ..default()
+                },
+            ));
             widgets::text_button(root, &font, StashClose, "Close");
         });
     commands.insert_resource(StashFont(font));
@@ -158,17 +173,11 @@ pub(super) fn show(
 
 /// What turns the moves off now, if anything. Run after the lobby has told the host our pick, so
 /// a pick sent this frame locks this frame.
-pub(super) fn refresh_lock(
-    net: Res<Net>,
-    selection: Res<Selection>,
-    stash: Res<Stash>,
-    mut lock: ResMut<StashLock>,
-) {
-    let frozen = net.is_client() && {
-        let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
-        lobby_frozen(true, net.pick_sent(), net.host_holds(&own))
-    };
-    let now = lock_of(stash.read_only(), frozen);
+pub(super) fn refresh_lock(net: Res<Net>, stash: Res<Stash>, mut lock: ResMut<StashLock>) {
+    let now = lock_of(
+        stash.read_only(),
+        lobby_frozen(net.is_client(), net.pick_sent()),
+    );
     if lock.0 != now {
         lock.0 = now;
     }
@@ -220,7 +229,7 @@ pub(super) fn rebuild(
             ));
             if let Some(l) = lock.0 {
                 col.spawn((
-                    text(font, lock_line(l, stash.note.as_deref()), 12.0, RED),
+                    text(font, lock_line(l), 12.0, RED),
                     Node {
                         width: Val::Px(10.0 * (SLOT + 3.0)),
                         ..default()
@@ -339,15 +348,38 @@ pub(super) fn rebuild(
     });
 }
 
+/// Where a Shift-click sends the loadout stack at `at`, as it does in a raid: a safe slot's stack
+/// to the backpack, any other (worn, bag or backpack) to a safe slot. `None` when that side is
+/// full.
+fn shift_target(inv: &Inventory, at: Place) -> Option<Place> {
+    match at {
+        Place::Safe(_) => inv.first_empty(false),
+        _ => inv.first_empty(true),
+    }
+}
+
+/// What a Shift-click on the loadout stack at `at` is said to do in the hover line.
+fn shift_hint(inv: &Inventory, at: Place) -> &'static str {
+    match shift_target(inv, at) {
+        Some(Place::Safe(_)) => " · shift-click: safe slot",
+        Some(Place::Pack(_)) => " · shift-click: backpack",
+        _ => "",
+    }
+}
+
 /// One click on `slot`, and what it did: Shift sells a stash stack, or sends a loadout stack
-/// between the backpack and the safe slots as it does in a raid; without Shift a stack goes to
-/// the loadout, or back to the stash. A move that went is saved at once; one that did not says why
-/// in the stash's note. With the panel [`Lock`]ed nothing happens at all (the panel already says
-/// why), so a locked click never touches the profile or the disk.
+/// between the backpack and the safe slots as it does in a raid ([`shift_target`]); without Shift
+/// a stack goes to the loadout, or back to the stash. A move that went is saved at once, and one
+/// that cannot be saved is undone (the profile put back as it was, as [`Stash::begin_raid`] does:
+/// a move the disk does not have would be lost at the next launch, and a sale would be gold from
+/// nothing); one the profile refused says why in the stash's note. With the panel [`Lock`]ed
+/// nothing happens at all (the panel already says why), so a locked click never touches the
+/// profile or the disk.
 fn act(stash: &mut Stash, slot: StashSlot, shift: bool, lock: Option<Lock>, content: &Content) {
     if lock.is_some() {
         return;
     }
+    let before = stash.profile.clone();
     let done = match slot {
         StashSlot::Stash(n) if shift => stash
             .profile
@@ -358,13 +390,8 @@ fn act(stash: &mut Stash, slot: StashSlot, shift: bool, lock: Option<Lock>, cont
             .take_from_stash(n, content)
             .map(|_| String::new()),
         StashSlot::Loadout(at) if shift => {
-            // Between the backpack and the safe slots, as Shift does in a raid.
             let (inv, _) = inventory_of(&stash.profile.loadout, content);
-            let to = match at {
-                Place::Safe(_) => inv.first_empty(false),
-                _ => inv.first_empty(true),
-            };
-            match to {
+            match shift_target(&inv, at) {
                 Some(to) => stash
                     .profile
                     .loadout_move(at, to, content)
@@ -378,10 +405,15 @@ fn act(stash: &mut Stash, slot: StashSlot, shift: bool, lock: Option<Lock>, cont
             .map(|_| String::new()),
     };
     match done {
-        Ok(line) => {
-            stash.note = (!line.is_empty()).then_some(line);
-            stash.save();
-        }
+        Ok(line) => match stash.try_save() {
+            Ok(_) => stash.note = (!line.is_empty()).then_some(line),
+            Err(e) => {
+                stash.profile = before;
+                let why = format!("Your stash could not be saved ({e}): nothing was changed.");
+                warn!("nightfall: {why}");
+                stash.note = Some(why);
+            }
+        },
         Err(e) => stash.note = Some(e.message().into()),
     }
 }
@@ -408,12 +440,13 @@ pub(super) fn clicks(
     }
 }
 
-/// The line under the panel: the stack under the mouse, else the stash's note.
+/// The line under the panel: the stack under the mouse; and under it, the stash's note.
 pub(super) fn hover(
     slots: Query<(&Interaction, &StashSlot)>,
     stash: Res<Stash>,
     lock: Res<StashLock>,
-    mut info: Query<&mut Text, With<StashInfo>>,
+    mut info: Query<&mut Text, (With<StashInfo>, Without<StashNote>)>,
+    mut notes: Query<&mut Text, (With<StashNote>, Without<StashInfo>)>,
 ) {
     let content = content();
     let hovered = slots
@@ -452,17 +485,25 @@ pub(super) fn hover(
                 format!(
                     "{}{}",
                     widgets::describe(&content.items[usize::from(s.item)], s.count),
-                    hint("  (click: back to the stash · shift-click: safe slot)")
+                    hint(&format!(
+                        "  (click: back to the stash{})",
+                        shift_hint(&inv, at)
+                    ))
                 )
             })
         }
         None => None,
     }
-    .or_else(|| stash.note.clone())
     .unwrap_or_default();
     for mut t in &mut info {
         if t.0 != line {
             t.0 = line.clone();
+        }
+    }
+    let note = stash.note.clone().unwrap_or_default();
+    for mut t in &mut notes {
+        if t.0 != note {
+            t.0 = note.clone();
         }
     }
 }
@@ -503,18 +544,15 @@ mod tests {
     }
 
     #[test]
-    fn only_a_joined_player_whose_pick_is_out_is_frozen() {
-        // Alone: nothing is out, whatever the lobby says (a solo `host_holds` is always true).
-        assert!(!lobby_frozen(false, false, true));
-        assert!(!lobby_frozen(false, true, true));
-        // A host before Start (or after: `start_run` reads the stash in one step) is not joined.
-        assert!(!lobby_frozen(false, false, false));
-        // Joined, nothing sent and nothing held yet: free to edit, the first pick will carry it.
-        assert!(!lobby_frozen(true, false, false));
-        // Joined with a pick sent, or the host's lobby already listing it.
-        assert!(lobby_frozen(true, true, false));
-        assert!(lobby_frozen(true, false, true));
-        assert!(lobby_frozen(true, true, true));
+    fn only_a_joined_player_the_host_has_welcomed_is_frozen() {
+        // Alone or hosting (before Start, or after: `start_run` reads the stash in one step):
+        // never joined, so nothing is out.
+        assert!(!lobby_frozen(false, false));
+        assert!(!lobby_frozen(false, true));
+        // Joined but not welcomed yet: free to edit, the first pick will carry it.
+        assert!(!lobby_frozen(true, false));
+        // Joined and welcomed: the pick is with the host.
+        assert!(lobby_frozen(true, true));
     }
 
     #[test]
@@ -523,15 +561,83 @@ mod tests {
         assert_eq!(lock_of(false, true), Some(Lock::Lobby));
         assert_eq!(lock_of(true, false), Some(Lock::ReadOnly));
         assert_eq!(lock_of(true, true), Some(Lock::ReadOnly));
-        assert!(lock_line(Lock::Lobby, None).contains("with the host"));
-        let line = lock_line(
-            Lock::ReadOnly,
-            Some("Your stash is from a newer Nightfall."),
-        );
+        let lobby = lock_line(Lock::Lobby);
+        assert!(lobby.contains("with the host"), "{lobby}");
+        assert!(lobby.contains("class can still be changed"), "{lobby}");
+        assert!(lock_line(Lock::ReadOnly).contains("read-only"));
+    }
+
+    #[test]
+    fn a_shift_click_says_where_the_stack_goes() {
+        let content = super::super::shipped_content();
+        let (mut stash, _) = stash_with_things("shift");
+        act(&mut stash, StashSlot::Stash(0), false, None, &content);
+        let worn = Place::Equip(EquipSlot::MainHand);
+        let (inv, _) = inventory_of(&stash.profile.loadout, &content);
+        // Worn goes to a safe slot, as does a backpack stack; a safe slot's stack comes out.
+        assert!(matches!(shift_target(&inv, worn), Some(Place::Safe(_))));
+        assert_eq!(shift_hint(&inv, worn), " · shift-click: safe slot");
+        act(&mut stash, StashSlot::Loadout(worn), true, None, &content);
+        let (inv, _) = inventory_of(&stash.profile.loadout, &content);
         assert!(
-            line.contains("read-only") && line.contains("newer Nightfall"),
-            "{line}"
+            inv.get(Place::Safe(0)).is_some(),
+            "the blade went to a safe slot"
         );
+        assert!(matches!(
+            shift_target(&inv, Place::Safe(0)),
+            Some(Place::Pack(_))
+        ));
+        assert_eq!(shift_hint(&inv, Place::Safe(0)), " · shift-click: backpack");
+    }
+
+    /// A stash whose folder cannot be written: its parent is a file.
+    fn stash_that_cannot_write(name: &str) -> Stash {
+        let content = super::super::shipped_content();
+        let blocker = dir(name).join("not-a-folder");
+        std::fs::write(&blocker, "x").unwrap();
+        let mut stash = Stash::open_at(Some(blocker.join("stash.ron")), &content);
+        assert!(
+            !stash.read_only(),
+            "a missing file is a fresh stash that may save"
+        );
+        stash
+            .profile
+            .stash_add(saved("night_watch_blade", 1), &content);
+        stash.profile.stash_add(saved("ruby_shard", 3), &content);
+        stash
+    }
+
+    #[test]
+    fn a_move_that_cannot_be_saved_is_undone() {
+        let content = super::super::shipped_content();
+        let mut stash = stash_that_cannot_write("unwritable");
+        assert!(
+            stash.try_save().is_err(),
+            "the write fails, not nothing-to-write"
+        );
+        let before = stash.profile.clone();
+        // A move, and a sale (gold from nothing, if it stuck).
+        act(&mut stash, StashSlot::Stash(0), false, None, &content);
+        assert_eq!(stash.profile, before);
+        act(&mut stash, StashSlot::Stash(1), true, None, &content);
+        assert_eq!(stash.profile, before);
+        assert_eq!(stash.profile.gold, 0);
+        let note = stash.note.as_deref().unwrap();
+        assert!(note.contains("could not be saved"), "{note}");
+    }
+
+    #[test]
+    fn nothing_to_write_to_is_not_a_failed_save() {
+        let content = super::super::shipped_content();
+        // No folder at all (a capture): edits stay in memory.
+        let mut stash = Stash::open_at(None, &content);
+        stash
+            .profile
+            .stash_add(saved("night_watch_blade", 1), &content);
+        assert!(matches!(stash.try_save(), Ok(false)));
+        act(&mut stash, StashSlot::Stash(0), false, None, &content);
+        assert_eq!(stash.profile.loadout.equip.len(), 1, "the move stands");
+        assert_eq!(stash.note, None);
     }
 
     #[test]

@@ -393,10 +393,11 @@ impl Stash {
         }
     }
 
-    /// The profile written to disk: whether anything was, or why it could not be. A session that
-    /// may not save (a newer or unreadable file), or has no folder, writes nothing and is not
-    /// an error.
-    fn write(&self) -> std::io::Result<bool> {
+    /// The profile written to disk: `Ok(true)` when it was, `Ok(false)` when there was nothing to
+    /// write to (a session that may not save, a newer or unreadable file, or no folder at all: not
+    /// an error), `Err` when a write failed. [`Stash::save`] folds the three into a bool; a caller
+    /// that must undo a change whose write failed needs the difference.
+    pub fn try_save(&self) -> std::io::Result<bool> {
         match (&self.path, self.writable) {
             (Some(path), true) => save(path, &self.profile).map(|()| true),
             _ => Ok(false),
@@ -406,7 +407,7 @@ impl Stash {
     /// Written to disk, unless this session may not (a newer or unreadable file). Whether it is
     /// written, or there was nothing to write to; a write that failed is said in the note.
     pub fn save(&mut self) -> bool {
-        match self.write() {
+        match self.try_save() {
             Ok(written) => written,
             Err(e) => {
                 warn!("nightfall: stash not saved: {e}");
@@ -444,7 +445,7 @@ impl Stash {
         }
         let before = self.profile.clone();
         self.profile.begin_raid(class, content);
-        if let Err(e) = self.write() {
+        if let Err(e) = self.try_save() {
             self.profile = before;
             let why = format!("Your stash could not be saved ({e}): the raid did not start.");
             warn!("nightfall: {why}");

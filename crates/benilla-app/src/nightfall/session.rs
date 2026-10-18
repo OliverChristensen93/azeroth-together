@@ -272,8 +272,8 @@ impl Net {
         out
     }
 
-    /// Joined: our pick has gone to the host (it is sent as soon as the host welcomes us, and
-    /// again whenever it changes). The stash panel freezes its moves from then on.
+    /// Joined and welcomed: our pick has gone to the host (it is sent as soon as the host welcomes
+    /// us, and again whenever it changes). The stash panel freezes its moves from then on.
     pub fn pick_sent(&self) -> bool {
         matches!(&self.role, Role::Client(c) if c.sent_pick.is_some())
     }
@@ -283,9 +283,9 @@ impl Net {
     /// differs is one still on its way, or one the host started the run without. Alone or
     /// hosting there is no host to disagree, and this is true.
     ///
-    /// Task 10's stash panel freezes moves while this is false; [`super::run::start_run`] refuses
-    /// to enter a raid while it is false, so the loadout the stash commits is the one the host's
-    /// hero is given.
+    /// The stash panel does not read this: it freezes on being welcomed, whether or not the lobby
+    /// lists the pick yet. [`super::run::start_run`] refuses to enter a raid while this is false, so
+    /// the loadout the stash commits is the one the host's hero is given.
     pub fn host_holds(&self, own: &HeroPick) -> bool {
         match &self.role {
             Role::Client(c) => lobby_holds(&c.lobby, c.me, own),
