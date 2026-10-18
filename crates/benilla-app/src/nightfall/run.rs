@@ -12,8 +12,8 @@ use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::messages::LobbyPlayer;
 use nightfall_sim::{
-    CastPress, Event, Gait, HeroPose, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World, DT,
-    V2, V3,
+    Act, ActPress, CastPress, Event, Gait, HeroOutcome, HeroPose, Loadout, Mark, PlayerId,
+    PlayerInput, RaidRoll, Snapshot, UnitRef, World, DT, V2, V3,
 };
 
 use super::menu::{LeaveRun, Selection, StartRequest};
@@ -26,6 +26,9 @@ use crate::glue::GlueClicks;
 const PLAYBACK_DEPTH: usize = 2;
 /// More than this waiting (a burst after a stall) and the oldest are played at once.
 const PLAYBACK_MAX: usize = 8;
+
+/// Acts waiting their turn at most: a click storm never grows without end.
+const MAX_QUEUED: usize = 32;
 
 /// The run being played. Present only during a run.
 #[derive(Resource)]
@@ -57,21 +60,41 @@ pub(super) struct Sim {
     /// Hosting: how many of the world's warnings (content the map could not give, paths that found
     /// nothing) are in the log already; they keep coming while the run is stepped.
     warned: usize,
+    /// Our outcome, once the host settled it, for the stash to take ([`super::stash`]).
+    pub mine: Option<HeroOutcome>,
+    /// Every hero's outcome, once the raid is over: the end screen shows while it is here.
+    pub over: Option<Vec<HeroOutcome>>,
 }
 
 impl Sim {
     /// A run for everyone in `roster` (just us, alone), stepped here.
-    fn hosted(roster: &[LobbyPlayer]) -> Self {
-        let mut world = World::new(content());
+    fn hosted(roster: &[LobbyPlayer], seed: u64) -> Self {
+        let content = content();
+        let mut world = World::new(content.clone());
+        // The raid first, so the heroes start at its entry.
+        let roll = RaidRoll::standard(&content, seed);
+        let _ = world.begin_raid(roll);
         for p in roster {
             // A class the content lacks (a mismatched client) is left out rather than crash.
-            let _ = world.add_hero(
-                p.player,
-                &p.hero.class,
-                &p.hero.name,
-                p.hero.race,
-                p.hero.sex,
-            );
+            if world
+                .add_hero(
+                    p.player,
+                    &p.hero.class,
+                    &p.hero.name,
+                    p.hero.race,
+                    p.hero.sex,
+                )
+                .is_ok()
+            {
+                let left = world.give_loadout(p.player, &p.hero.loadout);
+                if !left.is_empty() {
+                    warn!(
+                        "nightfall: {} brought {} stacks with no room for them; left out",
+                        p.hero.name,
+                        left.len()
+                    );
+                }
+            }
         }
         Self {
             world,
@@ -85,6 +108,8 @@ impl Sim {
             marks: Vec::new(),
             events: Vec::new(),
             warned: 0,
+            mine: None,
+            over: None,
         }
     }
 
@@ -102,6 +127,8 @@ impl Sim {
             marks: Vec::new(),
             events: Vec::new(),
             warned: 0,
+            mine: None,
+            over: None,
         }
     }
 
@@ -120,6 +147,8 @@ impl Sim {
             marks: Vec::new(),
             events: Vec::new(),
             warned: 0,
+            mine: None,
+            over: None,
         }
     }
 
@@ -190,6 +219,12 @@ pub(super) struct LocalInput {
     pub cast: Option<CastPress>,
     /// Dodge presses this session, counted round past 255.
     pub dodge_presses: u8,
+    /// The act the host has not taken yet, repeated in every input ([`PlayerInput::act`]).
+    pub act: Option<ActPress>,
+    /// Acts waiting their turn, oldest first.
+    pub acts: VecDeque<Act>,
+    /// The last act's number.
+    act_seq: u8,
 }
 
 impl LocalInput {
@@ -201,8 +236,7 @@ impl LocalInput {
             stealth_presses: self.stealth_presses,
             cast: self.cast,
             dodge_presses: self.dodge_presses,
-            // Task 8 fills it.
-            act: None,
+            act: self.act,
         }
     }
 
@@ -216,6 +250,46 @@ impl LocalInput {
             target,
             at,
         });
+    }
+
+    /// `act`, after the ones already waiting.
+    // The backpack and loot panels queue acts; until they are drawn (a later task) nothing does.
+    #[allow(dead_code)]
+    pub fn queue(&mut self, act: Act) {
+        if self.acts.len() < MAX_QUEUED {
+            self.acts.push_back(act);
+        }
+    }
+
+    /// The host has taken our act when our hero's `acted` (`Carry::acted`) says its number: the
+    /// next one goes. One at a time, so an input the host replaced loses none and none is taken
+    /// twice.
+    pub fn advance(&mut self, acted: Option<u8>) {
+        if let Some(p) = self.act {
+            if acted != Some(p.seq) {
+                return;
+            }
+            self.act = None;
+        }
+        if let Some(act) = self.acts.pop_front() {
+            // Numbers go 1 to 255 and round: 0 is a hero who has taken nothing yet.
+            self.act_seq = if self.act_seq == u8::MAX {
+                1
+            } else {
+                self.act_seq + 1
+            };
+            self.act = Some(ActPress {
+                seq: self.act_seq,
+                act,
+            });
+        }
+    }
+
+    /// A new run: nothing in flight, numbering from the start, as a new world has taken nothing.
+    pub fn new_run(&mut self) {
+        self.act = None;
+        self.acts.clear();
+        self.act_seq = 0;
     }
 }
 
@@ -246,6 +320,15 @@ fn autowalk(entry: V2, from: V2, elapsed: f32, speed: f32, dt: f32) -> V2 {
     from + to.normalize_or_zero() * (speed * 0.5 * dt).min(dist)
 }
 
+/// The raid's seed: `NIGHTFALL_SEED` when set (a test run rolls the same loot every time), else
+/// the clock.
+pub(super) fn raid_seed(time: &Time<Real>) -> u64 {
+    std::env::var("NIGHTFALL_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| time.elapsed().as_nanos() as u64 ^ 0x5EED_0F01_0000_0001)
+}
+
 /// Play Solo, the host's Start Run, or (joined) the host's start: a run, the controller taking our
 /// new hero.
 pub(super) fn start_run(
@@ -256,6 +339,7 @@ pub(super) fn start_run(
     mut player: ResMut<crate::player::Player>,
     mut next: ResMut<NextState<Phase>>,
     mut net: ResMut<Net>,
+    mut input: ResMut<LocalInput>,
 ) {
     if net.is_solo() && net.status.is_empty() && time.elapsed_secs() > 8.0 {
         if std::env::var_os("NIGHTFALL_HOST").is_some() {
@@ -271,6 +355,7 @@ pub(super) fn start_run(
         c.start = false;
         commands.insert_resource(Sim::mirror(me));
         player.active = false;
+        input.new_run();
         next.set(Phase::Playing);
         return;
     }
@@ -285,12 +370,41 @@ pub(super) fn start_run(
     if !std::mem::take(&mut start.0) && !auto {
         return;
     }
-    let own = session::own_pick(&selection);
+    // Until the stash comes in, a hero brings their class's free kit.
+    let loadout = Loadout {
+        inventory: nightfall_sim::free_kit(selection.class, &content()),
+        recovery: None,
+    };
+    let own = session::own_pick(&selection, loadout);
     let roster = net.roster(&own);
     net.broadcast_start();
-    commands.insert_resource(Sim::hosted(&roster));
+    commands.insert_resource(Sim::hosted(&roster, raid_seed(&time)));
     player.active = false;
+    input.new_run();
     next.set(Phase::Playing);
+}
+
+/// Before the pose is read: the act in flight is done once our hero says so, and the next goes.
+pub(super) fn advance_acts(sim: Res<Sim>, mut input: ResMut<LocalInput>) {
+    let acted = sim.world.hero(sim.me).map(|h| h.carry.acted);
+    input.advance(acted);
+}
+
+/// Alone or hosting: the outcomes the world settled, ours kept for the stash, each friend's sent
+/// to them; and once the raid is over, everyone's to everyone, for the end screen.
+pub(super) fn deliver(sim: &mut Sim, net: &mut Net) {
+    for o in sim.world.take_outcomes() {
+        if o.player == sim.me {
+            sim.mine = Some(o);
+        } else {
+            session::send_outcome(net, &o);
+        }
+    }
+    if sim.world.is_over() && sim.over.is_none() {
+        let all = sim.world.outcomes().to_vec();
+        session::broadcast_run_over(net, &all);
+        sim.over = Some(all);
+    }
 }
 
 /// Where WoW's controller left the local hero, as the pose the next step takes, kept inside the
@@ -383,8 +497,13 @@ pub(super) fn step_sim(
             end.0 = true;
         }
         for h in heard {
-            if let Heard::State(snapshot, seen, marks, events) = h {
-                sim.inbox.push_back((snapshot, seen, marks, events));
+            match h {
+                Heard::State(snapshot, seen, marks, events) => {
+                    sim.inbox.push_back((snapshot, seen, marks, events));
+                }
+                Heard::Outcome(o) => sim.mine = Some(o),
+                Heard::RunOver(all) => sim.over = Some(all),
+                Heard::Ended | Heard::Lost(_) => {}
             }
         }
         sim.play_back(time.delta_secs());
@@ -398,9 +517,12 @@ pub(super) fn step_sim(
             sim.log_new_warnings();
         }
     }
-    let Some(pose) = input.pose else {
+    // Until the controller has our hero the world waits (the terrain is still streaming); once
+    // our hero is out of the raid (extracted), it goes on for the others without us.
+    let ours = sim.world.hero(sim.me).is_some();
+    if ours && input.pose.is_none() {
         return;
-    };
+    }
     if loading.covering() {
         return;
     }
@@ -408,7 +530,9 @@ pub(super) fn step_sim(
     sim.acc = (sim.acc + time.delta_secs()).min(0.25);
     while sim.acc >= DT {
         sim.acc -= DT;
-        sim.world.set_input(sim.me, input.with_pose(Some(pose)));
+        if ours {
+            sim.world.set_input(sim.me, input.with_pose(input.pose));
+        }
         let from = sim.world.events().len();
         sim.world.step();
         if let Some(p) = super::fallen::frail_player() {
@@ -423,6 +547,7 @@ pub(super) fn step_sim(
         session::host_send(&mut net, &sim.world, from);
         sim.stepped = true;
     }
+    deliver(sim, &mut net);
     // Paths that found nothing are warned of during a step, not at the attach.
     sim.log_new_warnings();
 }
@@ -524,6 +649,134 @@ mod tests {
         input.press(3, None, None);
         assert_eq!(input.cast.unwrap().seq, 0);
         assert_eq!(input.with_pose(None).cast, input.cast);
+    }
+
+    #[test]
+    fn acts_go_one_at_a_time_and_only_once_taken() {
+        let mut input = LocalInput::default();
+        input.queue(Act::TakeAll);
+        input.queue(Act::Close);
+        input.advance(Some(0));
+        assert_eq!(
+            input.act,
+            Some(ActPress {
+                seq: 1,
+                act: Act::TakeAll
+            })
+        );
+        // Not taken yet: the same act, the same number.
+        input.advance(Some(0));
+        assert_eq!(
+            input.act,
+            Some(ActPress {
+                seq: 1,
+                act: Act::TakeAll
+            })
+        );
+        input.advance(Some(1));
+        assert_eq!(
+            input.act,
+            Some(ActPress {
+                seq: 2,
+                act: Act::Close
+            })
+        );
+        input.advance(Some(2));
+        assert_eq!(input.act, None);
+        input.new_run();
+        input.queue(Act::Close);
+        input.advance(None);
+        assert_eq!(
+            input.act.unwrap().seq,
+            1,
+            "a new run numbers from the start"
+        );
+        input.act_seq = u8::MAX;
+        input.act = None;
+        input.queue(Act::TakeAll);
+        input.advance(None);
+        assert_eq!(
+            input.act.unwrap().seq,
+            1,
+            "the numbers round past 255 without 0"
+        );
+    }
+
+    #[test]
+    fn the_first_act_is_never_number_0_which_a_fresh_hero_has_already_taken() {
+        // A new hero's `Carry::acted` is 0: an act numbered 0 would look taken before it was sent.
+        let mut input = LocalInput::default();
+        input.queue(Act::TakeAll);
+        input.advance(Some(0));
+        assert_ne!(input.act.unwrap().seq, 0);
+        // Every input carries the act in flight.
+        assert_eq!(input.with_pose(None).act, input.act);
+    }
+
+    #[test]
+    fn a_new_run_forgets_acts_still_waiting_or_in_flight() {
+        let mut input = LocalInput::default();
+        for _ in 0..3 {
+            input.queue(Act::TakeAll);
+        }
+        input.advance(None);
+        assert!(input.act.is_some() && input.acts.len() == 2);
+        input.new_run();
+        assert_eq!(input.act, None, "the act in flight is not replayed");
+        assert!(input.acts.is_empty(), "nor the ones waiting");
+        // Whatever the last run's hero had taken, the next one numbers from 1 again.
+        input.queue(Act::Close);
+        input.advance(Some(7));
+        assert_eq!(input.act.unwrap().seq, 1);
+    }
+
+    #[test]
+    fn a_click_storm_queues_only_so_many_acts() {
+        let mut input = LocalInput::default();
+        for _ in 0..MAX_QUEUED + 10 {
+            input.queue(Act::TakeAll);
+        }
+        assert_eq!(input.acts.len(), MAX_QUEUED);
+    }
+
+    #[test]
+    fn deliver_keeps_our_outcome_and_the_end_once() {
+        use std::sync::Arc;
+        let content = Arc::new(
+            nightfall_sim::Content::from_ron(nightfall_sim::ContentSources {
+                classes: include_str!("../../../../content/nightfall/classes.ron"),
+                map: include_str!("../../../../content/nightfall/map.ron"),
+                rules: include_str!("../../../../content/nightfall/rules.ron"),
+                enemies: include_str!("../../../../content/nightfall/enemies.ron"),
+                spawns: include_str!("../../../../content/nightfall/spawns.ron"),
+                abilities: include_str!("../../../../content/nightfall/abilities.ron"),
+                items: include_str!("../../../../content/nightfall/items.ron"),
+                loot: include_str!("../../../../content/nightfall/loot.ron"),
+            })
+            .expect("the shipped content parses"),
+        );
+        let mut world = World::new(content.clone());
+        world
+            .begin_raid(RaidRoll::standard(&content, 1))
+            .expect("the standard roll fits the map");
+        world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+        world.add_hero(1, "mage", "Friend", 1, 0).unwrap();
+        let mut sim = Sim::for_test(world);
+        let mut net = Net::default();
+        deliver(&mut sim, &mut net);
+        assert!(
+            sim.mine.is_none() && sim.over.is_none(),
+            "a raid under way has settled nothing"
+        );
+        sim.world.abandon();
+        deliver(&mut sim, &mut net);
+        assert_eq!(sim.mine.as_ref().map(|o| o.player), Some(0));
+        assert_eq!(sim.over.as_ref().map(Vec::len), Some(2));
+        // Delivered once: the world hands each outcome over only once, and the end is kept.
+        sim.mine = None;
+        deliver(&mut sim, &mut net);
+        assert!(sim.mine.is_none(), "our outcome came once");
+        assert_eq!(sim.over.as_ref().map(Vec::len), Some(2));
     }
 
     #[test]

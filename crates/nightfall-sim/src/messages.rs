@@ -3,23 +3,25 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Event, Mark, PlayerId, PlayerInput, Snapshot};
+use crate::{Event, HeroOutcome, Loadout, Mark, PlayerId, PlayerInput, Snapshot};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 /// The hero a player brings: their name and pick.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HeroPick {
     pub name: String,
     /// A class key from the content.
     pub class: String,
     pub race: u8,
     pub sex: u8,
+    /// What they bring into the raid (spec §8.3: the host trusts it).
+    pub loadout: Loadout,
 }
 
 /// A player in the host's lobby.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LobbyPlayer {
     pub player: PlayerId,
     pub hero: HeroPick,
@@ -42,10 +44,6 @@ pub enum ClientMsg {
 }
 
 /// What the host tells a client.
-// `State` holds a whole snapshot, and with a backpack and the loot in it is far larger than the
-// other messages. It is sent 15 times a second and handed on whole, so boxing it would cost an
-// allocation each for nothing.
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMsg {
     /// Joined: the client plays as `you`.
@@ -65,6 +63,10 @@ pub enum ServerMsg {
         marks: Vec<Mark>,
         events: Vec<Event>,
     },
+    /// Your raid is over: what you keep, sent once, as soon as it is settled.
+    Outcome(HeroOutcome),
+    /// Everyone is out or dead: every hero's outcome, for the end screen.
+    RunOver { outcomes: Vec<HeroOutcome> },
     /// The host ended the run and went back to its menu.
     Ended,
 }
@@ -89,10 +91,57 @@ mod tests {
                 class: "rogue".into(),
                 race: 1,
                 sex: 0,
+                loadout: Loadout::default(),
             },
         };
         let bytes = postcard::to_stdvec(&hello).unwrap();
         assert_eq!(postcard::from_bytes::<ClientMsg>(&bytes).unwrap(), hello);
+    }
+
+    #[test]
+    fn a_loadout_and_an_outcome_survive_the_wire() {
+        use crate::{Fate, HeroOutcome, Inventory, Loadout, Recovery, Stack, V3};
+        let inventory = Inventory {
+            pack: vec![Some(Stack::found(3, 7)), None],
+            ..Inventory::default()
+        };
+        let pick = ClientMsg::Pick(HeroPick {
+            name: "Valeera".into(),
+            class: "rogue".into(),
+            race: 1,
+            sex: 0,
+            loadout: Loadout {
+                inventory: inventory.clone(),
+                recovery: Some(Recovery {
+                    map: "duskwood".into(),
+                    at: V3::new(1.0, 2.0, 3.0),
+                    items: vec![Stack::new(2, 1)],
+                }),
+            },
+        });
+        let bytes = postcard::to_stdvec(&pick).unwrap();
+        assert_eq!(postcard::from_bytes::<ClientMsg>(&bytes).unwrap(), pick);
+        let outcome = HeroOutcome {
+            player: 1,
+            name: "Jaina".into(),
+            fate: Fate::Extracted {
+                exit: "The bridge".into(),
+            },
+            time: 1200.0,
+            kills: 4,
+            carried: inventory,
+            overflow: vec![Stack::new(5, 2)],
+            recovered: Vec::new(),
+            recovery: None,
+        };
+        let to_one = ServerMsg::Outcome(outcome.clone());
+        let bytes = postcard::to_stdvec(&to_one).unwrap();
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), to_one);
+        let all = ServerMsg::RunOver {
+            outcomes: vec![outcome],
+        };
+        let bytes = postcard::to_stdvec(&all).unwrap();
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), all);
     }
 
     #[test]
@@ -148,6 +197,51 @@ mod tests {
             h.fight.drinks = 4;
         }
         let mut snapshot = w.snapshot();
+        // Our own full pack (every bag slot, worn gear, the safe slots) and an open sixteen-slot
+        // container, twenty containers around us and every exit; four heroes in full gear.
+        let items = w.content().items.len();
+        let satchel = w.content().item("duskwood_satchel").unwrap();
+        let mut pack = crate::Inventory::new(w.content());
+        pack.bags = [Some(crate::Stack::new(satchel, 1)); crate::MAX_BAGS];
+        pack.pack = vec![None; pack.pack_size(w.content())];
+        for (i, s) in pack.pack.iter_mut().chain(pack.safe.iter_mut()).enumerate() {
+            *s = Some(crate::Stack::found(i % items, 3));
+        }
+        for (i, s) in pack.equip.iter_mut().enumerate() {
+            *s = Some(crate::Stack::new(i % items, 1));
+        }
+        let slots = pack.stacks().len();
+        snapshot.pack = Some((0, pack));
+        snapshot.loot.marks = (1..=20)
+            .map(|id| crate::ContainerMark {
+                id,
+                holder: crate::Holder::Placed(0),
+                at: V2::new(-10051.8, -792.5),
+                z: Some(36.5),
+                searched: false,
+                empty: false,
+                locked: false,
+            })
+            .collect();
+        snapshot.loot.open = Some(crate::OpenView {
+            id: 7,
+            stacks: (0..16)
+                .map(|i| Some(crate::Stack::found(i % items, 2)))
+                .collect(),
+            search: None,
+        });
+        snapshot.loot.exits = (0..4)
+            .map(|exit| crate::ExitMark {
+                exit,
+                open: true,
+                opens_in: Some(12.5),
+            })
+            .collect();
+        for h in &mut snapshot.heroes {
+            h.carry.worn = crate::EquipSlot::ALL.iter().map(|&s| (s, 3)).collect();
+            h.carry.load = 30.5;
+        }
+        assert!(slots >= 60, "{slots} stacks in the pack");
         snapshot.enemies = (1..=20)
             .map(|id| Enemy {
                 id,
@@ -245,11 +339,12 @@ mod tests {
             events,
         };
         let bytes = postcard::to_stdvec(&msg).unwrap().len();
-        // Four heroes casting with their cooldowns and their senses, the twenty enemies near one
-        // of them, all marked, casting, held and slowed, three telegraphs and two busy steps of
-        // events (2113 bytes measured, a quarter to spare), 15 times a second, stay near 32 KB a
-        // second.
-        assert!(bytes < 2650, "{bytes} bytes");
+        // Four heroes in full gear casting with their cooldowns and their senses, the twenty
+        // enemies near one of them, all marked, casting, held and slowed, three telegraphs, two
+        // busy steps of events, our own pack (all four bags worn, every slot full: 60 stacks), an
+        // open sixteen-slot container, twenty containers about us and four exits (2963 bytes
+        // measured, a quarter to spare), 15 times a second, stay near 44 KB a second.
+        assert!(bytes < 3700, "{bytes} bytes");
     }
 
     #[test]

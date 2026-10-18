@@ -93,8 +93,9 @@ pub struct Death {
 }
 
 /// What one hero carries: what is worn, the bags, the backpack and the safe slots (see the
-/// module docs). A plain value, so it can be saved, sent and compared whole.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// module docs). A plain value, so it can be saved, sent and compared whole. The default has no
+/// slots at all (for messages and tests); [`Inventory::new`] is the one with the rules' slots.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inventory {
     /// By [`EquipSlot::index`].
     pub equip: [Option<Stack>; EquipSlot::COUNT],

@@ -132,7 +132,7 @@ pub struct Recovery {
 }
 
 /// What a player brings into a raid (spec §8.3: the host trusts it).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Loadout {
     pub inventory: Inventory,
     /// Their remains from the last raid, when there are any.

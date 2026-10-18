@@ -304,6 +304,7 @@ impl Plugin for NightfallPlugin {
             .add_systems(
                 Update,
                 (
+                    run::advance_acts,
                     run::feed_pose,
                     run::step_sim,
                     run::take_events,

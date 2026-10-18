@@ -11,7 +11,10 @@ use std::sync::Mutex;
 
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
-use nightfall_sim::{Event, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World, DT};
+use nightfall_sim::{
+    free_kit, Event, HeroOutcome, Loadout, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World,
+    DT,
+};
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
 
@@ -319,8 +322,8 @@ fn clean_name(raw: &str) -> String {
     }
 }
 
-/// The local pick as the wire carries it.
-pub(super) fn own_pick(selection: &Selection) -> HeroPick {
+/// The local pick as the wire carries it, bringing `loadout`.
+pub(super) fn own_pick(selection: &Selection, loadout: Loadout) -> HeroPick {
     let content = content();
     let class = &content.classes[selection.class];
     HeroPick {
@@ -328,6 +331,7 @@ pub(super) fn own_pick(selection: &Selection) -> HeroPick {
         class: class.key.clone(),
         race: class.race,
         sex: class.sex,
+        loadout,
     }
 }
 
@@ -340,7 +344,13 @@ fn our_content_hash() -> u64 {
 /// At the menu: the host takes players in and keeps their lobby current; a client follows its
 /// host's lobby and tells it its pick.
 pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
-    let own = own_pick(&selection);
+    // Until the stash comes in, a hero brings their class's free kit.
+    let content = content();
+    let loadout = Loadout {
+        inventory: free_kit(selection.class, &content),
+        recovery: None,
+    };
+    let own = own_pick(&selection, loadout);
     let net = &mut *net;
     match &mut net.role {
         Role::Solo => {}
@@ -437,7 +447,12 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                     ClientEvent::Message(ServerMsg::Refused(why)) => gone = Some(why),
                     ClientEvent::Message(ServerMsg::Lobby { players }) => c.lobby = players,
                     ClientEvent::Message(ServerMsg::Start) => c.start = true,
-                    ClientEvent::Message(ServerMsg::State { .. } | ServerMsg::Ended) => {}
+                    ClientEvent::Message(
+                        ServerMsg::State { .. }
+                        | ServerMsg::Ended
+                        | ServerMsg::Outcome(_)
+                        | ServerMsg::RunOver { .. },
+                    ) => {}
                     ClientEvent::Disconnected(why) => gone = Some(format!("Disconnected: {why}")),
                 }
             }
@@ -557,11 +572,37 @@ pub(super) fn host_send(net: &mut Net, world: &World, events_from: usize) {
     }
 }
 
+/// The host: `outcome` to its player, once.
+pub(super) fn send_outcome(net: &mut Net, outcome: &HeroOutcome) {
+    let Role::Host(h) = &mut net.role else {
+        return;
+    };
+    if let Some(p) = h.peers.iter().find(|p| p.player == outcome.player) {
+        h.host
+            .lock()
+            .unwrap()
+            .send(p.conn, &ServerMsg::Outcome(outcome.clone()));
+    }
+}
+
+/// The host: the raid is over; everyone's outcome to everyone, for the end screen.
+pub(super) fn broadcast_run_over(net: &mut Net, outcomes: &[HeroOutcome]) {
+    if let Role::Host(h) = &mut net.role {
+        h.host.lock().unwrap().broadcast(&ServerMsg::RunOver {
+            outcomes: outcomes.to_vec(),
+        });
+    }
+}
+
 /// What a client heard from its host during a run.
 pub(super) enum Heard {
     /// A state, which enemies in it our hero sees, what they think of our hero, and what
     /// happened since the last.
     State(Snapshot, Vec<u32>, Vec<Mark>, Vec<Event>),
+    /// Our raid's outcome.
+    Outcome(HeroOutcome),
+    /// Every hero's, at the raid's end.
+    RunOver(Vec<HeroOutcome>),
     Ended,
     Lost(String),
 }
@@ -590,6 +631,10 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
                 heard.push(Heard::State(snapshot, seen, marks, events));
             }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
+            ClientEvent::Message(ServerMsg::Outcome(o)) => heard.push(Heard::Outcome(o)),
+            ClientEvent::Message(ServerMsg::RunOver { outcomes }) => {
+                heard.push(Heard::RunOver(outcomes));
+            }
             ClientEvent::Disconnected(why) => heard.push(Heard::Lost(why)),
             ClientEvent::Message(_) | ClientEvent::Connected => {}
         }
@@ -613,7 +658,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                 net.leave(format!("Disconnected: {why}"));
                 return true;
             }
-            Heard::State(..) => {}
+            Heard::State(..) | Heard::Outcome(_) | Heard::RunOver(_) => {}
         }
     }
     false
@@ -647,6 +692,7 @@ mod tests {
             class: "rogue".into(),
             race: 1,
             sex: 0,
+            loadout: Loadout::default(),
         }
     }
 
