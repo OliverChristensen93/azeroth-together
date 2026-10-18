@@ -201,6 +201,8 @@ impl LocalInput {
             stealth_presses: self.stealth_presses,
             cast: self.cast,
             dodge_presses: self.dodge_presses,
+            // Task 8 fills it.
+            act: None,
         }
     }
 

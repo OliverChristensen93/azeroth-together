@@ -182,6 +182,7 @@ mod tests {
                 life,
                 ..HeroFight::default()
             },
+            carry: Default::default(),
         }
     }
 

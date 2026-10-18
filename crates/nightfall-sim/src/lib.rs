@@ -18,6 +18,7 @@ mod inventory;
 mod items;
 mod math;
 pub mod messages;
+mod raid;
 mod senses;
 mod sight;
 mod world;
@@ -48,6 +49,10 @@ pub use items::{
     PlacedContainer, Table, TableEntry,
 };
 pub use math::{V2, V3};
+pub use raid::{
+    burden, Act, ActPress, Carry, ContainerMark, ExitMark, ExitPlan, Fate, HeroOutcome, Holder,
+    Loadout, LootView, OpenView, RaidRoll, Recovery,
+};
 pub use senses::{Alert, Gait, Loudness, Mark, Stance};
 pub use sight::{CHEST_HEIGHT, EYE_HEIGHT, KEEP_EXTRA};
 pub use world::{Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ};

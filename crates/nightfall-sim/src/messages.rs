@@ -42,6 +42,10 @@ pub enum ClientMsg {
 }
 
 /// What the host tells a client.
+// `State` holds a whole snapshot, and with a backpack and the loot in it is far larger than the
+// other messages. It is sent 15 times a second and handed on whole, so boxing it would cost an
+// allocation each for nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ServerMsg {
     /// Joined: the client plays as `you`.
@@ -257,6 +261,8 @@ mod tests {
                 heroes: Vec::new(),
                 enemies: Vec::new(),
                 telegraphs: Vec::new(),
+                pack: None,
+                loot: Default::default(),
             },
             seen: vec![3],
             marks: Vec::new(),
@@ -290,6 +296,8 @@ mod tests {
                 heroes: Vec::new(),
                 enemies: Vec::new(),
                 telegraphs: Vec::new(),
+                pack: None,
+                loot: Default::default(),
             },
             seen: vec![3, 4],
             marks: vec![Mark {

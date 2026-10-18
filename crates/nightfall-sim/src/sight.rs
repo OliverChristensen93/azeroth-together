@@ -39,7 +39,7 @@ impl World {
 
     /// How far from a player's hero a unit still matters to them: the view distance and
     /// [`KEEP_EXTRA`] past it, which is also what their snapshot holds.
-    fn reach(&self) -> f32 {
+    pub(crate) fn reach(&self) -> f32 {
         self.content().rules.atmosphere.view_distance + KEEP_EXTRA
     }
 
@@ -79,6 +79,10 @@ impl World {
                 .filter(|t| near.is_none_or(|p| p.distance(t.at.ground()) <= reach))
                 .copied()
                 .collect(),
+            // Only their own backpack: nobody learns what a friend carries. The loot is the
+            // containers within the same reach, and the one they have open.
+            pack: self.raid.pack(player).map(|i| (player, i.clone())),
+            loot: self.loot_view(Some(player)),
         }
     }
 

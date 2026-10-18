@@ -207,7 +207,7 @@ fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
         .iter()
         .any(|l| l.at.distance(hero.pos) <= l.radius);
     let light = Light {
-        lantern: false,
+        lantern: hero.carry.lantern.is_some(),
         lit_area,
         flash: hs.flash > 0.0,
     };
@@ -215,16 +215,20 @@ fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
     hero.speed = base_speed(hero, content);
 }
 
-/// How fast a hero goes by their class and Stealth alone: what the fight's Sprint, slowed casts
-/// and crawl are laid on ([`World::set_pace`]).
+/// How fast a hero goes by their class, Stealth and the weight they carry alone (spec §8.2:
+/// weight slows walking and sneaking alike): what the fight's Sprint, slowed casts and crawl are
+/// laid on ([`World::set_pace`]). The weight is here, not laid on after, because `set_pace`
+/// rebuilds the speed from this each step and between steps.
 pub(crate) fn base_speed(hero: &Hero, content: &Content) -> f32 {
     let class = &content.classes[hero.class];
+    let (pace, _) = crate::burden(hero.carry.load, &content.rules.run);
     class.speed
         * if hero.stealthed {
             content.rules.senses.stealth_speed
         } else {
             1.0
         }
+        * pace
 }
 
 /// Every hero's stance, visibility and speed for this step, and their footsteps: one every
@@ -246,7 +250,10 @@ pub(crate) fn step_heroes(s: &mut Senses, heroes: &mut [Hero], content: &Content
             hs.step_in -= DT;
             if hs.step_in <= 0.0 {
                 hs.step_in += r.steps.every;
-                let radius = step_radius(hero.stance, &r.steps);
+                // A heavy hero's footsteps carry further (sneaking stays silent: 0 times
+                // anything).
+                let (_, loud) = crate::burden(hero.carry.load, &content.rules.run);
+                let radius = step_radius(hero.stance, &r.steps) * loud;
                 if radius > 0.0 {
                     hs.recent.push((0.0, radius));
                     step = Some(Noise {

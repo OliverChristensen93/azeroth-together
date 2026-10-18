@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::combat::{CastPress, Combat, Engage, Event, HeroFight, Telegraph};
 use crate::enemies::{self, Brain, Enemy, Order, Planner};
 use crate::heightmap::{HeightMap, Navigator};
+use crate::raid::{Carry, Raid};
 use crate::senses::{self, Gait, Senses, Stance};
-use crate::{Content, V2, V3};
+use crate::{ActPress, Content, Inventory, LootView, RaidRoll, V2, V3};
 
 /// Where the host keeps a hero its client reports at height `z` over `pos` (`was` its height so
 /// far): on the floor nearest `z` if one is within [`HERO_FLOOR_REACH`], so a hero on a stair
@@ -71,6 +72,8 @@ pub struct PlayerInput {
     pub cast: Option<CastPress>,
     /// How many times the player has pressed dodge, counting round past 255.
     pub dodge_presses: u8,
+    /// The act the host has not taken yet, repeated until it has ([`ActPress`]).
+    pub act: Option<ActPress>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -101,6 +104,8 @@ pub struct Hero {
     pub noise: f32,
     /// Their side of the fight (spec §6).
     pub fight: HeroFight,
+    /// What they carry (spec §8.2), as every client sees it.
+    pub carry: Carry,
 }
 
 /// Everything a client needs to draw the world as the host has it.
@@ -112,6 +117,10 @@ pub struct Snapshot {
     pub enemies: Vec<Enemy>,
     /// The telegraphed blows about to land; a player's own snapshot has those near their hero.
     pub telegraphs: Vec<Telegraph>,
+    /// The receiving player's own inventory ([`World::snapshot_for`]).
+    pub pack: Option<(PlayerId, Inventory)>,
+    /// The raid's loot as the receiving player sees it.
+    pub loot: LootView,
 }
 
 #[derive(Debug, PartialEq)]
@@ -145,11 +154,14 @@ pub struct World {
     pub(crate) events: Vec<Event>,
     /// The fight's host-only state.
     pub(crate) combat: Combat,
+    /// The raid: what heroes carry, the containers, the exits and the outcomes.
+    pub(crate) raid: Raid,
 }
 
 impl World {
     /// An empty run on the content's map.
     pub fn new(content: Arc<Content>) -> Self {
+        let raid = Raid::new(&content, RaidRoll::standard(&content, 0));
         Self {
             content,
             heroes: Vec::new(),
@@ -164,6 +176,7 @@ impl World {
             telegraphs: Vec::new(),
             events: Vec::new(),
             combat: Combat::default(),
+            raid,
         }
     }
 
@@ -189,8 +202,13 @@ impl World {
             return Err(WorldError::PlayerTaken(player));
         }
         let map = &self.content.map;
-        let entry = V2::new(map.entries[0][0], map.entries[0][1]);
-        let z = map.entries[0][2];
+        // The raid's entry; `begin_raid` refuses one the map lacks, and the standard roll is 0.
+        let at = map
+            .entries
+            .get(self.raid.roll.entry)
+            .unwrap_or(&map.entries[0]);
+        let entry = V2::new(at[0], at[1]);
+        let z = at[2];
         let k = self.heroes.len();
         let pos = if k == 0 {
             entry
@@ -217,11 +235,14 @@ impl World {
             visibility: self.content.rules.senses.visibility.still,
             noise: 0.0,
             fight: HeroFight::new(def, &self.content.rules.combat),
+            carry: Carry::default(),
         });
         Ok(())
     }
 
     pub fn remove_hero(&mut self, player: PlayerId) {
+        // Before the hero is gone: what they carry is dropped where they stand.
+        self.raid_leave(player);
         self.heroes.retain(|h| h.player != player);
         self.inputs.retain(|(p, _)| *p != player);
         self.senses.forget(player);
@@ -323,6 +344,12 @@ impl World {
     /// and their fight moves on; once a map is attached, every enemy looks, listens, thinks and
     /// goes about its business.
     pub fn step(&mut self) {
+        // Checked as the step begins, where a list that fell out of line (by a change between
+        // steps) is caught before anything indexes it.
+        debug_assert!(
+            self.nav.is_none() || self.rows_match(),
+            "the enemies, brains, minds, ways and fights must stay the same length"
+        );
         let bounds = &self.content.map.bounds;
         let inputs = std::mem::take(&mut self.inputs);
         for (player, input) in &inputs {
@@ -354,6 +381,9 @@ impl World {
         for (player, input) in &inputs {
             self.take_presses(*player, input);
         }
+        for (player, input) in &inputs {
+            self.take_act(*player, input);
+        }
         senses::step_heroes(&mut self.senses, &mut self.heroes, &self.content);
         self.step_fighters();
         // Holds, slows and burns tick before the senses read what each enemy may do (a client's
@@ -368,10 +398,6 @@ impl World {
         for hi in 0..self.heroes.len() {
             self.set_pace(hi);
         }
-        debug_assert!(
-            self.nav.is_none() || self.rows_match(),
-            "the enemies, brains, minds, ways and fights must stay the same length"
-        );
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
         if let Some(nav) = self
@@ -413,6 +439,8 @@ impl World {
             heroes: self.heroes.clone(),
             enemies: self.enemies.clone(),
             telegraphs: self.telegraphs.clone(),
+            pack: None,
+            loot: self.loot_view(None),
         }
     }
 
@@ -427,6 +455,8 @@ impl World {
         self.heroes = snapshot.heroes;
         self.enemies = snapshot.enemies;
         self.telegraphs = snapshot.telegraphs;
+        self.raid.mirror = Some(snapshot.loot);
+        self.raid.packs = snapshot.pack.into_iter().collect();
     }
 }
 

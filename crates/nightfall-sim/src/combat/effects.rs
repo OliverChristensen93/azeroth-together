@@ -234,6 +234,14 @@ impl World {
         silent: bool,
         may_crit: bool,
     ) {
+        // Worn gear's share of damage (spec §6.1: power comes from gear). A blow that is not a
+        // number stays as it is, for the check below to refuse; one the multiplier would push
+        // past what a float holds is as deadly as any.
+        let amount = if amount.is_finite() {
+            (amount * self.gear_damage(by)).min(f32::MAX)
+        } else {
+            amount
+        };
         // A blow that is not a number, or does no harm, is no blow: no event, no noise, nothing
         // freed, no combat. Nor is a blow on one already dead.
         if !amount.is_finite() || amount <= 0.0 || self.enemies.get(ei).is_none_or(|e| e.hp <= 0.0)
