@@ -4,9 +4,10 @@
 
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::{AbilityDef, Bounds, Creature, V2};
+use crate::items::{check_items, LootFile};
+use crate::{AbilityDef, Bounds, Creature, ItemDef, LootContent, V2};
 
 /// One of the class's weapons as WoW's virtual item fields want it.
 #[derive(Clone, Debug, Deserialize)]
@@ -85,6 +86,12 @@ pub struct ClassDef {
     /// `bar` with each ability as its index into [`Content::abilities`], filled as content loads.
     #[serde(skip)]
     pub kit: Vec<(u8, usize)>,
+    /// The free basic kit (spec §8.3): items and counts, as written.
+    #[serde(default)]
+    pub free_kit: Vec<(String, u16)>,
+    /// The kit resolved: indices into [`Content::items`].
+    #[serde(skip)]
+    pub free_items: Vec<(usize, u16)>,
 }
 
 fn white() -> u32 {
@@ -107,6 +114,8 @@ pub struct MapDef {
     pub entries: Vec<[f32; 3]>,
     /// Its lit places (spec §5.1).
     pub lit: Vec<LitArea>,
+    /// The ways out (spec §8.1).
+    pub exits: Vec<ExitDef>,
 }
 
 /// A lit place: a hero standing in it is easier to see (spec §5.1: campfires, Darkshire's lamps).
@@ -126,6 +135,8 @@ struct MapFile {
     entries: Vec<(f32, f32, f32)>,
     #[serde(default)]
     lit: Vec<(f32, f32, f32)>,
+    #[serde(default)]
+    exits: Vec<ExitFile>,
 }
 
 /// The light a hero carries: a small glow so a player sees their feet.
@@ -166,6 +177,9 @@ pub struct Rules {
     /// The fight (spec §6); its defaults when `rules.ron` leaves it out.
     #[serde(default)]
     pub combat: CombatRules,
+    /// The run (spec §8, §11).
+    #[serde(default)]
+    pub run: RunRules,
 }
 
 /// How the host uses what it knows of the world.
@@ -741,6 +755,158 @@ pub struct SpawnDef {
     pub behaviour: Behaviour,
 }
 
+/// What a death takes (spec §8.2), the same everywhere on the map.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeathLoss {
+    /// All gear and bags are lost with the body.
+    Everything,
+    /// All gear stays on the body, and the body is there in the player's next raid on the map.
+    #[default]
+    EverythingOneRecovery,
+    /// Only what was found this raid is lost.
+    FoundOnly,
+}
+
+/// The run's rules (spec §8, §11): every number a setting, §11's value its default.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct RunRules {
+    pub death_loss: DeathLoss,
+    /// Slots always kept, whatever happens.
+    pub safe_slots: u8,
+    /// The backpack's own slots, before bags.
+    pub backpack_slots: u8,
+    /// Stacks the stash holds (sub-project 5b's stash station adds to it).
+    pub stash_slots: u16,
+    /// Weight carried with no penalty.
+    pub weight_free: f32,
+    /// Weight at which the penalty is whole: `weight_slow_floor` of normal speed and footsteps
+    /// `weight_noise_max` times as far; heavier changes nothing more.
+    pub weight_full: f32,
+    pub weight_slow_floor: f32,
+    pub weight_noise_max: f32,
+    /// Seconds in an exit's ring to get out.
+    pub extract_for: f32,
+    /// When an exit marked `late` opens, seconds into the raid.
+    pub cart_opens_at: f32,
+    /// How near a container must be to search it or take from it, yards.
+    pub reach: f32,
+    /// Seconds to search a body.
+    pub search_body: f32,
+    /// A search is heard every so many seconds while it lasts.
+    pub noise_every: f32,
+    /// The slots of a body or of things dropped on the ground.
+    pub container_slots: u8,
+    /// Seconds between two potions.
+    pub potion_cooldown: f32,
+    /// Eat and Drink restores health with no food in the backpack (a drink is still needed for
+    /// mana): the setting to playtest food as a resource or not.
+    pub free_meal: bool,
+    /// The item Conjure Water makes.
+    pub conjured_drink: String,
+}
+
+impl Default for RunRules {
+    fn default() -> Self {
+        Self {
+            death_loss: DeathLoss::EverythingOneRecovery,
+            safe_slots: 2,
+            backpack_slots: 16,
+            stash_slots: 60,
+            weight_free: 20.0,
+            weight_full: 60.0,
+            weight_slow_floor: 0.7,
+            weight_noise_max: 1.5,
+            extract_for: 10.0,
+            cart_opens_at: 1080.0,
+            reach: 3.0,
+            search_body: 1.5,
+            noise_every: 2.0,
+            container_slots: 16,
+            potion_cooldown: 30.0,
+            free_meal: false,
+            conjured_drink: "conjured_water".into(),
+        }
+    }
+}
+
+impl RunRules {
+    fn check(&self) -> Result<(), String> {
+        let finite = [
+            self.weight_free,
+            self.weight_full,
+            self.weight_slow_floor,
+            self.weight_noise_max,
+            self.extract_for,
+            self.cart_opens_at,
+            self.reach,
+            self.search_body,
+            self.noise_every,
+            self.potion_cooldown,
+        ];
+        if finite.iter().any(|n| !n.is_finite()) {
+            return Err("rules.ron: run: every number is a number".into());
+        }
+        if self.backpack_slots == 0 || self.safe_slots > 8 || self.stash_slots == 0 {
+            return Err(
+                "rules.ron: run: a backpack of 1 slot or more, at most 8 safe slots, a stash"
+                    .into(),
+            );
+        }
+        if !(self.weight_free >= 0.0 && self.weight_full > self.weight_free) {
+            return Err("rules.ron: run: weight_full is above weight_free".into());
+        }
+        if !(self.weight_slow_floor > 0.0 && self.weight_slow_floor <= 1.0) {
+            // Above 0, so a hero is never stuck (spec §8.2).
+            return Err("rules.ron: run: weight_slow_floor is above 0 and at most 1".into());
+        }
+        if self.weight_noise_max < 1.0 {
+            return Err("rules.ron: run: weight_noise_max is 1 or more".into());
+        }
+        if !(self.extract_for > 0.0 && self.reach > 0.0 && self.noise_every > 0.0) {
+            return Err("rules.ron: run: extract_for, reach and noise_every are above 0".into());
+        }
+        if self.cart_opens_at < 0.0 || self.search_body < 0.0 || self.potion_cooldown < 0.0 {
+            return Err(
+                "rules.ron: run: cart_opens_at, search_body and potion_cooldown are 0 or more"
+                    .into(),
+            );
+        }
+        if self.container_slots == 0 {
+            return Err("rules.ron: run: container_slots is at least 1".into());
+        }
+        Ok(())
+    }
+}
+
+/// A way out of the map (spec §8.1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExitDef {
+    pub key: String,
+    pub name: String,
+    pub at: V2,
+    /// The ring's radius, yards.
+    pub radius: f32,
+    /// Opens at `cart_opens_at`, not at the start (Darkshire's cart).
+    pub late: bool,
+}
+
+fn four() -> f32 {
+    4.0
+}
+
+#[derive(Deserialize)]
+struct ExitFile {
+    key: String,
+    name: String,
+    at: (f32, f32),
+    #[serde(default = "four")]
+    radius: f32,
+    #[serde(default)]
+    late: bool,
+}
+
 /// The most enemies one spawn line places.
 const MAX_SPAWN_COUNT: u32 = 20;
 
@@ -752,6 +918,8 @@ pub struct ContentSources<'a> {
     pub enemies: &'a str,
     pub spawns: &'a str,
     pub abilities: &'a str,
+    pub items: &'a str,
+    pub loot: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -762,6 +930,10 @@ pub struct Content {
     pub enemies: Vec<EnemyDef>,
     pub spawns: Vec<SpawnDef>,
     pub abilities: Vec<AbilityDef>,
+    pub items: Vec<ItemDef>,
+    pub loot: LootContent,
+    /// The item Conjure Water makes, when the content has it.
+    pub conjured: Option<usize>,
 }
 
 /// Content that does not load, and why.
@@ -850,6 +1022,23 @@ impl Content {
             .any(|&(x, y, _)| !x.is_finite() || !y.is_finite())
         {
             return invalid("map.ron: a lit area needs a finite position".into());
+        }
+        let mut exits = Vec::new();
+        for e in &map.exits {
+            let at = V2::new(e.at.0, e.at.1);
+            if !bounds.contains(at) || !positive(e.radius) {
+                return invalid(format!(
+                    "map.ron: exit \"{}\" must be inside the map with a radius above 0",
+                    e.key
+                ));
+            }
+            exits.push(ExitDef {
+                key: e.key.clone(),
+                name: e.name.clone(),
+                at,
+                radius: e.radius,
+                late: e.late,
+            });
         }
         if rules.hero_level == 0 {
             return invalid("rules.ron: hero_level must be at least 1".into());
@@ -1017,6 +1206,33 @@ impl Content {
             }
         }
         rules.combat.check().map_err(ContentError::Invalid)?;
+        let items: Vec<ItemDef> = parse("items.ron", src.items)?;
+        check_items(&items).map_err(ContentError::Invalid)?;
+        let loot_file: LootFile = parse("loot.ron", src.loot)?;
+        let loot = loot_file
+            .resolve(&items, &enemies, &bounds)
+            .map_err(ContentError::Invalid)?;
+        rules.run.check().map_err(ContentError::Invalid)?;
+        for c in &mut classes {
+            let mut kit = Vec::new();
+            for (key, count) in &c.free_kit {
+                let Some(i) = items.iter().position(|it| it.key == *key) else {
+                    return invalid(format!(
+                        "classes.ron: \"{}\"'s free kit names no item \"{key}\"",
+                        c.key
+                    ));
+                };
+                if *count == 0 {
+                    return invalid(format!(
+                        "classes.ron: \"{}\": a kit count is 1 or more",
+                        c.key
+                    ));
+                }
+                kit.push((i, *count));
+            }
+            c.free_items = kit;
+        }
+        let conjured = items.iter().position(|i| i.key == rules.run.conjured_drink);
         Ok(Self {
             classes,
             map: MapDef {
@@ -1033,17 +1249,26 @@ impl Content {
                         radius,
                     })
                     .collect(),
+                exits,
             },
             rules,
             enemies,
             spawns,
             abilities,
+            items,
+            loot,
+            conjured,
         })
     }
 
     /// The ability with this key, by index.
     pub fn ability(&self, key: &str) -> Option<usize> {
         self.abilities.iter().position(|a| a.key == key)
+    }
+
+    /// The item with this key, by index.
+    pub fn item(&self, key: &str) -> Option<usize> {
+        self.items.iter().position(|i| i.key == key)
     }
 
     /// The enemy kind with this key, by index.
@@ -1113,6 +1338,8 @@ mod tests {
             enemies,
             spawns: "[]",
             abilities,
+            items: "[]",
+            loot: "()",
         })
     }
 
@@ -1134,6 +1361,8 @@ mod tests {
             enemies,
             spawns,
             abilities: "[]",
+            items: "[]",
+            loot: "()",
         })
     }
 
@@ -1684,5 +1913,212 @@ mod tests {
         );
         let swing = KIT_ENEMIES.replace("every: 2.0", "every: inf");
         refused_naming(load_kit(KIT_CLASSES, ABILITIES, RULES, &swing), "weaver");
+    }
+    const ITEMS: &str = r#"[
+        (key: "knife", name: "Knife", kind: Weapon, icon: "INV_Weapon_ShortBlade_01", weight: 1.0,
+         slot: Some(MainHand),
+         look: Some(Item(display: 6443, inventory_type: 13, class: 2, subclass: 15, material: 1,
+                         sheath: 3))),
+        (key: "bread", name: "Bread", kind: Food, icon: "INV_Misc_Food_11", weight: 0.5, stack: 10),
+        (key: "water", name: "Water", kind: Drink, icon: "INV_Drink_07", weight: 0.5, stack: 10),
+        (key: "pouch", name: "Pouch", kind: Bag, icon: "INV_Misc_Bag_09", weight: 0.5, bag_slots: 4),
+        (key: "key", name: "Key", kind: Key, icon: "INV_Misc_Key_03", weight: 0.1),
+    ]"#;
+    const LOOT: &str = r#"(
+        kinds: [(key: "chest", name: "Chest", display: 259, search: 2.0, sound: Open)],
+        tables: [(key: "t", rolls: (1, 2), nothing: 1.0,
+                  items: [(item: "bread", weight: 2.0, count: (1, 3)), (item: "knife", weight: 1.0)])],
+        containers: [(kind: "chest", table: "t", at: (20.0, 20.0), lock: Some("key"))],
+        bodies: [(enemy: "skeleton", table: "t")],
+    )"#;
+    const EXIT_MAP: &str = r#"(key: "test", name: "Test", map: 0,
+        bounds: [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+        entries: [(50.0, 50.0, 10.0)],
+        exits: [(key: "bridge", name: "The Bridge", at: (90.0, 90.0)),
+                (key: "cart", name: "The Cart", at: (10.0, 90.0), radius: 5.0, late: true)])"#;
+
+    fn load_loot(map: &str, rules: &str, items: &str, loot: &str) -> Result<Content, ContentError> {
+        Content::from_ron(ContentSources {
+            classes: CLASSES,
+            map,
+            rules,
+            enemies: ENEMIES,
+            spawns: SPAWNS,
+            abilities: "[]",
+            items,
+            loot,
+        })
+    }
+
+    #[test]
+    fn items_loot_and_exits_load() {
+        let c = load_loot(EXIT_MAP, RULES, ITEMS, LOOT).unwrap();
+        assert_eq!(c.item("bread"), Some(1));
+        assert_eq!(c.item("cake"), None);
+        assert_eq!(c.loot.tables[0].items[0].item, 1);
+        assert_eq!(c.loot.containers[0].lock, Some(4));
+        assert_eq!(c.loot.containers[0].z, None);
+        assert_eq!(c.loot.bodies, vec![(0, 0)]);
+        assert_eq!(c.map.exits.len(), 2);
+        assert_eq!(c.map.exits[0].radius, 4.0);
+        assert!(c.map.exits[1].late);
+        assert_eq!(c.rules.run.death_loss, DeathLoss::EverythingOneRecovery);
+        assert_eq!(c.rules.run.safe_slots, 2);
+        assert_eq!(c.rules.run.backpack_slots, 16);
+        assert_eq!(c.conjured, None);
+    }
+
+    #[test]
+    fn an_item_with_the_wrong_parts_is_refused() {
+        for bad in [
+            ITEMS.replace("slot: Some(MainHand),", ""),
+            ITEMS.replace("bag_slots: 4", "bag_slots: 0"),
+            ITEMS.replace("weight: 0.1", "weight: -1.0"),
+            ITEMS.replace("\"water\", name", "\"bread\", name"),
+        ] {
+            assert!(
+                matches!(
+                    load_loot(EXIT_MAP, RULES, &bad, LOOT),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn loot_naming_what_is_not_there_is_refused() {
+        for bad in [
+            LOOT.replace("item: \"bread\"", "item: \"cake\""),
+            LOOT.replace("table: \"t\", at", "table: \"u\", at"),
+            LOOT.replace("enemy: \"skeleton\"", "enemy: \"dragon\""),
+            LOOT.replace("rolls: (1, 2)", "rolls: (3, 2)"),
+            LOOT.replace("at: (20.0, 20.0)", "at: (200.0, 20.0)"),
+        ] {
+            assert!(
+                matches!(
+                    load_loot(EXIT_MAP, RULES, ITEMS, &bad),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_exit_outside_the_map_is_refused() {
+        let map = EXIT_MAP.replace("at: (90.0, 90.0)", "at: (190.0, 90.0)");
+        assert!(matches!(
+            load_loot(&map, RULES, ITEMS, LOOT),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn the_weight_rules_must_make_sense() {
+        // RULES opens with `(hero_level: 30,`; the run's rules go in right after it.
+        let with = |run: &str| {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, run: ({run}),"),
+                1,
+            );
+            assert_ne!(rules, RULES);
+            load_loot(EXIT_MAP, &rules, ITEMS, LOOT)
+        };
+        assert!(with("weight_free: 25.0").is_ok());
+        assert!(with("death_loss: found_only").is_ok());
+        for bad in [
+            "weight_free: 60.0, weight_full: 60.0",
+            "weight_slow_floor: 0.0",
+            "weight_slow_floor: 1.5",
+            "weight_noise_max: 0.5",
+            "extract_for: 0.0",
+            "backpack_slots: 0",
+        ] {
+            assert!(matches!(with(bad), Err(ContentError::Invalid(_))), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_free_kit_names_real_items() {
+        let classes = CLASSES.replacen(
+            "base_hp: 100.0,",
+            "base_hp: 100.0, free_kit: [(\"knife\", 1), (\"bread\", 4)],",
+            1,
+        );
+        let c = Content::from_ron(ContentSources {
+            classes: &classes,
+            map: EXIT_MAP,
+            rules: RULES,
+            enemies: ENEMIES,
+            spawns: SPAWNS,
+            abilities: "[]",
+            items: ITEMS,
+            loot: LOOT,
+        })
+        .unwrap();
+        assert_eq!(c.classes[0].free_items, vec![(0, 1), (1, 4)]);
+        let bad = classes.replace("\"bread\", 4", "\"cake\", 4");
+        let r = Content::from_ron(ContentSources {
+            classes: &bad,
+            map: EXIT_MAP,
+            rules: RULES,
+            enemies: ENEMIES,
+            spawns: SPAWNS,
+            abilities: "[]",
+            items: ITEMS,
+            loot: LOOT,
+        });
+        assert!(matches!(r, Err(ContentError::Invalid(_))));
+    }
+
+    #[test]
+    fn non_finite_numbers_in_items_loot_and_exits_are_refused() {
+        let items = |extra: &str| ITEMS.replace("\n    ]", &format!("\n        {extra},\n    ]"));
+        let potion = |on_use: &str| {
+            items(&format!(
+                "(key: \"pot\", name: \"Pot\", kind: Potion, icon: \"x\", weight: 0.1, on_use: Some({on_use}))"
+            ))
+        };
+        let lantern = |light: &str| {
+            items(&format!(
+                "(key: \"lamp\", name: \"Lamp\", kind: Lantern, icon: \"x\", weight: 0.1, light: Some({light}))"
+            ))
+        };
+        // The good versions load, so each refusal below is the number's own.
+        assert!(load_loot(EXIT_MAP, RULES, &potion("Heal(50.0)"), LOOT).is_ok());
+        assert!(load_loot(
+            EXIT_MAP,
+            RULES,
+            &lantern("(range: 10.0, intensity: 1.0)"),
+            LOOT
+        )
+        .is_ok());
+        for bad in ["inf", "NaN", "0.0"] {
+            for use_ in [format!("Heal({bad})"), format!("Mana({bad})")] {
+                refused_naming(load_loot(EXIT_MAP, RULES, &potion(&use_), LOOT), "on_use");
+            }
+            for light in [
+                format!("(range: {bad}, intensity: 1.0)"),
+                format!("(range: 10.0, intensity: {bad})"),
+            ] {
+                refused_naming(load_loot(EXIT_MAP, RULES, &lantern(&light), LOOT), "light");
+            }
+        }
+        for bad in ["inf", "NaN", "-1.0"] {
+            let loot = LOOT.replace("search: 2.0", &format!("search: {bad}"));
+            refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "search");
+            let loot = LOOT.replace("nothing: 1.0", &format!("nothing: {bad}"));
+            refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "nothing");
+            let loot = LOOT.replace("weight: 2.0,", &format!("weight: {bad},"));
+            refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "weight");
+        }
+        for bad in ["inf", "NaN", "0.0"] {
+            let loot = LOOT.replace("display: 259,", &format!("display: 259, scale: {bad},"));
+            refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "scale");
+            let map = EXIT_MAP.replace("radius: 5.0", &format!("radius: {bad}"));
+            refused_naming(load_loot(&map, RULES, ITEMS, LOOT), "radius");
+        }
     }
 }

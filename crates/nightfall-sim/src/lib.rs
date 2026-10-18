@@ -14,6 +14,7 @@ mod combat;
 mod content;
 mod enemies;
 mod heightmap;
+mod items;
 mod math;
 pub mod messages;
 mod senses;
@@ -31,13 +32,18 @@ pub use combat::{
 };
 pub use content::{
     Atmosphere, AwarenessRules, Behaviour, ClassDef, CombatRules, Content, ContentError,
-    ContentSources, DodgeRules, EnemyDef, HeroLight, LitArea, LoudnessTable, MapDef, MoveDef,
-    Rules, SenseRules, SpawnDef, StanceTable, StepNoise, Swing, WeaponDef, WorldRules,
+    ContentSources, DeathLoss, DodgeRules, EnemyDef, ExitDef, HeroLight, LitArea, LoudnessTable,
+    MapDef, MoveDef, Rules, RunRules, SenseRules, SpawnDef, StanceTable, StepNoise, Swing,
+    WeaponDef, WorldRules,
 };
 pub use enemies::{Enemy, PATROL_BUDGET, STEP_FLOORS, WANDER_BUDGET};
 pub use heightmap::{
     Floors, Grid, HeightMap, HeightMapBuilder, Navigator, PathPlan, Span, SpanList, CELL, HEADROOM,
     MAX_FLOORS, MAX_STEP, MERGE_GAP, TERRAIN_DEPTH,
+};
+pub use items::{
+    Bonus, ContainerKindDef, EquipSlot, ItemDef, ItemKind, ItemUse, LightDef, Look, LootContent,
+    PlacedContainer, Table, TableEntry,
 };
 pub use math::{V2, V3};
 pub use senses::{Alert, Gait, Loudness, Mark, Stance};

@@ -1,0 +1,112 @@
+// What holds things on the map (spec §8.2). `kinds` are the containers the content places: a
+// GameObjectDisplayInfo id, how long a search takes standing by it and how loud it is (spec §5.2:
+// Open 15 yards, Dig 30). A table makes `rolls` picks, each an entry by weight or `nothing`;
+// `count` is how many of it. `containers` are placed at WoW (x, y); `z` (optional) when measured,
+// so one in a crypt under a hill is not opened from the hill. `bodies` are what an enemy kind's
+// body holds once it dies. `pile_display` is things dropped on the ground; `remains_display` a
+// hero's body from their last raid.
+//
+// The placed containers' displays and places are marked `measure:`: check each in a shot
+// (NIGHTFALL_TRACE_POS=1 logs where the hero stands) and move it where it belongs. The two crates
+// on the autoplay's circle around the first entry stay, so a test run loots.
+(
+    kinds: [
+        // `TreasureChest01.mdx`, the survivors' chest.
+        (key: "chest", name: "Chest", display: 259, scale: 1.0, search: 2.5, sound: Open, slots: 8),
+        // measure: a crate's display; the titan cache stands in.
+        (key: "crate", name: "Crate", display: 1387, scale: 0.8, search: 1.5, sound: Open, slots: 6),
+        // measure: a grave mound; the vase stands in, low and small.
+        (key: "grave", name: "Grave", display: 52, scale: 0.6, search: 6.0, sound: Dig, slots: 6),
+    ],
+    tables: [
+        (key: "crate", rolls: (1, 3), nothing: 2.0, items: [
+            (item: "tough_bread", weight: 4.0, count: (1, 3)),
+            (item: "spring_water", weight: 4.0, count: (1, 3)),
+            (item: "linen_cloth", weight: 3.0, count: (1, 4)),
+            (item: "iron_scrap", weight: 2.0, count: (1, 2)),
+            (item: "minor_healing_potion", weight: 1.0),
+            (item: "old_coins", weight: 2.0, count: (2, 6)),
+            (item: "linen_pouch", weight: 0.5),
+        ]),
+        (key: "chest", rolls: (2, 4), nothing: 1.0, items: [
+            (item: "minor_healing_potion", weight: 3.0, count: (1, 2)),
+            (item: "minor_mana_potion", weight: 2.0, count: (1, 2)),
+            (item: "silver_locket", weight: 2.0),
+            (item: "ruby_shard", weight: 1.5, count: (1, 2)),
+            (item: "hooded_lantern", weight: 1.0),
+            (item: "duskwood_satchel", weight: 0.7),
+            (item: "scavengers_leggings", weight: 1.0),
+            (item: "gravediggers_boots", weight: 1.0),
+            (item: "night_watch_blade", weight: 0.5),
+            (item: "darkshire_staff", weight: 0.5),
+        ]),
+        (key: "grave", rolls: (1, 3), nothing: 1.0, items: [
+            (item: "bone_fragments", weight: 4.0, count: (2, 5)),
+            (item: "old_coins", weight: 3.0, count: (3, 10)),
+            (item: "gold_ring", weight: 1.0),
+            (item: "engraved_skull", weight: 1.0),
+            (item: "raven_hill_dirk", weight: 0.6),
+            (item: "acolytes_robe", weight: 0.6),
+        ]),
+        (key: "worgen", rolls: (0, 2), nothing: 2.0, items: [
+            (item: "worgen_pelt", weight: 4.0),
+            (item: "old_coins", weight: 2.0, count: (1, 4)),
+            (item: "smoked_venison", weight: 1.0),
+        ]),
+        (key: "undead", rolls: (0, 2), nothing: 2.0, items: [
+            (item: "bone_fragments", weight: 4.0, count: (1, 3)),
+            (item: "old_coins", weight: 1.0, count: (1, 3)),
+        ]),
+        (key: "spider", rolls: (0, 2), nothing: 2.0, items: [
+            (item: "spider_silk", weight: 4.0, count: (1, 3)),
+        ]),
+        (key: "caster", rolls: (1, 2), nothing: 1.0, items: [
+            (item: "minor_mana_potion", weight: 2.0),
+            (item: "linen_cloth", weight: 3.0, count: (1, 3)),
+            (item: "silver_locket", weight: 1.0),
+        ]),
+        (key: "elite", rolls: (2, 3), items: [
+            (item: "watchmans_tunic", weight: 1.0),
+            (item: "night_watch_blade", weight: 1.0),
+            (item: "darkshire_staff", weight: 1.0),
+            (item: "gold_ring", weight: 1.5),
+            (item: "duskwood_satchel", weight: 1.0),
+            (item: "ruby_shard", weight: 2.0, count: (2, 4)),
+        ]),
+    ],
+    containers: [
+        // On the autoplay's 15-yard circle around the first entry, so a test run loots.
+        (kind: "crate", table: "crate", at: (-10036.8, -792.5), place: "By the entry (east)"),
+        (kind: "crate", table: "crate", at: (-10051.8, -777.5), place: "By the entry (west)"),
+        // measure: Raven Hill cemetery's graves.
+        (kind: "grave", table: "grave", at: (-10760.0, 300.0), place: "Raven Hill cemetery"),
+        (kind: "grave", table: "grave", at: (-10770.0, 310.0), place: "Raven Hill cemetery"),
+        (kind: "grave", table: "grave", at: (-10750.0, 320.0), place: "Raven Hill cemetery"),
+        // measure: Raven Hill's crypt, locked.
+        (kind: "chest", table: "chest", at: (-10745.0, 295.0), lock: Some("crypt_key"),
+         place: "Raven Hill crypt"),
+        // measure: Tranquil Gardens Cemetery.
+        (kind: "grave", table: "grave", at: (-10560.0, -680.0), place: "Tranquil Gardens"),
+        // measure: the Yorgen Farmstead's cellar.
+        (kind: "chest", table: "chest", at: (-10930.0, -390.0), place: "Yorgen Farmstead"),
+        // measure: Addle's Stead.
+        (kind: "crate", table: "crate", at: (-10900.0, 280.0), place: "Addle's Stead"),
+        // measure: Vul'Gol Ogre Mound.
+        (kind: "chest", table: "chest", at: (-10450.0, -1440.0), place: "Vul'Gol"),
+        // measure: Brightwood Grove.
+        (kind: "crate", table: "crate", at: (-10280.0, -1250.0), place: "Brightwood Grove"),
+    ],
+    bodies: [
+        (enemy: "nightbane_worgen", table: "worgen"),
+        (enemy: "black_ravager", table: "worgen"),
+        (enemy: "skeletal_warrior", table: "undead"),
+        (enemy: "fetid_corpse", table: "undead"),
+        (enemy: "venom_web_spider", table: "spider"),
+        (enemy: "nightbane_shadow_weaver", table: "caster"),
+        (enemy: "fenros", table: "elite"),
+        (enemy: "naraxis", table: "elite"),
+    ],
+    // measure: a sack on the ground (the chest stands in) and a heap of bones (the vase).
+    pile_display: 259,
+    remains_display: 52,
+)

@@ -451,6 +451,8 @@ mod tests {
                 enemies: "[]",
                 spawns: "[]",
                 abilities: "[]",
+items: "[]",
+                loot: "()",
             })
             .unwrap(),
         )

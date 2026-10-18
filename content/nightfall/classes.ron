@@ -19,6 +19,7 @@
             (slot: 0, display: 7492, class: 2, subclass: 7, material: 1, inventory_type: 13, sheath: 3),
             (slot: 1, display: 6443, class: 2, subclass: 15, material: 1, inventory_type: 13, sheath: 3),
         ],
+        free_kit: [("worn_shortsword", 1), ("worn_dagger", 1), ("tough_bread", 4), ("spring_water", 2)],
         sheath: 1,
         base_hp: 1050.0,
         speed: 7.0,
@@ -49,6 +50,7 @@
         weapons: [
             (slot: 0, display: 1927, class: 2, subclass: 10, material: 2, inventory_type: 17, sheath: 2),
         ],
+        free_kit: [("apprentice_staff", 1), ("tough_bread", 4), ("spring_water", 4)],
         sheath: 1,
         base_hp: 880.0,
         speed: 7.0,

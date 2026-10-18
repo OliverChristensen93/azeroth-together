@@ -1,0 +1,95 @@
+// Nightfall's things (spec §8.2). `icon` is the icon's name under Interface\Icons. `look` is how
+// worn gear shows: `Item(display: …)` an ItemDisplayInfo id with the stand-in template's fields
+// (the classes' own weapons), or `Outfit(class_id: …)` the piece a new character of that class
+// starts in for the slot (always in the data; worn in the hero's own race and sex). `bonus` adds
+// health and a share of damage; `restore` is the share of health (food) or mana (drink) a meal
+// gives back; `value` is gold each.
+[
+    // The free kits' weapons: the looks the classes had before items.
+    (key: "worn_shortsword", name: "Worn Shortsword", kind: Weapon, icon: "INV_Sword_04",
+     weight: 2.5, value: 1, slot: Some(MainHand),
+     look: Some(Item(display: 7492, inventory_type: 13, class: 2, subclass: 7, material: 1,
+                     sheath: 3))),
+    (key: "worn_dagger", name: "Worn Dagger", kind: Weapon, icon: "INV_Weapon_ShortBlade_01",
+     weight: 1.0, value: 1, slot: Some(OffHand),
+     look: Some(Item(display: 6443, inventory_type: 13, class: 2, subclass: 15, material: 1,
+                     sheath: 3))),
+    (key: "apprentice_staff", name: "Apprentice's Staff", kind: Weapon, icon: "INV_Staff_02",
+     weight: 3.0, value: 1, slot: Some(MainHand),
+     look: Some(Item(display: 1927, inventory_type: 17, class: 2, subclass: 10, material: 2,
+                     sheath: 2))),
+    // Found weapons.
+    (key: "night_watch_blade", name: "Night Watch Blade", kind: Weapon, icon: "INV_Sword_05",
+     quality: 2, weight: 3.0, value: 40, slot: Some(MainHand), bonus: (damage: 0.10),
+     look: Some(Item(display: 7492, inventory_type: 13, class: 2, subclass: 7, material: 1,
+                     sheath: 3)),
+     text: "Darkshire's own steel, taken off a guard who did not come back."),
+    (key: "raven_hill_dirk", name: "Raven Hill Dirk", kind: Weapon, icon: "INV_Weapon_ShortBlade_05",
+     quality: 2, weight: 1.0, value: 30, slot: Some(OffHand), bonus: (damage: 0.06),
+     look: Some(Item(display: 6443, inventory_type: 13, class: 2, subclass: 15, material: 1,
+                     sheath: 3))),
+    (key: "darkshire_staff", name: "Darkshire Staff", kind: Weapon, icon: "INV_Staff_08",
+     quality: 2, weight: 3.5, value: 50, slot: Some(MainHand), bonus: (health: 40.0, damage: 0.12),
+     look: Some(Item(display: 1927, inventory_type: 17, class: 2, subclass: 10, material: 2,
+                     sheath: 2))),
+    // Armour, in looks the starting outfits are sure to have.
+    (key: "watchmans_tunic", name: "Watchman's Tunic", kind: Armour, icon: "INV_Chest_Chain_05",
+     quality: 2, weight: 5.0, value: 35, slot: Some(Chest), bonus: (health: 90.0),
+     look: Some(Outfit(class_id: 5))),
+    (key: "acolytes_robe", name: "Acolyte's Robe", kind: Armour, icon: "INV_Chest_Cloth_17",
+     quality: 2, weight: 2.5, value: 35, slot: Some(Chest), bonus: (health: 45.0, damage: 0.05),
+     look: Some(Outfit(class_id: 5))),
+    (key: "scavengers_leggings", name: "Scavenger's Leggings", kind: Armour,
+     icon: "INV_Pants_Leather_09", quality: 1, weight: 3.0, value: 20, slot: Some(Legs),
+     bonus: (health: 50.0), look: Some(Outfit(class_id: 4))),
+    (key: "gravediggers_boots", name: "Gravedigger's Boots", kind: Armour, icon: "INV_Boots_05",
+     quality: 1, weight: 2.0, value: 15, slot: Some(Feet), bonus: (health: 30.0),
+     look: Some(Outfit(class_id: 2))),
+    // Bags.
+    (key: "linen_pouch", name: "Linen Pouch", kind: Bag, icon: "INV_Misc_Bag_09", weight: 0.5,
+     value: 5, bag_slots: 4),
+    (key: "duskwood_satchel", name: "Duskwood Satchel", kind: Bag, icon: "INV_Misc_Bag_10",
+     quality: 2, weight: 1.0, value: 25, bag_slots: 8),
+    // Light: lit from the backpack, a hero sees further and is seen sooner (spec §5.1, §10).
+    (key: "hooded_lantern", name: "Hooded Lantern", kind: Lantern, icon: "INV_Misc_Lantern_01",
+     weight: 1.5, value: 10, light: Some((range: 18.0, intensity: 1.4))),
+    // Food and drink, for Eat and Drink.
+    (key: "tough_bread", name: "Tough Hunk of Bread", kind: Food, icon: "INV_Misc_Food_11",
+     weight: 0.2, stack: 20, value: 1),
+    (key: "smoked_venison", name: "Smoked Venison", kind: Food, icon: "INV_Misc_Food_14",
+     weight: 0.3, stack: 20, value: 2),
+    (key: "spring_water", name: "Refreshing Spring Water", kind: Drink, icon: "INV_Drink_07",
+     weight: 0.3, stack: 20, value: 1),
+    (key: "conjured_water", name: "Conjured Water", kind: Drink, icon: "INV_Drink_18",
+     weight: 0.1, stack: 20),
+    // Potions.
+    (key: "minor_healing_potion", name: "Minor Healing Potion", kind: Potion,
+     icon: "INV_Potion_51", weight: 0.3, stack: 5, value: 8, on_use: Some(Heal(250.0))),
+    (key: "minor_mana_potion", name: "Minor Mana Potion", kind: Potion, icon: "INV_Potion_76",
+     weight: 0.3, stack: 5, value: 8, on_use: Some(Mana(300.0))),
+    // Valuables: gold, and weight.
+    (key: "silver_locket", name: "Silver Locket", kind: Valuable, icon: "INV_Jewelry_Necklace_04",
+     quality: 2, weight: 0.2, value: 25),
+    (key: "ruby_shard", name: "Ruby Shard", kind: Valuable, icon: "INV_Misc_Gem_Ruby_01",
+     quality: 2, weight: 0.3, stack: 10, value: 40),
+    (key: "gold_ring", name: "Gold Ring", kind: Valuable, icon: "INV_Jewelry_Ring_03",
+     quality: 3, weight: 0.1, value: 60),
+    (key: "old_coins", name: "Old Coins", kind: Valuable, icon: "INV_Misc_Coin_02",
+     weight: 0.2, stack: 20, value: 6),
+    (key: "engraved_skull", name: "Engraved Skull", kind: Valuable,
+     icon: "INV_Misc_Bone_HumanSkull_01", quality: 2, weight: 4.0, value: 45,
+     text: "Heavy, and worth it to the right buyer in Darkshire."),
+    // Keys.
+    (key: "crypt_key", name: "Crypt Key", kind: Key, icon: "INV_Misc_Key_03", weight: 0.1),
+    // Materials, for the inn's stations.
+    (key: "linen_cloth", name: "Linen Cloth", kind: Material, icon: "INV_Fabric_Linen_01",
+     weight: 0.1, stack: 20, value: 1),
+    (key: "worgen_pelt", name: "Worgen Pelt", kind: Material, icon: "INV_Misc_Pelt_Wolf_01",
+     weight: 1.5, stack: 10, value: 4),
+    (key: "spider_silk", name: "Spider Silk", kind: Material, icon: "INV_Fabric_Silk_01",
+     weight: 0.1, stack: 20, value: 3),
+    (key: "bone_fragments", name: "Bone Fragments", kind: Material, icon: "INV_Misc_Bone_08",
+     weight: 0.5, stack: 20, value: 2),
+    (key: "iron_scrap", name: "Iron Scrap", kind: Material, icon: "INV_Ingot_03",
+     weight: 1.0, stack: 20, value: 3),
+]

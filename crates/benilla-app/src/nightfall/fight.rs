@@ -771,6 +771,8 @@ mod tests {
                     (key: "ray", name: "Ray", spell: 11, tick_spell: Some(12), aim: Enemy,
                      range: 30.0, channel: 3.0, ticks: 3, effects: [Damage(min: 1.0, max: 2.0)]),
                 ]"#,
+                items: "[]",
+                loot: "()",
             })
             .unwrap();
             let mut sim = nightfall_sim::World::new(std::sync::Arc::new(content));

@@ -101,6 +101,8 @@ mod tests {
                 enemies: include_str!("../../../content/nightfall/enemies.ron"),
                 spawns: include_str!("../../../content/nightfall/spawns.ron"),
                 abilities: include_str!("../../../content/nightfall/abilities.ron"),
+                items: include_str!("../../../content/nightfall/items.ron"),
+                loot: include_str!("../../../content/nightfall/loot.ron"),
             })
             .unwrap(),
         );

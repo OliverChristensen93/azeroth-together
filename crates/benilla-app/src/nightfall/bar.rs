@@ -336,6 +336,8 @@ mod tests {
                 (key: "hold", name: "Hold", spell: 119, aim: Enemy, range: 30.0,
                  effects: [Control(kind: Polymorph, secs: 5.0)]),
             ]"#,
+            items: "[]",
+            loot: "()",
         })
         .unwrap()
     }

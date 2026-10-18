@@ -101,4 +101,27 @@
         combo_max: 5,
         max_drinks: 20,
     ),
+    // The run (spec §8, §11). death_loss: everything, everything_one_recovery or found_only.
+    // Past weight_free a hero slows and steps louder, linearly, to weight_slow_floor of normal
+    // speed and weight_noise_max times the footstep radius at weight_full; never stuck.
+    // free_meal: Eat and Drink heals with no food (a drink still needed for mana).
+    run: (
+        death_loss: everything_one_recovery,
+        safe_slots: 2,
+        backpack_slots: 16,
+        stash_slots: 60,
+        weight_free: 20.0,
+        weight_full: 60.0,
+        weight_slow_floor: 0.7,
+        weight_noise_max: 1.5,
+        extract_for: 10.0,
+        cart_opens_at: 1080.0,
+        reach: 3.0,
+        search_body: 1.5,
+        noise_every: 2.0,
+        container_slots: 16,
+        potion_cooldown: 30.0,
+        free_meal: false,
+        conjured_drink: "conjured_water",
+    ),
 )

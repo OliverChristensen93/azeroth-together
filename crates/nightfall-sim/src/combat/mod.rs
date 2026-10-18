@@ -522,6 +522,8 @@ mod state_tests {
             enemies: "[]",
             spawns: "[]",
             abilities: "[]",
+            items: "[]",
+            loot: "()",
         })
         .unwrap();
         World::new(Arc::new(content))

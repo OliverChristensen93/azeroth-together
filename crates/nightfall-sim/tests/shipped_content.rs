@@ -10,6 +10,8 @@ pub fn shipped() -> Content {
         enemies: include_str!("../../../content/nightfall/enemies.ron"),
         spawns: include_str!("../../../content/nightfall/spawns.ron"),
         abilities: include_str!("../../../content/nightfall/abilities.ron"),
+        items: include_str!("../../../content/nightfall/items.ron"),
+        loot: include_str!("../../../content/nightfall/loot.ron"),
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }
@@ -143,5 +145,19 @@ fn the_shipped_kits_are_on_their_bars_and_enemies_fight_back() {
             "{}",
             e.key
         );
+    }
+}
+
+#[test]
+fn the_shipped_content_has_its_items_loot_exits_and_kits() {
+    let c = shipped();
+    assert!(c.items.len() >= 20);
+    assert!(c.conjured.is_some());
+    assert!(c.map.exits.len() >= 3);
+    assert!(c.map.exits.iter().any(|e| e.late));
+    assert!(!c.loot.containers.is_empty());
+    assert!(!c.loot.bodies.is_empty());
+    for class in &c.classes {
+        assert!(!class.free_items.is_empty(), "{} has a free kit", class.key);
     }
 }

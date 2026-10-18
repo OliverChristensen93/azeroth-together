@@ -155,6 +155,8 @@ mod tests {
             enemies: ENEMIES,
             spawns: &spawns,
             abilities: "[]",
+            items: "[]",
+            loot: "()",
         })
         .unwrap();
         let mut w = World::new(Arc::new(content));

@@ -45,11 +45,11 @@ use nightfall_sim::{Content, ContentSources};
 use crate::game_pick::GameMode;
 
 static CONTENT: OnceLock<Arc<Content>> = OnceLock::new();
-/// The content files' text (classes, map, rules, enemies, spawns, abilities), for the hash a client
+/// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot), for the hash a client
 /// and host compare.
-static CONTENT_TEXTS: OnceLock<[String; 6]> = OnceLock::new();
+static CONTENT_TEXTS: OnceLock<[String; 8]> = OnceLock::new();
 
-pub(super) fn content_texts() -> &'static [String; 6] {
+pub(super) fn content_texts() -> &'static [String; 8] {
     CONTENT_TEXTS.get().expect("nightfall::prepare ran")
 }
 
@@ -134,6 +134,14 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         "abilities.ron",
         include_str!("../../../../content/nightfall/abilities.ron"),
     )?;
+    let items = read(
+        "items.ron",
+        include_str!("../../../../content/nightfall/items.ron"),
+    )?;
+    let loot = read(
+        "loot.ron",
+        include_str!("../../../../content/nightfall/loot.ron"),
+    )?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         map: &map,
@@ -141,6 +149,8 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         enemies: &enemies,
         spawns: &spawns,
         abilities: &abilities,
+        items: &items,
+        loot: &loot,
     })
     .map_err(|e| e.to_string())?;
     if let Some(key) = class_key() {
@@ -155,7 +165,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         None => println!("nightfall: content compiled in"),
     }
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set([classes, map, rules, enemies, spawns, abilities]);
+    let _ = CONTENT_TEXTS.set([classes, map, rules, enemies, spawns, abilities, items, loot]);
     Ok(())
 }
 
@@ -183,6 +193,8 @@ pub(super) fn bar_test_content() -> nightfall_sim::Content {
             (key: "stone", name: "Stone", spell: 4164, aim: Ground, range: 25.0,
              cooldown: 20.0, effects: []),
         ]"#,
+        items: "[]",
+        loot: "()",
     })
     .unwrap()
 }
@@ -199,6 +211,8 @@ pub(super) fn shipped_content() -> Arc<Content> {
             enemies: include_str!("../../../../content/nightfall/enemies.ron"),
             spawns: include_str!("../../../../content/nightfall/spawns.ron"),
             abilities: include_str!("../../../../content/nightfall/abilities.ron"),
+            items: include_str!("../../../../content/nightfall/items.ron"),
+            loot: include_str!("../../../../content/nightfall/loot.ron"),
         })
         .expect("the shipped content parses"),
     )
