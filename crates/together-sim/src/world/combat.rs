@@ -419,6 +419,7 @@ impl World {
             if !self.heroes[h].alive {
                 continue;
             }
+            self.casting = Some(self.heroes[h].player);
             let floes = self.heroes[h].spell.shield > 0.0 && self.knows(h, Augment::IceFloes);
             for a in 0..self.heroes[h].abilities.len() {
                 let owned = self.heroes[h].abilities[a].clone();
@@ -478,6 +479,7 @@ impl World {
                 }
             }
         }
+        self.casting = None;
         self.run_triggers();
     }
 

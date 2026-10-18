@@ -18,6 +18,8 @@ mod druid;
 mod gear;
 mod affixes;
 mod hazards;
+mod horde;
+mod meter;
 mod hunter;
 mod paladin;
 mod priest;
@@ -97,7 +99,7 @@ const CHALLENGE_ELITES: usize = 4;
 const CHALLENGE_PER_HERO: usize = 2;
 /// ...in a ring this far from it.
 const CHALLENGE_RING: (f32, f32) = (9.0, 14.0);
-/// The zone's boss comes this many seconds in, and again every as many after.
+/// The zone's boss comes this many seconds in, and again as many after each one falls.
 pub const BOSS_EVERY: f32 = 240.0;
 /// A camp's elite chases a hero who comes this near, and otherwise keeps to its camp.
 pub const ELITE_AGGRO: f32 = 20.0;
@@ -172,6 +174,10 @@ pub struct PlayerInput {
     /// paying its gold.
     #[serde(default)]
     pub gear_on: Option<u8>,
+    /// The player has the game menu open: the run waits, as for a hand of cards. Held, like
+    /// movement, until an input says otherwise.
+    #[serde(default)]
+    pub menu: bool,
 }
 
 /// A hero's position and facing as its player's client reports them.
@@ -233,6 +239,8 @@ pub enum Event {
     Shoved { hero: PlayerId, to: V2 },
     /// An affix joined the run.
     AffixGained { affix: Affix },
+    /// For `secs` the horde comes from every side, not only from behind.
+    Surrounded { secs: f32 },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -415,6 +423,10 @@ pub struct Hero {
     pub facing: V2,
     /// Whether the hero is running this step.
     pub moving: bool,
+    /// The way it has been running lately, smoothed (zero until it first moves): the horde
+    /// comes from behind it ([`World::spawn_angle`]).
+    #[serde(default)]
+    pub heading: V2,
     /// Height above the ground while jumping, 0 on it. Only for show: the game is flat, and a
     /// jump dodges nothing.
     pub air: f32,
@@ -464,6 +476,23 @@ pub struct Hero {
     pub damage_done: f64,
     /// The same, by ability (an index into the content's abilities): the damage meter.
     pub damage_by: Vec<(usize, f64)>,
+    /// Of that, what went into bosses, by ability too: the meter's boss view.
+    #[serde(default)]
+    pub boss_damage: f64,
+    #[serde(default)]
+    pub boss_by: Vec<(usize, f64)>,
+    /// Health this hero's healing restored (its own and, through its spells, its friends'), and
+    /// what its shields and wards soaked up: the meter's healing view.
+    #[serde(default)]
+    pub healed: f64,
+    #[serde(default)]
+    pub absorbed: f64,
+    /// This step's bookkeeping for [`World::tally_healing`]: health at its start, and what blows
+    /// took since.
+    #[serde(skip)]
+    pub(crate) hp_mark: Option<f32>,
+    #[serde(skip)]
+    pub(crate) taken: f32,
     /// What its spells' augments keep track of: a shield, streaks, charges, timers.
     #[serde(default)]
     pub spell: HeroSpells,
@@ -556,6 +585,8 @@ pub struct Snapshot {
     pub kills: u32,
     pub difficulty: Difficulty,
     pub next_boss: f32,
+    #[serde(default)]
+    pub menu_pause: bool,
     pub buffs: Vec<(PowerUp, f32)>,
     pub heroes: Vec<Hero>,
     pub enemies: Vec<EnemyState>,
@@ -671,6 +702,10 @@ pub struct World {
     delayed: Vec<(f32, combat::Trigger)>,
     /// The first target of the last missile cast, for an augment's second missile elsewhere.
     last_target: Option<u32>,
+    /// The hero whose spells are being cast, while [`World::cast_abilities`] casts them: a heal
+    /// it lands on a friend is its own on the meter. And those heals, this step.
+    casting: Option<PlayerId>,
+    heal_credit: Vec<(PlayerId, PlayerId, f32)>,
     inputs: HashMap<PlayerId, PlayerInput>,
     events: Vec<Event>,
     next_id: u32,
@@ -683,6 +718,12 @@ pub struct World {
     pub difficulty: Difficulty,
     /// Seconds into the run the boss comes next.
     pub next_boss: f32,
+    /// A living player has the game menu open, and the run waits for them.
+    pub menu_pause: bool,
+    /// Seconds left of a surround, when the horde comes from every side; and seconds into the
+    /// run the next one starts.
+    pub surround: f32,
+    pub next_surround: f32,
     /// Experience earned per experience picked up: 1 in a normal run.
     pub xp_rate: f32,
     /// The rank a newly learned spell starts at: 1 in a normal run.
@@ -720,6 +761,8 @@ impl World {
             triggers: Vec::new(),
             delayed: Vec::new(),
             last_target: None,
+            casting: None,
+            heal_credit: Vec::new(),
             inputs: HashMap::new(),
             events: Vec::new(),
             next_id: 1,
@@ -729,9 +772,13 @@ impl World {
             kills: 0,
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
+            menu_pause: false,
+            surround: 0.0,
+            next_surround: f32::INFINITY,
             xp_rate: 1.0,
             learn_rank: 1,
         };
+        world.next_surround = world.content.rules.surround_from;
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
             world.place(kind, pos);
@@ -801,6 +848,7 @@ impl World {
             pos,
             facing: V2::new(1.0, 0.0),
             moving: false,
+            heading: V2::ZERO,
             air: 0.0,
             vy: 0.0,
             hp: def.base_hp,
@@ -827,6 +875,12 @@ impl World {
             ward: 0.0,
             damage_done: 0.0,
             damage_by: Vec::new(),
+            boss_damage: 0.0,
+            boss_by: Vec::new(),
+            healed: 0.0,
+            absorbed: 0.0,
+            hp_mark: None,
+            taken: 0.0,
             spell: HeroSpells::default(),
             talents: Default::default(),
             gear: HeroGear::default(),
@@ -935,6 +989,7 @@ impl World {
         held.freeze |= input.freeze;
         held.banish = input.banish.or(held.banish);
         held.gear_on = input.gear_on.or(held.gear_on);
+        held.menu = input.menu;
     }
 
     /// `player` left: their hero goes, and the run no longer waits on them.
@@ -955,6 +1010,7 @@ impl World {
             kills: self.kills,
             difficulty: self.difficulty,
             next_boss: self.next_boss,
+            menu_pause: self.menu_pause,
             buffs: self.buffs.clone(),
             heroes: self.heroes.clone(),
             enemies: self
@@ -992,6 +1048,7 @@ impl World {
         self.kills = snapshot.kills;
         self.difficulty = snapshot.difficulty;
         self.next_boss = snapshot.next_boss;
+        self.menu_pause = snapshot.menu_pause;
         self.buffs = snapshot.buffs;
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;
@@ -1043,6 +1100,11 @@ impl World {
         self.heroes.iter().any(|h| h.alive && !h.offers.is_empty())
     }
 
+    /// The run waits: for cards ([`World::paused`]) or for a player in the game menu.
+    pub fn held(&self) -> bool {
+        self.paused() || self.menu_pause
+    }
+
     /// Every hero has fallen.
     pub fn game_over(&self) -> bool {
         !self.heroes.is_empty() && self.heroes.iter().all(|h| !h.alive)
@@ -1062,15 +1124,22 @@ impl World {
     pub fn step(&mut self) {
         self.apply_picks();
         self.switch_gear();
-        if self.paused() || self.game_over() {
+        let inputs = &self.inputs;
+        self.menu_pause = self
+            .heroes
+            .iter()
+            .any(|h| h.alive && inputs.get(&h.player).is_some_and(|i| i.menu));
+        if self.held() || self.game_over() {
             return;
         }
         self.tick += 1;
         self.elapsed += DT;
+        self.mark_healing();
         self.move_heroes();
         self.revive_heroes();
         self.regenerate();
         self.tend_spells();
+        self.tend_surround();
         self.spawn_enemies();
         self.spawn_bosses();
         self.move_enemies();
@@ -1085,6 +1154,7 @@ impl World {
         self.collect_pickups();
         self.use_interactables();
         self.tend_arena();
+        self.tally_healing();
         self.level_up();
     }
 
@@ -1325,6 +1395,10 @@ impl World {
         let max = class.base_hp * (1.0 + hero.stats.get(Stat::Health));
         if max > hero.max_hp && hero.alive {
             hero.hp += max - hero.max_hp;
+            // More health to the maximum is no heal.
+            if let Some(mark) = &mut hero.hp_mark {
+                *mark += max - hero.max_hp;
+            }
         }
         hero.max_hp = max;
         hero.hp = hero.hp.min(max);
@@ -1358,6 +1432,9 @@ impl World {
                     }
                 }
                 hero.moving = pos.distance(hero.pos) > 1e-3;
+                if hero.moving {
+                    horde::steer(&mut hero.heading, pos - hero.pos);
+                }
                 hero.pos = pos;
                 if pose.facing != V2::ZERO {
                     hero.facing = pose.facing.normalize_or_zero();
@@ -1389,6 +1466,7 @@ impl World {
                 continue;
             }
             hero.facing = dir;
+            horde::steer(&mut hero.heading, dir);
             hero.pos += dir * (hero.speed * DT);
             let off = hero.pos - center;
             if off.length() > leash {
@@ -1439,10 +1517,12 @@ impl World {
         }
     }
 
-    /// Living heroes heal by their [`Stat::Regen`], and their Frost Wards recover.
+    /// Living heroes heal by their class's base regeneration and their [`Stat::Regen`], and their
+    /// Frost Wards recover.
     fn regenerate(&mut self) {
+        let content = self.content.clone();
         for hero in self.heroes.iter_mut().filter(|h| h.alive) {
-            let regen = hero.stats.get(Stat::Regen);
+            let regen = content.classes[hero.class].base_regen + hero.stats.get(Stat::Regen);
             hero.hp = (hero.hp + regen * DT).min(hero.max_hp);
             hero.barrier = (hero.barrier - DT).max(0.0);
         }
@@ -1454,16 +1534,16 @@ impl World {
             return;
         }
         self.spawn_timer = SPAWN_EVERY;
-        let living: Vec<V2> = self
+        let living: Vec<(V2, V2)> = self
             .heroes
             .iter()
             .filter(|h| h.alive)
-            .map(|h| h.pos)
+            .map(|h| (h.pos, h.heading))
             .collect();
         if living.is_empty() {
             return;
         }
-        let horde = 1.0 + self.difficulty.horde;
+        let horde = 1.0 + self.difficulty.horde + self.surround_horde();
         let target = (target_alive(self.elapsed, living.len()) as f32 * horde) as usize;
         // Elites and bosses come on top of the horde, not out of it.
         let alive = self.enemies.iter().filter(|e| !e.elite && !e.boss).count();
@@ -1475,8 +1555,8 @@ impl World {
         let center = self.center();
         let leash = self.zone().leash;
         for _ in 0..batch {
-            let near = living[self.rng.index(living.len())];
-            let angle = self.rng.range(0.0, std::f32::consts::TAU);
+            let (near, heading) = living[self.rng.index(living.len())];
+            let angle = self.spawn_angle(heading);
             let r = self.rng.range(SPAWN_RING.0, SPAWN_RING.1);
             let mut pos = near + V2::from_angle(angle, r);
             // Never outside the arena: pull back onto its edge.
@@ -1496,6 +1576,12 @@ impl World {
         let Some(def) = self.zone().boss_ix else {
             return;
         };
+        // One boss at a time: while one stands the clock waits, so the next comes a full
+        // [`BOSS_EVERY`] after the last one falls, however long the fight took.
+        if self.enemies.iter().any(|e| e.boss) {
+            self.next_boss = self.next_boss.max(self.elapsed + BOSS_EVERY);
+            return;
+        }
         if self.elapsed < self.next_boss {
             return;
         }
@@ -1508,7 +1594,7 @@ impl World {
         if living.is_empty() {
             return;
         }
-        self.next_boss += BOSS_EVERY;
+        self.next_boss = self.elapsed + BOSS_EVERY;
         let party = 1.0 + 0.6 * (living.len() - 1) as f32;
         let near = living[self.rng.index(living.len())];
         let angle = self.rng.range(0.0, std::f32::consts::TAU);
@@ -1541,7 +1627,9 @@ impl World {
         };
         let hp = def.hp * (1.0 + progress * 0.75) * (1.0 + d.enemy_health) * health;
         let damage = def.damage * (1.0 + progress * 0.9) * (1.0 + d.enemy_damage) * hits;
-        let speed = def.speed * (1.0 + d.enemy_speed);
+        let rules = &self.content.rules;
+        let base = (def.speed * rules.enemy_speed).min(rules.enemy_speed_cap.max(def.speed));
+        let speed = base * (1.0 + d.enemy_speed);
         let radius = def.radius * def.scale * size;
         let id = self.id();
         self.enemies.push(Enemy {
@@ -1700,15 +1788,19 @@ impl World {
         }
         let wards = hero.stacks(Item::FrostWard);
         if wards > 0 && hero.barrier <= 0.0 {
+            hero.absorbed += f64::from(amount * (1.0 - hero.stats.get(Stat::Armor)));
             hero.barrier = ward_cooldown(wards);
             self.proc_cast(player, Item::FrostWard, vec![Target::Hero(player)]);
             return 0.0;
         }
         let guard = if hero.spell.guard > 0.0 { 0.5 } else { 1.0 };
         let amount = amount * (1.0 - hero.stats.get(Stat::Armor)) * guard;
+        let blow = amount;
         let amount = self.ward_blow(h, amount, from);
         let amount = self.shield_blow(h, amount, from);
         let hero = &mut self.heroes[h];
+        hero.absorbed += f64::from((blow - amount).max(0.0));
+        hero.taken += amount;
         hero.hp -= amount;
         if hero.hp <= 0.0 && self.cheat_death(h) {
             return amount;
@@ -1767,11 +1859,13 @@ impl World {
         let dealt = amount.min(e.hp);
         e.hp -= amount;
         e.last_hit = Some(by);
+        let boss = e.boss;
         if let Some(hero) = self.heroes.iter_mut().find(|h| h.player == by) {
             hero.damage_done += f64::from(dealt);
-            match hero.damage_by.iter_mut().find(|(a, _)| *a == ability) {
-                Some((_, total)) => *total += f64::from(dealt),
-                None => hero.damage_by.push((ability, f64::from(dealt))),
+            meter::add_to(&mut hero.damage_by, ability, dealt);
+            if boss {
+                hero.boss_damage += f64::from(dealt);
+                meter::add_to(&mut hero.boss_by, ability, dealt);
             }
         }
         self.events.push(Event::Damage {
@@ -3411,7 +3505,7 @@ mod tests {
         let boss = w.enemies.iter().find(|e| e.boss).expect("the boss came");
         let (id, def) = (boss.id, boss.def);
         assert_eq!(w.content().enemies[def].name, "Hogger");
-        assert_eq!(w.next_boss, BOSS_EVERY * 2.0);
+        assert!((w.next_boss - BOSS_EVERY * 2.0).abs() < 0.1, "{}", w.next_boss);
         assert!(w.drain_events().contains(&Event::BossCame { def }));
         w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 0.0;
         w.step();
@@ -3420,6 +3514,24 @@ mod tests {
             .iter()
             .any(|i| i.kind == InteractableKind::Cache && i.ready()));
         assert!(w.drain_events().contains(&Event::BossDied { id }));
+    }
+
+    #[test]
+    fn a_slow_boss_fight_does_not_bring_the_next_boss_at_once() {
+        let mut w = world();
+        w.interactables.clear();
+        w.elapsed = BOSS_EVERY - DT * 0.5;
+        w.step();
+        let id = w.enemies.iter().find(|e| e.boss).expect("the boss came").id;
+        // The fight drags on past when the next boss was once due.
+        w.elapsed = BOSS_EVERY * 2.0 + 20.0;
+        w.step();
+        assert_eq!(w.enemies.iter().filter(|e| e.boss).count(), 1);
+        w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 0.0;
+        w.step();
+        w.step();
+        assert!(!w.enemies.iter().any(|e| e.boss), "no fresh boss straight after the kill");
+        assert!(w.next_boss > w.elapsed + BOSS_EVERY - 1.0, "{} vs {}", w.next_boss, w.elapsed);
     }
 
     /// Hero 0 too tough to fall, for tests that run a while: through its stats, so a card's

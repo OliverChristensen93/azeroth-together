@@ -488,7 +488,7 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 sub,
                 badge: format!("{}/{}", rank + 1, rules.tome_max_rank),
                 bright: true,
-                description: format!("Raises your {} for the run.", stat.name().to_lowercase()),
+                description: format!("Raises your {}.", stat.name().to_lowercase()),
                 lines: vec![
                     (stat.describe(stat.tome_amount(card.rarity)), GREEN),
                     (format!("You have {}", stat_now(hero, stat)), GREY),

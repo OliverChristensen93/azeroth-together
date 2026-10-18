@@ -11,4 +11,15 @@
     shrine_every: 90.0,
     // Seconds after a camp's elite dies before a new one guards the camp again.
     elite_respawn: 180.0,
+    // Every enemy's speed from enemies.ron is multiplied by this, but held to at most
+    // `enemy_speed_cap` yards a second (heroes run 7), so the horde keeps up without pinning a
+    // hero who keeps moving. 1.0 and a cap of 99 give the old, slower horde.
+    enemy_speed: 1.35,
+    enemy_speed_cap: 6.65,
+    // The horde comes from behind the way a hero runs, never straight ahead. From
+    // `surround_from` seconds in, every `surround_every` seconds, it comes from every side for
+    // `surround_secs`.
+    surround_from: 150.0,
+    surround_every: 150.0,
+    surround_secs: 12.0,
 )

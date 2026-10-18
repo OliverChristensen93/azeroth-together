@@ -488,6 +488,8 @@ impl World {
         let before = hero.hp;
         hero.hp = (hero.hp + amount).min(hero.max_hp);
         let healed = hero.hp - before;
+        let target = hero.player;
+        self.credit_heal(target, healed);
         self.paladin_healed(t, amount);
         let Some(spec) = spec else {
             return healed;
@@ -1193,16 +1195,20 @@ pub(super) mod testkit {
     use crate::content::ContentSources;
     pub use crate::spell::Tag;
 
+    /// The shipped content, less the classes' base regeneration, so a test reads its heals
+    /// exactly.
     pub fn shipped() -> Arc<Content> {
-        Arc::new(
-            Content::from_ron(ContentSources {
-                classes: include_str!("../../../../content/classes.ron"),
-                abilities: include_str!("../../../../content/abilities.ron"),
-                enemies: include_str!("../../../../content/enemies.ron"),
-                zones: include_str!("../../../../content/zones.ron"),
-            })
-            .expect("shipped content is valid"),
-        )
+        let mut content = Content::from_ron(ContentSources {
+            classes: include_str!("../../../../content/classes.ron"),
+            abilities: include_str!("../../../../content/abilities.ron"),
+            enemies: include_str!("../../../../content/enemies.ron"),
+            zones: include_str!("../../../../content/zones.ron"),
+        })
+        .expect("shipped content is valid");
+        for class in &mut content.classes {
+            class.base_regen = 0.0;
+        }
+        Arc::new(content)
     }
 
     /// A hero of `class` alone in an emptied arena: no horde, no shrines, no boss, plenty of

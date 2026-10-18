@@ -364,6 +364,10 @@ pub struct ClassDef {
     #[serde(default = "one_u8")]
     pub sheath: u8,
     pub base_hp: f32,
+    /// Health back every second before any [`crate::Stat::Regen`]: a little for cloth, more for
+    /// the classes who fight in the thick of it.
+    #[serde(default = "half")]
+    pub base_regen: f32,
     /// Yards per second.
     pub speed: f32,
     /// The ability every run starts with.
@@ -384,6 +388,10 @@ pub struct ClassDef {
 
 fn one_u8() -> u8 {
     1
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 fn white() -> u32 {
@@ -424,6 +432,37 @@ pub struct Rules {
     /// Seconds after a camp's elite dies before a new one takes its place.
     #[serde(default = "one_eighty")]
     pub elite_respawn: f32,
+    /// Every enemy's speed from its entry is multiplied by this...
+    #[serde(default = "enemy_speed")]
+    pub enemy_speed: f32,
+    /// ...but held to at most this many yards a second (an entry already faster keeps its own),
+    /// so a hero at the base 7 can still pull away from the horde without help.
+    #[serde(default = "enemy_speed_cap")]
+    pub enemy_speed_cap: f32,
+    /// The horde comes from behind the way a hero runs. From `surround_from` seconds in, every
+    /// `surround_every` seconds it comes from every side instead, for `surround_secs`.
+    #[serde(default = "surround_from")]
+    pub surround_from: f32,
+    #[serde(default = "surround_every")]
+    pub surround_every: f32,
+    #[serde(default = "surround_secs")]
+    pub surround_secs: f32,
+}
+
+fn enemy_speed() -> f32 {
+    1.35
+}
+fn enemy_speed_cap() -> f32 {
+    6.65
+}
+fn surround_from() -> f32 {
+    150.0
+}
+fn surround_every() -> f32 {
+    150.0
+}
+fn surround_secs() -> f32 {
+    12.0
 }
 
 impl Default for Rules {
@@ -434,6 +473,11 @@ impl Default for Rules {
             item_max_copies: five_u8(),
             shrine_every: ninety(),
             elite_respawn: one_eighty(),
+            enemy_speed: enemy_speed(),
+            enemy_speed_cap: enemy_speed_cap(),
+            surround_from: surround_from(),
+            surround_every: surround_every(),
+            surround_secs: surround_secs(),
         }
     }
 }
@@ -628,7 +672,7 @@ pub(crate) mod tests {
 
     pub(crate) const CLASSES: &str = r#"[
         (key: "mage", name: "Mage", class_id: 8, power: 0, looks: [1294],
-         base_hp: 120.0, speed: 7.5, start: "frostbolt", pool: ["frostbolt", "nova"]),
+         base_hp: 120.0, base_regen: 0.0, speed: 7.5, start: "frostbolt", pool: ["frostbolt", "nova"]),
     ]"#;
     pub(crate) const ABILITIES: &str = r#"[
         (key: "frostbolt", name: "Frostbolt", visual: 116, kind: Bolt, damage: 12.0,
