@@ -114,7 +114,10 @@ mod tests {
         for _ in 0..2000 {
             let dir = V2::from_angle(w.spawn_angle(ahead), 1.0);
             let off = apart(dir, ahead);
-            assert!(off >= OPEN_AHEAD - 0.01, "a spawn {off} degrees off straight ahead");
+            assert!(
+                off >= OPEN_AHEAD - 0.01,
+                "a spawn {off} degrees off straight ahead"
+            );
             if off >= 120.0 {
                 behind += 1;
             }
@@ -128,7 +131,10 @@ mod tests {
         w.elapsed = w.content.rules.surround_from;
         w.tend_surround();
         assert!(w.surround > 0.0);
-        assert!(w.drain_events().iter().any(|e| matches!(e, Event::Surrounded { .. })));
+        assert!(w
+            .drain_events()
+            .iter()
+            .any(|e| matches!(e, Event::Surrounded { .. })));
         let ahead = V2::new(1.0, 0.0);
         let front = (0..2000)
             .filter(|_| apart(V2::from_angle(w.spawn_angle(ahead), 1.0), ahead) < 30.0)

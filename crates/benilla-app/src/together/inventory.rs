@@ -316,7 +316,10 @@ pub(super) fn refresh(
     strip: Query<Entity, With<Strip>>,
     mut names: Query<&mut Text, (With<SheetNames>, Without<SheetValues>, Without<TalentLines>)>,
     mut values: Query<&mut Text, (With<SheetValues>, Without<SheetNames>, Without<TalentLines>)>,
-    mut talent_text: Query<&mut Text, (With<TalentLines>, Without<SheetNames>, Without<SheetValues>)>,
+    mut talent_text: Query<
+        &mut Text,
+        (With<TalentLines>, Without<SheetNames>, Without<SheetValues>),
+    >,
     mut shown: Local<Option<(Vec<(Stat, u8)>, Vec<(Item, u8)>)>>,
 ) {
     let hero = (*phase.get() == Phase::Playing)
@@ -340,8 +343,7 @@ pub(super) fn refresh(
     if keys.just_pressed(KeyCode::Tab) || button.iter().any(|i| *i == Interaction::Pressed) {
         open.0 = !open.0;
     }
-    if keys.just_pressed(KeyCode::KeyN)
-        || talent_button.iter().any(|i| *i == Interaction::Pressed)
+    if keys.just_pressed(KeyCode::KeyN) || talent_button.iter().any(|i| *i == Interaction::Pressed)
     {
         talents_open.0 = !talents_open.0;
     }

@@ -87,7 +87,11 @@ mod tests {
         w.heroes[0].hp += 10.0;
         w.hurt_hero(0, 4.0);
         w.tally_healing();
-        assert!((w.heroes[0].healed - 10.0).abs() < 1e-3, "{}", w.heroes[0].healed);
+        assert!(
+            (w.heroes[0].healed - 10.0).abs() < 1e-3,
+            "{}",
+            w.heroes[0].healed
+        );
     }
 
     #[test]

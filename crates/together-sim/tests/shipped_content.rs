@@ -24,7 +24,9 @@ fn shipped() -> Content {
 fn every_classic_race_has_its_passives_and_a_dwarf_finds_more_gold() {
     let c = shipped();
     for race in 1..=8u8 {
-        let def = c.race(race).unwrap_or_else(|| panic!("race {race} has no passives"));
+        let def = c
+            .race(race)
+            .unwrap_or_else(|| panic!("race {race} has no passives"));
         assert!(!def.passives.is_empty(), "{}", def.name);
     }
     assert!(c.race(3).unwrap().treasure());

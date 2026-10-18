@@ -81,10 +81,16 @@ fn tint(source: Source) -> Color {
 fn rays(color: Color) -> BackgroundGradient {
     let step = std::f32::consts::TAU / RAYS as f32;
     let mut stops = Vec::with_capacity(RAYS * 2 + 1);
+    // Each ray a soft-edged spoke with a dark gap either side.
     for k in 0..RAYS {
         let a = k as f32 * step;
         stops.push(AngularColorStop::new(color.with_alpha(0.0), a));
-        stops.push(AngularColorStop::new(color.with_alpha(0.16), a + step * 0.5));
+        stops.push(AngularColorStop::new(color.with_alpha(0.0), a + step * 0.3));
+        stops.push(AngularColorStop::new(
+            color.with_alpha(0.42),
+            a + step * 0.5,
+        ));
+        stops.push(AngularColorStop::new(color.with_alpha(0.0), a + step * 0.7));
     }
     stops.push(AngularColorStop::new(
         color.with_alpha(0.0),
@@ -99,10 +105,10 @@ fn glow(color: Color, strength: f32) -> BackgroundGradient {
         UiPosition::CENTER,
         RadialGradientShape::ClosestSide,
         vec![
-            ColorStop::new(color.with_alpha(0.32 * strength), Val::Percent(0.0)),
-            ColorStop::new(color.with_alpha(0.10 * strength), Val::Percent(30.0)),
-            ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.0), Val::Percent(55.0)),
-            ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.55), Val::Percent(100.0)),
+            ColorStop::new(color.with_alpha(0.30 * strength), Val::Percent(0.0)),
+            ColorStop::new(color.with_alpha(0.08 * strength), Val::Percent(35.0)),
+            ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.0), Val::Percent(70.0)),
+            ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.5), Val::Percent(100.0)),
         ],
     ))
 }
@@ -138,7 +144,7 @@ pub(super) fn setup(mut commands: Commands) {
                 overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
             FocusPolicy::Pass,
             GlobalZIndex(299),
             Visibility::Hidden,

@@ -5,11 +5,11 @@
 
 use std::collections::HashMap;
 
+use benilla_world::world_point::WorldPoint;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
-use benilla_world::world_point::WorldPoint;
-use together_sim::{InteractState, InteractableKind, V2, ESCORT_GOAL};
+use together_sim::{InteractState, InteractableKind, ESCORT_GOAL, V2};
 
 use crate::minimap::{ExtraBlip, ExtraRing, ExtraShape, MinimapExtras};
 
@@ -50,10 +50,20 @@ pub(super) fn fill_minimap(sim: Res<Sim>, mut extras: ResMut<MinimapExtras>) {
                 blips.push(blip(it.pos, ExtraShape::GoldDot, 11.0, white, true));
             }
             (InteractState::Ready, InteractableKind::WarBanner) => {
-                blips.push(blip(it.pos, ExtraShape::Flag, 11.0, [0.7, 1.0, 0.7, 1.0], false));
+                blips.push(blip(
+                    it.pos,
+                    ExtraShape::Flag,
+                    11.0,
+                    [0.7, 1.0, 0.7, 1.0],
+                    false,
+                ));
             }
             (InteractState::Ready, _) if treasure => {
-                let size = if it.kind == InteractableKind::Pot { 6.0 } else { 9.0 };
+                let size = if it.kind == InteractableKind::Pot {
+                    6.0
+                } else {
+                    9.0
+                };
                 blips.push(blip(it.pos, ExtraShape::GoldDot, size, white, false));
             }
             _ => {}
@@ -63,7 +73,13 @@ pub(super) fn fill_minimap(sim: Res<Sim>, mut extras: ResMut<MinimapExtras>) {
         if e.boss {
             blips.push(blip(e.pos, ExtraShape::Skull, 16.0, white, true));
         } else if world.champions.contains(&e.id) {
-            blips.push(blip(e.pos, ExtraShape::RedDot, 14.0, [1.0, 0.75, 0.2, 1.0], true));
+            blips.push(blip(
+                e.pos,
+                ExtraShape::RedDot,
+                14.0,
+                [1.0, 0.75, 0.2, 1.0],
+                true,
+            ));
         } else if e.elite {
             blips.push(blip(e.pos, ExtraShape::RedDot, 9.0, white, false));
         }

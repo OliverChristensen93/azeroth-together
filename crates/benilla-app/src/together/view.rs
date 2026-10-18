@@ -784,10 +784,9 @@ pub(super) fn unhull_carried_banners(
             continue;
         };
         if hulls.contains(view.model) {
-            commands.entity(view.model).remove::<(
-                avian3d::prelude::Collider,
-                avian3d::prelude::RigidBody,
-            )>();
+            commands
+                .entity(view.model)
+                .remove::<(avian3d::prelude::Collider, avian3d::prelude::RigidBody)>();
         }
     }
 }

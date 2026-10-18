@@ -1608,21 +1608,25 @@ impl World {
         let leash = self.zone().leash;
         for _ in 0..batch {
             let (near, heading) = living[self.rng.index(living.len())];
-            let mut angle = self.spawn_angle(heading);
             let r = self.rng.range(SPAWN_RING.0, SPAWN_RING.1);
-            // Not inside a tree or a house: a few more tries round the ring.
+            // Never outside the arena: pulled back onto its edge.
+            let spot = |angle: f32| {
+                let pos = near + V2::from_angle(angle, r);
+                let off = pos - center;
+                if off.length() > leash + 10.0 {
+                    center + off.normalize_or_zero() * (leash + 10.0)
+                } else {
+                    pos
+                }
+            };
+            let mut pos = spot(self.spawn_angle(heading));
+            // Not inside a tree or a house, nor somewhere walled off from the heroes: a few more
+            // tries round the ring.
             for _ in 0..6 {
-                let at = near + V2::from_angle(angle, r);
-                if !self.obstacles.as_ref().is_some_and(|o| o.blocked_at(at)) {
+                if self.obstacles.as_ref().is_none_or(|o| o.reachable(pos)) {
                     break;
                 }
-                angle = self.spawn_angle(heading);
-            }
-            let mut pos = near + V2::from_angle(angle, r);
-            // Never outside the arena: pull back onto its edge.
-            let off = pos - center;
-            if off.length() > leash + 10.0 {
-                pos = center + off.normalize_or_zero() * (leash + 10.0);
+                pos = spot(self.spawn_angle(heading));
             }
             let tier = low + self.rng.index(top - low + 1);
             let elite = self.elapsed >= ELITES_FROM && self.rng.f32() < ELITE_CHANCE;

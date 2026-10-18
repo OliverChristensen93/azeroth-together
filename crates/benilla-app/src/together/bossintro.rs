@@ -53,16 +53,16 @@ pub(super) fn mechanic_name(m: Mechanic) -> String {
     out
 }
 
-/// What a boss does, a line each: its own sentence, then each mechanic's.
+/// What a boss does, a line per mechanic; its own sentence when it lists none.
 pub(super) fn mechanics_text(def: &EnemyDef) -> String {
-    let mut lines = Vec::new();
-    if !def.hint.is_empty() {
-        lines.push(def.hint.clone());
+    if def.mechanics.is_empty() {
+        return def.hint.clone();
     }
-    for &m in &def.mechanics {
-        lines.push(format!("• {}: {}", mechanic_name(m), m.hint()));
-    }
-    lines.join("\n")
+    def.mechanics
+        .iter()
+        .map(|&m| format!("• {}: {}", mechanic_name(m), m.hint()))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {

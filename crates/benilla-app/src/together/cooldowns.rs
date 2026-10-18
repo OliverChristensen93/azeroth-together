@@ -171,7 +171,13 @@ pub(super) fn refresh(
     let hero = (*phase.get() == Phase::Playing)
         .then_some(())
         .and(sim.as_ref())
-        .and_then(|s| s.world.heroes.iter().position(|h| h.player == s.me).map(|h| (s, h)));
+        .and_then(|s| {
+            s.world
+                .heroes
+                .iter()
+                .position(|h| h.player == s.me)
+                .map(|h| (s, h))
+        });
     let show = |v: &mut Visibility, on: bool| {
         let want = if on {
             Visibility::Inherited

@@ -389,7 +389,11 @@ pub(super) fn boss_bar(
         if t.0 != sentence {
             t.0 = sentence;
         }
-        let display = if hovered { Display::Flex } else { Display::None };
+        let display = if hovered {
+            Display::Flex
+        } else {
+            Display::None
+        };
         if node.display != display {
             node.display = display;
         }

@@ -82,7 +82,11 @@ mod tests {
         let def = e.def;
         let elite_hp = w.content.enemies[def].hp * ELITE_HEALTH;
         assert!(e.max_hp > elite_hp * 2.5, "{} vs {}", e.max_hp, elite_hp);
-        assert!(w.snapshot().enemies.iter().any(|s| s.id == id && s.champion));
+        assert!(w
+            .snapshot()
+            .enemies
+            .iter()
+            .any(|s| s.id == id && s.champion));
         w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 0.0;
         w.reap_enemies();
         assert!(w.champions.is_empty());

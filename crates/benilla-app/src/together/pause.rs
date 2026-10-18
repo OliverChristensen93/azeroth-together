@@ -66,6 +66,7 @@ pub(super) fn game_menu(
     let session = script.session();
     if *done != Some(session) && script.run(MENU_LUA).is_ok() {
         *done = Some(session);
+        info!("together: the game menu's Logout is Main Menu, and the menu pauses the run");
     }
     if *done != Some(session) {
         return;

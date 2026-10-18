@@ -395,7 +395,11 @@ pub(super) fn refresh(
         warning = Some("Surrounded!\nThey come from every side".into());
     }
     seen.surrounded = surrounded;
-    if let Some(&id) = world.champions.iter().find(|id| !seen.champions.contains(id)) {
+    if let Some(&id) = world
+        .champions
+        .iter()
+        .find(|id| !seen.champions.contains(id))
+    {
         if let Some(e) = world.enemy(id) {
             warning = Some(format!(
                 "A champion comes: {}\nIt guards a cache",

@@ -90,10 +90,32 @@ impl Obstacles {
         self.any
     }
 
+    /// Whether cell (`x`, `y`) is blocked.
+    pub fn is_blocked(&self, x: usize, y: usize) -> bool {
+        x < self.side && y < self.side && self.blocked[self.ix(x, y)]
+    }
+
+    /// How many cells are blocked.
+    pub fn blocked_count(&self) -> usize {
+        self.blocked.iter().filter(|b| **b).count()
+    }
+
     /// Whether `pos` is in a blocked cell; off the grid is open.
     pub fn blocked_at(&self, pos: V2) -> bool {
         self.cell_at(pos)
             .is_some_and(|(x, y)| self.blocked[self.ix(x, y)])
+    }
+
+    /// Whether an enemy at `pos` could walk to a hero: open, and (once the flow field is worked
+    /// out and anything is blocked) connected to one. Off the grid counts as reachable.
+    pub fn reachable(&self, pos: V2) -> bool {
+        match self.cell_at(pos) {
+            None => true,
+            Some((x, y)) => {
+                let i = self.ix(x, y);
+                !self.blocked[i] && (!self.any || !self.flowed || self.dist[i] != FAR)
+            }
+        }
     }
 
     /// Whether the straight line from `from` to `to` crosses no blocked cell.
@@ -243,6 +265,22 @@ mod tests {
             }
         }
         panic!("never got round the wall: at {pos:?}");
+    }
+
+    #[test]
+    fn a_walled_off_spot_is_not_reachable() {
+        let mut o = Obstacles::new(V2::ZERO, 20.0, 1.0);
+        // A closed box around (10, 10).
+        for k in 7..=13 {
+            for (x, y) in [(k, 7), (k, 13), (7, k), (13, k)] {
+                let (cx, cy) = o.cell_at(V2::new(x as f32 + 0.5, y as f32 + 0.5)).unwrap();
+                o.set(cx, cy, true);
+            }
+        }
+        o.flow(&[V2::new(-10.0, -10.0)]);
+        assert!(!o.reachable(V2::new(10.5, 10.5)));
+        assert!(o.reachable(V2::new(0.5, 0.5)));
+        assert!(o.reachable(V2::new(500.0, 0.0)), "off the grid");
     }
 
     #[test]
