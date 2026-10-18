@@ -15,9 +15,14 @@ const SEARCH_STRAY: f32 = 1.0;
 /// Mixed into the seed for enemies' bodies, so a body never rolls what a chest did.
 const BODY_SEED: u64 = 0xB0D7_5EED_0000_0001;
 
-/// The `i`th roll from a raid's `seed`: every container its own dice, the same every time.
+/// The `i`th roll from a raid's `seed`: every container its own dice, the same every time. The
+/// mix is splitmix64's finalizer, so that seeds that differ in one bit (and [`Dice::new`] sets
+/// bit 0 of whatever it is given) still roll differently.
 pub(crate) fn seed_for(seed: u64, i: u64) -> u64 {
-    seed ^ (i + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    let mut z = seed ^ (i + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// A whole number from `lo` to `hi`.
@@ -301,7 +306,7 @@ impl World {
             .map(|e| (e.id, e.kind, e.pos, e.z))
             .collect();
         for (id, kind, at, z) in fresh {
-            self.raid.bodied.push(id);
+            self.raid.bodied.insert(id);
             let Some(table) = content
                 .loot
                 .bodies

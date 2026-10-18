@@ -812,6 +812,20 @@ fn a_thing_keeps_its_found_flag_through_a_container() {
     assert_eq!(inv.count_of(bread), 2);
 }
 
+/// `player`'s input: their hero at `(x, y)` and act `a` (press `seq`) in the same input.
+fn act_at(w: &mut World, player: PlayerId, seq: u8, (x, y): (f32, f32), a: Act) {
+    w.set_input(
+        player,
+        PlayerInput {
+            pose: pose(x, y),
+            act: Some(ActPress { seq, act: a }),
+            ..Default::default()
+        },
+    );
+    w.step();
+    assert_eq!(w.hero(player).unwrap().carry.acted, seq);
+}
+
 #[test]
 fn nothing_moves_to_or_from_a_container_the_hero_has_walked_off_from() {
     let mut w = world();
@@ -821,43 +835,27 @@ fn nothing_moves_to_or_from_a_container_the_hero_has_walked_off_from() {
     w.give_loadout(0, &loadout(&w, &[("bread", 2)], &[], &[]));
     let gem = Stack::new(item(&w, "gem"), 2);
     let id = pile(&mut w, V2::new(5.0, 5.0), vec![gem]);
-    act(&mut w, 0, 1, Act::Open(id));
-    w.step();
-    let (pack, held) = (
-        w.pack(0).unwrap().clone(),
-        w.raid.containers[0].stacks.clone(),
-    );
-    // The same step they walk away, they ask for everything and offer their bread.
-    for (seq, a) in [
-        (2, Act::TakeAll),
-        (3, Act::Take(0)),
-        (4, Act::Put(Place::Pack(0))),
-    ] {
-        w.set_input(
-            0,
-            PlayerInput {
-                pose: pose(40.0, 40.0),
-                act: Some(ActPress { seq, act: a }),
-                ..Default::default()
-            },
+    let mut seq = 0;
+    // Each act on its own. The pile is open and the hero by it; then the act comes in an input
+    // that also has the hero far away. The act is taken before the raid closes what the hero
+    // has walked off from, so only the reach check at the take or put refuses it.
+    for a in [Act::TakeAll, Act::Take(0), Act::Put(Place::Pack(0))] {
+        seq += 1;
+        act_at(&mut w, 0, seq, (5.0, 5.0), Act::Open(id));
+        assert_eq!(w.raid.open_of(0), Some(id), "{a:?}: open before the act");
+        let (pack, held) = (
+            w.pack(0).unwrap().clone(),
+            w.raid.containers[0].stacks.clone(),
         );
-        w.step();
-        assert_eq!(w.hero(0).unwrap().carry.acted, seq);
-        assert_eq!(w.pack(0), Some(&pack));
-        assert_eq!(w.raid.containers[0].stacks, held);
+        seq += 1;
+        act_at(&mut w, 0, seq, (40.0, 40.0), a);
+        assert!(w.hero(0).unwrap().pos.distance(V2::new(5.0, 5.0)) > 30.0);
+        assert_eq!(w.pack(0), Some(&pack), "{a:?} took or put something");
+        assert_eq!(w.raid.containers[0].stacks, held, "{a:?} changed the pile");
     }
     // Walking off closed it; back in reach, they open it again and the same act works.
-    for (seq, a) in [(5, Act::Open(id)), (6, Act::TakeAll)] {
-        w.set_input(
-            0,
-            PlayerInput {
-                pose: pose(5.0, 5.0),
-                act: Some(ActPress { seq, act: a }),
-                ..Default::default()
-            },
-        );
-        w.step();
-    }
+    act_at(&mut w, 0, seq + 1, (5.0, 5.0), Act::Open(id));
+    act_at(&mut w, 0, seq + 2, (5.0, 5.0), Act::TakeAll);
     assert_eq!(w.pack(0).unwrap().count_of(item(&w, "gem")), 2);
 }
 
@@ -1542,11 +1540,11 @@ fn a_dead_enemy_is_looked_at_once() {
     let id = w.enemies[0].id;
     w.kill_enemy(0, Some(0));
     w.step();
-    assert_eq!(w.raid.bodied, vec![id]);
+    assert_eq!(w.raid.bodied, BTreeSet::from([id]));
     // Its body taken away, the dead enemy does not make another.
     w.raid.containers.retain(|c| c.holder != Holder::Body(id));
     steps(&mut w, 10);
-    assert_eq!(w.raid.bodied, vec![id]);
+    assert_eq!(w.raid.bodied, BTreeSet::from([id]));
     assert!(w
         .raid
         .containers
@@ -1665,8 +1663,8 @@ fn a_friend_picks_up_what_was_dropped() {
     assert_eq!(w.pack(0).unwrap().count_of(item(&w, "bread")), 0);
 }
 
-/// One whole scripted raid: loadouts, acts, a search, a body, a drop. Its end state, for the
-/// determinism test to compare.
+/// One whole scripted raid: loadouts, acts, a search, a drop, a kill, a body searched and
+/// emptied. Its end state, for the tests to compare and to check the script did its work.
 fn scripted_raid(
     seed: u64,
 ) -> (
@@ -1705,9 +1703,15 @@ fn scripted_raid(
         .find(|c| matches!(c.holder, Holder::Body(_)))
         .unwrap()
         .id;
+    // Hero 1 walks to the body (a step to get there: `act` takes the hero's position as it is),
+    // searches it, and empties it.
     stand(&mut w, 1, 6.0, 54.0);
+    w.step();
+    assert!(w.hero(1).unwrap().pos.distance(V2::new(6.0, 54.0)) < 0.5);
     act(&mut w, 1, 2, Act::Open(body));
     steps(&mut w, 60);
+    act(&mut w, 1, 3, Act::TakeAll);
+    w.step();
     (
         w.raid.containers.clone(),
         w.raid.packs.clone(),
@@ -1717,6 +1721,151 @@ fn scripted_raid(
 
 #[test]
 fn a_scripted_raid_plays_out_the_same_twice() {
-    assert_eq!(scripted_raid(1234), scripted_raid(1234));
-    assert_ne!(scripted_raid(1234).0, scripted_raid(99).0);
+    let first = scripted_raid(1234);
+    assert_eq!(first, scripted_raid(1234));
+    assert_ne!(first.0, scripted_raid(99).0);
+}
+
+#[test]
+fn the_scripted_raid_does_what_it_says() {
+    let w = world_with("", BRUTE_FAR);
+    let gem = item(&w, "gem");
+    let (containers, packs, _) = scripted_raid(1234);
+    let held = |p: PlayerId| packs.iter().find(|(q, _)| *q == p).unwrap().1.count_of(gem);
+    // Hero 0 emptied the chest; hero 1 the body.
+    assert_eq!(held(0), 6);
+    assert_eq!(held(1), 6);
+    let body = containers
+        .iter()
+        .find(|c| matches!(c.holder, Holder::Body(_)))
+        .expect("the enemy left a body");
+    assert!(body.searched, "hero 1 searched it");
+    assert!(body.stacks.iter().all(Option::is_none));
+    let pile = containers
+        .iter()
+        .find(|c| c.holder == Holder::Pile)
+        .expect("hero 1 dropped their rocks");
+    assert_eq!(
+        pile.stacks.iter().flatten().copied().collect::<Vec<_>>(),
+        vec![Stack::new(item(&w, "rock"), 2)]
+    );
+}
+
+#[test]
+fn raid_seeds_that_differ_in_one_bit_roll_different_loot() {
+    use containers::seed_for;
+    let w = world();
+    let c = w.content();
+    // The dice set bit 0 of any seed, so seeds 2k and 2k+1 must differ before that.
+    for k in 0..200u64 {
+        for i in 0..4 {
+            assert_ne!(
+                seed_for(2 * k, i) | 1,
+                seed_for(2 * k + 1, i) | 1,
+                "{k} {i}"
+            );
+        }
+    }
+    // And the loot of a container whose table has chance in it differs for most such pairs.
+    let mixed = &c.loot.tables[1];
+    let roll = |seed: u64| roll_table(mixed, &mut Dice::new(seed_for(seed, 1)), c);
+    let differing = (0..50u64)
+        .filter(|&k| roll(2 * k) != roll(2 * k + 1))
+        .count();
+    assert!(
+        differing >= 25,
+        "only {differing} of 50 neighbouring seeds differ"
+    );
+}
+
+/// A grave at (12, 20) and its searcher at (12, 18): the long search, so several beats of it.
+/// Counts the beats of the search by running its step by hand, clearing the noises the senses
+/// would have listened to between one step and the next.
+#[test]
+fn a_search_is_heard_every_noise_every_until_it_ends_or_is_given_up() {
+    let beats = |w: &mut World, steps: usize| -> Vec<usize> {
+        (0..steps)
+            .filter(|_| {
+                w.senses.noises.clear();
+                w.step_searches();
+                !w.senses.noises.is_empty()
+            })
+            .collect()
+    };
+    let mut w = world();
+    join(&mut w, 0, "rogue", 12.0, 18.0);
+    let grave = w.raid.containers[1].id;
+    act(&mut w, 0, 1, Act::Open(grave));
+    w.step();
+    // The first beat came in that step. The next are two seconds apart (the rules' default).
+    assert_eq!(w.content().rules.run.noise_every, 2.0);
+    let (total, sound) = search_of(Holder::Placed(1), w.content());
+    assert_eq!((total, sound), (6.0, Some(crate::Loudness::Dig)));
+    let at: Vec<usize> = beats(&mut w, 400);
+    // A second beat at 2 s and a third at 4 s from the first step, give or take a step of
+    // rounding; none once it ends at 6 s.
+    assert_eq!(at.len(), 2, "{at:?}");
+    for (got, want) in at.iter().zip([59usize, 119]) {
+        assert!(got.abs_diff(want) <= 1, "{at:?}");
+    }
+    assert!(w.raid.searches.is_empty());
+    assert!(w.raid.containers[1].searched);
+    // Given up: begin a search of the chest, walk off, and no beat is heard again.
+    let mut w = world();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    w.step();
+    assert!(!w.raid.searches.is_empty());
+    stand(&mut w, 0, 11.0, 8.0);
+    w.step();
+    assert!(w.raid.searches.is_empty());
+    assert!(beats(&mut w, 200).is_empty());
+}
+
+#[test]
+fn a_search_is_heard_by_a_calm_enemy_in_range_in_the_same_step() {
+    // A brute 14 yards from the chest and 15 from the searcher, facing away from both.
+    let post =
+        r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (26.0, 5.0), facing: 0.0)),"#;
+    let mut w = world_with("", post);
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    let noise = w.content().rules.senses.awareness.noise;
+    assert_eq!(w.senses.suspicion_of(0, 0), 0.0);
+    // Without a search, a few steps of standing there rouse nothing.
+    steps(&mut w, 10);
+    assert_eq!(w.senses.suspicion_of(0, 0), 0.0);
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    w.step();
+    assert_eq!(w.senses.suspicion_of(0, 0), noise);
+}
+
+#[test]
+fn enemies_killed_in_one_step_each_leave_exactly_one_body() {
+    let spawns = r#"
+        (place: "A", kind: "brute", behaviour: Sentry(at: (5.0, 55.0), facing: 0.0)),
+        (place: "B", kind: "brute", behaviour: Sentry(at: (15.0, 55.0), facing: 0.0)),
+        (place: "C", kind: "brute", behaviour: Sentry(at: (25.0, 55.0), facing: 0.0)),"#;
+    let mut w = world_with("", spawns);
+    join(&mut w, 0, "rogue", 6.0, 40.0);
+    let ids: Vec<u32> = w.enemies.iter().map(|e| e.id).collect();
+    assert_eq!(ids.len(), 3);
+    for i in 0..3 {
+        w.kill_enemy(i, Some(0));
+    }
+    steps(&mut w, 3);
+    for id in &ids {
+        let n = w
+            .raid
+            .containers
+            .iter()
+            .filter(|c| c.holder == Holder::Body(*id))
+            .count();
+        assert_eq!(n, 1, "enemy {id}");
+    }
+    assert_eq!(
+        w.raid.bodied,
+        ids.iter().copied().collect::<BTreeSet<u32>>()
+    );
 }
