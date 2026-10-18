@@ -106,3 +106,11 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 30. **The free starter kit can be farmed a little.** Raid with an empty loadout, extract, sell the kit
     (~8 gold), repeat. The plan accepted it (kit items are worth 1 gold each); set their `value` to 0 in
     `content/nightfall/items.ron` if you want it gone.
+31. **In a friend's lobby your stash is locked.** Once you've joined and sent your gear to the host,
+    the stash panel won't move or sell anything until you leave the lobby — even between raids. It stops
+    a start racing an edit (which could copy or lose an item). A finer lock is possible later.
+32. **Selling has no "are you sure?".** Shift-click sells a whole stack at once, rare or not. A confirm for
+    rare-and-better items is easy to add if you'd like one.
+33. **A "Ready" button would be the better lobby lock** (item 31): edit freely until you press Ready, the
+    host can only start when everyone is Ready, and only a Ready player is locked. A natural fit for the inn
+    (sub-project 5b).
