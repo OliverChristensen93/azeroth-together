@@ -47,6 +47,7 @@ impl SavedInventory {
     }
 
     /// Every stack, in a fixed order: worn, bags, backpack, safe slots.
+    #[cfg(test)]
     fn stacks(&self) -> impl Iterator<Item = &SavedStack> {
         self.equip
             .iter()
@@ -350,14 +351,11 @@ impl Profile {
     /// and what a death left with no room goes to the stash, and a body left behind waits for the
     /// next raid on the map. A body from before on this map had its one chance and is gone.
     ///
-    /// The loadout is empty while a raid is under way, so nothing is there to be overwritten; an
-    /// outcome that arrives with none under way (a stash edited by hand) still never costs the
-    /// loadout its things: they go to the stash.
-    pub fn settle(&mut self, o: &HeroOutcome, content: &Content) {
-        self.in_raid = None;
-        let before = std::mem::take(&mut self.loadout);
-        for s in before.stacks() {
-            self.stash_add(s.clone(), content);
+    /// Only a raid under way is settled: an outcome that comes again, or with no raid begun, does
+    /// nothing and gives `false`, so a repeat is never a second haul. Whether it was settled.
+    pub fn settle(&mut self, o: &HeroOutcome, content: &Content) -> bool {
+        if self.in_raid.take().is_none() {
+            return false;
         }
         self.loadout = saved_inventory(&o.carried, content);
         for s in o.recovered.iter().chain(&o.overflow) {
@@ -377,6 +375,7 @@ impl Profile {
         if matches!(o.fate, Fate::Extracted { .. }) {
             self.extracted += 1;
         }
+        true
     }
 
     /// A raid that never told this player its end (the game closed, the host went): settled as a
@@ -816,23 +815,43 @@ mod tests {
     }
 
     #[test]
-    fn an_outcome_never_costs_a_loadout_it_finds_its_things() {
+    fn an_outcome_with_no_raid_under_way_changes_nothing() {
         let c = content("");
         let mut p = Profile::default();
         p.loadout.pack.push(stack("gem", 2));
+        p.stash.push(stack("bread", 1));
         let mut carried = Inventory::new(&c);
-        carried.add(Stack::new(BREAD, 1), &c);
-        p.settle(
-            &outcome(
-                &c,
-                carried,
-                Vec::new(),
-                Fate::Extracted { exit: "x".into() },
-            ),
+        carried.add(Stack::new(BREAD, 4), &c);
+        let o = outcome(
             &c,
+            carried,
+            vec![Stack::new(GEM, 1)],
+            Fate::Extracted { exit: "x".into() },
         );
-        assert_eq!(p.loadout.pack, vec![stack("bread", 1)]);
-        assert_eq!(p.stash, vec![stack("gem", 2)]);
+        let before = p.clone();
+        assert!(!p.settle(&o, &c));
+        assert_eq!(p, before);
+    }
+
+    #[test]
+    fn settling_the_same_outcome_twice_changes_nothing_the_second_time() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.begin_raid(0, &c);
+        let mut carried = Inventory::new(&c);
+        carried.add(Stack::new(GEM, 5), &c);
+        let mut o = outcome(
+            &c,
+            carried,
+            vec![Stack::new(BREAD, 3)],
+            Fate::Extracted { exit: "x".into() },
+        );
+        o.overflow = vec![Stack::new(HELM, 1)];
+        assert!(p.settle(&o, &c));
+        let once = p.clone();
+        assert!(!p.settle(&o, &c));
+        assert_eq!(p, once);
+        assert_eq!(p.extracted, 1);
     }
 
     #[test]
