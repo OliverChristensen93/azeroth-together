@@ -63,6 +63,8 @@ impl World {
         h.fight.attacking = None;
         h.fight.sprint = 0.0;
         self.senses.lose(player, &content.rules.senses.awareness);
+        // Their stance and pace now: the crawl shows in the next snapshot, not a step late.
+        self.rederive(player);
         self.events.push(Event::Downed { player });
     }
 

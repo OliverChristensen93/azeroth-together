@@ -212,8 +212,19 @@ fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
         flash: hs.flash > 0.0,
     };
     hero.visibility = visibility(hero.stance, light, r);
+    hero.speed = base_speed(hero, content);
+}
+
+/// How fast a hero goes by their class and Stealth alone: what the fight's Sprint, slowed casts
+/// and crawl are laid on ([`World::set_pace`]).
+pub(crate) fn base_speed(hero: &Hero, content: &Content) -> f32 {
     let class = &content.classes[hero.class];
-    hero.speed = class.speed * if hero.stealthed { r.stealth_speed } else { 1.0 };
+    class.speed
+        * if hero.stealthed {
+            content.rules.senses.stealth_speed
+        } else {
+            1.0
+        }
 }
 
 /// Every hero's stance, visibility and speed for this step, and their footsteps: one every
@@ -359,12 +370,15 @@ impl World {
     }
 
     /// `player`'s hero's stance, visibility and speed again, after something between steps changed
-    /// what they follow from.
-    fn rederive(&mut self, player: PlayerId) {
+    /// what they follow from. The fight's pace goes back on top ([`World::set_pace`]), so a hero's
+    /// Sprint, slowed cast or crawl is not lost until the next step.
+    pub(crate) fn rederive(&mut self, player: PlayerId) {
         let content = self.content().clone();
         let i = self.senses.hero_index(player);
-        if let Some(h) = self.heroes.iter_mut().find(|h| h.player == player) {
-            derive(&self.senses.heroes[i], h, &content);
-        }
+        let Some(hi) = self.heroes.iter().position(|h| h.player == player) else {
+            return;
+        };
+        derive(&self.senses.heroes[i], &mut self.heroes[hi], &content);
+        self.set_pace(hi);
     }
 }

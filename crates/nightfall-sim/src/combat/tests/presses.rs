@@ -723,3 +723,46 @@ fn a_refused_step_into_stealth_is_told_to_its_player() {
     assert!(!w.heroes[0].stealthed);
     assert_eq!(refusal(&mut w), None);
 }
+
+/// A rogue sprinting (10.5 yards a second against 7), the press stepped.
+fn sprinting_rogue() -> World {
+    let mut w = world("");
+    join(&mut w, 0, "rogue", 10.0, 30.0);
+    press(&mut w, 0, 1, 5, None, None);
+    w.step();
+    assert!((w.heroes[0].speed - 10.5).abs() < 1e-4);
+    w
+}
+
+#[test]
+fn setting_the_pace_again_changes_nothing() {
+    let mut w = sprinting_rogue();
+    w.set_pace(0);
+    w.set_pace(0);
+    assert!(
+        (w.heroes[0].speed - 10.5).abs() < 1e-4,
+        "{}",
+        w.heroes[0].speed
+    );
+}
+
+#[test]
+fn a_sprinting_hero_hurt_between_steps_keeps_sprint_speed_in_the_next_snapshot() {
+    let mut w = sprinting_rogue();
+    w.hurt_hero(0, 10.0);
+    // Hurt breaks stealth and works the senses' speed out afresh; the Sprint is laid on again.
+    assert!((w.snapshot().heroes[0].speed - 10.5).abs() < 1e-4);
+    // So do the other seams that work it out afresh.
+    w.break_stealth(0);
+    assert!((w.snapshot().heroes[0].speed - 10.5).abs() < 1e-4);
+    w.flash(0);
+    assert!((w.snapshot().heroes[0].speed - 10.5).abs() < 1e-4);
+}
+
+#[test]
+fn a_hero_downed_between_steps_shows_crawl_speed() {
+    let mut w = sprinting_rogue();
+    w.hurt_hero(0, 5000.0);
+    assert!(!w.hero(0).unwrap().fight.up());
+    assert!((w.snapshot().heroes[0].speed - 7.0 * 0.3).abs() < 1e-4);
+}

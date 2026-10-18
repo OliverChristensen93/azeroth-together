@@ -12,6 +12,7 @@ use super::{
     allowance, in_range, stands_right, within_arc, CastPress, CastState, Casting, Cooldown, Event,
     Life, Refusal, Stop, UnitRef, MANA,
 };
+use crate::senses::base_speed;
 use crate::{
     Aim, Effect, Facing, Gait, Moving, PlayerId, PlayerInput, World, CHEST_HEIGHT, DT, EYE_HEIGHT,
     V3,
@@ -444,7 +445,7 @@ impl World {
         let content = self.content.clone();
         let a = &content.abilities[cs.ability];
         cs.elapsed += DT;
-        let run = self.heroes[hi].speed * (1.0 + self.sprint_by(hi));
+        let run = base_speed(&self.heroes[hi], &content) * (1.0 + self.sprint_by(hi));
         let allowed = allowance(a.moving, run, cs.elapsed, &content.rules.combat);
         if self.heroes[hi].pos.distance(cs.from) > allowed {
             return self.stop_cast(hi, Stop::Moved);
@@ -551,15 +552,17 @@ impl World {
         hero.fight.power = (hero.fight.power + meal.mana * DT).min(hero.fight.max_power);
     }
 
-    /// Hero `hi`'s pace this step: the senses' speed (stealth's) times Sprint, times
+    /// Hero `hi`'s pace: the senses' speed (class, stealth's) times Sprint, times
     /// `cast_move_speed` while casting a slowed ability, times `crawl_speed` downed; feet held for
-    /// a rooted ability, and for the dead. [`World::step`] sets it after the enemies have struck:
-    /// a blow breaks stealth, which works the senses' speed out afresh.
+    /// a rooted ability, and for the dead. Set from the base each time, so setting it again changes
+    /// nothing. [`World::step`] sets it after the enemies have struck, and whatever works the
+    /// senses' speed out afresh between steps ([`World::rederive`]) sets it again.
     pub(crate) fn set_pace(&mut self, hi: usize) {
         let content = self.content.clone();
         let r = &content.rules.combat;
         let sprint = 1.0 + self.sprint_by(hi);
         let hero = &mut self.heroes[hi];
+        let base = base_speed(hero, &content);
         let moving = hero
             .fight
             .casting
@@ -574,7 +577,7 @@ impl World {
             Life::Downed { .. } => r.crawl_speed,
             Life::Dead => 0.0,
         };
-        hero.speed *= sprint * cast * life;
+        hero.speed = base * sprint * cast * life;
         hero.fight.rooted = moving == Some(Moving::Rooted) || hero.fight.life == Life::Dead;
     }
 }
