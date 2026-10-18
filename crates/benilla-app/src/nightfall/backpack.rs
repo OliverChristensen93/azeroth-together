@@ -7,7 +7,9 @@
 
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
-use nightfall_sim::{Act, Content, EquipSlot, Holder, Inventory, ItemKind, OpenView, Place, World};
+use nightfall_sim::{
+    Act, Content, EquipSlot, Holder, Inventory, ItemKind, LootView, OpenView, Place, Stack, World,
+};
 
 use super::run::{LocalInput, Sim};
 use super::widgets::{self, text, EDGE, GOLD, GREY, PANEL, SLOT};
@@ -122,6 +124,10 @@ pub(super) struct PackBody;
 #[derive(Component)]
 pub(super) struct PackInfo;
 
+/// The "Searching… x s" line of the loot panel, whose seconds [`rebuild`] writes in place.
+#[derive(Component)]
+pub(super) struct SearchLeft;
+
 /// Which stack a slot shows: ours at a place, or the open container's in a slot.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PackSlot {
@@ -211,7 +217,9 @@ pub(super) fn quiet_wow_bags(
 /// Leaving Nightfall: WoW's own bag functions back, for the other game.
 pub(super) fn restore_wow_bags(script: Option<NonSend<UiScript>>) {
     if let Some(script) = script {
-        let _ = script.run(RESTORE_BAGS);
+        if let Err(e) = script.run(RESTORE_BAGS) {
+            warn!("nightfall: could not give WoW its bags back: {e}");
+        }
     }
 }
 
@@ -284,27 +292,71 @@ pub(super) fn show(
     }
 }
 
-/// Both panels built again whenever our things or the open container change.
+/// What the loot panel is built from: the container's name and its stacks, and whether it is
+/// still being searched. The seconds a search has left are not part of it (they tick every step,
+/// and are written in place, [`SearchLeft`]), so a steady search never builds the panel again.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LootKey {
+    name: String,
+    stacks: Vec<Option<Stack>>,
+    searching: bool,
+}
+
+/// The loot panel's key for the container `view` has open, if any.
+fn loot_key(view: &LootView, content: &Content, world: &World) -> Option<LootKey> {
+    let open = view.open.as_ref()?;
+    let holder = view
+        .marks
+        .iter()
+        .find(|m| m.id == open.id)
+        .map(|m| m.holder)
+        .unwrap_or(Holder::Pile);
+    Some(LootKey {
+        name: holder_name(holder, content, world),
+        stacks: open.stacks.clone(),
+        searching: open.search.is_some(),
+    })
+}
+
+/// The line a search with `left` seconds to go shows.
+fn search_line(left: f32) -> String {
+    format!("Searching… {left:.1} s")
+}
+
+/// The panels built again when what they show changes: the loot panel with the open container, the
+/// backpack with our things, each on its own, so a change to one leaves the other alone. A search's
+/// seconds are written into its text in place.
 pub(super) fn rebuild(
     mut commands: Commands,
     sim: Res<Sim>,
     font: Option<Res<PackFont>>,
     loot_body: Query<Entity, With<LootBody>>,
     pack_body: Query<Entity, With<PackBody>>,
-    mut shown: Local<Option<(Option<Inventory>, Option<OpenView>)>>,
+    mut searching: Query<&mut Text, With<SearchLeft>>,
+    mut loot_shown: Local<Option<Option<LootKey>>>,
+    mut pack_shown: Local<Option<Option<Inventory>>>,
 ) {
     let content = content();
     let inv = sim.world.pack(sim.me).cloned();
     let view = sim.world.loot_view(Some(sim.me));
-    let now = (inv.clone(), view.open.clone());
-    if shown.as_ref() == Some(&now) {
+    if let Some((left, _)) = view.open.as_ref().and_then(|o| o.search) {
+        let line = search_line(left);
+        for mut t in &mut searching {
+            if t.0 != line {
+                t.0 = line.clone();
+            }
+        }
+    }
+    let key = loot_key(&view, &content, &sim.world);
+    let loot_changed = loot_shown.as_ref() != Some(&key);
+    let pack_changed = pack_shown.as_ref() != Some(&inv);
+    if !loot_changed && !pack_changed {
         return;
     }
     let (Ok(loot_body), Ok(pack_body), Some(font)) = (loot_body.single(), pack_body.single(), font)
     else {
         return;
     };
-    *shown = Some(now);
     let font = &font.0;
     let row = |cols: usize| Node {
         flex_wrap: FlexWrap::Wrap,
@@ -313,104 +365,102 @@ pub(super) fn rebuild(
         row_gap: Val::Px(3.0),
         ..default()
     };
-    let item_of = |s: Option<nightfall_sim::Stack>| {
+    let item_of = |s: Option<Stack>| {
         s.and_then(|s| content.items.get(usize::from(s.item)).map(|d| (d, s.count)))
     };
-    commands.entity(loot_body).despawn_related::<Children>();
-    if let Some(open) = &view.open {
-        let holder = view
-            .marks
-            .iter()
-            .find(|m| m.id == open.id)
-            .map(|m| m.holder)
-            .unwrap_or(Holder::Pile);
-        let name = holder_name(holder, &content, &sim.world);
-        commands.entity(loot_body).with_children(|b| {
-            b.spawn(text(font, name, 13.0, GOLD));
-            match open.search {
-                Some((left, _)) => {
-                    b.spawn(text(font, format!("Searching… {left:.1} s"), 12.0, GREY));
+    if loot_changed {
+        commands.entity(loot_body).despawn_related::<Children>();
+        if let (Some(open), Some(key)) = (&view.open, &key) {
+            commands.entity(loot_body).with_children(|b| {
+                b.spawn(text(font, key.name.clone(), 13.0, GOLD));
+                match open.search {
+                    Some((left, _)) => {
+                        b.spawn((SearchLeft, text(font, search_line(left), 12.0, GREY)));
+                    }
+                    None => {
+                        b.spawn(row(6)).with_children(|g| {
+                            for (i, s) in key.stacks.iter().enumerate() {
+                                widgets::slot(g, font, PackSlot::Loot(i as u16), item_of(*s));
+                            }
+                        });
+                        b.spawn(Node {
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        })
+                        .with_children(|r| {
+                            widgets::text_button(r, font, PackButton::TakeAll, "Take All");
+                            widgets::text_button(r, font, PackButton::Close, "Close");
+                        });
+                    }
                 }
-                None => {
-                    b.spawn(row(6)).with_children(|g| {
-                        for (i, s) in open.stacks.iter().enumerate() {
-                            widgets::slot(g, font, PackSlot::Loot(i as u16), item_of(*s));
-                        }
-                    });
-                    b.spawn(Node {
-                        column_gap: Val::Px(6.0),
-                        ..default()
-                    })
-                    .with_children(|r| {
-                        widgets::text_button(r, font, PackButton::TakeAll, "Take All");
-                        widgets::text_button(r, font, PackButton::Close, "Close");
-                    });
-                }
-            }
-        });
+            });
+        }
+        *loot_shown = Some(key);
     }
-    commands.entity(pack_body).despawn_related::<Children>();
-    let Some(inv) = inv else {
-        return;
-    };
-    let item_at = |at: Place| item_of(inv.get(at).copied());
-    commands.entity(pack_body).with_children(|b| {
-        b.spawn(text(font, "Worn", 11.0, GREY));
-        b.spawn(row(EquipSlot::COUNT)).with_children(|g| {
-            for s in EquipSlot::ALL {
-                widgets::slot(
-                    g,
+    if pack_changed {
+        commands.entity(pack_body).despawn_related::<Children>();
+        if let Some(inv) = &inv {
+            let item_at = |at: Place| item_of(inv.get(at).copied());
+            commands.entity(pack_body).with_children(|b| {
+                b.spawn(text(font, "Worn", 11.0, GREY));
+                b.spawn(row(EquipSlot::COUNT)).with_children(|g| {
+                    for s in EquipSlot::ALL {
+                        widgets::slot(
+                            g,
+                            font,
+                            PackSlot::Mine(Place::Equip(s)),
+                            item_at(Place::Equip(s)),
+                        );
+                    }
+                });
+                b.spawn(text(font, "Bags", 11.0, GREY));
+                b.spawn(row(nightfall_sim::MAX_BAGS)).with_children(|g| {
+                    for i in 0..nightfall_sim::MAX_BAGS as u8 {
+                        widgets::slot(
+                            g,
+                            font,
+                            PackSlot::Mine(Place::Bag(i)),
+                            item_at(Place::Bag(i)),
+                        );
+                    }
+                });
+                b.spawn(text(
                     font,
-                    PackSlot::Mine(Place::Equip(s)),
-                    item_at(Place::Equip(s)),
-                );
-            }
-        });
-        b.spawn(text(font, "Bags", 11.0, GREY));
-        b.spawn(row(nightfall_sim::MAX_BAGS)).with_children(|g| {
-            for i in 0..nightfall_sim::MAX_BAGS as u8 {
-                widgets::slot(
-                    g,
+                    format!("Backpack  ({} slots)", inv.pack.len()),
+                    11.0,
+                    GREY,
+                ));
+                b.spawn(row(8)).with_children(|g| {
+                    for i in 0..inv.pack.len() as u16 {
+                        widgets::slot(
+                            g,
+                            font,
+                            PackSlot::Mine(Place::Pack(i)),
+                            item_at(Place::Pack(i)),
+                        );
+                    }
+                });
+                b.spawn(text(font, "Safe slots: always kept", 11.0, GREY));
+                b.spawn(row(inv.safe.len().max(1))).with_children(|g| {
+                    for i in 0..inv.safe.len() as u8 {
+                        widgets::slot(
+                            g,
+                            font,
+                            PackSlot::Mine(Place::Safe(i)),
+                            item_at(Place::Safe(i)),
+                        );
+                    }
+                });
+                b.spawn(text(
                     font,
-                    PackSlot::Mine(Place::Bag(i)),
-                    item_at(Place::Bag(i)),
-                );
-            }
-        });
-        b.spawn(text(
-            font,
-            format!("Backpack  ({} slots)", inv.pack.len()),
-            11.0,
-            GREY,
-        ));
-        b.spawn(row(8)).with_children(|g| {
-            for i in 0..inv.pack.len() as u16 {
-                widgets::slot(
-                    g,
-                    font,
-                    PackSlot::Mine(Place::Pack(i)),
-                    item_at(Place::Pack(i)),
-                );
-            }
-        });
-        b.spawn(text(font, "Safe slots: always kept", 11.0, GREY));
-        b.spawn(row(inv.safe.len().max(1))).with_children(|g| {
-            for i in 0..inv.safe.len() as u8 {
-                widgets::slot(
-                    g,
-                    font,
-                    PackSlot::Mine(Place::Safe(i)),
-                    item_at(Place::Safe(i)),
-                );
-            }
-        });
-        b.spawn(text(
-            font,
-            "B: close  ·  Shift-click: safe slot  ·  Ctrl-click: drop",
-            10.0,
-            GREY,
-        ));
-    });
+                    "B: close  ·  Shift-click: safe slot  ·  Ctrl-click: drop",
+                    10.0,
+                    GREY,
+                ));
+            });
+        }
+        *pack_shown = Some(inv);
+    }
 }
 
 /// Clicks into acts for the host: one act at most for a click, queued after any in flight.
@@ -618,5 +668,105 @@ mod tests {
         let empty = PackSlot::Mine(Place::Pack(2));
         assert_eq!(click_act(empty, Some(&inv), None, false, false, &c), None);
         assert_eq!(click_act(mine, None, None, false, false, &c), None);
+    }
+
+    /// A hero standing at the first placed container with it open and searching, in a world the
+    /// panels' system reads.
+    fn searching_world() -> bevy::ecs::world::World {
+        use nightfall_sim::{ActPress, HeroPose, PlayerInput, RaidRoll, V2};
+
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let c = super::super::shipped_content();
+        let mut sim = World::new(c.clone());
+        sim.begin_raid(RaidRoll::standard(&c, 1)).unwrap();
+        sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        sim.give_loadout(
+            0,
+            &nightfall_sim::Loadout {
+                inventory: Inventory::new(&c),
+                recovery: None,
+            },
+        );
+        let mark = sim
+            .loot_view(None)
+            .marks
+            .into_iter()
+            .find(|m| matches!(m.holder, Holder::Placed(_)))
+            .expect("the raid places containers");
+        let pose = Some(HeroPose {
+            pos: mark.at,
+            facing: V2::new(1.0, 0.0),
+            z: 0.0,
+        });
+        let input = PlayerInput {
+            pose,
+            act: Some(ActPress {
+                seq: 1,
+                act: Act::Open(mark.id),
+            }),
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            sim.set_input(0, input.clone());
+            sim.step();
+        }
+        assert!(
+            sim.loot_view(Some(0))
+                .open
+                .is_some_and(|o| o.search.is_some()),
+            "the hero is searching"
+        );
+        let mut app = bevy::ecs::world::World::new();
+        app.insert_resource(Sim::for_test(sim));
+        app.insert_resource(PackFont(Handle::default()));
+        app.spawn((LootBody, Node::default()));
+        app.spawn((PackBody, Node::default()));
+        app
+    }
+
+    fn panel_children(app: &mut bevy::ecs::world::World) -> (Vec<Entity>, Vec<Entity>) {
+        let kids = |app: &mut bevy::ecs::world::World, of: Entity| {
+            app.get::<Children>(of)
+                .map(|c| c.iter().collect())
+                .unwrap_or_default()
+        };
+        let loot = app
+            .query_filtered::<Entity, With<LootBody>>()
+            .single(app)
+            .unwrap();
+        let pack = app
+            .query_filtered::<Entity, With<PackBody>>()
+            .single(app)
+            .unwrap();
+        (kids(app, loot), kids(app, pack))
+    }
+
+    #[test]
+    fn a_steady_search_writes_its_seconds_in_place_and_builds_nothing_again() {
+        let mut app = searching_world();
+        let rebuild = app.register_system(rebuild);
+        app.run_system(rebuild).unwrap();
+        let (loot, pack) = panel_children(&mut app);
+        assert!(
+            !loot.is_empty() && !pack.is_empty(),
+            "both panels were built"
+        );
+        let said = |app: &mut bevy::ecs::world::World| {
+            app.query_filtered::<&Text, With<SearchLeft>>()
+                .single(app)
+                .unwrap()
+                .0
+                .clone()
+        };
+        let before = said(&mut app);
+        assert!(before.starts_with("Searching"), "{before}");
+
+        // The search goes on: seconds tick, the panels' children are the very same entities.
+        for _ in 0..6 {
+            app.resource_mut::<Sim>().world.step();
+        }
+        app.run_system(rebuild).unwrap();
+        assert_eq!(panel_children(&mut app), (loot, pack));
+        assert_ne!(said(&mut app), before, "the seconds were written in place");
     }
 }
