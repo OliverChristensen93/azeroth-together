@@ -40,6 +40,7 @@ const AUTO_KIT_ACTS: u8 = 12;
 /// Which entity draws which container, and whether it was drawn open.
 #[derive(Resource, Default)]
 pub(super) struct ContainerViews {
+    /// By container id (a [`ContainerMark::id`]): its object, and whether it is drawn open.
     pub drawn: HashMap<u32, (Entity, bool)>,
 }
 
@@ -83,7 +84,10 @@ pub(super) fn draw(
 /// [`draw`] for the `marks` the loot view names, with `terrain` giving the ground under a point:
 /// each container spawned once and kept; its lid opened and shut as it is searched; and one no
 /// longer named (out of reach, or never a model) despawned, with its guid filed away.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a system's own parameters, passed on so the rest can be tested without an engine"
+)]
 fn sync_drawn(
     commands: &mut Commands,
     marks: &[ContainerMark],
@@ -125,7 +129,9 @@ fn sync_drawn(
     views.drawn.retain(|id, (e, _)| {
         let keep = seen.contains(id);
         if !keep {
-            index.0.retain(|_, v| v != e);
+            index
+                .0
+                .remove(&units::object_guid(CONTAINER_SERIAL_BASE + u64::from(*id)));
             commands.entity(*e).despawn();
         }
         keep
@@ -175,6 +181,7 @@ pub(super) enum Target {
     Here(u32),
     /// One within the detour: walk to it.
     Toward(u32, V2),
+    /// No container within reach or the detour: the circle (or another system's goal) goes on.
     Nothing,
 }
 
@@ -216,6 +223,8 @@ pub(super) struct AutoLoot {
     heading: Option<(u32, f32)>,
     /// Acts spent wearing and lighting what it found.
     kit_acts: u8,
+    /// The goal this system last gave [`Autoplay::goal`], so it clears only its own.
+    detour: Option<V2>,
 }
 
 /// `NIGHTFALL_AUTOPLAY`: the nearest container within reach searched (standing still for it) and
@@ -238,7 +247,7 @@ pub(super) fn autoloot(
         .hero(sim.me)
         .filter(|h| matches!(h.fight.life, Life::Up));
     let Some(hero) = hero else {
-        set_orders(&mut auto, false, None);
+        set_orders(&mut auto, false, None, &mut state.detour);
         return;
     };
     let content = content();
@@ -277,7 +286,7 @@ pub(super) fn autoloot(
     } else {
         state.heading = None;
     }
-    set_orders(&mut auto, hold, goal);
+    set_orders(&mut auto, hold, goal, &mut state.detour);
     if input.act.is_some() || !input.acts.is_empty() || now - state.last < 0.5 {
         return;
     }
@@ -340,13 +349,26 @@ pub(super) fn kit_up(inv: &Inventory, lit: bool, content: &Content) -> Option<Ac
     None
 }
 
-/// The orders `NIGHTFALL_AUTOPLAY`'s walk takes, written only when they change.
-fn set_orders(auto: &mut Autoplay, hold: bool, goal: Option<V2>) {
+/// The orders `NIGHTFALL_AUTOPLAY`'s walk takes from the loot, written only when they change:
+/// whether to stand still, and the goal of a detour to a container. A detour takes precedence over
+/// any goal already set (the loot is picked up first); with none, the goal is left alone for
+/// another system's (the exits') to own, and only a goal this one set (`ours`) is taken back.
+fn set_orders(auto: &mut Autoplay, hold: bool, detour: Option<V2>, ours: &mut Option<V2>) {
     if auto.hold != hold {
         auto.hold = hold;
     }
-    if auto.goal != goal {
-        auto.goal = goal;
+    match detour {
+        Some(at) => {
+            if auto.goal != Some(at) {
+                auto.goal = Some(at);
+            }
+            *ours = Some(at);
+        }
+        None => {
+            if ours.take().is_some_and(|mine| auto.goal == Some(mine)) {
+                auto.goal = None;
+            }
+        }
     }
 }
 
@@ -561,12 +583,27 @@ mod tests {
     }
 
     #[test]
-    fn the_walks_orders_are_set_and_cleared() {
-        let mut auto = Autoplay {
-            hold: true,
-            goal: Some(V2::new(1.0, 1.0)),
-        };
-        set_orders(&mut auto, false, None);
-        assert!(!auto.hold && auto.goal.is_none());
+    fn the_loots_detour_takes_precedence_and_leaves_other_goals_alone() {
+        let (crate_at, exit_at) = (V2::new(1.0, 1.0), V2::new(50.0, 0.0));
+        let mut auto = Autoplay::default();
+        let mut ours = None;
+        // A detour to a crate sets the goal, and stands still when asked to.
+        set_orders(&mut auto, false, Some(crate_at), &mut ours);
+        assert_eq!(auto.goal, Some(crate_at));
+        set_orders(&mut auto, true, Some(crate_at), &mut ours);
+        assert!(auto.hold);
+        // It is taken back with the detour.
+        set_orders(&mut auto, false, None, &mut ours);
+        assert!(!auto.hold && auto.goal.is_none() && ours.is_none());
+        // With no detour another system's goal is not touched...
+        auto.goal = Some(exit_at);
+        set_orders(&mut auto, false, None, &mut ours);
+        assert_eq!(auto.goal, Some(exit_at));
+        // ...but a detour overrides it, and ends by clearing only a goal that is still its own.
+        set_orders(&mut auto, false, Some(crate_at), &mut ours);
+        assert_eq!(auto.goal, Some(crate_at));
+        auto.goal = Some(exit_at);
+        set_orders(&mut auto, false, None, &mut ours);
+        assert_eq!(auto.goal, Some(exit_at), "the exits' goal replaced ours");
     }
 }

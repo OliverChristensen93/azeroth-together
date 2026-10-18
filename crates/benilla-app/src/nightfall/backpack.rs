@@ -15,9 +15,10 @@ use super::run::{LocalInput, Sim};
 use super::widgets::{self, text, EDGE, GOLD, GREY, PANEL, SLOT};
 use super::{content, Phase};
 
-/// What a click on our stack at `at` does: Ctrl drops it, Shift moves it to or from a safe slot,
-/// with a container open it goes in; else gear is worn (or taken off into the backpack), a bag is
-/// worn in a free bag slot, a lantern lit, a potion drunk. Food and drink are for Eat and Drink.
+/// What a click on our stack at `at` does: Ctrl drops it, Shift moves it to a safe slot (a safe
+/// slot's to the backpack), with a container open it goes in; else gear is worn (or taken off into
+/// the backpack), a bag is worn in a free bag slot, a lantern lit, a potion drunk. Food and drink are
+/// for Eat and Drink.
 pub(super) fn smart_act(
     inv: &Inventory,
     at: Place,
@@ -33,9 +34,10 @@ pub(super) fn smart_act(
         return (!matches!(at, Place::Bag(_))).then_some(Act::Drop(at));
     }
     if shift {
+        // As the stash panel does ([`super::stash_panel`]): a safe slot's stack goes to the backpack,
+        // every other (worn, a bag, the backpack) to a safe slot.
         return match at {
             Place::Safe(_) => inv.first_empty(false).and_then(to),
-            Place::Bag(_) => None,
             _ => inv.first_empty(true).and_then(to),
         };
     }
@@ -50,7 +52,8 @@ pub(super) fn smart_act(
             }
             match def.kind {
                 ItemKind::Bag => {
-                    let free = inv.bags.iter().position(Option::is_none).unwrap_or(0);
+                    // No free bag slot: nothing to do, not a swap with the first.
+                    let free = inv.bags.iter().position(Option::is_none)?;
                     to(Place::Bag(free as u8))
                 }
                 ItemKind::Lantern | ItemKind::Potion => Some(Act::Use(at)),
@@ -112,15 +115,19 @@ impl Default for BackpackOpen {
     }
 }
 
+/// The root of both panels, at the right edge: hidden outside a run and while closed.
 #[derive(Component)]
 pub(super) struct BackpackRoot;
 
+/// The panel for the container that is open, rebuilt by [`rebuild`] when its contents change.
 #[derive(Component)]
 pub(super) struct LootBody;
 
+/// The panel for what we carry: worn gear, bags, backpack and safe slots, rebuilt by [`rebuild`].
 #[derive(Component)]
 pub(super) struct PackBody;
 
+/// The line under the panels: what the stack under the mouse is ([`hover`]).
 #[derive(Component)]
 pub(super) struct PackInfo;
 
@@ -135,15 +142,18 @@ pub(super) enum PackSlot {
     Loot(u16),
 }
 
+/// The loot panel's buttons: take everything in the open container, or close it.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PackButton {
     TakeAll,
     Close,
 }
 
+/// WoW's font, kept for the panels' text, which [`rebuild`] spawns again and again.
 #[derive(Resource)]
 pub(super) struct PackFont(Handle<Font>);
 
+/// Builds the panels' root once at startup, hidden: [`show`] decides when it is seen.
 pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     commands
@@ -613,6 +623,76 @@ mod tests {
             smart_act(&inv, Place::Pack(0), false, false, false, &c),
             None
         );
+    }
+
+    #[test]
+    fn a_worn_bag_goes_to_a_safe_slot_with_shift_as_in_the_stash_panel() {
+        let c = content();
+        let mut inv = Inventory::new(&c);
+        inv.add(Stack::new(2, 1), &c);
+        inv.move_to(Place::Pack(0), Place::Bag(0), &c).unwrap();
+        let bag = Place::Bag(0);
+        assert_eq!(
+            smart_act(&inv, bag, false, true, false, &c),
+            Some(Act::Move {
+                from: bag,
+                to: Place::Safe(0)
+            })
+        );
+    }
+
+    #[test]
+    fn a_bag_with_no_free_bag_slot_is_not_moved_to_the_first() {
+        let c = content();
+        let mut inv = Inventory::new(&c);
+        inv.add(Stack::new(2, 1), &c);
+        inv.bags = [Some(Stack::new(2, 1)); nightfall_sim::MAX_BAGS];
+        assert_eq!(
+            smart_act(&inv, Place::Pack(0), false, false, false, &c),
+            None
+        );
+    }
+
+    #[test]
+    fn quieting_and_restoring_the_bags_twice_ends_with_the_originals() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            "OpenAllBags = function() return 'open_all' end\n\
+             CloseAllBags = function() return 'close_all' end\n\
+             ToggleBackpack = function() return 'toggle_backpack' end\n\
+             OpenBackpack = function() return 'open_backpack' end\n\
+             ToggleBag = function() return 'toggle_bag' end\n\
+             ORIGINAL_TOGGLE = ToggleBackpack",
+        )
+        .unwrap();
+        let says = |call: &str| s.eval::<Option<String>>(&format!("return {call}")).unwrap();
+        // Quieted twice (it is run every two seconds): the second run must not save the stubs
+        // that the first left, or the restore would give back silence.
+        s.run(QUIET_BAGS).unwrap();
+        s.run(QUIET_BAGS).unwrap();
+        for call in [
+            "OpenAllBags()",
+            "CloseAllBags()",
+            "ToggleBackpack()",
+            "OpenBackpack()",
+            "ToggleBag()",
+        ] {
+            assert_eq!(says(call), None, "{call} is quiet");
+        }
+        // Restored twice (a leave and a leave again): the second finds nothing to do.
+        s.run(RESTORE_BAGS).unwrap();
+        s.run(RESTORE_BAGS).unwrap();
+        assert_eq!(says("OpenAllBags()").as_deref(), Some("open_all"));
+        assert_eq!(says("CloseAllBags()").as_deref(), Some("close_all"));
+        assert_eq!(says("ToggleBackpack()").as_deref(), Some("toggle_backpack"));
+        assert_eq!(says("OpenBackpack()").as_deref(), Some("open_backpack"));
+        assert_eq!(says("ToggleBag()").as_deref(), Some("toggle_bag"));
+        assert!(
+            s.eval::<bool>("return ToggleBackpack == ORIGINAL_TOGGLE")
+                .unwrap(),
+            "the very same function"
+        );
+        assert!(s.eval::<bool>("return NF_SAVED_BAGS == nil").unwrap());
     }
 
     #[test]

@@ -33,17 +33,20 @@ pub(super) const FACTION_PLAYER: u32 = 1;
 pub(super) const FACTION_MONSTER: u32 = 14;
 
 const HIGH_CREATURE: u64 = 0xF130 << 48;
+/// The high word of a GameObject's guid.
 const HIGH_GAMEOBJECT: u64 = 0xF110 << 48;
+/// `GAMEOBJECT_DISPLAYID`, `GAMEOBJECT_STATE` and `GAMEOBJECT_TYPE_ID`: their indices in an
+/// object's fields.
 const FIELD_GO_DISPLAY: u16 = 8;
 const FIELD_GO_STATE: u16 = 14;
 const FIELD_GO_TYPE: u16 = 21;
 /// `GO_STATE_ACTIVE`: open, a chest's lid up.
 const GO_STATE_ACTIVE: u32 = 0;
+/// `GO_STATE_READY`: shut, a chest's lid down.
 const GO_STATE_READY: u32 = 1;
 /// `GAMEOBJECT_TYPE_CHEST`: WoW shows its loot cursor over it, and a right-click reaches us.
 pub(super) const GO_TYPE_CHEST: u32 = 3;
 /// `GAMEOBJECT_TYPE_GENERIC`: a model and nothing to use (an exit's ring).
-// Task 12 draws the exits' rings with it.
 #[expect(dead_code, reason = "Task 12 draws the exits' rings")]
 pub(super) const GO_TYPE_GENERIC: u32 = 5;
 

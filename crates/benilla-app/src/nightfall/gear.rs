@@ -164,6 +164,7 @@ pub(super) fn lanterns(
 #[derive(Component)]
 pub(super) struct LoadLine;
 
+/// Spawns the load line once at startup, hidden: [`load_line`] writes and shows it.
 pub(super) fn spawn_line(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     commands.spawn((
@@ -187,18 +188,20 @@ pub(super) fn load_line(
     phase: Res<State<Phase>>,
     mut lines: Query<(&mut Text, &mut TextColor, &mut Visibility), With<LoadLine>>,
 ) {
-    let content = content();
     let hero = sim
         .as_ref()
         .filter(|_| *phase.get() == Phase::Playing)
         .and_then(|s| s.world.hero(s.me));
-    for (mut t, mut c, mut v) in &mut lines {
-        let Some(h) = hero else {
+    let Some(h) = hero else {
+        for (_, _, mut v) in &mut lines {
             if *v != Visibility::Hidden {
                 *v = Visibility::Hidden;
             }
-            continue;
-        };
+        }
+        return;
+    };
+    let content = content();
+    for (mut t, mut c, mut v) in &mut lines {
         let r = &content.rules.run;
         let (pace, _) = nightfall_sim::burden(h.carry.load, r);
         let mut line = if pace < 1.0 {

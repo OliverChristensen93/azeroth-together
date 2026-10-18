@@ -329,7 +329,10 @@ fn autowalk(entry: V2, from: V2, elapsed: f32, speed: f32, dt: f32) -> V2 {
 /// a spot instead of the circle.
 #[derive(Resource, Default)]
 pub(super) struct Autoplay {
+    /// Stand still (searching): the walk takes no step.
     pub hold: bool,
+    /// Walk to this spot instead of the circle. The loot's detour to a container sets it first
+    /// ([`super::loot_view::autoloot`]); with no such detour it is left to whoever else wants it.
     pub goal: Option<V2>,
 }
 
