@@ -2140,6 +2140,52 @@ fn a_dodge_stops_a_cast() {
     }));
 }
 
+#[test]
+fn a_dodge_breaks_a_rooted_channel_and_the_hero_is_free_to_evade_a_stomp() {
+    // Arcane Missiles roots its channeller; the dodge must still reach the cast, or a mage beside a
+    // winding-up stomp is locked in.
+    let mut w = world(&post("elite", 40.0, 40.0, 0.0));
+    join(&mut w, 0, "mage", 20.0, 30.0);
+    let target = foe(&w, 0);
+    press(&mut w, 0, 1, 5, target, None);
+    w.step();
+    assert!(w.hero(0).unwrap().fight.casting.is_some());
+    assert!(w.hero(0).unwrap().fight.rooted, "the channel roots them");
+    w.drain_events();
+
+    w.telegraphs.push(Telegraph {
+        id: 99,
+        enemy: w.enemies[0].id,
+        ability: ability(&w, "stomp") as u16,
+        shape: Shape::Circle { radius: 8.0 },
+        at: V3::new(20.0, 30.0, 0.0),
+        facing: V2::new(1.0, 0.0),
+        left: 9.0 * DT,
+        total: 1.5,
+    });
+    dodging(&mut w, 1);
+    let events = w.drain_events();
+    assert!(events.contains(&Event::CastStop {
+        by: UnitRef::Hero(0),
+        ability: ability(&w, "missiles") as u16,
+        why: Stop::Cancelled
+    }));
+    assert!(
+        !w.hero(0).unwrap().fight.rooted,
+        "the root lifts with the cast"
+    );
+    assert!(w.hero(0).unwrap().fight.casting.is_none());
+
+    // The stomp lands inside the dodge's window: a miss.
+    steps(&mut w, 9);
+    let events = w.drain_events();
+    assert!(events.contains(&Event::Evaded {
+        player: 0,
+        enemy: 1
+    }));
+    assert!(damage_to(&events, UnitRef::Hero(0)).is_empty());
+}
+
 /// A brute at (11.5, 30) after a rogue at (9.5, 30), 2 yards apart, with a thin wall (a cell
 /// wide, aligned to the grid) between them or not.
 fn brute_across_a_wall(walled: bool) -> World {

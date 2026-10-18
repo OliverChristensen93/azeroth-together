@@ -12,7 +12,6 @@ use benilla_ui::script::UiScript;
 use bevy::prelude::*;
 use nightfall_sim::V2;
 
-use super::content;
 use super::run::{LocalInput, Sim};
 use super::view::Views;
 use crate::creature_anim::move_flags::{BACKWARD, FORWARD, STRAFE_LEFT, STRAFE_RIGHT};
@@ -118,10 +117,11 @@ fn pressed(seen: &mut Option<(u64, u32)>, session: u64, now: u32) -> bool {
     matches!(seen.replace((session, now)), Some((s, last)) if s == session && now > last)
 }
 
-/// A dodge press (the binding's count went up): when our mirror shows the hero up, free-footed and
-/// with a charge, the controller hops them [`DodgeRules::distance`] yards the way they move, and
-/// the press goes into the input. The first count read, and the first of a new session, is a
-/// baseline ([`pressed`]).
+/// A dodge press (the binding's count went up): when our mirror shows the hero up and with a
+/// charge, the press goes into the input; and when they are free-footed the controller also hops
+/// them [`DodgeRules::distance`] yards the way they move. A rooted caster (Fireball, Arcane
+/// Missiles) is not hopped here, since the host's dodge cancels the cast, but the press must reach
+/// it. The first count read, and the first of a new session, is a baseline ([`pressed`]).
 ///
 /// [`DodgeRules::distance`]: nightfall_sim::DodgeRules
 pub(super) fn key(
@@ -157,7 +157,13 @@ pub(super) fn key(
         return;
     };
     let f = &hero.fight;
-    if !(f.up() && f.dodge.have > 0 && !f.rooted && player.active) {
+    if !(f.up() && f.dodge.have > 0 && player.active) {
+        return;
+    }
+    // A rooted hero (mid-cast) does not hop here, but the press still goes up: the host cancels the
+    // cast, spends the charge and opens the window, and the root lifts with its next snapshot.
+    if f.rooted {
+        input.dodge_presses = input.dodge_presses.wrapping_add(1);
         return;
     }
     let (Some(guid), Some(tf)) = (
@@ -172,7 +178,7 @@ pub(super) fn key(
     knocks.write(KnockBackMessage {
         guid,
         counter: *counter,
-        launch: hop(way, content().rules.combat.dodge.distance),
+        launch: hop(way, sim.world.content().rules.combat.dodge.distance),
     });
     input.dodge_presses = input.dodge_presses.wrapping_add(1);
 }
@@ -218,6 +224,77 @@ mod tests {
         // A count that went down re-baselines.
         assert!(!pressed(&mut seen, 3, 2));
         assert!(pressed(&mut seen, 3, 3));
+    }
+
+    /// A stage for [`key`]: a rogue (player 0) the controller drives, at a body in the views, the
+    /// binding's counter at 0 and read once as the baseline.
+    fn key_stage(rooted: bool) -> (bevy::app::App, bevy::ecs::system::SystemId) {
+        let mut app = bevy::app::App::new();
+        app.add_message::<KnockBackMessage>();
+        let mut sim = nightfall_sim::World::new(super::super::shipped_content());
+        sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        let fight = &mut sim.heroes[0].fight;
+        fight.rooted = rooted;
+        if rooted {
+            fight.casting = Some(nightfall_sim::Casting {
+                ability: 0,
+                left: 2.0,
+                total: 3.0,
+                channel: false,
+                target: None,
+            });
+        }
+        assert!(fight.dodge.have > 0);
+        app.insert_resource(Sim::for_test(sim));
+        let mut player = crate::player::Player::default();
+        player.active = true;
+        app.insert_resource(player);
+        app.insert_resource(SelfGuid(Some(7)));
+        let body = app.world_mut().spawn(Transform::default()).id();
+        let mut views = Views::default();
+        views.heroes.insert(0, body);
+        app.insert_resource(views);
+        app.init_resource::<LocalInput>();
+        let script = UiScript::new().unwrap();
+        script.run(&format!("{COUNTER} = 0")).unwrap();
+        app.world_mut().insert_non_send_resource(script);
+        let id = app.world_mut().register_system(key);
+        // The first count read is the baseline, not a press.
+        app.world_mut().run_system(id).unwrap();
+        (app, id)
+    }
+
+    /// Raises the binding's counter once, as a press of the key does, and runs [`key`].
+    fn press_dodge(app: &mut bevy::app::App, id: bevy::ecs::system::SystemId, count: u32) {
+        app.world()
+            .non_send_resource::<UiScript>()
+            .run(&format!("{COUNTER} = {count}"))
+            .unwrap();
+        app.world_mut().run_system(id).unwrap();
+    }
+
+    #[test]
+    fn a_free_footed_hero_hops_and_counts_the_press() {
+        let (mut app, id) = key_stage(false);
+        press_dodge(&mut app, id, 1);
+        assert_eq!(app.world().resource::<LocalInput>().dodge_presses, 1);
+        assert_eq!(
+            app.world().resource::<Messages<KnockBackMessage>>().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_rooted_caster_counts_the_press_for_the_host_but_does_not_hop() {
+        // The host's dodge cancels the cast; were the press not sent, a mage channelling beside a
+        // winding-up stomp would be locked in.
+        let (mut app, id) = key_stage(true);
+        press_dodge(&mut app, id, 1);
+        assert_eq!(app.world().resource::<LocalInput>().dodge_presses, 1);
+        assert_eq!(
+            app.world().resource::<Messages<KnockBackMessage>>().len(),
+            0
+        );
     }
 
     #[test]
