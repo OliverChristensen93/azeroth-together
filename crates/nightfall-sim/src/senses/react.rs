@@ -112,9 +112,15 @@ pub(crate) fn step_enemies(
         }
     }
     // A shout is heard by the allies near its maker that are not after anyone yet. They are
-    // alerted without a shout of their own, so it does not carry on from ally to ally.
+    // alerted without a shout of their own, so it does not carry on from ally to ally. A shout
+    // for a hero who is no longer up (a blow of theirs queued it, and they were downed before it
+    // was given out) is dropped: the downed are left be, and no ally is sent to the body.
     for (i, shout) in shouts {
-        if !shout.at.is_finite() || !heroes.iter().any(|h| h.player == shout.player) {
+        if !shout.at.is_finite()
+            || !heroes
+                .iter()
+                .any(|h| h.player == shout.player && h.fight.up())
+        {
             continue;
         }
         let from = enemies[i].pos;

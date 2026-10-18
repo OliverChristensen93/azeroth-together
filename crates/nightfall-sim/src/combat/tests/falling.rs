@@ -261,3 +261,27 @@ fn a_reviver_arriving_at_forty_seconds_is_in_time_and_one_at_forty_one_is_late()
     assert!(events.contains(&Event::Died { player: 0 }));
     assert!(!events.iter().any(|e| matches!(e, Event::Revived { .. })));
 }
+
+#[test]
+fn a_shout_raised_for_a_hero_downed_in_the_same_step_sends_no_ally_to_the_body() {
+    let spawns = format!(
+        "{}{}",
+        post("brute", 30.0, 30.0, 0.0),
+        post("brute", 30.0, 36.0, 0.0)
+    );
+    let mut w = world(&spawns);
+    join(&mut w, 0, "mage", 28.0, 30.0);
+    // A blow of the hero's alerts the first, which shouts at the next step; the hero is downed
+    // before the shout is given out.
+    w.alert(w.enemies[0].id, 0);
+    w.hurt_hero(0, 5000.0);
+    assert!(!w.hero(0).unwrap().fight.up());
+    steps(&mut w, 5);
+    assert!(!w.senses.alerted(1), "the ally went to the fallen hero");
+    // The same shout for a hero still up does wake the ally.
+    let mut w = world(&spawns);
+    join(&mut w, 0, "mage", 28.0, 30.0);
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, 5);
+    assert!(w.senses.alerted(1));
+}
