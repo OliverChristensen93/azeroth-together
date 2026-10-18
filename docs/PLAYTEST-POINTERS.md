@@ -175,7 +175,31 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
 18. **Kept "for the rest of the run"** on item cards ("Kept for the rest of the run."). You
     mentioned tomes only.
 
+19. **Early difficulty.** In a test run where the hero stood still (`TOGETHER_STAND=1`), the faster
+    horde overwhelmed a level-3 hunter at 0:21. Wolves, the first enemies in Elwynn, hit the
+    6.65 cap. If the first minute feels too punishing, lower `enemy_speed`, or lower only the
+    weak wolves' speed in `enemies.ron`.
+
 ## Part 3: Not done, or not verified
+
+Seen working in background test runs (screenshots): the boss entrance and small boss bar,
+ray bursts (gold, blue, purple) with popping cards, the stat sheet opening with cards up, the
+Talents button, the F button, the cooldown manager, shrine circles, the arena fence (Gurubashi)
+and minimap ring, minimap marks, the champion warning, racials (orc +6% damage / 4% armor,
+human crit and regen), the obstacle grid (a dump of Elwynn shows trees, the Goldshire building
+and fences), and the Main Menu Lua wiring (logged at startup). Sim tests: 419 passing.
+
+Not seen on screen:
+
+- **The coin shower**: the autoplay hero never opened a chest in the test runs.
+- **Escape pause and the Main Menu popup**: a background test window can't take key presses.
+  The wiring logs that it's installed.
+- **The banner camera fix**: it relies on the explanation above, and I didn't repeat the carry.
+- **Meter Reset and view switching** (clicks).
+- **Boss-bar click to target** (it uses WoW's `TargetByName`).
+- One test run exited 15 s in with code 1 and no crash report; the same run again was fine.
+
+Also:
 
 - **Co-op not tested** with two instances. Things that ride the network:
   - the menu pause
@@ -188,4 +212,17 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
 - **Heals from missiles that land later** (not in the cast step) count as the receiver's own
   healing, not the caster's. That only matters in co-op.
 - **Obstacle quality** depends on what the collision has, and narrow gaps between trees may
-  read as walls. Watch for enemies piling up behind something.
+  read as walls. Watch for enemies piling up behind something. To see what the scan found,
+  set `TOGETHER_OBSTACLE_DUMP=grid.pgm`; it writes the grid as a picture, north up.
+
+## Playing this branch
+
+The release build shares the main checkout's `target/` folder, so
+`D:\Games\azeroth-together\target\release\azeroth-together.exe` is now this branch's build until
+another branch is built there. A dev build reads `content/` from the source folder it was built
+from, so it uses this worktree's content files. It uses your usual saves (talents, armory, pick)
+in `D:\Games\azeroth-together\benilla-config`; my test runs used a separate scratch folder
+(`BENILLA_HOME`) and left your saves alone. To build it yourself, from the worktree, reuse the
+main checkout's build folder. Otherwise it's a cold ~17 min build and several GB on a D: drive
+with 17 GB free:
+`CARGO_TARGET_DIR=D:/Games/azeroth-together/target cargo build --release -p azeroth-together`.
