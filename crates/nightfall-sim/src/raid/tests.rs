@@ -549,6 +549,50 @@ fn a_hero_who_leaves_drops_what_a_death_would() {
     assert!(w.pack(1).is_none());
 }
 
+#[test]
+fn a_hero_who_leaves_before_any_input_drops_nothing() {
+    // Their client declined the raid or crashed before its stash committed the loadout: what they
+    // were given is still in their stash, so a friend must not find it on the ground.
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.add_hero(1, "rogue", "Late", 1, 0).unwrap();
+    w.give_loadout(1, &loadout(&w, &[("rock", 2)], &[], &[("bread", 1)]));
+    stand(&mut w, 0, 5.0, 5.0);
+    w.step();
+    assert!(w.pack(1).is_some());
+    w.remove_hero(1);
+    assert!(
+        w.raid.containers.iter().all(|c| c.holder != Holder::Pile),
+        "no pile of the loadout they never gave up"
+    );
+    assert!(w.pack(1).is_none());
+    assert!(w.raid.entered.iter().all(|p| *p != 1));
+}
+
+#[test]
+fn a_hero_who_sent_a_pose_has_entered_and_drops_what_a_death_would() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.add_hero(1, "rogue", "Here", 1, 0).unwrap();
+    w.give_loadout(1, &loadout(&w, &[("rock", 2)], &[], &[]));
+    // An input with no pose (a client still loading) is not entering.
+    w.set_input(1, PlayerInput::default());
+    w.step();
+    assert!(!w.raid.entered.contains(&1));
+    stand(&mut w, 1, 8.0, 5.0);
+    w.step();
+    assert!(w.raid.entered.contains(&1));
+    w.remove_hero(1);
+    let held: Vec<Stack> = w
+        .raid
+        .containers
+        .iter()
+        .filter(|c| c.holder == Holder::Pile)
+        .flat_map(|c| c.stacks.iter().flatten().copied())
+        .collect();
+    assert_eq!(held, vec![Stack::new(item(&w, "rock"), 2)]);
+}
+
 /// A rogue at (5, 5) carrying 50 weight: three quarters of the way to the full penalty, so
 /// 0.775 of the pace and 1.375 times the footsteps' reach.
 fn loaded() -> World {

@@ -358,6 +358,11 @@ impl World {
             let Some(hero) = self.heroes.iter_mut().find(|h| h.player == *player) else {
                 continue;
             };
+            // A pose is the client saying it is in the raid: from here what it brought is its own
+            // to lose (see `raid_leave`).
+            if input.pose.is_some() && !self.raid.entered.contains(player) {
+                self.raid.entered.push(*player);
+            }
             if senses::take_input(&mut self.senses, hero, input, &self.content, may_stealth) {
                 self.events.push(crate::Event::Refused {
                     player: *player,

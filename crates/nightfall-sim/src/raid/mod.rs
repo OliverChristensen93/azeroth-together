@@ -303,6 +303,10 @@ pub(crate) struct Raid {
     /// Brought stacks a dead hero kept but whose backpack no longer holds them (under `found_only`
     /// a found bag goes with them): theirs in their outcome, never on the body.
     pub(crate) spilled: Vec<(PlayerId, Vec<Stack>)>,
+    /// Players whose client has sent a pose in this raid: it entered, and what it brought is
+    /// really in the raid. A hero who leaves before this (their client declined or crashed before
+    /// committing the loadout from its stash) drops nothing for their friends to take.
+    pub(crate) entered: Vec<PlayerId>,
     /// Every hero's settled outcome, in the order they were settled.
     pub(crate) outcomes: Vec<HeroOutcome>,
     /// Outcomes before this index have been handed out.
@@ -467,6 +471,7 @@ impl Raid {
         self.exiting.retain(|e| e.player != player);
         self.fallen.retain(|(p, _, _)| *p != player);
         self.spilled.retain(|(p, _)| *p != player);
+        self.entered.retain(|p| *p != player);
     }
 
     /// What `player` has open or is searching.
@@ -623,15 +628,23 @@ impl World {
     /// take is dropped where they stood, for their friends, and nothing of theirs goes on. What a
     /// death would leave them ([`crate::Death::spill`] included) goes with them: a hero who left
     /// has no outcome, so nothing reaches their stash.
+    ///
+    /// A hero whose client never sent a pose in this raid never entered it: that client declined
+    /// the raid, or crashed before its stash committed the loadout, so the loadout is still in
+    /// its stash and was never given up. Dropping it would let a friend loot what the player still
+    /// has. Nothing is dropped for such a hero.
     pub(crate) fn raid_leave(&mut self, player: PlayerId) {
         let content = self.content().clone();
         let at = self.hero(player).map(|h| V3::at(h.pos, h.z));
+        let entered = self.raid.entered.contains(&player);
         if let (Some(at), Some(mut inv)) = (at, self.raid.take_pack(player)) {
-            for s in inv
-                .split_for_death(content.rules.run.death_loss, &content)
-                .lost
-            {
-                self.raid.drop_on_ground(at, s, &content);
+            if entered {
+                for s in inv
+                    .split_for_death(content.rules.run.death_loss, &content)
+                    .lost
+                {
+                    self.raid.drop_on_ground(at, s, &content);
+                }
             }
         }
         self.raid.forget(player);
