@@ -83,6 +83,7 @@ pub struct ContainerMark {
     pub at: V2,
     pub z: Option<f32>,
     pub searched: bool,
+    /// Searched, and nothing in it: an unsearched container does not say.
     pub empty: bool,
     pub locked: bool,
 }
@@ -264,26 +265,23 @@ pub(crate) struct Raid {
     /// When each player may drink a potion again.
     pub(crate) potions: Vec<(PlayerId, f32)>,
     pub(crate) exiting: Vec<Exiting>,
-    // Task 6 first reads `kills`, `outcomes`, `taken`, `had_heroes` and `over`, Task 5 `bodied`:
-    // remove each allowance in the task that reads it. A plain allow, not `not(test)`: no test
-    // here reads them either.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) kills: Vec<(PlayerId, u32)>,
     /// Enemies whose body has been made.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 5 (bodies)")]
     pub(crate) bodied: Vec<u32>,
     /// Fallen heroes and their body's container (0 for none).
     pub(crate) fallen: Vec<(PlayerId, u32)>,
     /// What each player took back from their remains.
     pub(crate) recovered: Vec<(PlayerId, Vec<Stack>)>,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) outcomes: Vec<HeroOutcome>,
     /// Outcomes before this index have been handed out.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) taken: usize,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) had_heroes: bool,
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) over: bool,
     /// A client's mirror: the loot view its host sent.
     pub(crate) mirror: Option<LootView>,
@@ -362,9 +360,7 @@ impl Raid {
         }
     }
 
-    // Task 6 (outcomes) is the first caller of `take_recovered`, `add_kill` and `kills_of`; remove
-    // the allowances there.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) fn take_recovered(&mut self, player: PlayerId) -> Vec<Stack> {
         match self.recovered.iter().position(|(p, _)| *p == player) {
             Some(i) => self.recovered.remove(i).1,
@@ -372,7 +368,7 @@ impl Raid {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) fn add_kill(&mut self, player: PlayerId) {
         match self.kills.iter_mut().find(|(p, _)| *p == player) {
             Some(k) => k.1 += 1,
@@ -380,7 +376,7 @@ impl Raid {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) fn kills_of(&self, player: PlayerId) -> u32 {
         self.kills
             .iter()
@@ -482,8 +478,9 @@ impl World {
         self.raid.pack(player)
     }
 
-    /// The raid's loot as `player` sees it: the containers within the view distance of their hero
-    /// (their own remains, nobody else's), the one they have open, and the exits; every
+    /// The raid's loot as `player` sees it: the containers within the snapshot reach of their hero
+    /// ([`World::reach`]: the view distance and [`crate::KEEP_EXTRA`] past it, which is also what
+    /// [`World::in_reach`] and their snapshot's enemies use; their own remains, nobody else's), the one they have open, and the exits; every
     /// container for `None`. A client's mirror answers with what its host sent.
     pub fn loot_view(&self, player: Option<PlayerId>) -> LootView {
         if let Some(view) = &self.raid.mirror {
@@ -491,7 +488,7 @@ impl World {
         }
         let content = self.content();
         let near = player.and_then(|p| self.hero(p)).map(|h| h.pos);
-        // The same reach as `in_reach`, the events and the snapshot's enemies.
+        // The same reach as `World::in_reach`, the events and the snapshot's enemies.
         let reach = self.reach();
         let marks = self
             .raid
@@ -508,7 +505,8 @@ impl World {
                 at: c.at,
                 z: c.z,
                 searched: c.searched,
-                empty: c.stacks.iter().all(Option::is_none),
+                // An unsearched container does not say whether it is empty.
+                empty: c.searched && c.stacks.iter().all(Option::is_none),
                 locked: c.lock.is_some(),
             })
             .collect();

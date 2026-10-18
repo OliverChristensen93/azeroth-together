@@ -4,9 +4,7 @@
 //! replaced before its step loses nothing, and the same act seen again does nothing.
 
 use super::{in_reach, search_of, Act, ActPress, Holder, Search};
-use crate::{
-    Content, EquipSlot, ItemKind, ItemUse, Place, PlayerId, PlayerInput, Stack, World, V3,
-};
+use crate::{Content, EquipSlot, ItemKind, ItemUse, Place, PlayerId, PlayerInput, World, V3};
 
 impl World {
     /// `player`'s act in `input`, unless it is the one already taken. A hero who is not up is
@@ -18,10 +16,10 @@ impl World {
         if self.raid.last_act(player) == Some(seq) {
             return;
         }
-        self.raid.set_last_act(player, seq);
         let Some(hi) = self.hero_slot(player) else {
             return;
         };
+        self.raid.set_last_act(player, seq);
         self.heroes[hi].carry.acted = seq;
         if !self.heroes[hi].fight.up() {
             return;
@@ -146,8 +144,9 @@ impl World {
         }
     }
 
-    /// The stack in `slot` (or every stack) of the open container into the backpack, as found
-    /// this raid; what does not fit stays.
+    /// The stack in `slot` (or every stack) of the open container into the backpack, with its own
+    /// `found` flag (what the world made is found; a brought thing dropped and taken up again stays
+    /// brought); what does not fit stays. Nothing is taken from a container out of reach.
     fn take_from(&mut self, player: PlayerId, slot: Option<usize>, content: &Content) {
         let Some(id) = self.raid.open_of(player) else {
             return;
@@ -155,6 +154,9 @@ impl World {
         let Some(ci) = self.raid.containers.iter().position(|c| c.id == id) else {
             return;
         };
+        if !self.reaches(player, ci, content) {
+            return;
+        }
         let slots: Vec<usize> = match slot {
             Some(s) => vec![s],
             None => (0..self.raid.containers[ci].stacks.len()).collect(),
@@ -163,21 +165,22 @@ impl World {
             let Some(stack) = self.raid.containers[ci].stacks.get(s).copied().flatten() else {
                 continue;
             };
-            let left = self.raid.pack_mut(player, content).add(
-                Stack {
-                    found: true,
-                    ..stack
-                },
-                content,
-            );
-            self.raid.containers[ci].stacks[s] = left.map(|l| Stack {
-                found: stack.found,
-                ..l
-            });
+            let left = self.raid.pack_mut(player, content).add(stack, content);
+            self.raid.containers[ci].stacks[s] = left;
         }
     }
 
-    /// The stack at `at` into the open container's first empty slot.
+    /// Whether `player`'s hero, where they stand now, reaches container `ci`: checked again at
+    /// every take and put, as they may have walked off since they opened it.
+    fn reaches(&self, player: PlayerId, ci: usize, content: &Content) -> bool {
+        let Some(h) = self.hero(player) else {
+            return false;
+        };
+        let c = &self.raid.containers[ci];
+        in_reach(h.pos, h.z, c.at, c.z, content.rules.run.reach)
+    }
+
+    /// The stack at `at` into the open container's first empty slot, when it is in reach.
     fn put_into(&mut self, player: PlayerId, at: Place, content: &Content) {
         let Some(id) = self.raid.open_of(player) else {
             return;
@@ -185,6 +188,9 @@ impl World {
         let Some(ci) = self.raid.containers.iter().position(|c| c.id == id) else {
             return;
         };
+        if !self.reaches(player, ci, content) {
+            return;
+        }
         let Some(free) = self.raid.containers[ci]
             .stacks
             .iter()

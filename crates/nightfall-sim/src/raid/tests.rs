@@ -687,3 +687,141 @@ fn loot_is_only_seen_within_a_players_reach() {
     assert_eq!(w.loot_view(None).marks.len(), 2);
     assert_eq!(w.snapshot_for(0).loot.marks.len(), 1);
 }
+
+/// A searched pile at `at` holding `stacks`; its id.
+fn pile(w: &mut World, at: V2, stacks: Vec<Stack>) -> u32 {
+    w.raid
+        .add_container(Holder::Pile, at, Some(0.0), stacks, 4, true, None)
+}
+
+/// `player` opens the pile `id` and takes everything, standing where they are.
+fn loot_pile(w: &mut World, player: PlayerId, id: u32, seq: u8) {
+    act(w, player, seq, Act::Open(id));
+    w.step();
+    act(w, player, seq + 1, Act::TakeAll);
+    w.step();
+}
+
+#[test]
+fn a_thing_keeps_its_found_flag_through_a_container() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 2)], &[], &[]));
+    let (gem, bread) = (item(&w, "gem"), item(&w, "bread"));
+    // What the world made is found.
+    let id = pile(&mut w, V2::new(5.0, 5.0), vec![Stack::found(gem, 1)]);
+    loot_pile(&mut w, 0, id, 1);
+    // A brought thing dropped and picked up again stays brought.
+    act(&mut w, 0, 3, Act::Drop(Place::Pack(0)));
+    w.step();
+    let dropped = w
+        .loot_view(Some(0))
+        .marks
+        .iter()
+        .find(|m| m.holder == Holder::Pile && !m.empty)
+        .unwrap()
+        .id;
+    loot_pile(&mut w, 0, dropped, 4);
+    let stacks: Vec<Stack> = w
+        .pack(0)
+        .unwrap()
+        .stacks()
+        .into_iter()
+        .map(|s| s.1)
+        .collect();
+    assert!(stacks.contains(&Stack::found(gem, 1)), "{stacks:?}");
+    assert!(stacks.contains(&Stack::new(bread, 2)), "{stacks:?}");
+    // Under found_only a death takes the gem and leaves the bread.
+    let content = w.content().clone();
+    let mut inv = w.pack(0).unwrap().clone();
+    let death = inv.split_for_death(crate::DeathLoss::FoundOnly, &content);
+    assert_eq!(death.lost, vec![Stack::found(gem, 1)]);
+    assert_eq!(inv.count_of(bread), 2);
+}
+
+#[test]
+fn nothing_moves_to_or_from_a_container_the_hero_has_walked_off_from() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 2)], &[], &[]));
+    let gem = Stack::new(item(&w, "gem"), 2);
+    let id = pile(&mut w, V2::new(5.0, 5.0), vec![gem]);
+    act(&mut w, 0, 1, Act::Open(id));
+    w.step();
+    let (pack, held) = (
+        w.pack(0).unwrap().clone(),
+        w.raid.containers[0].stacks.clone(),
+    );
+    // The same step they walk away, they ask for everything and offer their bread.
+    for (seq, a) in [
+        (2, Act::TakeAll),
+        (3, Act::Take(0)),
+        (4, Act::Put(Place::Pack(0))),
+    ] {
+        w.set_input(
+            0,
+            PlayerInput {
+                pose: pose(40.0, 40.0),
+                act: Some(ActPress { seq, act: a }),
+                ..Default::default()
+            },
+        );
+        w.step();
+        assert_eq!(w.hero(0).unwrap().carry.acted, seq);
+        assert_eq!(w.pack(0), Some(&pack));
+        assert_eq!(w.raid.containers[0].stacks, held);
+    }
+    // Back in reach, the same act works.
+    w.set_input(
+        0,
+        PlayerInput {
+            pose: pose(5.0, 5.0),
+            act: Some(ActPress {
+                seq: 5,
+                act: Act::TakeAll,
+            }),
+            ..Default::default()
+        },
+    );
+    w.step();
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "gem")), 2);
+}
+
+#[test]
+fn an_unsearched_container_does_not_say_whether_it_is_empty() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    let at = V2::new(6.0, 5.0);
+    let full = w
+        .raid
+        .add_container(Holder::Placed(0), at, Some(0.0), Vec::new(), 4, false, None);
+    let marks = w.loot_view(Some(0)).marks;
+    let m = marks.iter().find(|m| m.id == full).unwrap();
+    assert!(!m.searched && !m.empty);
+    let done = pile(&mut w, at, Vec::new());
+    let marks = w.loot_view(Some(0)).marks;
+    let m = marks.iter().find(|m| m.id == done).unwrap();
+    assert!(m.searched && m.empty);
+}
+
+#[test]
+fn an_act_for_a_player_with_no_hero_is_not_remembered() {
+    let mut w = world();
+    w.set_input(
+        4,
+        PlayerInput {
+            act: Some(ActPress {
+                seq: 1,
+                act: Act::Close,
+            }),
+            ..Default::default()
+        },
+    );
+    w.step();
+    assert_eq!(w.raid.last_act(4), None);
+    // So the hero who joins later has their first act, with that number, taken.
+    join(&mut w, 4, "rogue", 5.0, 5.0);
+    act(&mut w, 4, 1, Act::Close);
+    w.step();
+    assert_eq!(w.raid.last_act(4), Some(1));
+}
