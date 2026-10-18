@@ -1,14 +1,17 @@
 //! The player's things between raids, on disk: `benilla-config/nightfall/stash.ron`, a
 //! [`Profile`] in RON (spec §8.3: each player's stash on their own machine). Never lost silently:
 //! every save keeps the last good file as `stash.ron.bak`; a file that does not read is kept as
-//! `stash.ron.broken` (numbered when there is one already) and the backup tried; a file from a
-//! newer Nightfall is left untouched, and this session does not save over it. Whatever happened
-//! is said on the menu ([`Stash::note`]).
+//! `stash.ron.broken` (numbered when there is one already) and the backup tried; a damaged backup
+//! is kept as `stash.ron.bak-broken` before a save can replace it; a file or a backup from a newer
+//! Nightfall is left untouched, and this session does not save. Whatever happened is said on the
+//! menu ([`Stash::note`]).
 //!
 //! A raid is written to disk before it starts ([`Stash::begin_raid`]): the loadout leaves the
-//! profile for `in_raid`. A raid that never ends (a crash, a lost connection, the host going) is
-//! found there at the next start and settled as missing, once ([`Stash::open`], [`after_raid`]);
-//! a raid that ends is settled by its outcome ([`settle_run`]) and saved at once.
+//! profile for `in_raid`, and a raid whose begin cannot be saved does not start, or it would be a
+//! copy of the loadout the next crash leaves on disk. A raid that never ends (a crash, a lost
+//! connection, the host going) is found there at the next start and settled as missing, once
+//! ([`Stash::open`], [`after_raid`]); a raid that ends is settled by its outcome ([`settle_run`])
+//! and saved at once.
 
 use std::path::{Path, PathBuf};
 
@@ -30,27 +33,104 @@ fn backup_of(path: &Path) -> PathBuf {
     path.with_extension("ron.bak")
 }
 
-/// Where a broken file is set aside: `stash.ron.broken`, or the first `stash.ron.broken-N` free.
-fn broken_of(path: &Path) -> PathBuf {
+/// How many files of one kind are set aside before there is no more room for another.
+const MAX_ASIDE: u32 = 999;
+
+/// Where a damaged file is set aside: `stash.ron.<tag>`, or the first `stash.ron.<tag>-N` free.
+/// None when `MAX_ASIDE` are kept already: a copy is never put over an earlier one, so the file
+/// is not touched and the session does not save.
+fn aside_of(path: &Path, tag: &str) -> Option<PathBuf> {
     let free = |p: &Path| matches!(crate::local_state::read_to_string(p), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
-    let first = path.with_extension("ron.broken");
+    let first = path.with_extension(format!("ron.{tag}"));
     if free(&first) {
-        return first;
+        return Some(first);
     }
-    (2..1000)
-        .map(|n| path.with_extension(format!("ron.broken-{n}")))
+    (2..=MAX_ASIDE)
+        .map(|n| path.with_extension(format!("ron.{tag}-{n}")))
         .find(|p| free(p))
-        .unwrap_or(first)
 }
 
-/// The backup's profile, if it reads.
-fn from_backup(path: &Path) -> Option<Profile> {
-    let text = crate::local_state::read_to_string(&backup_of(path)).ok()?;
-    Profile::from_ron(&text).ok()
+/// What the backup file is.
+enum Backup {
+    Absent,
+    Good(Profile),
+    /// From a newer Nightfall: a save would replace it with an older shape.
+    Newer,
+    Damaged {
+        text: String,
+        why: String,
+    },
+    Unreadable(String),
 }
 
-/// The stash at `path`.
+fn read_backup(path: &Path) -> Backup {
+    match crate::local_state::read_to_string(&backup_of(path)) {
+        Ok(text) => match Profile::from_ron(&text) {
+            Ok(p) => Backup::Good(p),
+            Err(ProfileError::Newer { .. }) => Backup::Newer,
+            Err(ProfileError::Parse(why)) => Backup::Damaged { text, why },
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Backup::Absent,
+        Err(e) => Backup::Unreadable(e.to_string()),
+    }
+}
+
+/// `text` kept beside the stash as `stash.ron.<tag>[-N]`: its file name, or None when it could not
+/// be (no room, or the write failed).
+fn keep_aside(path: &Path, tag: &str, text: &str) -> Option<String> {
+    let aside = aside_of(path, tag)?;
+    crate::local_state::write_atomic(&aside, text).ok()?;
+    Some(
+        aside
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    )
+}
+
+/// The stash at `path`: the backup is looked at first, for a save would replace it. A backup from
+/// a newer Nightfall, or one that cannot be read, or one damaged and not to be kept aside, makes
+/// the session read-only; a damaged one that was kept aside is just said.
 pub(super) fn load(path: &Path) -> Loaded {
+    let mut notes: Vec<String> = Vec::new();
+    let mut writable = true;
+    let backup = match read_backup(path) {
+        Backup::Good(p) => Some(p),
+        Backup::Absent => None,
+        Backup::Newer => {
+            writable = false;
+            notes.push("Your stash's backup is from a newer Nightfall: it is left untouched, and this session does not save.".into());
+            None
+        }
+        Backup::Unreadable(e) => {
+            writable = false;
+            notes.push(format!("Your stash's backup could not be read ({e}); it is left as it is, and this session does not save."));
+            None
+        }
+        Backup::Damaged { text, why } => {
+            match keep_aside(path, "bak-broken", &text) {
+                Some(kept) => notes.push(format!(
+                    "Your stash's backup was damaged ({why}): it was kept as {kept}."
+                )),
+                None => {
+                    writable = false;
+                    notes.push(format!("Your stash's backup is damaged ({why}) and could not be set aside: it is left as it is, and this session does not save."));
+                }
+            }
+            None
+        }
+    };
+    let mut loaded = load_main(path, backup);
+    loaded.writable &= writable;
+    if let Some(n) = loaded.note.take() {
+        notes.push(n);
+    }
+    loaded.note = (!notes.is_empty()).then(|| notes.join("\n"));
+    loaded
+}
+
+/// The stash file at `path`, with `backup` (the backup's profile, when it reads) to fall back on.
+fn load_main(path: &Path, backup: Option<Profile>) -> Loaded {
     let fresh = |note: Option<String>, writable: bool| Loaded {
         profile: Profile::default(),
         note,
@@ -59,7 +139,7 @@ pub(super) fn load(path: &Path) -> Loaded {
     let text = match crate::local_state::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return match from_backup(path) {
+            return match backup {
                 Some(profile) => Loaded {
                     profile,
                     note: Some("Your stash file was missing; it came back from its backup.".into()),
@@ -91,20 +171,15 @@ pub(super) fn load(path: &Path) -> Loaded {
             false,
         ),
         Err(ProfileError::Parse(why)) => {
-            let aside = broken_of(path);
-            if crate::local_state::write_atomic(&aside, &text).is_err() {
+            let Some(kept) = keep_aside(path, "broken", &text) else {
                 return fresh(
                     Some(format!(
                         "Your stash file is damaged ({why}) and could not be set aside: it is left as it is, and this session does not save."
                     )),
                     false,
                 );
-            }
-            let kept = aside
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            match from_backup(path) {
+            };
+            match backup {
                 Some(profile) => Loaded {
                     profile,
                     note: Some(format!(
@@ -176,11 +251,15 @@ pub(super) struct Stash {
 
 impl Stash {
     /// The stash from `benilla-config/nightfall/stash.ron`; a raid that never ended settled as
-    /// missing; and `NIGHTFALL_GIVE`'s things added (a test hook). With no state folder (a unit
-    /// test, a capture) there is nothing to read and nothing is saved.
+    /// missing; and `NIGHTFALL_GIVE`'s things added (a test hook). With no state folder (a
+    /// capture) there is nothing to read and nothing is saved. A unit test never reaches a real
+    /// stash, whatever `BENILLA_HOME` says: it gets a fresh one in memory.
     pub fn open() -> Self {
-        let path = crate::local_state::home().map(|h| h.join("nightfall").join("stash.ron"));
         let content = content();
+        if cfg!(test) {
+            return Self::open_at(None, &content);
+        }
+        let path = crate::local_state::home().map(|h| h.join("nightfall").join("stash.ron"));
         let mut stash = Self::open_at(path, &content);
         if let Ok(give) = std::env::var("NIGHTFALL_GIVE") {
             let (stacks, warnings) = parse_give(&give, &content);
@@ -214,10 +293,18 @@ impl Stash {
             note: loaded.note,
         };
         if stash.profile.settle_missing(content) {
-            stash.note = Some("Your last raid ended without you: you were counted missing.".into());
+            stash.say("Your last raid ended without you: you were counted missing.");
             stash.save();
         }
         stash
+    }
+
+    /// `line` on the menu, under what it already says.
+    fn say(&mut self, line: &str) {
+        self.note = Some(match self.note.take() {
+            Some(old) => format!("{old}\n{line}"),
+            None => line.to_owned(),
+        });
     }
 
     /// The profile written to disk: whether anything was, or why it could not be. A session that
@@ -428,6 +515,95 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_backup_is_refused_like_a_newer_file() {
+        let path = dir("newer-bak").join("stash.ron");
+        save(&path, &with_gold(3)).unwrap();
+        std::fs::write(backup_of(&path), "(version: 99, gold: 8)").unwrap();
+        let l = load(&path);
+        assert!(!l.writable, "a save would replace the newer backup");
+        assert!(l.note.as_ref().unwrap().contains("backup is from a newer"));
+        assert_eq!(l.profile.gold, 3, "the stash itself still reads");
+        let mut stash = Stash {
+            profile: l.profile,
+            path: Some(path.clone()),
+            writable: l.writable,
+            note: l.note,
+        };
+        stash.profile.gold = 4;
+        assert!(!stash.save());
+        assert_eq!(
+            std::fs::read_to_string(backup_of(&path)).unwrap(),
+            "(version: 99, gold: 8)"
+        );
+        assert_eq!(load(&path).profile.gold, 3, "and the file was not touched");
+    }
+
+    #[test]
+    fn a_damaged_backup_is_kept_aside_before_a_save_can_replace_it() {
+        let path = dir("bad-bak").join("stash.ron");
+        save(&path, &with_gold(2)).unwrap();
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        let l = load(&path);
+        assert!(l.writable);
+        assert_eq!(l.profile.gold, 2);
+        let note = l.note.as_ref().unwrap();
+        assert!(note.contains("stash.ron.bak-broken"), "{note}");
+        let kept = path.with_extension("ron.bak-broken");
+        assert_eq!(std::fs::read_to_string(&kept).unwrap(), "(gold: ");
+        // The save that follows replaces the backup, and the copy is still there.
+        save(&path, &with_gold(5)).unwrap();
+        assert_eq!(
+            Profile::from_ron(&std::fs::read_to_string(backup_of(&path)).unwrap())
+                .unwrap()
+                .gold,
+            2
+        );
+        assert_eq!(std::fs::read_to_string(&kept).unwrap(), "(gold: ");
+        // A second damaged backup is kept beside the first.
+        std::fs::write(backup_of(&path), "nonsense").unwrap();
+        let _ = load(&path);
+        assert!(path.with_extension("ron.bak-broken-2").exists());
+    }
+
+    #[test]
+    fn a_damaged_file_and_a_damaged_backup_are_both_kept_and_both_said() {
+        let path = dir("both-bad").join("stash.ron");
+        std::fs::write(&path, "(gold: \"x\")").unwrap();
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        let l = load(&path);
+        assert!(l.writable);
+        assert_eq!(l.profile, Profile::default());
+        let note = l.note.unwrap();
+        assert!(
+            note.contains("bak-broken") && note.contains("stash.ron.broken"),
+            "{note}"
+        );
+        assert!(path.with_extension("ron.broken").exists());
+        assert!(path.with_extension("ron.bak-broken").exists());
+    }
+
+    #[test]
+    fn with_no_room_to_keep_a_copy_aside_the_session_does_not_save() {
+        let path = dir("full-aside").join("stash.ron");
+        std::fs::write(&path, "(gold: ").unwrap();
+        // `.broken` and `.broken-2` to `.broken-999` are all there already.
+        std::fs::write(path.with_extension("ron.broken"), "first").unwrap();
+        for n in 2..=MAX_ASIDE {
+            std::fs::write(path.with_extension(format!("ron.broken-{n}")), "kept").unwrap();
+        }
+        assert_eq!(aside_of(&path, "broken"), None);
+        let l = load(&path);
+        assert!(!l.writable);
+        assert!(l.note.unwrap().contains("could not be set aside"));
+        // Nothing was reused: the first copy is as it was, and so is the damaged file.
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("ron.broken")).unwrap(),
+            "first"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "(gold: ");
+    }
+
+    #[test]
     fn a_raid_whose_begin_cannot_be_saved_does_not_start() {
         let content = shipped();
         // A file where the `nightfall` folder should be: nothing can be written under it.
@@ -457,6 +633,33 @@ mod tests {
             "and the menu says why"
         );
         assert_eq!(std::fs::read_to_string(&blocker).unwrap(), "not a folder");
+    }
+
+    #[test]
+    fn a_unit_test_never_opens_a_real_stash_even_with_a_home_set() {
+        use crate::local_state::test_env::{EnvGuard, ENV_LOCK};
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = dir("home");
+        std::fs::create_dir_all(root.join("nightfall")).unwrap();
+        let file = root.join("nightfall").join("stash.ron");
+        // A stash that a real open would settle (a raid under way) and rewrite.
+        std::fs::write(
+            &file,
+            "(gold: 7, in_raid: Some((map: \"duskwood\", brought: ())))",
+        )
+        .unwrap();
+        let _home = EnvGuard::set("BENILLA_HOME", root.to_str().unwrap());
+        let _give = EnvGuard::set("NIGHTFALL_GIVE", "ruby_shard:3");
+        super::super::prepare(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).unwrap();
+        let mut stash = Stash::open();
+        assert_eq!(stash.profile, Profile::default(), "a fresh stash in memory");
+        assert!(!stash.save(), "which writes nothing");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "(gold: 7, in_raid: Some((map: \"duskwood\", brought: ())))"
+        );
+        let names = std::fs::read_dir(root.join("nightfall")).unwrap().count();
+        assert_eq!(names, 1, "no backup or aside appeared");
     }
 
     #[test]

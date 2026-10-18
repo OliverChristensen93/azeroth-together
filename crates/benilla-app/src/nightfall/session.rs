@@ -106,6 +106,22 @@ fn refusal(protocol: u32, content: u64, ours: u64, peers: usize) -> Option<Strin
     }
 }
 
+/// Whether the host's `lobby` lists player `me` with the class and loadout of `own`.
+fn lobby_holds(lobby: &[LobbyPlayer], me: Option<PlayerId>, own: &HeroPick) -> bool {
+    lobby
+        .iter()
+        .find(|p| Some(p.player) == me)
+        .is_some_and(|p| p.hero.class == own.class && p.hero.loadout == own.loadout)
+}
+
+/// The name of the first of `peers` (picked yet, name) whose first pick has not come.
+fn first_unpicked<'a>(peers: impl IntoIterator<Item = (bool, &'a str)>) -> Option<&'a str> {
+    peers
+        .into_iter()
+        .find(|(picked, _)| !picked)
+        .map(|(_, name)| name)
+}
+
 /// The lowest player number not taken (the host is 0).
 fn free_player(taken: impl Iterator<Item = PlayerId> + Clone) -> Option<PlayerId> {
     (1..MAX_PLAYERS as PlayerId).find(|p| !taken.clone().any(|t| t == *p))
@@ -259,11 +275,7 @@ impl Net {
     /// hero is given.
     pub fn host_holds(&self, own: &HeroPick) -> bool {
         match &self.role {
-            Role::Client(c) => c
-                .lobby
-                .iter()
-                .find(|p| Some(p.player) == c.me)
-                .is_some_and(|p| p.hero.class == own.class && p.hero.loadout == own.loadout),
+            Role::Client(c) => lobby_holds(&c.lobby, c.me, own),
             _ => true,
         }
     }
@@ -272,11 +284,10 @@ impl Net {
     /// A run waits for them, or it would begin with their hands empty.
     pub fn awaiting_pick(&self) -> Option<String> {
         match &self.role {
-            Role::Host(h) => h
-                .peers
-                .iter()
-                .find(|p| !p.picked)
-                .map(|p| p.hero.name.clone()),
+            Role::Host(h) => {
+                first_unpicked(h.peers.iter().map(|p| (p.picked, p.hero.name.as_str())))
+                    .map(str::to_owned)
+            }
             _ => None,
         }
     }
@@ -770,6 +781,48 @@ mod tests {
         let text = roster_lines(&players, Some(1));
         assert!(text.contains("Me  ·  rogue  (you)"));
         assert!(!text.contains("Host  ·  rogue  (you)"));
+    }
+
+    #[test]
+    fn the_host_holds_our_pick_only_when_its_lobby_lists_it_for_us() {
+        let mut ours = pick("Me");
+        let lobby = |hero: HeroPick| {
+            vec![
+                LobbyPlayer {
+                    player: 0,
+                    hero: pick("Host"),
+                },
+                LobbyPlayer { player: 1, hero },
+            ]
+        };
+        assert!(lobby_holds(&lobby(ours.clone()), Some(1), &ours));
+        // Not listed yet, or not welcomed yet.
+        assert!(!lobby_holds(&[], Some(1), &ours));
+        assert!(!lobby_holds(&lobby(ours.clone()), None, &ours));
+        // The host holds an older loadout or class than ours.
+        let old = ours.clone();
+        ours.loadout.inventory.pack = vec![Some(nightfall_sim::Stack::new(0, 1))];
+        assert!(!lobby_holds(&lobby(old.clone()), Some(1), &ours));
+        let mut other_class = old.clone();
+        other_class.class = "mage".into();
+        assert!(!lobby_holds(&lobby(other_class), Some(1), &old));
+        // Only class and loadout count: the name is the host's to clean.
+        let mut renamed = old.clone();
+        renamed.name = "Cleaned".into();
+        assert!(lobby_holds(&lobby(renamed), Some(1), &old));
+        // Alone or hosting there is no host to disagree.
+        assert!(Net::default().host_holds(&ours));
+    }
+
+    #[test]
+    fn a_run_waits_for_the_first_joiner_who_has_not_picked() {
+        assert_eq!(first_unpicked([]), None);
+        assert_eq!(first_unpicked([(true, "A"), (true, "B")]), None);
+        assert_eq!(
+            first_unpicked([(true, "A"), (false, "B"), (false, "C")]),
+            Some("B")
+        );
+        assert_eq!(Net::default().awaiting_pick(), None);
     }
 
     fn damage(to: UnitRef, by: Option<UnitRef>) -> Event {

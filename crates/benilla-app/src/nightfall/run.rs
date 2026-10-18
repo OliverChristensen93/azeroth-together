@@ -347,6 +347,7 @@ pub(super) fn start_run(
     mut net: ResMut<Net>,
     mut input: ResMut<LocalInput>,
     mut stash: ResMut<Stash>,
+    mut held: Local<bool>,
 ) {
     if net.is_solo() && net.status.is_empty() && time.elapsed_secs() > 8.0 {
         if std::env::var_os("NIGHTFALL_HOST").is_some() {
@@ -354,6 +355,11 @@ pub(super) fn start_run(
         } else if let Ok(addr) = std::env::var("NIGHTFALL_JOIN") {
             net.join(&addr);
         }
+    }
+    // A start held for a joiner's loadout dies with the party: never a solo run by surprise.
+    if *held && !matches!(net.role, Role::Host(_)) {
+        *held = false;
+        start.0 = false;
     }
     if let Role::Client(c) = &mut net.role {
         let (true, Some(me)) = (c.start, c.me) else {
@@ -396,13 +402,14 @@ pub(super) fn start_run(
         return;
     }
     // A joined player's loadout arrives with their first pick, just after the welcome: a start
-    // in that moment waits (the autoplay start tries again next frame), never beginning with
-    // their hands empty.
+    // in that moment waits, never beginning with their hands empty. The host's click is
+    // remembered (`held`), and the run starts the frame the pick comes.
     if let Some(name) = net.awaiting_pick() {
         net.status = format!("Waiting for {name}'s loadout…");
-        start.0 = false;
+        *held = start.0;
         return;
     }
+    *held = false;
     start.0 = false;
     let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
     let roster = net.roster(&own);

@@ -194,6 +194,31 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_and_a_welcome_keep_their_protocol_4_shape() {
+        // The host's refusal of a protocol 4 client is read by that client: `Welcome` and
+        // `Refused` must stay the first two variants, in this order, with these fields.
+        // (Variants added after them, `Outcome` and `RunOver` before `Ended`, only moved `Ended`.)
+        #[derive(Debug, PartialEq, Deserialize)]
+        enum OldServerMsg {
+            Welcome { you: PlayerId },
+            Refused(String),
+        }
+        let refused = ServerMsg::Refused("The host has a different version of the game.".into());
+        let bytes = postcard::to_stdvec(&refused).unwrap();
+        assert_eq!(bytes[0], 1, "Refused is variant 1");
+        assert_eq!(
+            postcard::from_bytes::<OldServerMsg>(&bytes).unwrap(),
+            OldServerMsg::Refused("The host has a different version of the game.".into())
+        );
+        let welcome = postcard::to_stdvec(&ServerMsg::Welcome { you: 2 }).unwrap();
+        assert_eq!(welcome[0], 0, "Welcome is variant 0");
+        assert_eq!(
+            postcard::from_bytes::<OldServerMsg>(&welcome).unwrap(),
+            OldServerMsg::Welcome { you: 2 }
+        );
+    }
+
+    #[test]
     fn a_loadout_and_an_outcome_survive_the_wire() {
         use crate::{Fate, HeroOutcome, Inventory, Loadout, Recovery, Stack, V3};
         let inventory = Inventory {
