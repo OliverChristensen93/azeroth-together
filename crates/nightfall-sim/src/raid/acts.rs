@@ -21,7 +21,9 @@ impl World {
         };
         self.raid.set_last_act(player, seq);
         self.heroes[hi].carry.acted = seq;
-        if !self.heroes[hi].fight.up() {
+        // Answered, but nothing is done: after the raid ends a hero's things are settled, and no
+        // search, take or drop may move them again.
+        if self.raid.over || !self.heroes[hi].fight.up() {
             return;
         }
         let content = self.content().clone();

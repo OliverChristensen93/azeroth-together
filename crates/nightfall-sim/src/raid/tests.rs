@@ -2402,3 +2402,44 @@ fn kills_by_a_far_teammate_count_for_them_however_the_events_are_drained() {
     assert_eq!(killer.kills, 2, "each kill counted once");
     assert_eq!(far.kills, 0);
 }
+
+#[test]
+fn nothing_goes_on_after_the_raid_is_abandoned() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    join(&mut w, 1, "rogue", 20.0, 20.0);
+    stand(&mut w, 0, 50.0, 49.0);
+    stand(&mut w, 1, 20.0, 20.0);
+    w.step();
+    w.give_loadout(0, &loadout(&w, &[("bread", 1)], &[], &[]));
+    w.give_loadout(
+        1,
+        &loadout(&w, &[("gem", 3)], &[("knife", EquipSlot::MainHand)], &[]),
+    );
+    die(&mut w, 1);
+    steps(&mut w, (3.0 / DT) as usize);
+    w.abandon();
+    let first = w.take_outcomes();
+    assert_eq!(first.len(), 2);
+    assert_eq!(first[0].fate, Fate::Missing);
+    let recovery = first[1].recovery.clone().unwrap();
+    assert_eq!(recovery.items.len(), 2);
+    let body = body_of(&w, 1).clone();
+    // The missing hero walks to the body, opens it and takes all.
+    stand(&mut w, 0, 21.0, 20.0);
+    act(&mut w, 0, 1, Act::Open(body.id));
+    steps(&mut w, (2.0 / DT) as usize);
+    act(&mut w, 0, 2, Act::TakeAll);
+    w.step();
+    assert_eq!(body_of(&w, 1), &body, "the body is as it was left");
+    assert!(w.pack(0).is_none(), "no pack was made for them again");
+    // The act was answered, though nothing was done.
+    assert_eq!(w.hero(0).unwrap().carry.acted, 2);
+    // And back in the ring for longer than the count: no second outcome.
+    stand(&mut w, 0, 50.0, 49.0);
+    steps(&mut w, (11.0 / DT) as usize);
+    assert!(w.hero(0).is_some(), "an abandoned raid lets nobody out");
+    assert!(w.take_outcomes().is_empty());
+    assert_eq!(w.outcomes().len(), 2);
+    assert_eq!(w.outcomes()[1].recovery, Some(recovery));
+}

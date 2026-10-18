@@ -116,7 +116,7 @@ impl World {
     /// `player` is out by exit `exit`: everything they carry is theirs to keep, and they leave
     /// the world.
     pub(super) fn extract(&mut self, player: PlayerId, exit: usize) {
-        if self.hero(player).is_none() {
+        if self.raid.over || self.hero(player).is_none() {
             return;
         }
         let content = self.content().clone();

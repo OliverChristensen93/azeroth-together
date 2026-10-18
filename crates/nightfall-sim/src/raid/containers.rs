@@ -215,9 +215,11 @@ impl Raid {
 
 impl World {
     /// The raid's part of a step, after the fight's: searches, bodies, deaths, then exits. A
-    /// client's mirror has no raid of its own to run: its host's loot view is all it knows.
+    /// client's mirror has no raid of its own to run: its host's loot view is all it knows. A raid
+    /// that is over (everyone out or dead, or abandoned) runs no more: nobody searches, is settled
+    /// twice or leaves by an exit after their outcome is final.
     pub(crate) fn step_raid(&mut self) {
-        if self.raid.mirror.is_some() {
+        if self.raid.mirror.is_some() || self.raid.over {
             return;
         }
         self.step_searches();
