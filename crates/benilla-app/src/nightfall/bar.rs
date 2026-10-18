@@ -221,6 +221,32 @@ pub(super) fn presses(
     }
 }
 
+/// The actions the autofight may press at enemy `target` now: its plain attacks ([`attacks`]) that
+/// are off cooldown, that the hero can pay for ([`affordable`]) and whose facing the hero meets
+/// (the host's own rule, [`nightfall_sim::World::stands_for`]). An attack the hero stands wrong for
+/// is left out rather than pressed into a refusal; the autoplay keeps walking, and so turns, so
+/// the enemy comes into its front in time.
+pub(super) fn autofight_moves(
+    world: &nightfall_sim::World,
+    me: nightfall_sim::PlayerId,
+    hero: &Hero,
+    target: u32,
+    walking: bool,
+) -> Vec<u8> {
+    let content = world.content();
+    let kit = &content.classes[hero.class].kit;
+    attacks(kit, &content.abilities, walking)
+        .into_iter()
+        .filter(|&s| {
+            slot_ability(kit, u32::from(s)).is_some_and(|a| {
+                !on_cooldown(&hero.fight, a)
+                    && affordable(&content.abilities[a], &hero.fight, target)
+                    && world.stands_for(me, a, target)
+            })
+        })
+        .collect()
+}
+
 /// `NIGHTFALL_AUTOFIGHT=1`: with no living enemy targeted, WoW's own Tab picks the nearest; else
 /// every [`AUTO_EVERY`] seconds the next of the hero's plain attacks is pressed through
 /// `UseAction`, as a key would; standing in a telegraph, the dodge binding is pressed.
@@ -264,17 +290,7 @@ pub(super) fn autofight(
             return;
         }
     };
-    let content = sim.world.content();
-    let kit = &content.classes[hero.class].kit;
-    let moves: Vec<u8> = attacks(kit, &content.abilities, autoplay())
-        .into_iter()
-        .filter(|&s| {
-            slot_ability(kit, u32::from(s)).is_some_and(|a| {
-                !on_cooldown(&hero.fight, a)
-                    && affordable(&content.abilities[a], &hero.fight, target)
-            })
-        })
-        .collect();
+    let moves = autofight_moves(&sim.world, sim.me, hero, target, autoplay());
     if moves.is_empty() {
         return;
     }
@@ -381,6 +397,40 @@ mod tests {
         assert!(on_cooldown(&fight, 3));
         assert!(!on_cooldown(&fight, 4), "a spent cooldown is ready");
         assert!(!on_cooldown(&fight, 1));
+    }
+
+    #[test]
+    fn the_autofight_leaves_out_what_the_hero_stands_wrong_for() {
+        use nightfall_sim::{Enemy, EnemyFight, Facing, V2};
+
+        let mut world = nightfall_sim::World::new(super::super::shipped_content());
+        world.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        let hero_at = world.hero(0).unwrap().pos;
+        let enemy_at = |dx: f32| Enemy {
+            id: 1,
+            kind: 0,
+            pos: hero_at + V2::new(dx, 0.0),
+            z: 0.0,
+            facing: V2::new(1.0, 0.0),
+            hp: 1000.0,
+            max_hp: 1000.0,
+            speed: 0.0,
+            asleep: false,
+            fight: EnemyFight::default(),
+        };
+        // The hero faces +x: an enemy ahead of them is theirs to strike, one behind is not.
+        world.enemies = vec![enemy_at(3.0)];
+        let ahead = autofight_moves(&world, 0, world.hero(0).unwrap(), 1, false);
+        world.enemies = vec![enemy_at(-3.0)];
+        let behind = autofight_moves(&world, 0, world.hero(0).unwrap(), 1, false);
+        assert!(!ahead.is_empty());
+        assert!(behind.len() < ahead.len(), "{ahead:?} against {behind:?}");
+        let content = world.content();
+        let kit = &content.classes[world.hero(0).unwrap().class].kit;
+        for s in &behind {
+            let a = slot_ability(kit, u32::from(*s)).unwrap();
+            assert_eq!(content.abilities[a].facing, Facing::Any, "slot {s}");
+        }
     }
 
     #[test]

@@ -766,3 +766,29 @@ fn a_hero_downed_between_steps_shows_crawl_speed() {
     assert!(!w.hero(0).unwrap().fight.up());
     assert!((w.snapshot().heroes[0].speed - 7.0 * 0.3).abs() < 1e-4);
 }
+
+#[test]
+fn a_hero_stands_as_an_ability_wants_toward_an_enemy_or_the_host_judges() {
+    let mut w = world(&post("brute", 30.0, 30.0, 0.0));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    // Facing +x with the brute 2 yards ahead: in front, but not behind it (the brute faces north).
+    w.enemies[0].facing = V2::new(1.0, 0.0);
+    let id = w.enemies[0].id;
+    assert!(w.stands_for(0, ability(&w, "strike"), id));
+    assert!(w.stands_for(0, ability(&w, "blast"), id), "any way will do");
+    // Turned away from it, a front-facing ability is wrong; an any-facing one is not.
+    stand(
+        &mut w,
+        0,
+        V2::new(28.0, 30.0),
+        V2::new(-1.0, 0.0),
+        Gait::Still,
+    );
+    w.step();
+    assert!(!w.stands_for(0, ability(&w, "strike"), id));
+    assert!(w.stands_for(0, ability(&w, "blast"), id));
+    // What is not there is the host's to judge.
+    assert!(w.stands_for(9, ability(&w, "strike"), id));
+    assert!(w.stands_for(0, ability(&w, "strike"), 99));
+    assert!(w.stands_for(0, 999, id));
+}

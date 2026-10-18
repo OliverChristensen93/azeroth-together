@@ -196,6 +196,28 @@ impl World {
         }
     }
 
+    /// Whether `player`'s hero stands as ability `ability` (an index into the content's
+    /// abilities) wants toward enemy `enemy`: the facing rule a press is judged by, for a client
+    /// that would rather not press into a refusal (the autoplay). `true` for a hero, ability or
+    /// enemy that is not there: the host judges those.
+    pub fn stands_for(&self, player: PlayerId, ability: usize, enemy: u32) -> bool {
+        let (Some(hero), Some(e), Some(a)) = (
+            self.hero(player),
+            self.enemy(enemy),
+            self.content.abilities.get(ability),
+        ) else {
+            return true;
+        };
+        stands_right(
+            a.facing,
+            hero.pos,
+            hero.facing,
+            e.pos,
+            e.facing,
+            self.content.rules.combat.front,
+        )
+    }
+
     /// Nothing solid between `a` and `b` (always, without a map).
     pub(crate) fn clear_line(&self, a: V3, b: V3) -> bool {
         self.map().is_none_or(|m| m.line_of_sight(a, b))
