@@ -4,8 +4,10 @@
 use std::sync::Arc;
 
 use super::*;
+use crate::combat::Dice;
 use crate::heightmap::testmap::flat;
-use crate::{CastPress, ContentSources, Gait, HeroPose, Life, PlayerInput, DT};
+use crate::{CastPress, ContentSources, Gait, HeroPose, Life, PlayerInput, Table, DT};
+use containers::roll_table;
 
 const CLASSES: &str = r#"[
     (key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0, base_hp: 1000.0,
@@ -657,6 +659,7 @@ fn a_bad_act_from_a_client_changes_nothing_and_is_answered() {
     join(&mut w, 0, "rogue", 5.0, 5.0);
     w.give_loadout(0, &loadout(&w, &[("bread", 2), ("lantern", 1)], &[], &[]));
     let pack = w.pack(0).unwrap().clone();
+    let before = w.raid.containers.clone();
     let bad = [
         Act::Open(9999),
         Act::Take(60000),
@@ -683,7 +686,10 @@ fn a_bad_act_from_a_client_changes_nothing_and_is_answered() {
         assert_eq!(w.hero(0).unwrap().carry.acted, i as u8 + 1, "{a:?}");
     }
     assert_eq!(w.pack(0), Some(&pack));
-    assert!(w.loot_view(Some(0)).marks.is_empty());
+    assert_eq!(
+        w.raid.containers, before,
+        "a bad act dropped or took nothing"
+    );
     // An act for a hero who is not there is dropped.
     w.set_input(
         9,
@@ -724,6 +730,8 @@ fn the_snapshot_of_one_player_holds_only_their_own_pack() {
 #[test]
 fn loot_is_only_seen_within_a_players_reach() {
     let mut w = world();
+    // Only the piles made here: the content's own containers would be in view too.
+    w.raid.containers.clear();
     join(&mut w, 0, "rogue", 5.0, 5.0);
     // The same reach as the enemies of their snapshot and the events they are sent. The spots
     // are only data to the raid, so they may lie past the 60 yard map.
@@ -807,6 +815,8 @@ fn a_thing_keeps_its_found_flag_through_a_container() {
 #[test]
 fn nothing_moves_to_or_from_a_container_the_hero_has_walked_off_from() {
     let mut w = world();
+    // The pile made below is the only container, at index 0.
+    w.raid.containers.clear();
     join(&mut w, 0, "rogue", 5.0, 5.0);
     w.give_loadout(0, &loadout(&w, &[("bread", 2)], &[], &[]));
     let gem = Stack::new(item(&w, "gem"), 2);
@@ -836,19 +846,18 @@ fn nothing_moves_to_or_from_a_container_the_hero_has_walked_off_from() {
         assert_eq!(w.pack(0), Some(&pack));
         assert_eq!(w.raid.containers[0].stacks, held);
     }
-    // Back in reach, the same act works.
-    w.set_input(
-        0,
-        PlayerInput {
-            pose: pose(5.0, 5.0),
-            act: Some(ActPress {
-                seq: 5,
-                act: Act::TakeAll,
-            }),
-            ..Default::default()
-        },
-    );
-    w.step();
+    // Walking off closed it; back in reach, they open it again and the same act works.
+    for (seq, a) in [(5, Act::Open(id)), (6, Act::TakeAll)] {
+        w.set_input(
+            0,
+            PlayerInput {
+                pose: pose(5.0, 5.0),
+                act: Some(ActPress { seq, act: a }),
+                ..Default::default()
+            },
+        );
+        w.step();
+    }
     assert_eq!(w.pack(0).unwrap().count_of(item(&w, "gem")), 2);
 }
 
@@ -1307,4 +1316,407 @@ fn a_free_meal_restores_all_health_without_food_and_no_mana_and_still_eats_food_
     let meal = w.combat.hero(0).unwrap().meal.unwrap();
     assert!((meal.health - 800.0 * 0.6 / 15.0).abs() < 1e-3);
     assert_eq!(meal.mana, 0.0);
+}
+
+fn chest(w: &World) -> u32 {
+    w.raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Placed(0) && c.lock.is_none())
+        .unwrap()
+        .id
+}
+
+#[test]
+fn the_content_places_its_containers_filled_from_their_tables() {
+    let w = world();
+    let placed: Vec<&Container> = w
+        .raid
+        .containers
+        .iter()
+        .filter(|c| matches!(c.holder, Holder::Placed(_)))
+        .collect();
+    assert_eq!(placed.len(), 3);
+    let gems: Vec<Stack> = placed[0].stacks.iter().flatten().copied().collect();
+    // Two rolls of three gems each, one stack, and found: world loot counts as found.
+    assert_eq!(gems, vec![Stack::found(item(&w, "gem"), 6)]);
+    assert_eq!(placed[0].stacks.len(), 8);
+    assert!(!placed[0].searched);
+    assert_eq!(placed[2].lock, Some(item(&w, "key") as u16));
+    // Whatever any table rolled, in any container, is found.
+    assert!(placed
+        .iter()
+        .flat_map(|c| c.stacks.iter().flatten())
+        .all(|s| s.found));
+}
+
+#[test]
+fn the_same_seed_rolls_the_same_loot_and_seeds_differ() {
+    let grave = |seed: u64| {
+        let mut w = world();
+        let roll = RaidRoll::standard(w.content(), seed);
+        w.begin_raid(roll).unwrap();
+        w.raid.containers[1].stacks.clone()
+    };
+    assert_eq!(grave(7), grave(7));
+    let rolls: Vec<_> = (0..20).map(grave).collect();
+    assert!(
+        rolls.iter().any(|r| *r != rolls[0]),
+        "twenty seeds all rolled the same"
+    );
+}
+
+#[test]
+fn searching_a_chest_takes_its_time_and_is_heard() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[], &[], &[]));
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    w.step();
+    let view = w.loot_view(Some(0)).open.unwrap();
+    assert_eq!(view.id, id);
+    assert!(view.stacks.is_empty());
+    let (left, total) = view.search.unwrap();
+    assert_eq!(total, 2.0);
+    assert!(left < 2.0);
+    steps(&mut w, 3);
+    assert!(
+        w.hero(0).unwrap().noise >= 15.0,
+        "a chest is heard 15 yards off"
+    );
+    steps(&mut w, (2.0 / DT) as usize);
+    let open = w.loot_view(Some(0)).open.unwrap();
+    assert!(open.search.is_none());
+    assert_eq!(open.stacks[0], Some(Stack::found(item(&w, "gem"), 6)));
+    act(&mut w, 0, 2, Act::Take(0));
+    w.step();
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "gem")), 6);
+    assert!(w.pack(0).unwrap().stacks()[0].1.found);
+    let mark = w
+        .loot_view(Some(0))
+        .marks
+        .into_iter()
+        .find(|m| m.id == id)
+        .unwrap();
+    assert!(mark.searched && mark.empty);
+}
+
+#[test]
+fn the_search_noise_is_made_at_the_container_in_the_searchers_name() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    w.step();
+    // The senses have listened and cleared the noises by the end of a step: call the search again
+    // by hand, with its beat due, and see what it made.
+    w.raid.searches[0].noise_in = 0.0;
+    w.step_searches();
+    let n = w
+        .senses
+        .noises
+        .last()
+        .expect("a beat of the search is heard");
+    assert_eq!(n.by, 0);
+    assert_eq!((n.at.x, n.at.y), (12.0, 5.0));
+    assert_eq!(n.radius, 15.0);
+}
+
+#[test]
+fn walking_off_stops_a_search_and_closes_what_is_open() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    w.step();
+    stand(&mut w, 0, 11.0, 7.0);
+    w.step();
+    assert!(w.loot_view(Some(0)).open.is_none());
+    assert!(
+        !w.raid
+            .containers
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .searched
+    );
+    // Searched, then walked away from: it closes.
+    stand(&mut w, 0, 11.0, 5.0);
+    w.step();
+    act(&mut w, 0, 2, Act::Open(id));
+    steps(&mut w, (2.2 / DT) as usize);
+    assert!(w.loot_view(Some(0)).open.is_some());
+    stand(&mut w, 0, 20.0, 5.0);
+    w.step();
+    assert!(w.loot_view(Some(0)).open.is_none());
+}
+
+#[test]
+fn a_locked_chest_needs_its_key_and_a_far_one_cannot_be_opened() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 30.0, 28.0);
+    let locked = w.raid.containers[2].id;
+    act(&mut w, 0, 1, Act::Open(locked));
+    w.step();
+    assert!(w.loot_view(Some(0)).open.is_none());
+    w.give_loadout(0, &loadout(&w, &[("key", 1)], &[], &[]));
+    act(&mut w, 0, 2, Act::Open(locked));
+    w.step();
+    assert!(w.loot_view(Some(0)).open.is_some());
+    let far = chest(&w);
+    act(&mut w, 0, 3, Act::Open(far));
+    w.step();
+    let open = w.loot_view(Some(0)).open.unwrap();
+    assert_eq!(
+        open.id, locked,
+        "the far chest did not open, and the search went on"
+    );
+}
+
+#[test]
+fn what_does_not_fit_stays_in_the_container() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    w.give_loadout(
+        0,
+        &loadout(
+            &w,
+            &[("rock", 5), ("bread", 1), ("water", 1), ("potion", 1)],
+            &[],
+            &[],
+        ),
+    );
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    steps(&mut w, (2.2 / DT) as usize);
+    act(&mut w, 0, 2, Act::TakeAll);
+    w.step();
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "gem")), 0);
+    let c = w.raid.containers.iter().find(|c| c.id == id).unwrap();
+    assert_eq!(c.stacks[0], Some(Stack::found(item(&w, "gem"), 6)));
+    // Put the rocks in; then the gems fit.
+    act(&mut w, 0, 3, Act::Put(Place::Pack(0)));
+    w.step();
+    act(&mut w, 0, 4, Act::Take(0));
+    w.step();
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "gem")), 6);
+    let c = w.raid.containers.iter().find(|c| c.id == id).unwrap();
+    assert!(c.stacks.contains(&Some(Stack::new(item(&w, "rock"), 5))));
+}
+
+#[test]
+fn a_dead_enemy_leaves_a_body_holding_its_table() {
+    let mut w = world_with("", BRUTE_FAR);
+    join(&mut w, 0, "rogue", 6.0, 54.0);
+    let id = w.enemies[0].id;
+    w.kill_enemy(0, Some(0));
+    w.step();
+    let body = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Body(id))
+        .unwrap();
+    assert_eq!(body.stacks[0], Some(Stack::found(item(&w, "gem"), 6)));
+    let body = body.id;
+    act(&mut w, 0, 1, Act::Open(body));
+    w.step();
+    let (_, total) = w.loot_view(Some(0)).open.unwrap().search.unwrap();
+    assert_eq!(total, 1.5);
+    steps(&mut w, 60);
+    assert_eq!(
+        w.raid
+            .containers
+            .iter()
+            .filter(|c| c.holder == Holder::Body(id))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_dead_enemy_is_looked_at_once() {
+    let mut w = world_with("", BRUTE_FAR);
+    join(&mut w, 0, "rogue", 6.0, 54.0);
+    let id = w.enemies[0].id;
+    w.kill_enemy(0, Some(0));
+    w.step();
+    assert_eq!(w.raid.bodied, vec![id]);
+    // Its body taken away, the dead enemy does not make another.
+    w.raid.containers.retain(|c| c.holder != Holder::Body(id));
+    steps(&mut w, 10);
+    assert_eq!(w.raid.bodied, vec![id]);
+    assert!(w
+        .raid
+        .containers
+        .iter()
+        .all(|c| c.holder != Holder::Body(id)));
+}
+
+#[test]
+fn a_clients_mirror_makes_no_bodies_of_its_own() {
+    let mut host = world_with("", BRUTE_FAR);
+    join(&mut host, 0, "rogue", 6.0, 54.0);
+    host.kill_enemy(0, Some(0));
+    let mut mirror = World::new(host.content().clone());
+    mirror.apply_snapshot(host.snapshot());
+    let placed = mirror.raid.containers.len();
+    mirror.step();
+    assert_eq!(mirror.enemies[0].hp, 0.0, "the mirror has the dead enemy");
+    assert_eq!(
+        mirror.raid.containers.len(),
+        placed,
+        "and makes no body of it"
+    );
+    assert!(mirror.raid.bodied.is_empty());
+}
+
+fn entry(item: usize, weight: f32, count: (u16, u16)) -> crate::TableEntry {
+    crate::TableEntry {
+        item,
+        weight,
+        count,
+    }
+}
+
+fn table(rolls: (u8, u8), nothing: f32, items: Vec<crate::TableEntry>) -> Table {
+    Table {
+        key: "t".into(),
+        rolls,
+        nothing,
+        items,
+    }
+}
+
+#[test]
+fn a_table_that_cannot_roll_rolls_nothing_and_does_not_panic() {
+    let w = world();
+    let c = w.content();
+    let mut dice = Dice::new(5);
+    let mut roll = |t: Table| roll_table(&t, &mut dice, c);
+    // No entries, nothing to roll.
+    assert!(roll(table((3, 3), 0.0, vec![])).is_empty());
+    // All weight on "nothing".
+    assert!(roll(table((3, 3), 5.0, vec![])).is_empty());
+    // Not a number.
+    assert!(roll(table((3, 3), f32::NAN, vec![entry(0, 1.0, (1, 3))])).is_empty());
+    // An item the content does not have.
+    assert!(roll(table((3, 3), 0.0, vec![entry(999, 1.0, (1, 3))])).is_empty());
+    // Zero rolls.
+    assert!(roll(table((0, 0), 0.0, vec![entry(0, 1.0, (1, 3))])).is_empty());
+    // A reversed range gives its low end.
+    let gem = item(&w, "gem");
+    assert_eq!(
+        roll(table((1, 1), 0.0, vec![entry(gem, 1.0, (5, 2))])),
+        vec![Stack::found(gem, 5)]
+    );
+}
+
+#[test]
+fn a_roll_past_a_stack_size_spills_into_the_next_stack() {
+    let w = world();
+    let gem = item(&w, "gem");
+    let t = table((6, 6), 0.0, vec![entry(gem, 1.0, (4, 4))]);
+    let got = roll_table(&t, &mut Dice::new(9), w.content());
+    // Twenty-four gems, ten to a stack.
+    assert_eq!(
+        got,
+        vec![
+            Stack::found(gem, 10),
+            Stack::found(gem, 10),
+            Stack::found(gem, 4)
+        ]
+    );
+}
+
+#[test]
+fn a_container_whose_kind_the_content_lacks_opens_at_once_and_is_quiet() {
+    let w = world();
+    assert_eq!(search_of(Holder::Placed(99), w.content()), (0.0, None));
+}
+
+#[test]
+fn a_friend_picks_up_what_was_dropped() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    join(&mut w, 1, "rogue", 6.0, 5.0);
+    stand(&mut w, 0, 5.0, 5.0);
+    stand(&mut w, 1, 6.0, 5.0);
+    w.step();
+    w.give_loadout(0, &loadout(&w, &[("bread", 3)], &[], &[]));
+    w.give_loadout(1, &loadout(&w, &[], &[], &[]));
+    act(&mut w, 0, 1, Act::Drop(Place::Pack(0)));
+    stand(&mut w, 1, 6.0, 5.0);
+    w.step();
+    let pile = w
+        .loot_view(Some(1))
+        .marks
+        .iter()
+        .find(|m| m.holder == Holder::Pile)
+        .unwrap()
+        .id;
+    act(&mut w, 1, 1, Act::Open(pile));
+    stand(&mut w, 0, 5.0, 5.0);
+    w.step();
+    act(&mut w, 1, 2, Act::TakeAll);
+    w.step();
+    assert_eq!(w.pack(1).unwrap().count_of(item(&w, "bread")), 3);
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "bread")), 0);
+}
+
+/// One whole scripted raid: loadouts, acts, a search, a body, a drop. Its end state, for the
+/// determinism test to compare.
+fn scripted_raid(
+    seed: u64,
+) -> (
+    Vec<Container>,
+    Vec<(PlayerId, Inventory)>,
+    Vec<crate::Event>,
+) {
+    let mut w = world_with("", BRUTE_FAR);
+    let roll = RaidRoll::standard(w.content(), seed);
+    w.begin_raid(roll).unwrap();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    join(&mut w, 1, "rogue", 13.0, 5.0);
+    w.give_loadout(
+        0,
+        &loadout(
+            &w,
+            &[("bread", 3), ("potion", 2)],
+            &[("knife", EquipSlot::MainHand)],
+            &[],
+        ),
+    );
+    w.give_loadout(1, &loadout(&w, &[("rock", 2)], &[], &[("key", 1)]));
+    let id = chest(&w);
+    act(&mut w, 0, 1, Act::Open(id));
+    steps(&mut w, (2.2 / DT) as usize);
+    act(&mut w, 0, 2, Act::TakeAll);
+    w.step();
+    act(&mut w, 1, 1, Act::Drop(Place::Pack(0)));
+    w.step();
+    w.kill_enemy(0, Some(1));
+    steps(&mut w, 5);
+    let body = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| matches!(c.holder, Holder::Body(_)))
+        .unwrap()
+        .id;
+    stand(&mut w, 1, 6.0, 54.0);
+    act(&mut w, 1, 2, Act::Open(body));
+    steps(&mut w, 60);
+    (
+        w.raid.containers.clone(),
+        w.raid.packs.clone(),
+        w.events().to_vec(),
+    )
+}
+
+#[test]
+fn a_scripted_raid_plays_out_the_same_twice() {
+    assert_eq!(scripted_raid(1234), scripted_raid(1234));
+    assert_ne!(scripted_raid(1234).0, scripted_raid(99).0);
 }

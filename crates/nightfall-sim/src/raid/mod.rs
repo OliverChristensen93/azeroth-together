@@ -287,7 +287,6 @@ pub(crate) struct Raid {
     #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) kills: Vec<(PlayerId, u32)>,
     /// Enemies whose body has been made.
-    #[expect(dead_code, reason = "used by Task 5 (bodies)")]
     pub(crate) bodied: Vec<u32>,
     /// Fallen heroes and their body's container (0 for none).
     pub(crate) fallen: Vec<(PlayerId, u32)>,

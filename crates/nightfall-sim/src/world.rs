@@ -393,6 +393,10 @@ impl World {
             // Before the senses listen, so the noise of these blows is heard this step.
             self.strike_back();
         }
+        // The raid after the fight, burns and counter-blows included, so every enemy dead by now
+        // leaves its body this step: a search goes on or stops, the dead leave bodies. Before the
+        // enemies step, so the noises made here are heard this step.
+        self.step_raid();
         // Their pace last: a blow just struck broke stealth, which works the senses' speed out
         // afresh, so the Sprint, the slowed cast and the crawl are laid on after it.
         for hi in 0..self.heroes.len() {
