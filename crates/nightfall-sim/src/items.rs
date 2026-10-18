@@ -337,9 +337,9 @@ pub(crate) fn check_items(items: &[ItemDef]) -> Result<(), String> {
         if items[..i].iter().any(|o| o.key == *k) {
             return Err(format!("items.ron: item \"{k}\" is listed twice"));
         }
-        if !non_negative(it.weight) || it.stack == 0 {
+        if !positive(it.weight) || it.stack == 0 {
             return Err(format!(
-                "items.ron: \"{k}\": weight is 0 or more and stack at least 1"
+                "items.ron: \"{k}\": weight is above 0 (everything weighs something) and stack at least 1"
             ));
         }
         let gear = matches!(it.kind, ItemKind::Weapon | ItemKind::Armour);
@@ -374,6 +374,12 @@ pub(crate) fn check_items(items: &[ItemDef]) -> Result<(), String> {
         }
         if !(it.bonus.health.is_finite() && it.bonus.damage.is_finite()) {
             return Err(format!("items.ron: \"{k}\": a bonus is a number"));
+        }
+        // A bonus that took away all of a hero's health or damage (or more) is a mistake.
+        if it.bonus.health <= -1.0 || it.bonus.damage <= -1.0 {
+            return Err(format!(
+                "items.ron: \"{k}\": a bonus of health or damage is above -1"
+            ));
         }
         if let Some(ItemUse::Heal(n) | ItemUse::Mana(n)) = it.on_use {
             if !positive(n) {
@@ -446,6 +452,13 @@ impl LootFile {
                     weight: e.weight,
                     count: e.count,
                 });
+            }
+            // A roll picks by weight, so a table that weighs nothing has no way to pick.
+            if t.nothing + t.items.iter().map(|e| e.weight).sum::<f32>() <= 0.0 {
+                return Err(format!(
+                    "loot.ron: table \"{}\": its entries and nothing all weigh 0, so it picks nothing",
+                    t.key
+                ));
             }
             tables.push(Table {
                 key: t.key.clone(),

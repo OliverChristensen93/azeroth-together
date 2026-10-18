@@ -45,8 +45,8 @@ use nightfall_sim::{Content, ContentSources};
 use crate::game_pick::GameMode;
 
 static CONTENT: OnceLock<Arc<Content>> = OnceLock::new();
-/// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot), for the hash a client
-/// and host compare.
+/// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot), for
+/// the hash a client and host compare.
 static CONTENT_TEXTS: OnceLock<[String; 8]> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static [String; 8] {

@@ -854,6 +854,9 @@ impl RunRules {
                     .into(),
             );
         }
+        if self.safe_slots > self.backpack_slots {
+            return Err("rules.ron: run: safe_slots is at most backpack_slots".into());
+        }
         if !(self.weight_free >= 0.0 && self.weight_full > self.weight_free) {
             return Err("rules.ron: run: weight_full is above weight_free".into());
         }
@@ -2068,6 +2071,7 @@ mod tests {
         };
         assert!(with("weight_free: 25.0").is_ok());
         assert!(with("death_loss: found_only").is_ok());
+        assert!(with("safe_slots: 3, backpack_slots: 3").is_ok());
         for bad in [
             "weight_free: 60.0, weight_full: 60.0",
             "weight_slow_floor: 0.0",
@@ -2075,9 +2079,69 @@ mod tests {
             "weight_noise_max: 0.5",
             "extract_for: 0.0",
             "backpack_slots: 0",
+            "safe_slots: 4, backpack_slots: 3",
         ] {
             assert!(matches!(with(bad), Err(ContentError::Invalid(_))), "{bad}");
         }
+        // The finite list: an infinity and a NaN are numbers that are not numbers.
+        for bad in ["weight_free: inf", "extract_for: NaN"] {
+            refused_naming(with(bad), "every number is a number");
+        }
+        refused_naming(with("safe_slots: 4, backpack_slots: 3"), "safe_slots");
+    }
+
+    #[test]
+    fn an_items_weight_bonus_and_a_tables_weights_must_make_sense() {
+        let items = |from: &str, to: &str| {
+            let it = ITEMS.replace(from, to);
+            assert_ne!(it, ITEMS, "{from}");
+            it
+        };
+        // Every item weighs something (spec §8.2).
+        for bad in ["0.0", "-1.0", "inf", "NaN"] {
+            let it = items("weight: 0.1", &format!("weight: {bad}"));
+            refused_naming(load_loot(EXIT_MAP, RULES, &it, LOOT), "weight");
+        }
+        // A bonus that takes everything away, or is not a number.
+        for bonus in [
+            "(health: -1.0)",
+            "(damage: -1.5)",
+            "(health: inf)",
+            "(damage: NaN)",
+        ] {
+            let it = items(
+                "slot: Some(MainHand),",
+                &format!("slot: Some(MainHand), bonus: {bonus},"),
+            );
+            refused_naming(load_loot(EXIT_MAP, RULES, &it, LOOT), "bonus");
+        }
+        assert!(load_loot(
+            EXIT_MAP,
+            RULES,
+            &items(
+                "slot: Some(MainHand),",
+                "slot: Some(MainHand), bonus: (health: -0.5, damage: 0.1),"
+            ),
+            LOOT
+        )
+        .is_ok());
+        // Food and drink restore a share above 0, at most 1, and a number.
+        for bad in ["0.0", "1.5", "inf", "NaN"] {
+            let it = items(
+                "weight: 0.5, stack: 10),\n        (key: \"water\"",
+                &format!("weight: 0.5, stack: 10, restore: {bad}),\n        (key: \"water\""),
+            );
+            refused_naming(load_loot(EXIT_MAP, RULES, &it, LOOT), "restore");
+        }
+        // A table that weighs nothing cannot pick.
+        let empty = LOOT
+            .replace("nothing: 1.0", "nothing: 0.0")
+            .replace("weight: 2.0", "weight: 0.0")
+            .replace(
+                "(item: \"knife\", weight: 1.0)",
+                "(item: \"knife\", weight: 0.0)",
+            );
+        refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &empty), "weigh 0");
     }
 
     #[test]
