@@ -9,10 +9,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::combat::{CastPress, Combat, Engage, Event, HeroFight, Telegraph};
-use crate::enemies::{self, Brain, Enemy, Planner};
+use crate::enemies::{self, Brain, Enemy, Order, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::senses::{self, Gait, Senses, Stance};
-use crate::{Content, V2};
+use crate::{Content, V2, V3};
 
 /// Where the host keeps a hero its client reports at height `z` over `pos` (`was` its height so
 /// far): on the floor nearest `z` if one is within [`HERO_FLOOR_REACH`], so a hero on a stair
@@ -250,6 +250,43 @@ impl World {
         self.combat.place(&self.content, &self.enemies);
     }
 
+    /// One more enemy arrives in a running host: on spawn line `spawn` of the content (its kind, and
+    /// the senses its behaviour gives), at `at` facing `facing`, set to `order`. Its id is returned;
+    /// nothing of the others (their minds, holds and fights) is touched. The seam for what comes
+    /// mid-run (reinforcements, summons); the caller picks a spot a unit can stand on. Nothing is
+    /// added to a client's mirror (no map, no brains), nor for a spawn line the content lacks.
+    // Sub-project 6 is its first caller; until then only the tests are.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn add_enemy(
+        &mut self,
+        spawn: usize,
+        at: V3,
+        facing: V2,
+        order: Order,
+    ) -> Option<u32> {
+        self.nav.as_ref()?;
+        let id = enemies::add(
+            &mut self.enemies,
+            &mut self.brains,
+            &self.content,
+            spawn,
+            at,
+            facing,
+            order,
+        )?;
+        let enemy = self.enemies.last()?;
+        self.senses.add(&self.content, spawn);
+        self.combat.add_enemy(&self.content, enemy);
+        Some(id)
+    }
+
+    /// Whether every list kept beside the enemies has a row for each of them: brains, minds, ways
+    /// and fights. [`World::add_enemy`] and [`World::attach_map`] are the only ways to change them.
+    fn rows_match(&self) -> bool {
+        let n = self.enemies.len();
+        self.brains.len() == n && self.senses.rows_match(n) && self.combat.enemies.len() == n
+    }
+
     /// The height map, on the host once attached.
     pub fn map(&self) -> Option<&Arc<HeightMap>> {
         self.nav.as_ref().map(Navigator::map)
@@ -331,6 +368,10 @@ impl World {
         for hi in 0..self.heroes.len() {
             self.set_pace(hi);
         }
+        debug_assert!(
+            self.nav.is_none() || self.rows_match(),
+            "the enemies, brains, minds, ways and fights must stay the same length"
+        );
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
         if let Some(nav) = self

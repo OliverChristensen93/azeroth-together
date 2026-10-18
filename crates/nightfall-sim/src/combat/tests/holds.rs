@@ -267,3 +267,75 @@ fn a_slow_with_no_number_for_its_strength_slows_nothing() {
         w.enemies[0].speed
     );
 }
+
+#[test]
+fn an_enemy_added_mid_run_leaves_the_others_as_they_were_and_acts_on_its_own() {
+    use crate::enemies::Order;
+
+    let nest =
+        r#"(place: "Nest", kind: "brute", behaviour: Wander(center: (10.0, 50.0), radius: 5.0)),"#;
+    let mut w = world(&format!(
+        "{}{}{nest}",
+        post("brute", 30.0, 30.0, 0.0),
+        post("brute", 45.0, 30.0, 0.0)
+    ));
+    join(&mut w, 0, "rogue", 28.0, 30.0);
+    let (alerted, sapped) = (w.enemies[0].id, w.enemies[1].id);
+    w.alert(alerted, 0);
+    w.land(0, ability(&w, "sap"), Some(1), None);
+    steps(&mut w, 5);
+    let marks = w.marks_for(0);
+    assert!(marks.iter().any(|m| m.enemy == alerted));
+    assert!(
+        w.opener_allowed(sapped, 0),
+        "the sapped one was never alerted"
+    );
+    let held = |w: &World| w.combat.enemies[1].held.map(|h| h.kind);
+    assert_eq!(held(&w), Some(ControlKind::Sap));
+
+    // A fourth enemy arrives on the nest's spawn line, far from the fight.
+    let at = V3::new(50.0, 10.0, 0.0);
+    let order = Order::Wander {
+        center: at,
+        radius: 5.0,
+        height: None,
+    };
+    let id = w.add_enemy(2, at, V2::new(1.0, 0.0), order).unwrap();
+    assert_eq!((w.enemies.len(), id), (4, 4));
+    assert_eq!(w.enemies[3].hp, 1000.0);
+
+    // The two already there keep their minds and their hold.
+    assert!(w.senses.alerted(0));
+    assert!(!w.senses.alerted(1));
+    assert_eq!(held(&w), Some(ControlKind::Sap));
+    assert_eq!(w.marks_for(0), marks);
+    // The new one is calm, and goes about its business: wandering.
+    assert!(!w.senses.alerted(3));
+    assert!(w.marks_for(0).iter().all(|m| m.enemy != id));
+    let start = w.enemies[3].pos;
+    steps(&mut w, 600);
+    assert!(w.enemies[3].pos.distance(start) > 0.1, "it never moved");
+    assert!(w.senses.alerted(0), "the fight went on beside it");
+
+    // It can be killed like any other.
+    w.drain_events();
+    w.kill_enemy(3, Some(0));
+    assert_eq!(w.enemies[3].hp, 0.0);
+    assert!(w
+        .drain_events()
+        .contains(&Event::EnemyDied { id, by: Some(0) }));
+
+    // Without a map (a client's mirror) there is nothing to add to.
+    let mut mirror = World::new(w.content().clone());
+    assert!(mirror
+        .add_enemy(
+            0,
+            at,
+            V2::new(1.0, 0.0),
+            Order::Sentry {
+                post: at,
+                facing: V2::new(1.0, 0.0)
+            }
+        )
+        .is_none());
+}

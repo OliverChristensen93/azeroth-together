@@ -126,17 +126,35 @@ impl Senses {
     /// A calm mind for each enemy placed from these spawn lines: a sentry's wide front cone, a
     /// sleeper's closed eyes, everyone else's own cone.
     pub(crate) fn place(&mut self, content: &Content, spawns: impl IntoIterator<Item = usize>) {
-        let r = &content.rules.senses;
         self.minds = spawns
             .into_iter()
-            .map(|si| match content.spawns[si].behaviour {
-                Behaviour::Sentry { .. } => Mind::new(r.sentry_cone, false),
-                Behaviour::Sleeper { .. } => Mind::new(r.cone, true),
-                _ => Mind::new(r.cone, false),
-            })
+            .map(|si| calm_mind(content, si))
             .collect();
         self.ways = vec![Way::default(); self.minds.len()];
         self.shouts.clear();
+    }
+
+    /// A calm mind, and no way yet, for one more enemy placed from spawn line `spawn`, beside the
+    /// others in the world's enemies. Nothing of the others is touched.
+    pub(crate) fn add(&mut self, content: &Content, spawn: usize) {
+        self.minds.push(calm_mind(content, spawn));
+        self.ways.push(Way::default());
+    }
+
+    /// Whether there is a mind and a way for each of `n` enemies.
+    pub(crate) fn rows_match(&self, n: usize) -> bool {
+        self.minds.len() == n && self.ways.len() == n
+    }
+}
+
+/// A calm mind for an enemy placed from spawn line `spawn`: a sentry's wide front cone, a sleeper's
+/// closed eyes, everyone else's own cone.
+fn calm_mind(content: &Content, spawn: usize) -> Mind {
+    let r = &content.rules.senses;
+    match content.spawns[spawn].behaviour {
+        Behaviour::Sentry { .. } => Mind::new(r.sentry_cone, false),
+        Behaviour::Sleeper { .. } => Mind::new(r.cone, true),
+        _ => Mind::new(r.cone, false),
     }
 }
 

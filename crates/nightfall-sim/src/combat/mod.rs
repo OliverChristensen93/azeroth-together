@@ -301,19 +301,25 @@ impl Combat {
     /// A fresh fight for each enemy placed: its moves half ready, so none opens with its big
     /// move at once.
     pub(crate) fn place(&mut self, content: &Content, enemies: &[Enemy]) {
-        let chase = content.rules.senses.chase_reach;
-        self.enemies = enemies
+        self.enemies = enemies.iter().map(|e| fresh_fight(content, e)).collect();
+    }
+
+    /// A fresh fight for one more enemy, beside the others' (which are not touched).
+    pub(crate) fn add_enemy(&mut self, content: &Content, enemy: &Enemy) {
+        self.enemies.push(fresh_fight(content, enemy));
+    }
+}
+
+/// An enemy's fight as it begins: its moves half ready, so none opens with its big move at once.
+fn fresh_fight(content: &Content, e: &Enemy) -> EnemyCombat {
+    EnemyCombat {
+        moves_in: content.enemies[e.kind]
+            .kit
             .iter()
-            .map(|e| EnemyCombat {
-                moves_in: content.enemies[e.kind]
-                    .kit
-                    .iter()
-                    .map(|&(_, every)| every * 0.5)
-                    .collect(),
-                engage: Engage::free(chase),
-                ..EnemyCombat::default()
-            })
-            .collect();
+            .map(|&(_, every)| every * 0.5)
+            .collect(),
+        engage: Engage::free(content.rules.senses.chase_reach),
+        ..EnemyCombat::default()
     }
 }
 

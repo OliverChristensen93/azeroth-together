@@ -66,6 +66,11 @@ impl Rng {
         Self(seed | 1)
     }
 
+    /// The generator of enemy `id`: the same every run.
+    fn seeded(id: u32) -> Self {
+        Self::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9))
+    }
+
     fn next_u64(&mut self) -> u64 {
         let mut x = self.0;
         x ^= x >> 12;
@@ -211,10 +216,9 @@ pub(crate) fn spawn_all(
     let mut warnings = Vec::new();
     let mut id = 1u32;
     for (si, s) in content.spawns.iter().enumerate() {
-        let Some(kind) = content.enemy(&s.kind) else {
+        if content.enemy(&s.kind).is_none() {
             continue;
-        };
-        let def = &content.enemies[kind];
+        }
         // Where a point stands: on a floor a unit can stand on near the height the content gives,
         // else near the terrain, a yard or two aside if need be (`stand`: never a tree trunk's or
         // a rock's top over the ground it was meant for); `floor` is the nearest floor at all.
@@ -222,8 +226,7 @@ pub(crate) fn spawn_all(
         let stand = |p: V2| map.stand_near(V3::at(p, hint(p)));
         let floor = |p: V2| map.floor_near(p, hint(p)).map(|z| V3::at(p, z));
         for k in 0..s.count as usize {
-            let mut rng =
-                Rng::new(0x9E37_79B9_7F4A_7C15 ^ u64::from(id).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+            let mut rng = Rng::seeded(id);
             let placed = match &s.behaviour {
                 Behaviour::Sentry { at, facing } | Behaviour::Sleeper { at, facing } => {
                     let post = V2::new(at.0, at.1);
@@ -318,33 +321,75 @@ pub(crate) fn spawn_all(
                 });
                 continue;
             };
-            enemies.push(Enemy {
-                id,
-                kind,
-                pos: at.ground(),
-                z: at.z,
-                facing,
-                hp: def.hp,
-                max_hp: def.hp,
-                speed: 0.0,
-                asleep: matches!(s.behaviour, Behaviour::Sleeper { .. }),
-                fight: EnemyFight::default(),
-            });
-            brains.push(Brain {
-                spawn: si,
-                order,
-                path: None,
-                next: 0,
-                wait: 0.0,
-                failures: 0,
-                warned: false,
-                held: false,
-                rng,
-            });
+            let Some((enemy, brain)) = recruit(content, id, si, at, facing, order, rng) else {
+                continue;
+            };
+            enemies.push(enemy);
+            brains.push(brain);
             id += 1;
         }
     }
     (enemies, brains, warnings)
+}
+
+/// The enemy and brain of spawn line `spawn` with id `id`, standing at `at` facing `facing` and set
+/// to `order`: how [`spawn_all`] and [`World::add_enemy`] both make one, so the two cannot drift.
+fn recruit(
+    content: &Content,
+    id: u32,
+    spawn: usize,
+    at: V3,
+    facing: V2,
+    order: Order,
+    rng: Rng,
+) -> Option<(Enemy, Brain)> {
+    let s = content.spawns.get(spawn)?;
+    let kind = content.enemy(&s.kind)?;
+    let def = &content.enemies[kind];
+    let enemy = Enemy {
+        id,
+        kind,
+        pos: at.ground(),
+        z: at.z,
+        facing,
+        hp: def.hp,
+        max_hp: def.hp,
+        speed: 0.0,
+        asleep: matches!(s.behaviour, Behaviour::Sleeper { .. }),
+        fight: EnemyFight::default(),
+    };
+    let brain = Brain {
+        spawn,
+        order,
+        path: None,
+        next: 0,
+        wait: 0.0,
+        failures: 0,
+        warned: false,
+        held: false,
+        rng,
+    };
+    Some((enemy, brain))
+}
+
+/// One more enemy for a host that already has its map, on spawn line `spawn` (its kind, and the
+/// behaviour its senses take after), at `at` facing `facing`, set to `order`: its id, one past the
+/// highest there is. `None` for a spawn line the content lacks. The caller picks a spot a unit can
+/// stand on.
+pub(crate) fn add(
+    enemies: &mut Vec<Enemy>,
+    brains: &mut Vec<Brain>,
+    content: &Content,
+    spawn: usize,
+    at: V3,
+    facing: V2,
+    order: Order,
+) -> Option<u32> {
+    let id = enemies.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+    let (enemy, brain) = recruit(content, id, spawn, at, facing, order, Rng::seeded(id))?;
+    enemies.push(enemy);
+    brains.push(brain);
+    Some(id)
 }
 
 /// What the enemies share in choosing their ways: the host's alone, never sent.
