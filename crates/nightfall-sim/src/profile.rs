@@ -774,7 +774,7 @@ mod tests {
             "(stash: [(item: \"gem\", count: 1, extra: 2)])",
             "(loadout: (pak: []))",
             "(recovery: [(map: \"x\", at: (0.0, 0.0, 0.0), items: [], why: 1)])",
-            "(in_raid: Some((map: \"x\", brougt: ())))",
+            "(in_raid: Some((map: \"x\", brought: (), extra: 1)))",
         ] {
             assert!(
                 matches!(Profile::from_ron(text), Err(ProfileError::Parse(_))),

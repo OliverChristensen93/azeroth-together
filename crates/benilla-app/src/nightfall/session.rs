@@ -70,7 +70,11 @@ pub(super) struct HostSide {
 pub(super) struct Peer {
     conn: ConnId,
     pub player: PlayerId,
+    /// Who they are; what they bring is empty until their first pick comes ([`Peer::picked`]).
     pub hero: HeroPick,
+    /// Their first [`ClientMsg::Pick`] has come, so `hero` holds what they bring. A hello carries
+    /// no loadout (see [`nightfall_sim::messages::Who`]), so until it a run must not start.
+    pub picked: bool,
     /// The events since this player's last state, sent with the next one it keeps up for.
     pending: Vec<Event>,
 }
@@ -245,6 +249,19 @@ impl Net {
         out
     }
 
+    /// The host: the first joined player whose loadout has not come yet (a hello carries none).
+    /// A run waits for them, or it would begin with their hands empty.
+    pub fn awaiting_pick(&self) -> Option<String> {
+        match &self.role {
+            Role::Host(h) => h
+                .peers
+                .iter()
+                .find(|p| !p.picked)
+                .map(|p| p.hero.name.clone()),
+            _ => None,
+        }
+    }
+
     /// The host: tell every client the run begins.
     pub fn broadcast_start(&mut self) {
         if let Role::Host(h) = &mut self.role {
@@ -335,6 +352,16 @@ pub(super) fn own_pick(selection: &Selection, loadout: Loadout) -> HeroPick {
     }
 }
 
+/// What the local hero brings into a raid now. One place for the lobby's pick (what a joined
+/// player tells the host) and the host's own run, so the two can never differ. Until the stash
+/// comes in, a hero brings their class's free kit.
+pub(super) fn own_loadout(selection: &Selection) -> Loadout {
+    Loadout {
+        inventory: free_kit(selection.class, &content()),
+        recovery: None,
+    }
+}
+
 /// The content files' hash, which a client and its host must share.
 fn our_content_hash() -> u64 {
     let texts: Vec<&str> = super::content_texts().iter().map(String::as_str).collect();
@@ -344,13 +371,7 @@ fn our_content_hash() -> u64 {
 /// At the menu: the host takes players in and keeps their lobby current; a client follows its
 /// host's lobby and tells it its pick.
 pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
-    // Until the stash comes in, a hero brings their class's free kit.
-    let content = content();
-    let loadout = Loadout {
-        inventory: free_kit(selection.class, &content),
-        recovery: None,
-    };
-    let own = own_pick(&selection, loadout);
+    let own = own_pick(&selection, own_loadout(&selection));
     let net = &mut *net;
     match &mut net.role {
         Role::Solo => {}
@@ -377,6 +398,7 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                             continue;
                         }
                         hero.name = clean_name(&hero.name);
+                        let hero = hero.bringing(Loadout::default());
                         if let Some(why) =
                             refusal(protocol, content, our_content_hash(), h.peers.len())
                         {
@@ -392,6 +414,7 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                             conn,
                             player,
                             hero,
+                            picked: false,
                             pending: Vec::new(),
                         });
                     }
@@ -399,6 +422,7 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
                             hero.name = clean_name(&hero.name);
                             p.hero = hero;
+                            p.picked = true;
                         }
                     }
                     HostEvent::Left(conn) => {
@@ -436,9 +460,8 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>) {
                         c.client.lock().unwrap().send(&ClientMsg::Hello {
                             protocol: PROTOCOL,
                             content: our_content_hash(),
-                            hero: own.clone(),
+                            hero: own.who(),
                         });
-                        c.sent_pick = Some(own.clone());
                     }
                     ClientEvent::Message(ServerMsg::Welcome { you }) => {
                         c.me = Some(you);

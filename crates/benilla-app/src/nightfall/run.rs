@@ -12,8 +12,8 @@ use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::messages::LobbyPlayer;
 use nightfall_sim::{
-    Act, ActPress, CastPress, Event, Gait, HeroOutcome, HeroPose, Loadout, Mark, PlayerId,
-    PlayerInput, RaidRoll, Snapshot, UnitRef, World, DT, V2, V3,
+    Act, ActPress, CastPress, Event, Gait, HeroOutcome, HeroPose, Mark, PlayerId, PlayerInput,
+    RaidRoll, Snapshot, UnitRef, World, DT, V2, V3,
 };
 
 use super::menu::{LeaveRun, Selection, StartRequest};
@@ -73,7 +73,12 @@ impl Sim {
         let mut world = World::new(content.clone());
         // The raid first, so the heroes start at its entry.
         let roll = RaidRoll::standard(&content, seed);
-        let _ = world.begin_raid(roll);
+        // The standard roll fits the map the content shipped (the content test checks it); a
+        // content folder that breaks that is told, not crashed on.
+        if let Err(e) = world.begin_raid(roll) {
+            debug_assert!(false, "nightfall: the raid could not begin: {e}");
+            warn!("nightfall: the raid could not begin: {e}");
+        }
         for p in roster {
             // A class the content lacks (a mismatched client) is left out rather than crash.
             if world
@@ -254,7 +259,7 @@ impl LocalInput {
 
     /// `act`, after the ones already waiting.
     // The backpack and loot panels queue acts; until they are drawn (a later task) nothing does.
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code, reason = "Task 11 queues acts"))]
     pub fn queue(&mut self, act: Act) {
         if self.acts.len() < MAX_QUEUED {
             self.acts.push_back(act);
@@ -367,15 +372,19 @@ pub(super) fn start_run(
             Role::Host(h) => !h.peers.is_empty() && time.elapsed_secs() > 20.0,
             Role::Client(_) => false,
         };
-    if !std::mem::take(&mut start.0) && !auto {
+    if !start.0 && !auto {
         return;
     }
-    // Until the stash comes in, a hero brings their class's free kit.
-    let loadout = Loadout {
-        inventory: nightfall_sim::free_kit(selection.class, &content()),
-        recovery: None,
-    };
-    let own = session::own_pick(&selection, loadout);
+    // A joined player's loadout arrives with their first pick, just after the welcome: a start
+    // in that moment waits (the autoplay start tries again next frame), never beginning with
+    // their hands empty.
+    if let Some(name) = net.awaiting_pick() {
+        net.status = format!("Waiting for {name}'s loadout…");
+        start.0 = false;
+        return;
+    }
+    start.0 = false;
+    let own = session::own_pick(&selection, session::own_loadout(&selection));
     let roster = net.roster(&own);
     net.broadcast_start();
     commands.insert_resource(Sim::hosted(&roster, raid_seed(&time)));
@@ -776,6 +785,77 @@ mod tests {
         sim.mine = None;
         deliver(&mut sim, &mut net);
         assert!(sim.mine.is_none(), "our outcome came once");
+        assert_eq!(sim.over.as_ref().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn the_world_goes_on_for_the_others_once_our_hero_has_extracted() {
+        use bevy::ecs::system::RunSystemOnce;
+        use std::time::Duration;
+
+        let content = super::super::shipped_content();
+        let mut world = World::new(content.clone());
+        world
+            .begin_raid(RaidRoll::standard(&content, 1))
+            .expect("the standard roll fits the map");
+        world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+        world.add_hero(1, "mage", "Friend", 1, 0).unwrap();
+        let exit = content.map.exits[0].at;
+
+        let mut app = bevy::prelude::World::new();
+        app.init_resource::<Time<Real>>();
+        app.init_resource::<crate::loading_screen::LoadingScreen>();
+        app.init_resource::<super::super::terrain::Terrain>();
+        app.init_resource::<Net>();
+        app.init_resource::<EndRun>();
+        app.insert_resource(Sim::for_test(world));
+        app.insert_resource(LocalInput {
+            pose: Some(HeroPose {
+                pos: exit,
+                facing: V2::new(1.0, 0.0),
+                z: 0.0,
+            }),
+            ..LocalInput::default()
+        });
+        let frame = |app: &mut bevy::prelude::World| {
+            app.resource_mut::<Time<Real>>()
+                .update_with_duration(Duration::from_millis(250));
+            app.run_system_once(step_sim).unwrap();
+        };
+
+        // Ten seconds in the ring (a frame is a quarter second at most) and we are out.
+        for _ in 0..48 {
+            frame(&mut app);
+        }
+        let sim = app.resource::<Sim>();
+        assert!(sim.world.hero(0).is_none(), "our hero has extracted");
+        assert!(
+            matches!(
+                sim.mine.as_ref().map(|o| &o.fate),
+                Some(nightfall_sim::Fate::Extracted { .. })
+            ),
+            "and our outcome is ours to settle"
+        );
+        assert!(sim.world.hero(1).is_some() && sim.over.is_none());
+
+        // The controller no longer has a hero to pose, yet the world goes on for the friend.
+        app.resource_mut::<LocalInput>().pose = None;
+        let before = app.resource::<Sim>().world.elapsed;
+        for _ in 0..8 {
+            frame(&mut app);
+        }
+        let sim = app.resource::<Sim>();
+        assert!(
+            sim.world.elapsed > before + 1.5,
+            "the world waited for a pose that will never come ({} then {})",
+            before,
+            sim.world.elapsed
+        );
+
+        // And what it settles is still delivered: the raid ends, the end screen has everyone.
+        app.resource_mut::<Sim>().world.abandon();
+        frame(&mut app);
+        let sim = app.resource::<Sim>();
         assert_eq!(sim.over.as_ref().map(Vec::len), Some(2));
     }
 

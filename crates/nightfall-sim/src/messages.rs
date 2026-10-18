@@ -20,6 +20,44 @@ pub struct HeroPick {
     pub loadout: Loadout,
 }
 
+impl HeroPick {
+    /// Who this pick is, without what it brings: what a [`ClientMsg::Hello`] carries.
+    pub fn who(&self) -> Who {
+        Who {
+            name: self.name.clone(),
+            class: self.class.clone(),
+            race: self.race,
+            sex: self.sex,
+        }
+    }
+}
+
+/// The hero a player is, without what they bring. This is the shape the hero had in protocol 4, and
+/// [`ClientMsg::Hello`] keeps it for good: a client of another protocol must still decode as a
+/// hello, so the host can refuse it by version rather than drop it. What the hero brings follows
+/// as the first [`ClientMsg::Pick`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Who {
+    pub name: String,
+    /// A class key from the content.
+    pub class: String,
+    pub race: u8,
+    pub sex: u8,
+}
+
+impl Who {
+    /// The pick of this hero bringing `loadout`.
+    pub fn bringing(self, loadout: Loadout) -> HeroPick {
+        HeroPick {
+            name: self.name,
+            class: self.class,
+            race: self.race,
+            sex: self.sex,
+            loadout,
+        }
+    }
+}
+
 /// A player in the host's lobby.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LobbyPlayer {
@@ -31,13 +69,15 @@ pub struct LobbyPlayer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// The first message: who is joining, and whether they play the same version with the same
-    /// content (`content` is a hash of the content files).
+    /// content (`content` is a hash of the content files). Its shape never changes (see [`Who`]),
+    /// so that a host of any protocol can read the version of a client of any other.
     Hello {
         protocol: u32,
         content: u64,
-        hero: HeroPick,
+        hero: Who,
     },
-    /// A new pick, made in the lobby.
+    /// A pick made in the lobby: the first one, sent as soon as the host welcomes the client, says
+    /// what the hero brings; a new one follows whenever that changes.
     Pick(HeroPick),
     /// This step's input, during a run.
     Input(PlayerInput),
@@ -86,16 +126,71 @@ mod tests {
         let hello = ClientMsg::Hello {
             protocol: PROTOCOL,
             content: 7,
-            hero: HeroPick {
+            hero: Who {
                 name: "Valeera".into(),
                 class: "rogue".into(),
                 race: 1,
                 sex: 0,
-                loadout: Loadout::default(),
             },
         };
         let bytes = postcard::to_stdvec(&hello).unwrap();
         assert_eq!(postcard::from_bytes::<ClientMsg>(&bytes).unwrap(), hello);
+    }
+
+    #[test]
+    fn a_hello_of_protocol_4_still_reads_so_that_it_is_refused_by_version() {
+        // Protocol 4's hello, byte for byte: its hero had no loadout. A hello whose hero changed
+        // shape would fail to decode and the host would drop the client without a word.
+        #[derive(Serialize)]
+        struct OldHero {
+            name: String,
+            class: String,
+            race: u8,
+            sex: u8,
+        }
+        #[derive(Serialize)]
+        enum OldClientMsg {
+            Hello {
+                protocol: u32,
+                content: u64,
+                hero: OldHero,
+            },
+        }
+        let old = OldClientMsg::Hello {
+            protocol: 4,
+            content: 99,
+            hero: OldHero {
+                name: "Valeera".into(),
+                class: "rogue".into(),
+                race: 1,
+                sex: 0,
+            },
+        };
+        let bytes = postcard::to_stdvec(&old).unwrap();
+        match postcard::from_bytes::<ClientMsg>(&bytes) {
+            Ok(ClientMsg::Hello {
+                protocol,
+                content,
+                hero,
+            }) => {
+                assert_eq!((protocol, content), (4, 99));
+                assert_eq!(hero.name, "Valeera");
+                assert_ne!(protocol, PROTOCOL, "the host refuses it for its version");
+            }
+            other => panic!("a protocol 4 hello must read as a hello: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_pick_is_a_hello_hero_bringing_a_loadout() {
+        let pick = HeroPick {
+            name: "Valeera".into(),
+            class: "rogue".into(),
+            race: 1,
+            sex: 0,
+            loadout: Loadout::default(),
+        };
+        assert_eq!(pick.who().bringing(Loadout::default()), pick);
     }
 
     #[test]
@@ -341,9 +436,10 @@ mod tests {
         let bytes = postcard::to_stdvec(&msg).unwrap().len();
         // Four heroes in full gear casting with their cooldowns and their senses, the twenty
         // enemies near one of them, all marked, casting, held and slowed, three telegraphs, two
-        // busy steps of events, our own pack (all four bags worn, every slot full: 60 stacks), an
-        // open sixteen-slot container, twenty containers about us and four exits (2963 bytes
-        // measured, a quarter to spare), 15 times a second, stay near 44 KB a second.
+        // busy steps of events, our own pack (all four bags worn, every slot full: 60 or more
+        // stacks, 63 today), an open sixteen-slot container, twenty containers about us and four
+        // exits (2963 bytes measured, a quarter to spare), 15 times a second, stay near 44 KB a
+        // second.
         assert!(bytes < 3700, "{bytes} bytes");
     }
 
