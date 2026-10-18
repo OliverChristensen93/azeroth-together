@@ -890,3 +890,157 @@ fn an_act_for_a_player_with_no_hero_is_not_remembered() {
     w.step();
     assert_eq!(w.raid.last_act(4), Some(1));
 }
+
+#[test]
+fn eating_eats_food_and_drinks_a_drink_from_the_pack() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 2), ("water", 1)], &[], &[]));
+    assert_eq!(w.hero(0).unwrap().fight.drinks, 1);
+    let eat = w.content().ability("eat").unwrap();
+    w.land(0, eat, None, None);
+    let meal = w.combat.hero(0).unwrap().meal.unwrap();
+    // Bread gives back 60% of health over the meal, water all the mana.
+    assert!((meal.health - 800.0 * 0.6 / 15.0).abs() < 1e-3);
+    assert!((meal.mana - 1000.0 / 15.0).abs() < 1e-3);
+    let p = w.pack(0).unwrap();
+    assert_eq!(p.count_of(item(&w, "bread")), 1);
+    assert_eq!(p.count_of(item(&w, "water")), 0);
+    // The count the hero shows follows the meal at once, not at their next act.
+    assert_eq!(w.hero(0).unwrap().fight.drinks, 0);
+}
+
+#[test]
+fn a_rogue_eats_and_keeps_the_water() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 1), ("water", 1)], &[], &[]));
+    w.land(0, w.content().ability("eat").unwrap(), None, None);
+    let meal = w.combat.hero(0).unwrap().meal.unwrap();
+    assert_eq!(meal.mana, 0.0);
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "water")), 1);
+}
+
+#[test]
+fn water_conjures_drinks_into_the_pack_up_to_the_cap() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[], &[], &[]));
+    let water = w.content().ability("water").unwrap();
+    let conjured = item(&w, "conjured");
+    w.land(0, water, None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(conjured), 2);
+    assert_eq!(w.hero(0).unwrap().fight.drinks, 2);
+    assert!(w.pack(0).unwrap().stacks().iter().all(|(_, s)| s.found));
+    for _ in 0..12 {
+        w.land(0, water, None, None);
+    }
+    let cap = u32::from(w.content().rules.combat.max_drinks);
+    assert_eq!(w.pack(0).unwrap().count_of(conjured), cap);
+}
+
+#[test]
+fn with_nothing_to_eat_eating_is_refused() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("knife", 1)], &[], &[]));
+    let eat = w.content().ability("eat").unwrap();
+    let hi = w.hero_slot(0).unwrap();
+    assert_eq!(
+        w.check(hi, eat, None, None).err(),
+        Some(crate::Refusal::NoFood)
+    );
+    w.give_loadout(0, &loadout(&w, &[("bread", 1)], &[], &[]));
+    assert!(w.check(hi, eat, None, None).is_ok());
+    let mut free = world_with("free_meal: true", "");
+    join(&mut free, 0, "rogue", 5.0, 5.0);
+    free.give_loadout(0, &loadout(&free, &[], &[], &[]));
+    let hi = free.hero_slot(0).unwrap();
+    assert!(free.check(hi, eat, None, None).is_ok());
+}
+
+/// The drinks a hero shows are the drinks the backpack holds: after every conjure and every
+/// drink, with no lag until their next act.
+#[test]
+fn the_drinks_shown_follow_the_pack_through_conjuring_and_drinking() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[], &[], &[]));
+    let water = w.content().ability("water").unwrap();
+    let eat = w.content().ability("eat").unwrap();
+    let conjured = item(&w, "conjured");
+    let cap = u32::from(w.content().rules.combat.max_drinks);
+    let agree = |w: &World, want: u32| {
+        assert_eq!(w.pack(0).unwrap().count_of(conjured), want);
+        assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), want);
+    };
+    w.land(0, water, None, None);
+    agree(&w, 2);
+    // Drinking one (the mage has no food; the meal is the drink alone) leaves one.
+    w.land(0, eat, None, None);
+    agree(&w, 1);
+    w.land(0, water, None, None);
+    agree(&w, 3);
+    // Up to the cap, and conjuring at the cap adds nothing.
+    for _ in 0..12 {
+        w.land(0, water, None, None);
+    }
+    agree(&w, cap);
+    w.land(0, water, None, None);
+    agree(&w, cap);
+}
+
+#[test]
+fn drinks_of_any_kind_count_against_the_cap_and_the_shown_count_stops_at_it() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    let cap = u32::from(w.content().rules.combat.max_drinks);
+    // More drinks than may be shown: the display stops at the cap, the pack keeps them all.
+    w.give_loadout(0, &loadout(&w, &[("water", 25)], &[], &[]));
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "water")), 25);
+    assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), cap);
+    // So conjuring adds none; with one fewer than the cap it adds one.
+    let water = w.content().ability("water").unwrap();
+    w.land(0, water, None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "conjured")), 0);
+    w.give_loadout(0, &loadout(&w, &[("water", 19)], &[], &[]));
+    w.land(0, water, None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "conjured")), 1);
+}
+
+#[test]
+fn conjuring_into_a_full_pack_loses_the_leftover_and_never_panics() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    // Four slots of rock, five to a slot: nothing is left to put a drink in.
+    w.give_loadout(0, &loadout(&w, &[("rock", 20)], &[], &[]));
+    assert!(w.pack(0).unwrap().first_empty(false).is_none());
+    let water = w.content().ability("water").unwrap();
+    w.land(0, water, None, None);
+    let p = w.pack(0).unwrap();
+    assert_eq!(p.count_of(item(&w, "conjured")), 0);
+    assert_eq!(p.count_of(item(&w, "rock")), 20);
+    assert_eq!(w.hero(0).unwrap().fight.drinks, 0);
+    // Room for one slot: the drinks arrive.
+    let mut inv = p.clone();
+    let at = inv.first_of(ItemKind::Material, w.content()).unwrap();
+    inv.take(at);
+    w.give_loadout(
+        0,
+        &Loadout {
+            inventory: inv,
+            recovery: None,
+        },
+    );
+    w.land(0, water, None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "conjured")), 2);
+}
+
+#[test]
+fn landing_a_meal_or_a_conjuring_on_an_absent_hero_does_nothing() {
+    let mut w = world();
+    // No hero: landing the spells does nothing and does not panic.
+    w.land(7, w.content().ability("eat").unwrap(), None, None);
+    w.land(7, w.content().ability("water").unwrap(), None, None);
+    assert!(w.pack(7).is_none());
+}

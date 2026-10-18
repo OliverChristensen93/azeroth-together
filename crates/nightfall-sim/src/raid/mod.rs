@@ -12,7 +12,9 @@ pub(crate) use containers::{in_reach, search_of};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Content, EquipSlot, Inventory, Place, PlayerId, RunRules, Stack, World, V2, V3};
+use crate::{
+    Content, EquipSlot, Inventory, ItemKind, Place, PlayerId, RunRules, Stack, World, V2, V3,
+};
 
 /// What a hero carries, as every client sees it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -216,6 +218,21 @@ pub fn burden(load: f32, r: &RunRules) -> (f32, f32) {
     )
 }
 
+/// The drinks in `inv`, in any slot: what Conjure Water counts against `max_drinks` and what
+/// [`HeroFight::drinks`](crate::HeroFight::drinks) reports (capped there).
+pub(crate) fn drinks_in(inv: &Inventory, content: &Content) -> u32 {
+    inv.stacks()
+        .iter()
+        .filter(|(_, s)| {
+            content
+                .items
+                .get(usize::from(s.item))
+                .is_some_and(|d| d.kind == ItemKind::Drink)
+        })
+        .map(|(_, s)| u32::from(s.count))
+        .sum()
+}
+
 /// A container in the host's world.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Container {
@@ -293,6 +310,32 @@ impl Raid {
             .iter()
             .find(|(p, _)| *p == player)
             .map(|(_, i)| i)
+    }
+
+    /// One of the first `kind` (food or drink) in `player`'s backpack eaten: the share of health
+    /// or mana it gives back. The safe slots are not eaten from.
+    pub(crate) fn eat(
+        &mut self,
+        player: PlayerId,
+        kind: ItemKind,
+        content: &Content,
+    ) -> Option<f32> {
+        let inv = self
+            .packs
+            .iter_mut()
+            .find(|(p, _)| *p == player)
+            .map(|(_, i)| i)?;
+        let at = inv.first_of(kind, content)?;
+        let s = inv.take_one(at)?;
+        Some(content.items.get(usize::from(s.item))?.restore)
+    }
+
+    /// Whether `player`'s backpack holds anything to eat or drink.
+    pub(crate) fn has_meal(&self, player: PlayerId, content: &Content) -> bool {
+        self.pack(player).is_some_and(|i| {
+            i.first_of(ItemKind::Food, content).is_some()
+                || i.first_of(ItemKind::Drink, content).is_some()
+        })
     }
 
     /// `player`'s inventory, an empty one made if they have none yet.

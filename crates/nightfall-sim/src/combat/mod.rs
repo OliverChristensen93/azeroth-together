@@ -163,6 +163,8 @@ pub enum Refusal {
     Facing,
     Behind,
     NotInSight,
+    /// Eat and Drink with nothing to eat or drink in the backpack.
+    NoFood,
 }
 
 /// An ability press: the latest, repeated in every input until the next, so an input replaced

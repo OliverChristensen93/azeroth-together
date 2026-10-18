@@ -255,17 +255,7 @@ impl World {
             .iter()
             .filter_map(|&s| inv.equip[s.index()].map(|st| (s, st.item)))
             .collect();
-        let drinks: u32 = inv
-            .stacks()
-            .iter()
-            .filter(|(_, s)| {
-                content
-                    .items
-                    .get(usize::from(s.item))
-                    .is_some_and(|d| d.kind == ItemKind::Drink)
-            })
-            .map(|(_, s)| u32::from(s.count))
-            .sum();
+        let drinks = super::drinks_in(inv, &content);
         let bonus = inv.bonus(&content);
         let lantern_kept = self.heroes[hi]
             .carry
@@ -277,7 +267,8 @@ impl World {
         if !lantern_kept {
             h.carry.lantern = None;
         }
-        h.fight.drinks = drinks.min(u32::from(u8::MAX)) as u8;
+        // At most `max_drinks`: the most a hero is shown (and Conjure Water leaves them) carrying.
+        h.fight.drinks = drinks.min(u32::from(content.rules.combat.max_drinks)) as u8;
         // Never below 1, whatever the gear says, so a hero is never born dead by it.
         let max = (content.classes[h.class].base_hp + bonus.health).max(1.0);
         let change = max - h.max_hp;

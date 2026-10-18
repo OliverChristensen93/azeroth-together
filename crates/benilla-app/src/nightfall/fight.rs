@@ -52,6 +52,7 @@ const MOVING: u8 = 0x2E;
 const NOT_BEHIND: u8 = 0x33;
 const NO_COMBO_POINTS: u8 = 0x46;
 const ONLY_STEALTHED: u8 = 0x57;
+const REAGENTS: u8 = 0x5C;
 const OUT_OF_RANGE: u8 = 0x59;
 const SPELL_IN_PROGRESS: u8 = 0x61;
 const TARGET_AFFECTING_COMBAT: u8 = 0x66;
@@ -82,6 +83,7 @@ pub(super) fn refusal_route(why: Refusal, power: u8) -> Route {
         Refusal::Facing => Route::Wire(UNIT_NOT_INFRONT),
         Refusal::Behind => Route::Wire(NOT_BEHIND),
         Refusal::NotInSight => Route::Wire(LINE_OF_SIGHT),
+        Refusal::NoFood => Route::Wire(REAGENTS),
     }
 }
 
@@ -581,12 +583,13 @@ mod tests {
             Refusal::Facing => 12,
             Refusal::Behind => 13,
             Refusal::NotInSight => 14,
+            Refusal::NoFood => 15,
         }
     }
 
     /// What every refusal reads as, by the GlobalStrings key of WoW's own line: the catalog key it
     /// is shown by, or the key of its cast-failure reason's row in the engine's table.
-    const READS: [(Refusal, &str); 15] = [
+    const READS: [(Refusal, &str); 16] = [
         (Refusal::Down, "SPELL_FAILED_CASTER_DEAD"),
         (Refusal::Busy, "SPELL_FAILED_SPELL_IN_PROGRESS"),
         (Refusal::NotReady, "ERR_ABILITY_COOLDOWN"),
@@ -602,6 +605,7 @@ mod tests {
         (Refusal::Facing, "SPELL_FAILED_UNIT_NOT_INFRONT"),
         (Refusal::Behind, "SPELL_FAILED_NOT_BEHIND"),
         (Refusal::NotInSight, "SPELL_FAILED_LINE_OF_SIGHT"),
+        (Refusal::NoFood, "SPELL_FAILED_REAGENTS"),
     ];
 
     /// The engine's cast-failure table, as source: its rows read `"KEY", // 0xNN`.

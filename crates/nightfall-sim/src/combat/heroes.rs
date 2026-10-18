@@ -110,6 +110,12 @@ impl World {
         if f.casting.is_some() {
             return Err(Refusal::Busy);
         }
+        if a.has(|e| matches!(e, Effect::Eat { .. }))
+            && !content.rules.run.free_meal
+            && !self.raid.has_meal(hero.player, content)
+        {
+            return Err(Refusal::NoFood);
+        }
         let cooling = f
             .cooldowns
             .iter()

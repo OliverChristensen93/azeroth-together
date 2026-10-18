@@ -11,7 +11,8 @@
 //! blink with a non-finite number is not applied (a Blink longer than the map is wide is cut to it), so no health, timer or position goes NaN.
 
 use super::{Burn, Event, Held, Meal, Slowed, UnitRef};
-use crate::{Aim, ControlKind, Effect, Loudness, PlayerId, Sound, World, V2, V3};
+use crate::raid::drinks_in;
+use crate::{Aim, ControlKind, Effect, ItemKind, Loudness, PlayerId, Sound, Stack, World, V2, V3};
 
 /// Yards up or down a Blink may end from where it began.
 const BLINK_CLIMB: f32 = 3.0;
@@ -367,28 +368,43 @@ impl World {
                 if !span(secs) {
                     return;
                 }
-                let hero = &mut self.heroes[hi];
-                let drinks = content.classes[hero.class].power == MANA && hero.fight.drinks > 0;
-                if drinks {
-                    hero.fight.drinks -= 1;
-                }
-                hero.fight.eating = secs;
-                let mana = if drinks {
-                    hero.fight.max_power / secs
+                // Food and drink are items (spec §8.2): one of each from the backpack, the drink
+                // only for a mana user; with `free_meal`, health comes back without food. The
+                // count shown follows at once.
+                let mana_user = content.classes[self.heroes[hi].class].power == MANA;
+                let food = self.raid.eat(player, ItemKind::Food, &content);
+                let drink = if mana_user {
+                    self.raid.eat(player, ItemKind::Drink, &content)
                 } else {
-                    0.0
+                    None
                 };
+                let health = food
+                    .or(content.rules.run.free_meal.then_some(1.0))
+                    .unwrap_or(0.0);
+                let hero = &mut self.heroes[hi];
+                hero.fight.eating = secs;
                 self.combat.heroes[ci].meal = Some(Meal {
-                    health: hero.max_hp / secs,
-                    mana,
+                    health: hero.max_hp * health / secs,
+                    mana: hero.fight.max_power * drink.unwrap_or(0.0) / secs,
                 });
+                self.refresh_carry(player);
             }
             Effect::ConjureWater { count } => {
-                let f = &mut self.heroes[hi].fight;
-                f.drinks = f
-                    .drinks
-                    .saturating_add(count)
-                    .min(content.rules.combat.max_drinks);
+                // Conjured drinks are items in the backpack (found: they were made here), so
+                // that the drinks carried, of any kind, come to at most `max_drinks`. What does
+                // not fit a full backpack is lost: the spell's mana is spent all the same.
+                if let Some(drink) = content.conjured {
+                    let have = self.raid.pack(player).map_or(0, |i| drinks_in(i, &content));
+                    let room = u32::from(content.rules.combat.max_drinks).saturating_sub(have);
+                    let n = u32::from(count).min(room) as u16;
+                    if n > 0 {
+                        let _ = self
+                            .raid
+                            .pack_mut(player, &content)
+                            .add(Stack::found(drink, n), &content);
+                    }
+                    self.refresh_carry(player);
+                }
             }
             _ => {}
         }

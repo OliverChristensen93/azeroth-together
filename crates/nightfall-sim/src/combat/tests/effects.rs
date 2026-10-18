@@ -211,24 +211,6 @@ fn distract_turns_only_the_unalerted_within_reach() {
 }
 
 #[test]
-fn eating_needs_a_drink_for_mana_and_water_gives_two() {
-    let mut w = world("");
-    join(&mut w, 0, "mage", 10.0, 30.0);
-    let eat = ability(&w, "eat");
-    w.land(0, eat, None, None);
-    let meal = w.combat.hero(0).unwrap().meal.unwrap();
-    assert!((meal.health - 800.0 / 15.0).abs() < 1e-3);
-    assert_eq!(meal.mana, 0.0);
-    w.land(0, ability(&w, "water"), None, None);
-    assert_eq!(w.hero(0).unwrap().fight.drinks, 2);
-    w.land(0, eat, None, None);
-    let meal = w.combat.hero(0).unwrap().meal.unwrap();
-    assert!((meal.mana - 1000.0 / 15.0).abs() < 1e-3);
-    let f = &w.hero(0).unwrap().fight;
-    assert_eq!((f.drinks, f.eating), (1, 15.0));
-}
-
-#[test]
 fn a_blow_of_no_number_does_nothing_and_never_makes_health_nan() {
     let mut w = world(&post("brute", 30.0, 30.0, 0.0));
     join(&mut w, 0, "rogue", 28.0, 30.0);
