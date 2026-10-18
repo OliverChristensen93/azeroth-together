@@ -95,3 +95,7 @@ may not be what you pictured. Each line says what was decided, why, and how to c
     Rare; worth a look if it happens.
 27. **Teammates see each other's loadout in the lobby**, including where a dead hero's remains lie.
     Everyone in a lobby is on your team, so I kept it.
+28. **Item names are our own, but plain.** Seven that were exact WoW item names were renamed (e.g.
+    "Stale Black Bread", "Small Healing Draught"); plain descriptive ones stay ("Silver Locket", "Worgen
+    Pelt", "Bone Fragments", "Notched Shortsword"…), and a few may coincide with WoW's own. Keys don't
+    change, so renaming any is a one-line edit in `content/nightfall/items.ron`.
