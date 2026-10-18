@@ -480,6 +480,9 @@ impl World {
 
     /// The events so far, taken.
     pub fn drain_events(&mut self) -> Vec<Event> {
+        // The kills among them are counted first, and the count starts over with the events.
+        self.tally_kills();
+        self.raid.counted = 0;
         std::mem::take(&mut self.events)
     }
 

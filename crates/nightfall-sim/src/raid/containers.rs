@@ -214,14 +214,16 @@ impl Raid {
 }
 
 impl World {
-    /// The raid's part of a step, after the fight's: searches, then bodies. A client's mirror
-    /// has no raid of its own to run: its host's loot view is all it knows.
+    /// The raid's part of a step, after the fight's: searches, bodies, deaths, then exits. A
+    /// client's mirror has no raid of its own to run: its host's loot view is all it knows.
     pub(crate) fn step_raid(&mut self) {
         if self.raid.mirror.is_some() {
             return;
         }
         self.step_searches();
         self.step_bodies();
+        self.step_deaths();
+        self.step_exits();
     }
 
     /// Searches move on (spec §8.2): a searcher who stays by the container and up finishes it,

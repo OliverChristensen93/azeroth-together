@@ -1869,3 +1869,536 @@ fn enemies_killed_in_one_step_each_leave_exactly_one_body() {
         ids.iter().copied().collect::<BTreeSet<u32>>()
     );
 }
+
+// Exits and extracting, deaths and bodies, the raid's end and its outcomes.
+
+fn body_of(w: &World, player: PlayerId) -> &Container {
+    w.raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Hero(player))
+        .unwrap()
+}
+
+fn die(w: &mut World, player: PlayerId) {
+    let hi = w.hero_slot(player).unwrap();
+    w.heroes[hi].fight.life = Life::Dead;
+    w.step();
+}
+
+#[test]
+fn ten_seconds_in_an_open_exit_gets_a_hero_out() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 2)], &[], &[]));
+    steps(&mut w, (5.0 / DT) as usize);
+    assert!((w.hero(0).unwrap().carry.extracting - 5.0).abs() < 0.1);
+    steps(&mut w, (5.1 / DT) as usize);
+    assert!(w.hero(0).is_none());
+    let out = w.take_outcomes();
+    assert_eq!(out.len(), 1);
+    assert_eq!(
+        out[0].fate,
+        Fate::Extracted {
+            exit: "The Bridge".into()
+        }
+    );
+    assert_eq!(out[0].carried.count_of(item(&w, "bread")), 2);
+    assert!(out[0].time > 9.9);
+    assert!(w.is_over());
+}
+
+#[test]
+fn extracting_is_heard_every_second() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    steps(&mut w, 3);
+    assert!(w.hero(0).unwrap().noise >= 25.0);
+}
+
+#[test]
+fn extracting_is_made_at_the_ring_once_a_second_in_the_heros_name() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    // The senses clear the noises at the end of a step: count the beats by running the exits by
+    // hand, as the step does, over four seconds.
+    let mut beats = 0;
+    for _ in 0..(4.0 / DT) as usize {
+        w.senses.noises.clear();
+        w.step_exits();
+        if let Some(n) = w.senses.noises.last() {
+            assert_eq!(n.by, 0);
+            assert_eq!(n.radius, 25.0);
+            beats += 1;
+        }
+        w.elapsed += DT;
+    }
+    assert!((3..=4).contains(&beats), "{beats} beats in four seconds");
+}
+
+#[test]
+fn extracting_is_heard_by_a_calm_enemy_in_range() {
+    // A brute 19 yards from the ring, facing away.
+    let post =
+        r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (50.0, 31.0), facing: 0.0)),"#;
+    let mut away = world_with("", post);
+    join(&mut away, 0, "rogue", 38.0, 49.0);
+    steps(&mut away, 10);
+    assert_eq!(
+        away.senses.suspicion_of(0, 0),
+        0.0,
+        "nothing rouses it outside the ring"
+    );
+    let mut w = world_with("", post);
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    let noise = w.content().rules.senses.awareness.noise;
+    assert_eq!(w.senses.suspicion_of(0, 0), noise);
+}
+
+#[test]
+fn a_blow_starts_the_count_over() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    steps(&mut w, (9.0 / DT) as usize);
+    w.hurt_hero(0, 10.0);
+    w.step();
+    assert!(w.hero(0).unwrap().carry.extracting < 0.1);
+    steps(&mut w, (9.0 / DT) as usize);
+    assert!(w.hero(0).is_some());
+    steps(&mut w, (1.2 / DT) as usize);
+    assert!(w.hero(0).is_none());
+}
+
+#[test]
+fn the_cart_opens_late() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 11.0);
+    steps(&mut w, (12.0 / DT) as usize);
+    assert_eq!(w.hero(0).unwrap().carry.extracting, 0.0);
+    let cart = w.loot_view(Some(0)).exits[1];
+    assert!(!cart.open);
+    assert!((cart.opens_in.unwrap() - 8.0).abs() < 0.2);
+    steps(&mut w, (18.5 / DT) as usize);
+    assert!(
+        w.hero(0).is_none(),
+        "out once the cart opened and ten seconds passed"
+    );
+}
+
+#[test]
+fn the_downed_do_not_extract() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.heroes[0].fight.life = Life::Downed {
+        left: 40.0,
+        revive: 0.0,
+    };
+    steps(&mut w, (11.0 / DT) as usize);
+    let h = w.hero(0).unwrap();
+    assert_eq!(h.carry.extracting, 0.0);
+}
+
+#[test]
+fn a_shut_exit_or_a_missing_roll_never_lets_a_hero_out_and_never_panics() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.raid.roll.exits[0].open = false;
+    steps(&mut w, (11.0 / DT) as usize);
+    assert!(w.hero(0).is_some());
+    assert_eq!(w.hero(0).unwrap().carry.extracting, 0.0);
+    // The roll has no exits at all: nothing to stand in.
+    w.raid.roll.exits.clear();
+    steps(&mut w, (11.0 / DT) as usize);
+    assert!(w.hero(0).is_some());
+    assert!(!w.is_over());
+}
+
+#[test]
+fn a_bad_exit_index_still_gets_the_hero_out() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.extract(0, 99);
+    assert!(w.hero(0).is_none());
+    let out = w.take_outcomes();
+    assert_eq!(
+        out[0].fate,
+        Fate::Extracted {
+            exit: String::new()
+        }
+    );
+    // Nobody left to take out: nothing happens, and nothing is settled twice.
+    w.extract(0, 0);
+    assert!(w.take_outcomes().is_empty());
+}
+
+#[test]
+fn a_hero_removed_mid_extraction_leaves_the_other_to_finish() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    join(&mut w, 1, "rogue", 51.0, 49.0);
+    stand(&mut w, 0, 50.0, 49.0);
+    stand(&mut w, 1, 51.0, 49.0);
+    steps(&mut w, (5.0 / DT) as usize);
+    w.remove_hero(0);
+    assert!(w.raid.exiting.iter().all(|e| e.player != 0 || e.t == 0.0));
+    stand(&mut w, 1, 51.0, 49.0);
+    steps(&mut w, (5.5 / DT) as usize);
+    assert!(w.hero(1).is_none());
+    let out = w.take_outcomes();
+    assert_eq!(out.len(), 1, "the hero who left the session has no outcome");
+    assert_eq!(out[0].player, 1);
+    assert!(w.is_over());
+}
+
+#[test]
+fn what_was_found_is_simply_carried_once_out() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 1)], &[], &[]));
+    let c = chest(&w);
+    act(&mut w, 0, 1, Act::Open(c));
+    steps(&mut w, (2.2 / DT) as usize);
+    act(&mut w, 0, 2, Act::Take(0));
+    w.step();
+    assert!(w.pack(0).unwrap().stacks().iter().any(|(_, s)| s.found));
+    stand(&mut w, 0, 50.0, 49.0);
+    steps(&mut w, (10.3 / DT) as usize);
+    let out = w.take_outcomes();
+    assert_eq!(out[0].carried.count_of(item(&w, "gem")), 6);
+    assert_eq!(out[0].carried.count_of(item(&w, "bread")), 1);
+    assert!(out[0].carried.stacks().iter().all(|(_, s)| !s.found));
+}
+
+#[test]
+fn death_takes_the_gear_to_the_body_and_keeps_the_safe_slot() {
+    let mut w = world_with("death_loss: everything", "");
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    w.give_loadout(
+        0,
+        &loadout(
+            &w,
+            &[("bread", 1)],
+            &[("knife", EquipSlot::MainHand)],
+            &[("potion", 1)],
+        ),
+    );
+    die(&mut w, 0);
+    let body: Vec<Stack> = body_of(&w, 0).stacks.iter().flatten().copied().collect();
+    assert_eq!(
+        body,
+        vec![
+            Stack::new(item(&w, "knife"), 1),
+            Stack::new(item(&w, "bread"), 1)
+        ]
+    );
+    assert!(w.is_over());
+    let out = w.take_outcomes();
+    assert_eq!(out[0].fate, Fate::Died);
+    assert_eq!(
+        out[0].carried.stacks(),
+        vec![(Place::Safe(0), Stack::new(item(&w, "potion"), 1))]
+    );
+    assert_eq!(out[0].recovery, None);
+}
+
+#[test]
+fn everything_one_recovery_leaves_the_body_for_the_next_raid() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    w.give_loadout(
+        0,
+        &loadout(&w, &[("gem", 3)], &[("knife", EquipSlot::MainHand)], &[]),
+    );
+    die(&mut w, 0);
+    let out = w.take_outcomes();
+    let r = out[0].recovery.clone().unwrap();
+    assert_eq!(r.map, "test");
+    assert!(r.at.ground().distance(V2::new(20.0, 20.0)) < 1e-4);
+    assert_eq!(r.items.len(), 2);
+    // The next raid: the remains lie where the hero fell, seen only by their player.
+    let mut next = world();
+    join(&mut next, 0, "rogue", 19.0, 20.0);
+    next.give_loadout(
+        0,
+        &Loadout {
+            inventory: Inventory::new(next.content()),
+            recovery: Some(r.clone()),
+        },
+    );
+    let mine = next.loot_view(Some(0));
+    let remains = mine
+        .marks
+        .iter()
+        .find(|m| m.holder == Holder::Remains(0))
+        .unwrap()
+        .id;
+    assert!(next
+        .loot_view(Some(1))
+        .marks
+        .iter()
+        .all(|m| m.holder != Holder::Remains(0)));
+    act(&mut next, 0, 1, Act::Open(remains));
+    next.step();
+    assert!(next.raid.containers.iter().all(|c| c.id != remains));
+    stand(&mut next, 0, 50.0, 49.0);
+    steps(&mut next, (10.3 / DT) as usize);
+    let out = next.take_outcomes();
+    assert_eq!(out[0].recovered.len(), 2);
+    assert!(out[0].recovered.iter().all(|s| !s.found));
+    assert_eq!(out[0].recovery, None);
+}
+
+#[test]
+fn found_only_loses_only_what_was_found() {
+    let mut w = world_with("death_loss: found_only", "");
+    join(&mut w, 0, "rogue", 11.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("bread", 1)], &[], &[]));
+    let c = chest(&w);
+    act(&mut w, 0, 1, Act::Open(c));
+    steps(&mut w, (2.2 / DT) as usize);
+    act(&mut w, 0, 2, Act::Take(0));
+    w.step();
+    die(&mut w, 0);
+    let body: Vec<Stack> = body_of(&w, 0).stacks.iter().flatten().copied().collect();
+    assert_eq!(body, vec![Stack::found(item(&w, "gem"), 6)]);
+    let out = w.take_outcomes();
+    assert_eq!(out[0].carried.count_of(item(&w, "bread")), 1);
+    assert_eq!(out[0].carried.count_of(item(&w, "gem")), 0);
+    assert_eq!(out[0].recovery, None);
+}
+
+#[test]
+fn a_brought_stack_a_found_bag_no_longer_holds_is_kept_by_the_dead_not_lost() {
+    let mut w = world_with("death_loss: found_only", "");
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    // A found pouch makes the backpack 8 slots; five brought stacks fill five of them. With the
+    // pouch gone the backpack is 4, and one brought stack has no slot.
+    let mut inv = Inventory::new(w.content());
+    inv.bags[0] = Some(Stack::found(item(&w, "pouch"), 1));
+    inv.pack = vec![None; 8];
+    let keys = ["bread", "water", "potion", "rock", "gem"];
+    for (i, key) in keys.iter().enumerate() {
+        inv.pack[i] = Some(Stack::new(item(&w, key), 1));
+    }
+    let lo = Loadout {
+        inventory: inv,
+        recovery: None,
+    };
+    assert!(w.give_loadout(0, &lo).is_empty());
+    assert_eq!(w.pack(0).unwrap().stacks().len(), 6);
+    die(&mut w, 0);
+    let body: Vec<Stack> = body_of(&w, 0).stacks.iter().flatten().copied().collect();
+    assert_eq!(
+        body,
+        vec![Stack::found(item(&w, "pouch"), 1)],
+        "only the found bag is lost"
+    );
+    let out = w.take_outcomes();
+    assert_eq!(out[0].fate, Fate::Died);
+    let kept = out[0].carried.stacks();
+    assert_eq!(
+        kept.len(),
+        5,
+        "all five brought stacks are the dead hero's: {kept:?}"
+    );
+    for key in keys {
+        assert_eq!(out[0].carried.count_of(item(&w, key)), 1, "{key}");
+    }
+    assert!(kept.iter().all(|(_, s)| !s.found));
+    assert_eq!(out[0].recovery, None);
+}
+
+/// Every stack of `key` in the world's packs and containers.
+fn held(w: &World, key: &str) -> u32 {
+    let i = item(w, key);
+    let packs: u32 = w.raid.packs.iter().map(|(_, inv)| inv.count_of(i)).sum();
+    let boxes: u32 = w
+        .raid
+        .containers
+        .iter()
+        .flat_map(|c| c.stacks.iter().flatten())
+        .filter(|s| usize::from(s.item) == i)
+        .map(|s| u32::from(s.count))
+        .sum();
+    packs + boxes
+}
+
+#[test]
+fn a_friend_loots_a_fallen_heros_body() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    join(&mut w, 1, "rogue", 21.0, 20.0);
+    stand(&mut w, 0, 20.0, 20.0);
+    stand(&mut w, 1, 21.0, 20.0);
+    w.step();
+    w.give_loadout(
+        0,
+        &loadout(&w, &[("gem", 6)], &[("knife", EquipSlot::MainHand)], &[]),
+    );
+    w.give_loadout(1, &loadout(&w, &[], &[], &[]));
+    die(&mut w, 0);
+    let body = body_of(&w, 0).id;
+    act(&mut w, 1, 1, Act::Open(body));
+    steps(&mut w, (1.7 / DT) as usize);
+    // The body holds the worn knife first, then the backpack's gems.
+    act(&mut w, 1, 2, Act::Take(1));
+    w.step();
+    assert_eq!(w.pack(1).unwrap().count_of(item(&w, "gem")), 6);
+    stand(&mut w, 1, 50.0, 49.0);
+    steps(&mut w, (10.3 / DT) as usize);
+    assert!(w.is_over());
+    let out = w.take_outcomes();
+    let friend = out.iter().find(|o| o.player == 1).unwrap();
+    let fallen = out.iter().find(|o| o.player == 0).unwrap();
+    assert_eq!(friend.carried.count_of(item(&w, "gem")), 6);
+    assert_eq!(fallen.fate, Fate::Died);
+    let left = &fallen.recovery.as_ref().unwrap().items;
+    assert_eq!(left, &vec![Stack::new(item(&w, "knife"), 1)]);
+}
+
+#[test]
+fn nothing_is_made_or_lost_between_the_body_the_packs_and_the_outcomes() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    join(&mut w, 1, "rogue", 21.0, 20.0);
+    stand(&mut w, 0, 20.0, 20.0);
+    stand(&mut w, 1, 21.0, 20.0);
+    w.step();
+    w.give_loadout(
+        0,
+        &loadout(
+            &w,
+            &[("gem", 6), ("rock", 2)],
+            &[("knife", EquipSlot::MainHand)],
+            &[("bread", 1)],
+        ),
+    );
+    w.give_loadout(1, &loadout(&w, &[("bread", 2)], &[], &[]));
+    let keys = ["gem", "rock", "knife", "bread"];
+    let before: Vec<u32> = keys.iter().map(|k| held(&w, k)).collect();
+    die(&mut w, 0);
+    let body = body_of(&w, 0).id;
+    act(&mut w, 1, 1, Act::Open(body));
+    steps(&mut w, (1.7 / DT) as usize);
+    act(&mut w, 1, 2, Act::TakeAll);
+    w.step();
+    act(&mut w, 1, 3, Act::Drop(Place::Pack(0)));
+    w.step();
+    let after: Vec<u32> = keys.iter().map(|k| held(&w, k)).collect();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn a_dead_hero_stays_where_they_fell_whatever_their_client_reports() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    join(&mut w, 1, "rogue", 21.0, 20.0);
+    stand(&mut w, 0, 20.0, 20.0);
+    stand(&mut w, 1, 21.0, 20.0);
+    w.step();
+    w.give_loadout(0, &loadout(&w, &[("gem", 1)], &[], &[]));
+    die(&mut w, 0);
+    let spot = V2::new(20.0, 20.0);
+    stand(&mut w, 0, 30.0, 30.0);
+    steps(&mut w, 5);
+    assert!(w.hero(0).unwrap().pos.distance(spot) < 1e-4);
+    assert!(body_of(&w, 0).at.distance(spot) < 1e-4);
+    // The living are not frozen by it.
+    stand(&mut w, 1, 25.0, 25.0);
+    w.step();
+    assert!(w.hero(1).unwrap().pos.distance(V2::new(25.0, 25.0)) < 1e-4);
+}
+
+#[test]
+fn each_outcome_is_taken_once() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    join(&mut w, 1, "rogue", 20.0, 20.0);
+    stand(&mut w, 0, 50.0, 49.0);
+    stand(&mut w, 1, 20.0, 20.0);
+    w.step();
+    die(&mut w, 1);
+    assert!(!w.is_over());
+    assert!(
+        w.take_outcomes().is_empty(),
+        "the dead are settled when the raid is over"
+    );
+    steps(&mut w, (10.3 / DT) as usize);
+    let out = w.take_outcomes();
+    assert_eq!(out.len(), 2);
+    assert!(matches!(out[0].fate, Fate::Extracted { .. }));
+    assert_eq!(out[1].fate, Fate::Died);
+    assert!(w.take_outcomes().is_empty());
+    assert_eq!(w.outcomes().len(), 2);
+}
+
+#[test]
+fn abandoning_counts_everyone_still_in_as_missing() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    join(&mut w, 1, "rogue", 20.0, 20.0);
+    stand(&mut w, 0, 5.0, 5.0);
+    stand(&mut w, 1, 20.0, 20.0);
+    w.step();
+    w.give_loadout(
+        0,
+        &loadout(&w, &[], &[("knife", EquipSlot::MainHand)], &[("bread", 1)]),
+    );
+    w.give_loadout(1, &loadout(&w, &[("gem", 2)], &[], &[]));
+    die(&mut w, 1);
+    let bodies = w.raid.containers.len();
+    w.abandon();
+    assert!(w.is_over());
+    assert_eq!(w.raid.containers.len(), bodies, "the missing leave no body");
+    let out = w.take_outcomes();
+    let missing = out.iter().find(|o| o.player == 0).unwrap();
+    assert_eq!(missing.fate, Fate::Missing);
+    assert_eq!(missing.carried.stacks().len(), 1);
+    assert_eq!(missing.carried.count_of(item(&w, "bread")), 1);
+    assert_eq!(missing.recovery, None);
+    let dead = out.iter().find(|o| o.player == 1).unwrap();
+    assert_eq!(dead.fate, Fate::Died);
+    assert!(dead.recovery.is_some());
+    // Abandoning twice settles nothing twice.
+    w.abandon();
+    assert!(w.take_outcomes().is_empty());
+}
+
+#[test]
+fn a_kill_counts_for_its_hero() {
+    let mut w = world_with("", BRUTE_FAR);
+    join(&mut w, 0, "rogue", 6.0, 54.0);
+    w.kill_enemy(0, Some(0));
+    w.step();
+    w.abandon();
+    assert_eq!(w.take_outcomes()[0].kills, 1);
+}
+
+#[test]
+fn kills_by_a_far_teammate_count_for_them_however_the_events_are_drained() {
+    const TWO: &str = r#"
+        (place: "A", kind: "brute", behaviour: Sentry(at: (5.0, 55.0), facing: 0.0)),
+        (place: "B", kind: "brute", behaviour: Sentry(at: (15.0, 55.0), facing: 0.0)),"#;
+    let mut w = world_with("", TWO);
+    // Hero 0 stands far past any reach of the kills; hero 1 makes them.
+    join(&mut w, 0, "rogue", 50.0, 10.0);
+    join(&mut w, 1, "rogue", 8.0, 54.0);
+    // A kill between steps, drained before any step tallied it (a feed polling the host).
+    w.kill_enemy(0, Some(1));
+    assert!(w
+        .drain_events()
+        .iter()
+        .any(|e| matches!(e, crate::Event::EnemyDied { by: Some(1), .. })));
+    // A kill in a step, then drained twice (the host's and a peer's), and stepped on.
+    w.kill_enemy(1, Some(1));
+    w.step();
+    w.drain_events();
+    w.drain_events();
+    w.step();
+    w.abandon();
+    let out = w.take_outcomes();
+    let killer = out.iter().find(|o| o.player == 1).unwrap();
+    let far = out.iter().find(|o| o.player == 0).unwrap();
+    assert_eq!(killer.kills, 2, "each kill counted once");
+    assert_eq!(far.kills, 0);
+}

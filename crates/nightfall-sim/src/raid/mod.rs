@@ -5,6 +5,7 @@
 
 mod acts;
 mod containers;
+mod extract;
 #[cfg(test)]
 mod tests;
 
@@ -285,8 +286,9 @@ pub(crate) struct Raid {
     pub(crate) acts: Vec<(PlayerId, u8)>,
     /// When each player may drink a potion again.
     pub(crate) potions: Vec<(PlayerId, f32)>,
+    /// Every hero's extract count.
     pub(crate) exiting: Vec<Exiting>,
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
+    /// Enemies killed, by the hero who killed them ([`World::tally_kills`]).
     pub(crate) kills: Vec<(PlayerId, u32)>,
     /// Enemies whose body has been made.
     pub(crate) bodied: BTreeSet<u32>,
@@ -294,15 +296,19 @@ pub(crate) struct Raid {
     pub(crate) fallen: Vec<(PlayerId, u32)>,
     /// What each player took back from their remains.
     pub(crate) recovered: Vec<(PlayerId, Vec<Stack>)>,
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
+    /// Brought stacks a dead hero kept but whose backpack no longer holds them (under `found_only`
+    /// a found bag goes with them): theirs in their outcome, never on the body.
+    pub(crate) spilled: Vec<(PlayerId, Vec<Stack>)>,
+    /// Every hero's settled outcome, in the order they were settled.
     pub(crate) outcomes: Vec<HeroOutcome>,
     /// Outcomes before this index have been handed out.
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) taken: usize,
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
+    /// Whether any hero has been in the raid: an empty world is not an ended raid.
     pub(crate) had_heroes: bool,
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
+    /// Every hero is out or dead, or the raid was abandoned.
     pub(crate) over: bool,
+    /// Events already tallied for kills ([`World::tally_kills`]).
+    pub(crate) counted: usize,
     /// A client's mirror: the loot view its host sent.
     pub(crate) mirror: Option<LootView>,
 }
@@ -407,7 +413,6 @@ impl Raid {
         }
     }
 
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) fn take_recovered(&mut self, player: PlayerId) -> Vec<Stack> {
         match self.recovered.iter().position(|(p, _)| *p == player) {
             Some(i) => self.recovered.remove(i).1,
@@ -415,7 +420,14 @@ impl Raid {
         }
     }
 
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
+    /// What `player` kept but their backpack no longer holds, taken for their outcome.
+    pub(crate) fn take_spilled(&mut self, player: PlayerId) -> Vec<Stack> {
+        match self.spilled.iter().position(|(p, _)| *p == player) {
+            Some(i) => self.spilled.remove(i).1,
+            None => Vec::new(),
+        }
+    }
+
     pub(crate) fn add_kill(&mut self, player: PlayerId) {
         match self.kills.iter_mut().find(|(p, _)| *p == player) {
             Some(k) => k.1 += 1,
@@ -423,7 +435,6 @@ impl Raid {
         }
     }
 
-    #[expect(dead_code, reason = "used by Task 6 (the outcomes)")]
     pub(crate) fn kills_of(&self, player: PlayerId) -> u32 {
         self.kills
             .iter()
@@ -439,6 +450,7 @@ impl Raid {
         self.potions.retain(|(p, _)| *p != player);
         self.exiting.retain(|e| e.player != player);
         self.fallen.retain(|(p, _)| *p != player);
+        self.spilled.retain(|(p, _)| *p != player);
     }
 
     /// What `player` has open or is searching.

@@ -364,6 +364,10 @@ impl World {
                     why,
                 });
             }
+            // The dead stay where they fell, with their body: the client's pose is ignored.
+            if hero.fight.life == crate::Life::Dead {
+                continue;
+            }
             let Some(pose) = input.pose else { continue };
             if !pose.pos.is_finite() || !pose.facing.is_finite() {
                 continue;
@@ -431,6 +435,9 @@ impl World {
                 &mut self.planner,
             );
         }
+        // Last: every kill of the step counted, then whether the raid is over.
+        self.tally_kills();
+        self.step_over();
         // Noises are heard the step they are made, or the next; none waits longer.
         self.senses.noises.clear();
         self.elapsed += DT;

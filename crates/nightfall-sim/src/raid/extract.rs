@@ -1,0 +1,330 @@
+//! The end of a hero's raid (spec §8.1, §8.2): out by an exit after `extract_for` seconds in its
+//! ring, or dead with their body left holding what `death_loss` takes; the raid over once every
+//! hero is out or dead, each hero's outcome settled once and handed out once.
+
+use super::{Exiting, Fate, HeroOutcome, Holder, Raid, RaidRoll, Recovery};
+use crate::{
+    Content, DeathLoss, Event, Inventory, Life, Loudness, PlayerId, Stack, World, DT, V2, V3,
+};
+
+/// The exit (an index into the map's exits) whose open ring `pos` stands in now. Rings are flat:
+/// no exit stands over another floor.
+pub(crate) fn exit_at(content: &Content, roll: &RaidRoll, now: f32, pos: V2) -> Option<usize> {
+    content
+        .map
+        .exits
+        .iter()
+        .enumerate()
+        .find(|(i, e)| {
+            roll.exits
+                .get(*i)
+                .is_some_and(|p| p.open && now >= p.opens_at)
+                && pos.distance(e.at) <= e.radius
+        })
+        .map(|(i, _)| i)
+}
+
+/// `spill` (brought stacks a death left the hero but that no longer fit their backpack) filed
+/// with what `carried` keeps: into its backpack where there is room, and past its end where there
+/// is none, so nothing a hero kept is lost with a bag. The stash sorts such an inventory out with
+/// [`Inventory::sanitize`], which hands back what has no room.
+fn file_spill(carried: &mut Inventory, spill: Vec<Stack>, content: &Content) {
+    for s in spill {
+        if let Some(rest) = carried.add(s, content) {
+            carried.pack.push(Some(rest));
+        }
+    }
+}
+
+impl World {
+    /// Every enemy killed since the last tally counts for the hero who killed it. Last in a step,
+    /// so every kill of the step counts; [`World::drain_events`] tallies what is left and starts
+    /// the count over, so no kill is counted twice or missed, whoever drains the events. The count
+    /// is the world's own, never a player's event stream (which is cut to their reach).
+    pub(crate) fn tally_kills(&mut self) {
+        if self.raid.mirror.is_some() {
+            return;
+        }
+        let from = self.raid.counted.min(self.events.len());
+        let by: Vec<PlayerId> = self.events[from..]
+            .iter()
+            .filter_map(|e| match e {
+                Event::EnemyDied { by: Some(p), .. } => Some(*p),
+                _ => None,
+            })
+            .collect();
+        self.raid.counted = self.events.len();
+        for p in by {
+            self.raid.add_kill(p);
+        }
+    }
+
+    /// Heroes up in an open exit's ring count to `extract_for` (spec §8.1), heard as they step in
+    /// and every second after (§5.2); a blow, stepping out or falling starts the count over.
+    /// At the end of the count they are out.
+    pub(crate) fn step_exits(&mut self) {
+        let content = self.content().clone();
+        let r = &content.rules.run;
+        let now = self.elapsed;
+        let mut ticks: Vec<(PlayerId, V3)> = Vec::new();
+        let mut out: Vec<(PlayerId, usize)> = Vec::new();
+        {
+            let Raid { exiting, roll, .. } = &mut self.raid;
+            for h in self.heroes.iter_mut() {
+                let i = match exiting.iter().position(|e| e.player == h.player) {
+                    Some(i) => i,
+                    None => {
+                        exiting.push(Exiting {
+                            player: h.player,
+                            t: 0.0,
+                            last_hp: h.hp,
+                        });
+                        exiting.len() - 1
+                    }
+                };
+                let e = &mut exiting[i];
+                let hurt = h.hp < e.last_hp - 1e-4;
+                e.last_hp = h.hp;
+                let ring = if h.fight.up() {
+                    exit_at(&content, roll, now, h.pos)
+                } else {
+                    None
+                };
+                match ring {
+                    Some(x) if !hurt => {
+                        if e.t == 0.0 || (e.t + DT).floor() > e.t.floor() {
+                            ticks.push((h.player, V3::at(h.pos, h.z)));
+                        }
+                        e.t += DT;
+                        if e.t + 1e-4 >= r.extract_for {
+                            out.push((h.player, x));
+                        }
+                    }
+                    _ => e.t = 0.0,
+                }
+                h.carry.extracting = e.t;
+            }
+        }
+        for (p, at) in ticks {
+            self.make_noise(p, at, Loudness::Extract);
+        }
+        for (p, x) in out {
+            self.extract(p, x);
+        }
+    }
+
+    /// `player` is out by exit `exit`: everything they carry is theirs to keep, and they leave
+    /// the world.
+    pub(super) fn extract(&mut self, player: PlayerId, exit: usize) {
+        if self.hero(player).is_none() {
+            return;
+        }
+        let content = self.content().clone();
+        let mut carried = self
+            .raid
+            .take_pack(player)
+            .unwrap_or_else(|| Inventory::new(&content));
+        carried.clear_found();
+        let fate = Fate::Extracted {
+            exit: content
+                .map
+                .exits
+                .get(exit)
+                .map_or_else(String::new, |e| e.name.clone()),
+        };
+        let o = self.outcome(player, fate, carried, None);
+        self.raid.outcomes.push(o);
+        self.remove_hero(player);
+    }
+
+    /// Every hero dead since the last step leaves their body where they fell (spec §8.2),
+    /// holding what `death_loss` takes; friends can search it this raid.
+    pub(crate) fn step_deaths(&mut self) {
+        let content = self.content().clone();
+        let mode = content.rules.run.death_loss;
+        let dead: Vec<(PlayerId, V2, f32)> = self
+            .heroes
+            .iter()
+            .filter(|h| {
+                h.fight.life == Life::Dead && !self.raid.fallen.iter().any(|(p, _)| *p == h.player)
+            })
+            .map(|h| (h.player, h.pos, h.z))
+            .collect();
+        for (player, at, z) in dead {
+            let death = self
+                .raid
+                .pack_mut(player, &content)
+                .split_for_death(mode, &content);
+            // What was brought stays the hero's even when it no longer fits their backpack: it
+            // goes to their outcome, never onto the body.
+            if !death.spill.is_empty() {
+                self.raid.spilled.push((player, death.spill));
+            }
+            let body = if death.lost.is_empty() {
+                0
+            } else {
+                let slots = usize::from(content.rules.run.container_slots);
+                self.raid.add_container(
+                    Holder::Hero(player),
+                    at,
+                    Some(z),
+                    death.lost,
+                    slots,
+                    false,
+                    None,
+                )
+            };
+            self.raid.fallen.push((player, body));
+            self.raid.close(player);
+            if let Some(hi) = self.hero_slot(player) {
+                self.heroes[hi].carry.lantern = None;
+            }
+            self.refresh_carry(player);
+        }
+    }
+
+    /// With every hero out or dead the raid is over (spec §8.1), and each dead hero's outcome is
+    /// settled now: what is left on their body by then is what a recovery holds. A client's
+    /// mirror has no raid to end: its host tells it.
+    pub(crate) fn step_over(&mut self) {
+        if self.raid.mirror.is_some() {
+            return;
+        }
+        if !self.heroes.is_empty() {
+            self.raid.had_heroes = true;
+        }
+        if self.raid.over || !self.raid.had_heroes {
+            return;
+        }
+        if !self.heroes.iter().all(|h| h.fight.life == Life::Dead) {
+            return;
+        }
+        self.raid.over = true;
+        let dead: Vec<PlayerId> = self.heroes.iter().map(|h| h.player).collect();
+        for p in dead {
+            self.settle_dead(p);
+        }
+    }
+
+    /// Dead `player`'s outcome: what death left them, and under `everything_one_recovery` their
+    /// body's remaining things as the recovery their next raid holds.
+    fn settle_dead(&mut self, player: PlayerId) {
+        let content = self.content().clone();
+        let mut carried = self
+            .raid
+            .take_pack(player)
+            .unwrap_or_else(|| Inventory::new(&content));
+        carried.clear_found();
+        let spill = self.raid.take_spilled(player);
+        file_spill(&mut carried, spill, &content);
+        let body = self
+            .raid
+            .fallen
+            .iter()
+            .find(|(p, _)| *p == player)
+            .map_or(0, |(_, id)| *id);
+        let recovery = if content.rules.run.death_loss == DeathLoss::EverythingOneRecovery {
+            self.raid
+                .containers
+                .iter()
+                .find(|c| c.id == body)
+                .and_then(|c| {
+                    let items: Vec<Stack> = c
+                        .stacks
+                        .iter()
+                        .flatten()
+                        .map(|s| Stack { found: false, ..*s })
+                        .collect();
+                    (!items.is_empty()).then(|| Recovery {
+                        map: content.map.key.clone(),
+                        at: V3::at(c.at, c.z.unwrap_or(0.0)),
+                        items,
+                    })
+                })
+        } else {
+            None
+        };
+        let o = self.outcome(player, Fate::Died, carried, recovery);
+        self.raid.outcomes.push(o);
+    }
+
+    fn outcome(
+        &mut self,
+        player: PlayerId,
+        fate: Fate,
+        carried: Inventory,
+        recovery: Option<Recovery>,
+    ) -> HeroOutcome {
+        let name = self
+            .hero(player)
+            .map(|h| h.name.clone())
+            .unwrap_or_default();
+        let mut recovered = self.raid.take_recovered(player);
+        for s in &mut recovered {
+            s.found = false;
+        }
+        HeroOutcome {
+            player,
+            name,
+            fate,
+            time: self.elapsed,
+            kills: self.raid.kills_of(player),
+            carried,
+            recovered,
+            recovery,
+        }
+    }
+
+    /// The outcomes settled since the last call: each handed out once, for the host to give to
+    /// its player.
+    pub fn take_outcomes(&mut self) -> Vec<HeroOutcome> {
+        let from = self.raid.taken.min(self.raid.outcomes.len());
+        let new = self.raid.outcomes[from..].to_vec();
+        self.raid.taken = self.raid.outcomes.len();
+        new
+    }
+
+    /// Every outcome so far, for the end screen.
+    pub fn outcomes(&self) -> &[HeroOutcome] {
+        &self.raid.outcomes
+    }
+
+    /// Every hero is out or dead, or the raid was abandoned.
+    pub fn is_over(&self) -> bool {
+        self.raid.over
+    }
+
+    /// The raid ends now (its host abandoned it): every hero still in it is missing, losing what
+    /// a death would and leaving no body; the dead are settled as dead.
+    pub fn abandon(&mut self) {
+        if self.raid.over {
+            return;
+        }
+        let content = self.content().clone();
+        self.raid.over = true;
+        self.raid.had_heroes = true;
+        // Kills since the last step still count.
+        self.tally_kills();
+        let heroes: Vec<(PlayerId, bool)> = self
+            .heroes
+            .iter()
+            .map(|h| (h.player, h.fight.life == Life::Dead))
+            .collect();
+        for (p, dead) in heroes {
+            if dead {
+                self.settle_dead(p);
+                continue;
+            }
+            let mut carried = self
+                .raid
+                .take_pack(p)
+                .unwrap_or_else(|| Inventory::new(&content));
+            // The missing lose what a death would; what was brought stays theirs, as in a death.
+            let death = carried.split_for_death(content.rules.run.death_loss, &content);
+            carried.clear_found();
+            file_spill(&mut carried, death.spill, &content);
+            let o = self.outcome(p, Fate::Missing, carried, None);
+            self.raid.outcomes.push(o);
+        }
+    }
+}
