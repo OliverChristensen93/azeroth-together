@@ -42,7 +42,7 @@ pub use heightmap::{
     Floors, Grid, HeightMap, HeightMapBuilder, Navigator, PathPlan, Span, SpanList, CELL, HEADROOM,
     MAX_FLOORS, MAX_STEP, MERGE_GAP, TERRAIN_DEPTH,
 };
-pub use inventory::{InvError, Inventory, Place, Stack, MAX_BAGS};
+pub use inventory::{Death, InvError, Inventory, Place, Stack, MAX_BAGS};
 pub use items::{
     Bonus, ContainerKindDef, EquipSlot, ItemDef, ItemKind, ItemUse, LightDef, Look, LootContent,
     PlacedContainer, Table, TableEntry,

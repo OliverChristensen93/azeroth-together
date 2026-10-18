@@ -74,6 +74,16 @@ fn finite(sum: f64) -> f32 {
     }
 }
 
+/// What [`Inventory::split_for_death`] took out of an inventory.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Death {
+    /// Stacks the death takes: they go onto the body, or are gone, by the death-loss mode.
+    pub lost: Vec<Stack>,
+    /// Brought stacks that stay the hero's under `found_only` but no longer fit the backpack
+    /// once a found bag is gone. Never lost; the caller files them home.
+    pub spill: Vec<Stack>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inventory {
     /// By [`EquipSlot::index`].
@@ -396,15 +406,20 @@ impl Inventory {
         Ok(())
     }
 
-    /// Death (spec §8.2): the stacks a death takes, by `mode`, out of the inventory; the safe
-    /// slots are always kept. Under `found_only` what was brought stays, but a brought thing
-    /// that has no slot left once a found bag is gone goes with the body too.
-    pub fn split_for_death(&mut self, mode: DeathLoss, content: &Content) -> Vec<Stack> {
+    /// Death (spec §8.2): what a death takes, by `mode`, out of the inventory; the safe slots are
+    /// always kept. Under `found_only` only what was found is lost ([`Death::lost`]). When a
+    /// found bag goes and brought stacks no longer fit the smaller backpack, those are not lost:
+    /// they leave the inventory as [`Death::spill`], for the caller to file with the rest of the
+    /// dead hero's kept things. Under the other modes everything but the safe slots is lost, so
+    /// nothing spills.
+    ///
+    /// What stays is packed to the front of the backpack, which renumbers its slots.
+    pub fn split_for_death(&mut self, mode: DeathLoss, content: &Content) -> Death {
         let lose = |s: &Stack| match mode {
             DeathLoss::Everything | DeathLoss::EverythingOneRecovery => true,
             DeathLoss::FoundOnly => s.found,
         };
-        let mut lost = Vec::new();
+        let mut death = Death::default();
         for slot in self
             .equip
             .iter_mut()
@@ -412,7 +427,7 @@ impl Inventory {
             .chain(self.pack.iter_mut())
         {
             if slot.as_ref().is_some_and(&lose) {
-                lost.extend(slot.take());
+                death.lost.extend(slot.take());
             }
         }
         let size = self.pack_size(content);
@@ -422,10 +437,10 @@ impl Inventory {
             if i < size {
                 self.pack[i] = Some(s);
             } else {
-                lost.push(s);
+                death.spill.push(s);
             }
         }
-        lost
+        death
     }
 
     /// Out of the raid: what was found is now simply carried.
@@ -681,21 +696,30 @@ mod tests {
             inv
         };
         let mut all = filled();
-        let lost = all.split_for_death(DeathLoss::Everything, &c);
-        assert_eq!(lost.len(), 7);
+        let death = all.split_for_death(DeathLoss::Everything, &c);
+        assert_eq!(death.lost.len(), 7);
+        assert!(
+            death.spill.is_empty(),
+            "everything is lost, so nothing spills"
+        );
         assert_eq!(all.stacks(), vec![(Place::Safe(0), Stack::found(BREAD, 1))]);
         assert_eq!(all.pack.len(), 3);
         let mut found = filled();
-        let lost = found.split_for_death(DeathLoss::FoundOnly, &c);
-        // The pouch and the gem were found; with the pouch gone, the four brought stacks left in
-        // the pack must fit 3 slots: the last (the second knife) goes too.
-        assert!(lost.contains(&Stack::found(POUCH, 1)));
-        assert!(lost.contains(&Stack::found(GEM, 3)));
-        assert_eq!(lost.len(), 3);
+        let death = found.split_for_death(DeathLoss::FoundOnly, &c);
+        // The pouch and the gem were found, so they are lost. With the pouch gone, the four
+        // brought stacks left in the pack must fit 3 slots: the last (the second knife) does not,
+        // but it was brought, so it spills instead of being lost.
+        assert!(death.lost.contains(&Stack::found(POUCH, 1)));
+        assert!(death.lost.contains(&Stack::found(GEM, 3)));
+        assert_eq!(death.lost.len(), 2);
+        assert_eq!(death.spill, vec![Stack::new(KNIFE, 1)]);
         assert_eq!(found.count_of(KNIFE), 1);
         assert_eq!(found.get(Place::Safe(0)), Some(&Stack::found(BREAD, 1)));
-        // Nothing made, nothing lost: 8 stacks before, 8 between what is kept and the body.
-        assert_eq!(found.stacks().len() + lost.len(), 8);
+        // Nothing made, nothing lost: 8 stacks before, 8 between what is kept, spilled and lost.
+        assert_eq!(
+            found.stacks().len() + death.lost.len() + death.spill.len(),
+            8
+        );
     }
 
     #[test]
