@@ -1,0 +1,54 @@
+// Racial passives: each race (by its ChrRaces.dbc id) gives its heroes a couple of small
+// bonuses, after its racials in Classic, so they read the way a WoW player expects. `stats` add
+// to the hero's stat block like a tome (a fraction for the percentage stats, health a second for
+// Regen); `treasure` shows chests, shrines and pots on the minimap. A race left out gives nothing.
+[
+    (race: 1, name: "Human", passives: [
+        (name: "Perception", description: "Your eyes miss little: +3% critical strike chance.",
+         stats: [(Crit, 0.03)]),
+        (name: "The Human Spirit", description: "+0.4 health a second.",
+         stats: [(Regen, 0.4)]),
+    ]),
+    (race: 2, name: "Orc", passives: [
+        (name: "Blood Fury", description: "+6% damage.",
+         stats: [(Damage, 0.06)]),
+        (name: "Hardiness", description: "+4% armor.",
+         stats: [(Armor, 0.04)]),
+    ]),
+    (race: 3, name: "Dwarf", passives: [
+        (name: "Treasure Finding", description: "Chests, shrines and pots show on your minimap, and you find +15% gold.",
+         stats: [(GoldGain, 0.15)], treasure: true),
+        (name: "Stoneform", description: "+5% armor.",
+         stats: [(Armor, 0.05)]),
+    ]),
+    (race: 4, name: "Night Elf", passives: [
+        (name: "Quickness", description: "+6% move speed.",
+         stats: [(Speed, 0.06)]),
+        (name: "Shadowmeld", description: "+3% armor: the horde loses you in the shadows now and then.",
+         stats: [(Armor, 0.03)]),
+    ]),
+    (race: 5, name: "Undead", passives: [
+        (name: "Cannibalize", description: "+0.6 health a second.",
+         stats: [(Regen, 0.6)]),
+        (name: "Will of the Forsaken", description: "+10% critical strike damage.",
+         stats: [(CritDamage, 0.10)]),
+    ]),
+    (race: 6, name: "Tauren", passives: [
+        (name: "Endurance", description: "+5% max health.",
+         stats: [(Health, 0.05)]),
+        (name: "War Stomp", description: "+8% area.",
+         stats: [(Area, 0.08)]),
+    ]),
+    (race: 7, name: "Gnome", passives: [
+        (name: "Expansive Mind", description: "+8% experience.",
+         stats: [(XpGain, 0.08)]),
+        (name: "Engineering Specialization", description: "+4% cooldown speed.",
+         stats: [(Cooldown, 0.04)]),
+    ]),
+    (race: 8, name: "Troll", passives: [
+        (name: "Regeneration", description: "+0.5 health a second.",
+         stats: [(Regen, 0.5)]),
+        (name: "Berserking", description: "+4% damage.",
+         stats: [(Damage, 0.04)]),
+    ]),
+]

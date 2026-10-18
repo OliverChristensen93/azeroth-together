@@ -16,7 +16,23 @@ fn shipped() -> Content {
         zones: include_str!("../../../content/zones.ron"),
     })
     .and_then(|c| c.with_rules(include_str!("../../../content/rules.ron")))
+    .and_then(|c| c.with_races(include_str!("../../../content/races.ron")))
     .unwrap_or_else(|e| panic!("content/ is invalid: {e}"))
+}
+
+#[test]
+fn every_classic_race_has_its_passives_and_a_dwarf_finds_more_gold() {
+    let c = shipped();
+    for race in 1..=8u8 {
+        let def = c.race(race).unwrap_or_else(|| panic!("race {race} has no passives"));
+        assert!(!def.passives.is_empty(), "{}", def.name);
+    }
+    assert!(c.race(3).unwrap().treasure());
+    let mut w = World::new(Arc::new(c), "elwynn", 1).unwrap();
+    w.add_hero_as(0, "warrior", "Dwarf", 3, 0).unwrap();
+    let hero = w.hero(0).unwrap();
+    assert!(hero.stats.get(together_sim::Stat::GoldGain) > 0.1);
+    assert_eq!(hero.hp, hero.max_hp);
 }
 
 #[test]

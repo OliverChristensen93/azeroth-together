@@ -447,6 +447,19 @@ pub struct Rules {
     pub surround_every: f32,
     #[serde(default = "surround_secs")]
     pub surround_secs: f32,
+    /// A champion (an elite mini-boss) comes `champion_from` seconds in, and every
+    /// `champion_every` after.
+    #[serde(default = "champion_from")]
+    pub champion_from: f32,
+    #[serde(default = "champion_every")]
+    pub champion_every: f32,
+}
+
+fn champion_from() -> f32 {
+    120.0
+}
+fn champion_every() -> f32 {
+    240.0
 }
 
 fn enemy_speed() -> f32 {
@@ -478,7 +491,37 @@ impl Default for Rules {
             surround_from: surround_from(),
             surround_every: surround_every(),
             surround_secs: surround_secs(),
+            champion_from: champion_from(),
+            champion_every: champion_every(),
         }
+    }
+}
+
+/// A race's passives, from `races.ron`: what every hero of `race` (a `ChrRaces.dbc` id) gets.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct RaceDef {
+    pub race: u8,
+    pub name: String,
+    pub passives: Vec<Racial>,
+}
+
+/// One racial passive: its name and line for the menu, the stats it adds, and whether it shows
+/// treasure on the minimap.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Racial {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub stats: Vec<(crate::stats::Stat, f32)>,
+    #[serde(default)]
+    pub treasure: bool,
+}
+
+impl RaceDef {
+    /// Whether one of its passives shows chests, shrines and pots on the minimap.
+    pub fn treasure(&self) -> bool {
+        self.passives.iter().any(|p| p.treasure)
     }
 }
 
@@ -491,6 +534,8 @@ pub struct Content {
     pub zones: Vec<ZoneDef>,
     /// [`Rules::default`] until [`Content::with_rules`] reads a file.
     pub rules: Rules,
+    /// None until [`Content::with_races`] reads `races.ron`.
+    pub races: Vec<RaceDef>,
 }
 
 #[derive(Debug)]
@@ -641,6 +686,7 @@ impl Content {
             enemies,
             zones,
             rules: Rules::default(),
+            races: Vec::new(),
         })
     }
 
@@ -651,6 +697,20 @@ impl Content {
             message: e.to_string(),
         })?;
         Ok(self)
+    }
+
+    /// These contents with the racial passives in `text` (`races.ron`).
+    pub fn with_races(mut self, text: &str) -> Result<Self, ContentError> {
+        self.races = ron::from_str(text).map_err(|e| ContentError::Parse {
+            file: "races.ron",
+            message: e.to_string(),
+        })?;
+        Ok(self)
+    }
+
+    /// The passives of `race` (a `ChrRaces.dbc` id), if it has any.
+    pub fn race(&self, race: u8) -> Option<&RaceDef> {
+        self.races.iter().find(|r| r.race == race)
     }
 
     pub fn ability(&self, key: &str) -> Option<usize> {

@@ -17,6 +17,7 @@ mod gear;
 mod interact;
 mod items;
 mod math;
+pub mod obstacles;
 mod mechanics;
 mod powerups;
 mod rng;
@@ -32,7 +33,8 @@ pub use cards::{
     SpellMods, MAX_RANK,
 };
 pub use content::{
-    AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, Rules,
+    AbilityDef, AbilityKind, ClassDef, Content, ContentError, ContentSources, EnemyDef, RaceDef,
+    Racial, Rules,
     WardKind, WeaponDef, ZoneDef,
 };
 pub use gear::{
@@ -44,6 +46,7 @@ pub use interact::{
 };
 pub use items::{ward_cooldown, Item};
 pub use math::V2;
+pub use obstacles::Obstacles;
 pub use mechanics::{Affix, Mechanic, Shape};
 pub use powerups::{Pickup, PickupKind, PotLoot, PowerUp};
 pub use rng::Rng;
@@ -59,6 +62,7 @@ pub use talents::{
 pub use world::{
     shield_size, status_bits, xp_to_next, ActiveBuff, Bank, Boon, Enemy, EnemyState, Event, Gem,
     Hero, HeroFx, HeroPose, HeroSpells, Offer, Owned, PlayerId, PlayerInput, Snapshot, Source,
-    Status, StatusFx, Target, World, WorldError, BOSS_EVERY, DT, ELITE_SCALE, MAX_ABILITIES, REVIVE_RANGE,
+    Status, StatusFx, Target, World, WorldError, BOSS_EVERY, CHAMPION_SCALE, DT, ELITE_SCALE,
+    MAX_ABILITIES, REVIVE_RANGE,
     REVIVE_SECS, TICK_HZ,
 };

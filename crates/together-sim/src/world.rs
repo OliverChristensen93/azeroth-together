@@ -19,6 +19,8 @@ mod gear;
 mod affixes;
 mod hazards;
 mod horde;
+pub(crate) mod champions;
+pub use champions::CHAMPION_SCALE;
 mod meter;
 mod hunter;
 mod paladin;
@@ -89,7 +91,7 @@ const GOLD_PER_XP: f32 = 1.5;
 /// Random tomes mixed into the options a level-up deals from.
 const LEVEL_UP_TOMES: usize = 2;
 /// An elite's health, experience and gold, in ordinary enemies of its kind...
-const ELITE_HEALTH: f32 = 4.0;
+pub(crate) const ELITE_HEALTH: f32 = 4.0;
 const ELITE_REWARD: u32 = 5;
 /// ...its damage and its size.
 const ELITE_DAMAGE: f32 = 1.25;
@@ -112,6 +114,8 @@ const SPENT_LINGER: f32 = 6.0;
 const SPAWN_RING: (f32, f32) = (34.0, 42.0);
 /// Seconds between spawn batches.
 const SPAWN_EVERY: f32 = 0.12;
+/// Seconds between workings-out of the horde's way around obstacles.
+const FLOW_EVERY: f32 = 0.4;
 /// The run's length; enemy health and damage grow toward it.
 const RUN_SECS: f32 = 900.0;
 /// A living hero this close to a fallen friend raises them...
@@ -241,6 +245,10 @@ pub enum Event {
     AffixGained { affix: Affix },
     /// For `secs` the horde comes from every side, not only from behind.
     Surrounded { secs: f32 },
+    /// A champion (a mini-boss, enemy `id` of kind `def`) came.
+    ChampionCame { id: u32, def: usize },
+    /// A champion died; a cache stands where it fell.
+    ChampionDied { id: u32 },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -608,6 +616,9 @@ pub struct EnemyState {
     pub moving: bool,
     pub elite: bool,
     pub boss: bool,
+    /// A champion: an elite mini-boss ([`World::champions`]).
+    #[serde(default)]
+    pub champion: bool,
     /// Health and its maximum, rounded up to whole points.
     pub hp: u32,
     pub max_hp: u32,
@@ -720,6 +731,13 @@ pub struct World {
     pub next_boss: f32,
     /// A living player has the game menu open, and the run waits for them.
     pub menu_pause: bool,
+    /// What stands in the horde's way, once the host's client has filled it in; and seconds
+    /// until its flow field is worked out again.
+    pub obstacles: Option<crate::obstacles::Obstacles>,
+    flow_timer: f32,
+    /// The champions alive, by enemy id, and seconds into the run the next one comes.
+    pub champions: Vec<u32>,
+    pub next_champion: f32,
     /// Seconds left of a surround, when the horde comes from every side; and seconds into the
     /// run the next one starts.
     pub surround: f32,
@@ -773,12 +791,17 @@ impl World {
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
             menu_pause: false,
+            obstacles: None,
+            flow_timer: 0.0,
+            champions: Vec::new(),
+            next_champion: f32::INFINITY,
             surround: 0.0,
             next_surround: f32::INFINITY,
             xp_rate: 1.0,
             learn_rank: 1,
         };
         world.next_surround = world.content.rules.surround_from;
+        world.next_champion = world.content.rules.champion_from;
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
             world.place(kind, pos);
@@ -885,7 +908,24 @@ impl World {
             talents: Default::default(),
             gear: HeroGear::default(),
         });
+        self.apply_race(self.heroes.len() - 1);
         Ok(())
+    }
+
+    /// Hero `h`'s racial passives ([`crate::content::RaceDef`]) join its stats.
+    fn apply_race(&mut self, h: usize) {
+        let content = self.content.clone();
+        let Some(race) = content.race(self.heroes[h].race) else {
+            return;
+        };
+        for passive in &race.passives {
+            for &(stat, amount) in &passive.stats {
+                self.heroes[h].stats.add(stat, amount);
+            }
+        }
+        self.refresh(h);
+        let hero = &mut self.heroes[h];
+        hero.hp = hero.max_hp;
     }
 
     /// Give `player`'s hero the spell `key` at `rank` with `augments`, in place of the same spell
@@ -1027,6 +1067,7 @@ impl World {
                     moving: e.moving,
                     elite: e.elite,
                     boss: e.boss,
+                    champion: self.champions.contains(&e.id),
                     hp: e.hp.max(0.0).ceil() as u32,
                     max_hp: e.max_hp.ceil() as u32,
                     status: e.status.bits(),
@@ -1056,6 +1097,12 @@ impl World {
         self.affixes = snapshot.affixes;
         let center = self.center();
         let defs = &self.content.enemies;
+        self.champions = snapshot
+            .enemies
+            .iter()
+            .filter(|s| s.champion)
+            .map(|s| s.id)
+            .collect();
         self.enemies = snapshot
             .enemies
             .into_iter()
@@ -1142,6 +1189,7 @@ impl World {
         self.tend_surround();
         self.spawn_enemies();
         self.spawn_bosses();
+        self.spawn_champions();
         self.move_enemies();
         self.tend_mechanics();
         self.tend_affixes();
@@ -1556,8 +1604,16 @@ impl World {
         let leash = self.zone().leash;
         for _ in 0..batch {
             let (near, heading) = living[self.rng.index(living.len())];
-            let angle = self.spawn_angle(heading);
+            let mut angle = self.spawn_angle(heading);
             let r = self.rng.range(SPAWN_RING.0, SPAWN_RING.1);
+            // Not inside a tree or a house: a few more tries round the ring.
+            for _ in 0..6 {
+                let at = near + V2::from_angle(angle, r);
+                if !self.obstacles.as_ref().is_some_and(|o| o.blocked_at(at)) {
+                    break;
+                }
+                angle = self.spawn_angle(heading);
+            }
             let mut pos = near + V2::from_angle(angle, r);
             // Never outside the arena: pull back onto its edge.
             let off = pos - center;
@@ -1667,6 +1723,14 @@ impl World {
             }
             return;
         }
+        self.flow_timer -= DT;
+        if self.flow_timer <= 0.0 {
+            self.flow_timer = FLOW_EVERY;
+            if let Some(o) = self.obstacles.as_mut().filter(|o| o.any()) {
+                let at: Vec<V2> = living.iter().map(|l| l.1).collect();
+                o.flow(&at);
+            }
+        }
         // Push apart overlapping bodies, so the horde spreads instead of stacking.
         let n = self.enemies.len();
         let mut shove = vec![V2::ZERO; n];
@@ -1685,6 +1749,7 @@ impl World {
         }
         let mut swings = Vec::new();
         let content = self.content.clone();
+        let obstacles = self.obstacles.as_ref();
         for (i, e) in self.enemies.iter_mut().enumerate() {
             let (player, target) = living
                 .iter()
@@ -1741,7 +1806,11 @@ impl World {
                 0.0
             };
             let speed = e.speed * if frenzied { hazards::FRENZY_SPEED } else { 1.0 };
-            e.facing = to.normalize_or_zero();
+            // Around a tree or a wall in the way, rather than through it.
+            e.facing = obstacles
+                .filter(|_| !contact)
+                .and_then(|o| o.steer(e.pos, target))
+                .unwrap_or_else(|| to.normalize_or_zero());
             let rooted = e.status.fx.root > 0.0;
             e.moving = !contact && !rooted && dist > keep;
             let step = if e.moving {
@@ -1749,7 +1818,11 @@ impl World {
             } else {
                 V2::ZERO
             };
-            e.pos += step + shove[i] * (DT * 8.0).min(0.5);
+            let step = step + shove[i] * (DT * 8.0).min(0.5);
+            e.pos = match obstacles {
+                Some(o) => o.slide(e.pos, step),
+                None => e.pos + step,
+            };
             e.attack_cd -= DT;
             if contact && e.attack_cd <= 0.0 {
                 e.attack_cd = if frenzied { hazards::FRENZY_SWING } else { 1.3 };
@@ -1992,6 +2065,7 @@ impl World {
                 self.place(InteractableKind::Cache, pos);
                 self.events.push(Event::BossDied { id });
             }
+            self.champion_fell(id, pos);
             if elite {
                 self.drop_gear(boss);
             }

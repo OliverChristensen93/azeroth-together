@@ -119,6 +119,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     )?;
     let zones = read("zones.ron", include_str!("../../../../content/zones.ron"))?;
     let rules = read("rules.ron", include_str!("../../../../content/rules.ron"))?;
+    let races = read("races.ron", include_str!("../../../../content/races.ron"))?;
     let talent_web = read(
         "talents.ron",
         include_str!("../../../../content/talents.ron"),
@@ -131,6 +132,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         zones: &zones,
     })
     .and_then(|c| c.with_rules(&rules))
+    .and_then(|c| c.with_races(&races))
     .map_err(|e| e.to_string())?;
     let zone = content
         .zone(&zone_key())

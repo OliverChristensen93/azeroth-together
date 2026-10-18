@@ -22,4 +22,8 @@
     surround_from: 150.0,
     surround_every: 150.0,
     surround_secs: 12.0,
+    // A champion, an elite mini-boss a few tiers above the horde that leaves a cache, comes
+    // `champion_from` seconds in and every `champion_every` after: halfway between the bosses.
+    champion_from: 120.0,
+    champion_every: 240.0,
 )
