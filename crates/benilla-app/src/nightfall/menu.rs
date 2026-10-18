@@ -52,6 +52,7 @@ pub(super) struct MenuBuilt;
 pub(super) enum MenuAction {
     Class(usize),
     PlaySolo,
+    Stash,
     Host,
     Join,
     CopyCode,
@@ -214,6 +215,7 @@ pub(super) fn build_menu(
                 .with_children(|row| {
                     for (action, caption) in [
                         (MenuAction::PlaySolo, "Play Solo"),
+                        (MenuAction::Stash, "Stash"),
                         (MenuAction::Host, "Host Co-op"),
                         (MenuAction::Join, "Join (paste code)"),
                         (MenuAction::CopyCode, "Copy Invite Code"),
@@ -279,6 +281,7 @@ pub(super) fn menu_clicks(
     mut start: ResMut<StartRequest>,
     mut net: ResMut<Net>,
     mut stash: ResMut<super::stash::Stash>,
+    mut stash_open: ResMut<super::stash_panel::StashOpen>,
     mut next_mode: ResMut<NextState<GameMode>>,
     mut clipboard: NonSendMut<HostClipboard>,
     window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
@@ -307,6 +310,7 @@ pub(super) fn menu_clicks(
                 start.0 = true;
             }
         }
+        MenuAction::Stash => stash_open.0 = !stash_open.0,
         MenuAction::Host => {
             if net.is_solo() {
                 net.host();
@@ -385,8 +389,10 @@ pub(super) fn refresh_menu(
     }
     let visible = shown(&net.role);
     for (action, mut node) in &mut buttons {
-        let on =
-            matches!(action, MenuAction::Class(_) | MenuAction::Back) || visible.contains(action);
+        let on = matches!(
+            action,
+            MenuAction::Class(_) | MenuAction::Back | MenuAction::Stash
+        ) || visible.contains(action);
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;

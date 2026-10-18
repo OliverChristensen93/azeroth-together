@@ -341,7 +341,7 @@ impl Stash {
     /// The stash at `path` (none: nothing read, nothing saved), a raid it still holds as under way
     /// settled as missing and saved at once: a game that closed in a raid did not leave it, so the
     /// raid ended without its player.
-    fn open_at(path: Option<PathBuf>, content: &Content) -> Self {
+    pub(super) fn open_at(path: Option<PathBuf>, content: &Content) -> Self {
         let loaded = match &path {
             Some(p) => load(p),
             None => Loaded {
@@ -364,6 +364,14 @@ impl Stash {
             stash.save();
         }
         stash
+    }
+
+    /// This session has a folder for the stash and may not write to it (a newer or unreadable
+    /// file or backup): the stash panel shows it and moves nothing, since every move would be
+    /// undone at the next launch. [`Stash::note`] says why. With no folder at all (a capture)
+    /// nothing is read or saved and the stash is only this session's, so it may be edited.
+    pub fn read_only(&self) -> bool {
+        self.path.is_some() && !self.writable
     }
 
     /// `line` on the menu, under what it already says (once: asking again adds nothing). Whether

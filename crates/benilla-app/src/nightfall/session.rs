@@ -272,6 +272,12 @@ impl Net {
         out
     }
 
+    /// Joined: our pick has gone to the host (it is sent as soon as the host welcomes us, and
+    /// again whenever it changes). The stash panel freezes its moves from then on.
+    pub fn pick_sent(&self) -> bool {
+        matches!(&self.role, Role::Client(c) if c.sent_pick.is_some())
+    }
+
     /// Joined: whether the host's lobby holds our pick, class and loadout, as `own` has it now.
     /// The host's last lobby is the only word on what it will give our hero, so a pick that
     /// differs is one still on its way, or one the host started the run without. Alone or

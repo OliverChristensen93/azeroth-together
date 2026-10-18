@@ -27,11 +27,13 @@ mod senses_hud;
 mod session;
 mod stance;
 mod stash;
+mod stash_panel;
 mod telegraphs;
 mod terrain;
 mod ui;
 mod units;
 mod view;
+mod widgets;
 
 /// The UI decisions, for the launcher's test of moving between the games.
 #[cfg(test)]
@@ -259,10 +261,39 @@ impl Plugin for NightfallPlugin {
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
             .init_resource::<conceal::TargetGrace>()
+            .init_resource::<stash_panel::StashOpen>()
+            .init_resource::<stash_panel::StashLock>()
             .add_plugins(grade::plugin)
-            .add_systems(Startup, (menu::spawn_roots, terrain::spawn_line))
+            .add_systems(
+                Startup,
+                (
+                    menu::spawn_roots,
+                    terrain::spawn_line,
+                    stash_panel::spawn_root,
+                ),
+            )
             // Ungated: hides Nightfall's screens whenever another game is up.
             .add_systems(Update, menu::show_roots)
+            // Ungated: hides the stash panel whenever another game is up.
+            .add_systems(Update, stash_panel::show)
+            .add_systems(Update, widgets::fill_icons.in_set(NightfallSet))
+            .add_systems(
+                Update,
+                // After the lobby has sent our pick (so a pick sent this frame locks this frame)
+                // and before the run can start: a host's edit and its Start are each one whole
+                // step on the stash, never torn.
+                (
+                    stash_panel::refresh_lock,
+                    stash_panel::clicks,
+                    stash_panel::rebuild,
+                    stash_panel::hover,
+                )
+                    .chain()
+                    .after(session::lobby)
+                    .before(run::start_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Menu)),
+            )
             // Ungated: hides the bake's line whenever another game is up.
             .add_systems(Update, terrain::show_line)
             .add_systems(
