@@ -391,17 +391,31 @@ impl World {
             }
             Effect::ConjureWater { count } => {
                 // Conjured drinks are items in the backpack (found: they were made here), so
-                // that the drinks carried, of any kind, come to at most `max_drinks`. What does
-                // not fit a full backpack is lost: the spell's mana is spent all the same.
+                // that the drinks in the backpack, of any kind, come to at most `max_drinks`.
+                // What does not fit a full backpack is put on the ground at the hero's feet, a
+                // pile to pick up, so the spell's mana always buys real drinks.
                 if let Some(drink) = content.conjured {
                     let have = self.raid.pack(player).map_or(0, |i| drinks_in(i, &content));
                     let room = u32::from(content.rules.combat.max_drinks).saturating_sub(have);
                     let n = u32::from(count).min(room) as u16;
                     if n > 0 {
-                        let _ = self
+                        let left = self
                             .raid
                             .pack_mut(player, &content)
                             .add(Stack::found(drink, n), &content);
+                        if let Some(mut left) = left {
+                            let here = V3::at(self.heroes[hi].pos, self.heroes[hi].z);
+                            let most = content.items[drink].stack.max(1);
+                            while left.count > 0 {
+                                let part = left.count.min(most);
+                                left.count -= part;
+                                let pile = Stack {
+                                    count: part,
+                                    ..left
+                                };
+                                self.raid.drop_on_ground(here, pile, &content);
+                            }
+                        }
                     }
                     self.refresh_carry(player);
                 }

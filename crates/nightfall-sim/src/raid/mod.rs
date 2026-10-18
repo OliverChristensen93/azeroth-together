@@ -218,16 +218,18 @@ pub fn burden(load: f32, r: &RunRules) -> (f32, f32) {
     )
 }
 
-/// The drinks in `inv`, in any slot: what Conjure Water counts against `max_drinks` and what
+/// The drinks in `inv`'s backpack, the ones a hero can drink (not the safe slots or what they
+/// wear): what Conjure Water counts against `max_drinks` and what
 /// [`HeroFight::drinks`](crate::HeroFight::drinks) reports (capped there).
 pub(crate) fn drinks_in(inv: &Inventory, content: &Content) -> u32 {
     inv.stacks()
         .iter()
-        .filter(|(_, s)| {
-            content
-                .items
-                .get(usize::from(s.item))
-                .is_some_and(|d| d.kind == ItemKind::Drink)
+        .filter(|(at, s)| {
+            matches!(at, Place::Pack(_))
+                && content
+                    .items
+                    .get(usize::from(s.item))
+                    .is_some_and(|d| d.kind == ItemKind::Drink)
         })
         .map(|(_, s)| u32::from(s.count))
         .sum()
@@ -330,11 +332,12 @@ impl Raid {
         Some(content.items.get(usize::from(s.item))?.restore)
     }
 
-    /// Whether `player`'s backpack holds anything to eat or drink.
-    pub(crate) fn has_meal(&self, player: PlayerId, content: &Content) -> bool {
+    /// Whether `player`'s backpack holds a meal for them: food, or for a mana user a drink as
+    /// well. A drink alone is no meal for a hero who has no mana to drink it for.
+    pub(crate) fn has_meal(&self, player: PlayerId, mana_user: bool, content: &Content) -> bool {
         self.pack(player).is_some_and(|i| {
             i.first_of(ItemKind::Food, content).is_some()
-                || i.first_of(ItemKind::Drink, content).is_some()
+                || (mana_user && i.first_of(ItemKind::Drink, content).is_some())
         })
     }
 

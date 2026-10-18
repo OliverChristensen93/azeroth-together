@@ -1009,20 +1009,43 @@ fn drinks_of_any_kind_count_against_the_cap_and_the_shown_count_stops_at_it() {
 }
 
 #[test]
-fn conjuring_into_a_full_pack_loses_the_leftover_and_never_panics() {
+fn conjuring_into_a_full_pack_puts_the_drinks_on_the_ground_at_the_feet() {
     let mut w = world();
     join(&mut w, 0, "mage", 5.0, 5.0);
     // Four slots of rock, five to a slot: nothing is left to put a drink in.
     w.give_loadout(0, &loadout(&w, &[("rock", 20)], &[], &[]));
     assert!(w.pack(0).unwrap().first_empty(false).is_none());
     let water = w.content().ability("water").unwrap();
+    let conjured = item(&w, "conjured");
     w.land(0, water, None, None);
     let p = w.pack(0).unwrap();
-    assert_eq!(p.count_of(item(&w, "conjured")), 0);
+    assert_eq!(p.count_of(conjured), 0);
     assert_eq!(p.count_of(item(&w, "rock")), 20);
+    // Not carried, so not shown as carried; but they were made, and lie where the hero stands.
     assert_eq!(w.hero(0).unwrap().fight.drinks, 0);
-    // Room for one slot: the drinks arrive.
-    let mut inv = p.clone();
+    let piles: Vec<&Container> = w
+        .raid
+        .containers
+        .iter()
+        .filter(|c| c.holder == Holder::Pile)
+        .collect();
+    assert_eq!(piles.len(), 1);
+    assert!(piles[0].at.distance(V2::new(5.0, 5.0)) < 1e-4);
+    let held: Vec<Stack> = piles[0].stacks.iter().flatten().copied().collect();
+    assert_eq!(held, vec![Stack::found(conjured, 2)]);
+    // A second conjuring joins the same pile (a new slot), and with room in the pack none is
+    // put on the ground.
+    w.land(0, water, None, None);
+    let held: u32 = w
+        .raid
+        .containers
+        .iter()
+        .filter(|c| c.holder == Holder::Pile)
+        .flat_map(|c| c.stacks.iter().flatten())
+        .map(|s| u32::from(s.count))
+        .sum();
+    assert_eq!(held, 4);
+    let mut inv = w.pack(0).unwrap().clone();
     let at = inv.first_of(ItemKind::Material, w.content()).unwrap();
     inv.take(at);
     w.give_loadout(
@@ -1033,7 +1056,74 @@ fn conjuring_into_a_full_pack_loses_the_leftover_and_never_panics() {
         },
     );
     w.land(0, water, None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(conjured), 2);
+    assert_eq!(
+        w.raid
+            .containers
+            .iter()
+            .filter(|c| c.holder == Holder::Pile)
+            .flat_map(|c| c.stacks.iter().flatten())
+            .map(|s| u32::from(s.count))
+            .sum::<u32>(),
+        4
+    );
+}
+
+#[test]
+fn a_drink_in_a_safe_slot_is_neither_counted_nor_drunk() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    let water = item(&w, "water");
+    w.give_loadout(0, &loadout(&w, &[], &[], &[("water", 3)]));
+    assert_eq!(w.pack(0).unwrap().count_of(water), 3);
+    assert_eq!(w.hero(0).unwrap().fight.drinks, 0);
+    // No meal: the mage has only the safe slot's water, which the check does not see.
+    let eat = w.content().ability("eat").unwrap();
+    let hi = w.hero_slot(0).unwrap();
+    assert_eq!(
+        w.check(hi, eat, None, None).err(),
+        Some(crate::Refusal::NoFood)
+    );
+    // Eaten anyway (a stray landing), it drinks nothing and leaves the water where it is.
+    w.land(0, eat, None, None);
+    assert_eq!(w.combat.hero(0).unwrap().meal.unwrap().mana, 0.0);
+    assert_eq!(w.pack(0).unwrap().count_of(water), 3);
+    // And the cap for Conjure Water does not count it: a full 2 arrive.
+    w.land(0, w.content().ability("water").unwrap(), None, None);
     assert_eq!(w.pack(0).unwrap().count_of(item(&w, "conjured")), 2);
+    assert_eq!(w.hero(0).unwrap().fight.drinks, 2);
+}
+
+#[test]
+fn a_meal_for_a_rogue_is_food_and_for_a_mage_food_or_a_drink() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    join(&mut w, 1, "mage", 5.0, 5.0);
+    let eat = w.content().ability("eat").unwrap();
+    let may = |w: &World, p: PlayerId| {
+        let hi = w.hero_slot(p).unwrap();
+        w.check(hi, eat, None, None).is_ok()
+    };
+    // Only water: no meal for the rogue, a drink for the mage.
+    for p in [0, 1] {
+        w.give_loadout(p, &loadout(&w, &[("water", 1)], &[], &[]));
+    }
+    assert!(!may(&w, 0));
+    assert_eq!(
+        w.check(w.hero_slot(0).unwrap(), eat, None, None).err(),
+        Some(crate::Refusal::NoFood)
+    );
+    assert!(may(&w, 1));
+    // Food: a meal for both.
+    for p in [0, 1] {
+        w.give_loadout(p, &loadout(&w, &[("bread", 1)], &[], &[]));
+    }
+    assert!(may(&w, 0) && may(&w, 1));
+    // Nothing: no meal for either.
+    for p in [0, 1] {
+        w.give_loadout(p, &loadout(&w, &[], &[], &[]));
+    }
+    assert!(!may(&w, 0) && !may(&w, 1));
 }
 
 #[test]

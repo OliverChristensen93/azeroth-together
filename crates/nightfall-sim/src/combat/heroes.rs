@@ -112,7 +112,11 @@ impl World {
         }
         if a.has(|e| matches!(e, Effect::Eat { .. }))
             && !content.rules.run.free_meal
-            && !self.raid.has_meal(hero.player, content)
+            && !self.raid.has_meal(
+                hero.player,
+                content.classes[hero.class].power == MANA,
+                content,
+            )
         {
             return Err(Refusal::NoFood);
         }
