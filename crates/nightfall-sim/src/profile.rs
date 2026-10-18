@@ -773,7 +773,8 @@ mod tests {
             "(stsh: [(item: \"gem\", count: 1)])",
             "(stash: [(item: \"gem\", count: 1, extra: 2)])",
             "(loadout: (pak: []))",
-            "(recovery: Some((map: \"x\", at: (0.0, 0.0, 0.0), items: [], why: 1)))",
+            "(recovery: [(map: \"x\", at: (0.0, 0.0, 0.0), items: [], why: 1)])",
+            "(in_raid: Some((map: \"x\", brougt: ())))",
         ] {
             assert!(
                 matches!(Profile::from_ron(text), Err(ProfileError::Parse(_))),
@@ -989,6 +990,28 @@ mod tests {
         assert!(p.settle_missing(&c));
         assert_eq!(p.recovery.len(), 1);
         assert_eq!(p.recovery[0].map, "elsewhere");
+    }
+
+    #[test]
+    fn a_missing_raid_uses_up_the_body_on_the_raids_own_map() {
+        let c = content("");
+        let mut p = Profile {
+            recovery: vec![
+                body("test", 1.0, vec![stack("gem", 1)]),
+                body("elsewhere", 2.0, vec![stack("gem", 2)]),
+            ],
+            in_raid: Some(SavedRaid {
+                map: "elsewhere".into(),
+                brought: SavedInventory::default(),
+            }),
+            ..Profile::default()
+        };
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.recovery.len(), 1);
+        assert_eq!(
+            p.recovery[0].map, "test",
+            "the raid's own map is used, not the content's"
+        );
     }
 
     #[test]
