@@ -16,8 +16,11 @@
 
 mod actions;
 mod armory;
+mod bossintro;
+mod cooldowns;
 mod dev;
 mod dress;
+mod flair;
 mod gear_look;
 mod gear_menu;
 mod gear_run;
@@ -28,9 +31,12 @@ mod inventory;
 mod runpanel;
 mod levelup;
 mod lobby;
+mod marks;
 mod menu;
+mod obstacles;
 mod meter;
 mod party;
+mod pause;
 mod session;
 mod talents;
 mod tooltip;
@@ -316,6 +322,9 @@ pub(super) struct LocalInput {
     pub(super) banish: Option<u8>,
     /// Switch on the dormant gear piece in this slot ([`gear_run`]).
     pub(super) gear_on: Option<u8>,
+    /// The game menu is open ([`pause`]), or a boss's entrance ([`bossintro`]): the run waits.
+    pub(super) menu: bool,
+    pub(super) boss_intro: bool,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -331,10 +340,13 @@ impl Plugin for TogetherPlugin {
             .insert_resource(menu::Selection::new(&content()))
             .init_resource::<StartRequest>()
             .init_resource::<EndRun>()
+            .init_resource::<pause::LeaveRun>()
+            .init_resource::<bossintro::BossIntro>()
             .init_resource::<session::Net>()
             .init_resource::<lobby::JoinDialog>()
             .init_resource::<dev::DevSettings>()
             .init_resource::<inventory::SheetOpen>()
+            .init_resource::<inventory::TalentOpen>()
             .init_resource::<hazards::Pending>()
             .init_resource::<levelup::BanishMode>()
             .init_resource::<hazards::Telegraphs>()
@@ -354,6 +366,9 @@ impl Plugin for TogetherPlugin {
                     hazards::setup,
                     runpanel::setup,
                     gear_tip::setup,
+                    bossintro::setup,
+                    cooldowns::setup,
+                    flair::setup,
                     menu::spawn_root,
                 ),
             )
@@ -380,6 +395,8 @@ impl Plugin for TogetherPlugin {
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
+            .add_systems(Update, cooldowns::refresh)
+            .add_systems(Update, flair::animate)
             // Equipment: the stash on disk, icons, tooltips and the run's gear bar.
             .add_systems(
                 Update,
@@ -423,11 +440,26 @@ impl Plugin for TogetherPlugin {
                     .run_if(in_state(Phase::Menu)),
             )
             .add_systems(OnExit(Phase::Menu), menu::clear_preview)
-            .add_systems(OnEnter(Phase::Menu), hazards::clear)
+            .add_systems(OnEnter(Phase::Menu), (hazards::clear, marks::clear_minimap))
+            .add_systems(OnExit(Phase::Playing), reset_input)
+            // Where things are: the minimap's marks, the arena's fence, shrines' circles.
+            .add_systems(
+                Update,
+                (
+                    marks::fill_minimap,
+                    marks::build_fence,
+                    marks::shrine_circles,
+                    obstacles::scan,
+                )
+                    .after(WorldStage::Input)
+                    .run_if(playing()),
+            )
             // The run.
             .add_systems(
                 Update,
                 (
+                    pause::game_menu,
+                    bossintro::refresh,
                     read_keys,
                     defend,
                     feed_pose,
@@ -436,6 +468,7 @@ impl Plugin for TogetherPlugin {
                     view::apply_events,
                     hazards::show,
                     view::sync,
+                    view::unhull_carried_banners,
                     view::write_vitals,
                     hazards::status_auras,
                     gear_look::dress_heroes,
@@ -592,7 +625,7 @@ fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState>>) {
 
 /// `TOGETHER_AUTOPLAY=1`: the local hero takes the first card and walks to the shrines and
 /// chests ([`autowalk`]), so a test run plays on without anyone at the keys.
-fn autoplay() -> bool {
+pub(super) fn autoplay() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("TOGETHER_AUTOPLAY").is_some())
 }
@@ -877,6 +910,7 @@ fn step_sim(
             banish: input.banish.take(),
             gear_on: input.gear_on.take(),
             pose: input.pose,
+            menu: input.menu || input.boss_intro,
             ..Default::default()
         };
         let heard = session::client_exchange(&mut net, held);
@@ -912,6 +946,7 @@ fn step_sim(
                 banish: input.banish.take(),
                 gear_on: input.gear_on.take(),
                 pose: Some(pose),
+                menu: input.menu || input.boss_intro,
                 ..Default::default()
             };
             sim.world.set_input(sim.me, held);
@@ -922,12 +957,17 @@ fn step_sim(
         }
     }
     // Cards up (or the run over): the world holds still, animations and the hero included.
-    let hold = sim.world.paused() || sim.world.game_over();
+    let hold = sim.world.held() || sim.world.game_over();
     if hold && !virtual_time.is_paused() {
         virtual_time.pause();
     } else if !hold && virtual_time.is_paused() {
         virtual_time.unpause();
     }
+}
+
+/// A run's input does not carry into the next.
+fn reset_input(mut input: ResMut<LocalInput>) {
+    *input = LocalInput::default();
 }
 
 /// A joined client's run ended from outside (the host ended it, or the connection went): the
@@ -953,8 +993,14 @@ fn back_to_menu(
     mut over_since: Local<Option<f32>>,
     mut net: ResMut<session::Net>,
     mut end: ResMut<EndRun>,
+    mut leave: ResMut<pause::LeaveRun>,
 ) {
-    let ended_outside = std::mem::take(&mut end.0);
+    // Main Menu from the game menu: the run ends here, for a host's party too.
+    let leaving = std::mem::take(&mut leave.0);
+    if leaving {
+        pause::leave_session(&mut net);
+    }
+    let ended_outside = std::mem::take(&mut end.0) || leaving;
     if !ended_outside {
         if !sim.world.game_over() || net.is_client() {
             *over_since = None;

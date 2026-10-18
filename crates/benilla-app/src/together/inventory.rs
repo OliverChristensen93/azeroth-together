@@ -1,7 +1,9 @@
 //! What the hero carries and what it adds up to: a strip of its tomes and items under WoW's
-//! player frame, each with its tooltip under the mouse ([`super::tooltip`]), and the stat sheet,
-//! opened by the strip's Stats button or Tab. Both stay above the level-up screen, so a tome or
-//! item card can be weighed against what the hero has.
+//! player frame, each with its tooltip under the mouse ([`super::tooltip`]), the stat sheet,
+//! opened by the strip's Stats button or Tab, and beside it the talent sheet, opened by its
+//! Talents button or N: every bonus the hero's talents give, each kind added up into one line.
+//! The stat sheet opens by itself while cards are up, and both stay above the level-up screen,
+//! so a card can be weighed against what the hero has.
 
 use bevy::prelude::*;
 use together_sim::{Hero, Item, Stat, BASE_CRIT};
@@ -26,6 +28,20 @@ pub(super) struct Strip;
 /// The Stats button, which opens and closes the sheet.
 #[derive(Component)]
 pub(super) struct SheetButton;
+
+/// The Talents button, its sheet and the sheet's text.
+#[derive(Component)]
+pub(super) struct TalentButton;
+
+#[derive(Component)]
+pub(super) struct TalentSheet;
+
+#[derive(Component)]
+pub(super) struct TalentLines;
+
+/// Whether the talent sheet is open.
+#[derive(Resource, Default)]
+pub(super) struct TalentOpen(bool);
 
 #[derive(Component)]
 pub(super) struct Sheet;
@@ -87,31 +103,37 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 ..default()
             })
             .with_children(|row| {
-                row.spawn((
-                    SheetButton,
-                    Button,
-                    Node {
-                        height: Val::Px(ICON),
-                        padding: UiRect::horizontal(Val::Px(7.0)),
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.05, 0.04, 0.02, 0.85)),
-                    BorderColor::all(Color::srgb(0.6, 0.5, 0.3)),
-                ))
-                .with_children(|b| {
-                    b.spawn((
-                        Text::new("Stats"),
-                        TextFont {
-                            font: font.clone(),
-                            font_size: 11.0,
+                for (title, talents) in [("Stats", false), ("Talents", true)] {
+                    let mut b = row.spawn((
+                        Button,
+                        Node {
+                            height: Val::Px(ICON),
+                            padding: UiRect::horizontal(Val::Px(7.0)),
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
                             ..default()
                         },
-                        TextColor(GOLD),
-                        TextShadow::default(),
+                        BackgroundColor(Color::srgba(0.05, 0.04, 0.02, 0.85)),
+                        BorderColor::all(Color::srgb(0.6, 0.5, 0.3)),
                     ));
-                });
+                    if talents {
+                        b.insert(TalentButton);
+                    } else {
+                        b.insert(SheetButton);
+                    }
+                    b.with_children(|b| {
+                        b.spawn((
+                            Text::new(title),
+                            TextFont {
+                                font: font.clone(),
+                                font_size: 11.0,
+                                ..default()
+                            },
+                            TextColor(GOLD),
+                            TextShadow::default(),
+                        ));
+                    });
+                }
                 row.spawn((
                     Strip,
                     Node {
@@ -123,26 +145,51 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                 ));
             });
-            root.spawn((
-                Sheet,
-                Node {
-                    align_self: AlignSelf::FlexStart,
-                    padding: UiRect::all(Val::Px(8.0)),
-                    column_gap: Val::Px(14.0),
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.02, 0.02, 0.07, 0.92)),
-                BorderColor::all(Color::srgb(0.6, 0.6, 0.6)),
-                Visibility::Hidden,
-            ))
-            .with_children(|s| {
-                s.spawn((label(&font, 11.0, GREY), SheetNames));
-                s.spawn((
-                    label(&font, 11.0, Color::WHITE),
-                    TextLayout::new_with_justify(Justify::Right),
-                    SheetValues,
-                ));
+            // The two sheets side by side; a closed one takes no room.
+            root.spawn(Node {
+                column_gap: Val::Px(6.0),
+                align_items: AlignItems::FlexStart,
+                ..default()
+            })
+            .with_children(|panels| {
+                panels
+                    .spawn((
+                        Sheet,
+                        Node {
+                            padding: UiRect::all(Val::Px(8.0)),
+                            column_gap: Val::Px(14.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.02, 0.07, 0.92)),
+                        BorderColor::all(Color::srgb(0.6, 0.6, 0.6)),
+                    ))
+                    .with_children(|s| {
+                        s.spawn((label(&font, 11.0, GREY), SheetNames));
+                        s.spawn((
+                            label(&font, 11.0, Color::WHITE),
+                            TextLayout::new_with_justify(Justify::Right),
+                            SheetValues,
+                        ));
+                    });
+                panels
+                    .spawn((
+                        TalentSheet,
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(8.0)),
+                            max_width: Val::Px(300.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.02, 0.02, 0.07, 0.92)),
+                        BorderColor::all(Color::srgb(0.6, 0.5, 0.3)),
+                    ))
+                    .with_children(|s| {
+                        s.spawn((label(&font, 11.0, Color::WHITE), TalentLines));
+                    });
             });
         });
     commands.insert_resource(InventoryFont(font));
@@ -161,6 +208,7 @@ fn pct(v: f32) -> String {
 /// The stat sheet's lines: each stat's name and its total, from tomes, items and pacts alike.
 fn sheet(hero: &Hero) -> Vec<(&'static str, String)> {
     let s = &hero.stats;
+    let base_regen = content().classes[hero.class].base_regen;
     let projectiles = s.get(Stat::Projectiles).round();
     vec![
         (
@@ -169,7 +217,7 @@ fn sheet(hero: &Hero) -> Vec<(&'static str, String)> {
         ),
         (
             "Regeneration",
-            format!("{:.1} a second", s.get(Stat::Regen)),
+            format!("{:.1} a second", base_regen + s.get(Stat::Regen)),
         ),
         (
             "Armor",
@@ -257,12 +305,18 @@ pub(super) fn refresh(
     keys: Res<ButtonInput<KeyCode>>,
     font: Option<Res<InventoryFont>>,
     mut open: ResMut<SheetOpen>,
-    button: Query<&Interaction, (Changed<Interaction>, With<SheetButton>)>,
-    mut root: Query<&mut Visibility, (With<InventoryRoot>, Without<Sheet>)>,
-    mut sheet_vis: Query<&mut Visibility, (With<Sheet>, Without<InventoryRoot>)>,
+    mut talents_open: ResMut<TalentOpen>,
+    (button, talent_button): (
+        Query<&Interaction, (Changed<Interaction>, With<SheetButton>)>,
+        Query<&Interaction, (Changed<Interaction>, With<TalentButton>)>,
+    ),
+    mut root: Query<&mut Visibility, With<InventoryRoot>>,
+    mut sheet_node: Query<&mut Node, (With<Sheet>, Without<TalentSheet>)>,
+    mut talent_node: Query<&mut Node, (With<TalentSheet>, Without<Sheet>)>,
     strip: Query<Entity, With<Strip>>,
-    mut names: Query<&mut Text, (With<SheetNames>, Without<SheetValues>)>,
-    mut values: Query<&mut Text, (With<SheetValues>, Without<SheetNames>)>,
+    mut names: Query<&mut Text, (With<SheetNames>, Without<SheetValues>, Without<TalentLines>)>,
+    mut values: Query<&mut Text, (With<SheetValues>, Without<SheetNames>, Without<TalentLines>)>,
+    mut talent_text: Query<&mut Text, (With<TalentLines>, Without<SheetNames>, Without<SheetValues>)>,
     mut shown: Local<Option<(Vec<(Stat, u8)>, Vec<(Item, u8)>)>>,
 ) {
     let hero = (*phase.get() == Phase::Playing)
@@ -286,17 +340,43 @@ pub(super) fn refresh(
     if keys.just_pressed(KeyCode::Tab) || button.iter().any(|i| *i == Interaction::Pressed) {
         open.0 = !open.0;
     }
-    let sheet_want = if open.0 {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    for mut v in &mut sheet_vis {
-        if *v != sheet_want {
-            *v = sheet_want;
+    if keys.just_pressed(KeyCode::KeyN)
+        || talent_button.iter().any(|i| *i == Interaction::Pressed)
+    {
+        talents_open.0 = !talents_open.0;
+    }
+    // Cards up: the sheet is open too, to weigh them against, and closes again after.
+    let stats_open = open.0 || (hero.alive && !hero.offers.is_empty());
+    let display = |on: bool| if on { Display::Flex } else { Display::None };
+    if let Ok(mut node) = sheet_node.single_mut() {
+        if node.display != display(stats_open) {
+            node.display = display(stats_open);
         }
     }
-    if open.0 {
+    if let Ok(mut node) = talent_node.single_mut() {
+        if node.display != display(talents_open.0) {
+            node.display = display(talents_open.0);
+        }
+    }
+    if talents_open.0 {
+        let lines = hero.talents.bonuses.summary();
+        let text = if lines.is_empty() {
+            "No talents taken yet.\nSpend talent points on Talents at the menu.".to_string()
+        } else {
+            let s = if hero.talents.nodes == 1 { "" } else { "s" };
+            format!(
+                "Talents: {} node{s}\n\n{}",
+                hero.talents.nodes,
+                lines.join("\n")
+            )
+        };
+        if let Ok(mut t) = talent_text.single_mut() {
+            if t.0 != text {
+                t.0 = text;
+            }
+        }
+    }
+    if stats_open {
         let lines = sheet(hero);
         let n = lines.iter().map(|(n, _)| *n).collect::<Vec<_>>().join("\n");
         let v = lines

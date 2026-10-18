@@ -595,6 +595,8 @@ pub struct Snapshot {
     pub next_boss: f32,
     #[serde(default)]
     pub menu_pause: bool,
+    #[serde(default)]
+    pub surround: f32,
     pub buffs: Vec<(PowerUp, f32)>,
     pub heroes: Vec<Hero>,
     pub enemies: Vec<EnemyState>,
@@ -1051,6 +1053,7 @@ impl World {
             difficulty: self.difficulty,
             next_boss: self.next_boss,
             menu_pause: self.menu_pause,
+            surround: self.surround,
             buffs: self.buffs.clone(),
             heroes: self.heroes.clone(),
             enemies: self
@@ -1090,6 +1093,7 @@ impl World {
         self.difficulty = snapshot.difficulty;
         self.next_boss = snapshot.next_boss;
         self.menu_pause = snapshot.menu_pause;
+        self.surround = snapshot.surround;
         self.buffs = snapshot.buffs;
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;

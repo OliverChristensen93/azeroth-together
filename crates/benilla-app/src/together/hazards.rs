@@ -13,7 +13,7 @@ use together_sim::{Event, Shape, V2};
 use super::{content, units, view::Views, Phase, Sim};
 
 /// The boss bar's width, in the 768-unit canvas.
-const BAR_W: f32 = 360.0;
+const BAR_W: f32 = 260.0;
 /// How far above the ground a telegraph lies, so it is not lost in the grass, and its edge's
 /// width in yards.
 const LIFT: f32 = 0.12;
@@ -273,34 +273,35 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             TextLayout::new_with_justify(Justify::Center),
         )
     };
-    // Under the run's status line, top centre.
+    // Top centre, small: its name and health. Hovered, what it does drops down under it; clicked,
+    // it is our target.
     commands
         .spawn((
             BossBar,
-            // Top centre, in a frame like the run panel's.
+            Button,
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Percent(50.0),
-                top: Val::Px(6.0),
-                width: Val::Px(BAR_W + 32.0),
-                margin: UiRect::left(Val::Px(-(BAR_W + 32.0) / 2.0)),
+                top: Val::Px(4.0),
+                width: Val::Px(BAR_W + 16.0),
+                margin: UiRect::left(Val::Px(-(BAR_W + 16.0) / 2.0)),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(3.0),
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                row_gap: Val::Px(2.0),
+                padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.88)),
+            BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.82)),
             BorderColor::all(Color::srgb(0.72, 0.6, 0.32)),
             Visibility::Hidden,
         ))
         .with_children(|b| {
-            b.spawn((text(14.0, Color::srgb(1.0, 0.82, 0.0)), BossName));
+            b.spawn((text(12.0, Color::srgb(1.0, 0.82, 0.0)), BossName));
             b.spawn((
                 Node {
                     width: Val::Px(BAR_W),
-                    height: Val::Px(12.0),
+                    height: Val::Px(9.0),
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
@@ -321,7 +322,9 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             b.spawn((
                 text(10.0, Color::WHITE),
                 Node {
-                    max_width: Val::Px(BAR_W + 8.0),
+                    max_width: Val::Px(BAR_W + 4.0),
+                    margin: UiRect::top(Val::Px(3.0)),
+                    display: Display::None,
                     ..default()
                 },
                 BossHint,
@@ -329,15 +332,18 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         });
 }
 
-/// The boss bar shown while a boss lives: its name, health and what it does.
-#[allow(clippy::type_complexity)]
+/// The boss bar shown while a boss lives: its name and health; hovered, what it does; clicked,
+/// the boss becomes our target.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn boss_bar(
     phase: Res<State<Phase>>,
     sim: Option<Res<Sim>>,
-    mut bar: Query<&mut Visibility, With<BossBar>>,
-    mut fill: Query<&mut Node, With<BossFill>>,
+    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    mut bar: Query<(&mut Visibility, &Interaction), With<BossBar>>,
+    mut fill: Query<&mut Node, (With<BossFill>, Without<BossHint>)>,
     mut name: Query<&mut Text, (With<BossName>, Without<BossHint>)>,
-    mut hint: Query<&mut Text, (With<BossHint>, Without<BossName>)>,
+    mut hint: Query<(&mut Text, &mut Node), (With<BossHint>, Without<BossName>, Without<BossFill>)>,
+    mut was: Local<Interaction>,
 ) {
     let boss = (*phase.get() == Phase::Playing)
         .then_some(())
@@ -348,15 +354,26 @@ pub(super) fn boss_bar(
     } else {
         Visibility::Hidden
     };
-    for mut v in &mut bar {
+    let mut hovered = false;
+    let mut clicked = false;
+    for (mut v, interaction) in &mut bar {
         if *v != want {
             *v = want;
         }
+        hovered = *interaction != Interaction::None;
+        clicked = *interaction == Interaction::Pressed && *was != Interaction::Pressed;
+        *was = *interaction;
     }
     let Some(boss) = boss else {
         return;
     };
     let def = &content().enemies[boss.def];
+    if clicked {
+        if let Some(script) = script {
+            // WoW's own targeting by name, exact: the TargetFrame takes it as a click would.
+            let _ = script.run(&format!("TargetByName({:?}, 1)", def.name));
+        }
+    }
     let share = (boss.hp / boss.max_hp.max(1.0)).clamp(0.0, 1.0);
     if let Ok(mut node) = fill.single_mut() {
         node.width = Val::Percent(share * 100.0);
@@ -367,18 +384,14 @@ pub(super) fn boss_bar(
             t.0 = title;
         }
     }
-    let sentence = if def.hint.is_empty() {
-        def.mechanics
-            .iter()
-            .map(|m| m.hint())
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        def.hint.clone()
-    };
-    if let Ok(mut t) = hint.single_mut() {
+    let sentence = super::bossintro::mechanics_text(def);
+    if let Ok((mut t, mut node)) = hint.single_mut() {
         if t.0 != sentence {
             t.0 = sentence;
+        }
+        let display = if hovered { Display::Flex } else { Display::None };
+        if node.display != display {
+            node.display = display;
         }
     }
 }

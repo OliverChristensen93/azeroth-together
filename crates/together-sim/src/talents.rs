@@ -762,6 +762,77 @@ impl TalentBonuses {
         *self == TalentBonuses::default()
     }
 
+    /// Everything it gives, one line per kind of bonus with every node of that kind added up
+    /// (three +1% damage nodes read "+3% damage"), keystones last: the run's talent overview.
+    pub fn summary(&self) -> Vec<String> {
+        let mut effects: Vec<TalentEffect> = Vec::new();
+        // Keystones' own stats are in `stats` too; their lines say them, so leave them out here.
+        let mut stats = self.stats.clone();
+        for k in &self.keystones {
+            for &(s, v) in k.stats() {
+                if let Some(x) = stats.iter_mut().find(|(t, _)| *t == s) {
+                    x.1 -= v;
+                }
+            }
+        }
+        effects.extend(
+            stats
+                .iter()
+                .filter(|(_, v)| v.abs() > 1e-4)
+                .map(|&(s, v)| TalentEffect::Stat(s, v)),
+        );
+        effects.extend(self.tagged.iter().map(|&(t, b, v)| TalentEffect::Tagged(t, b, v)));
+        effects.extend(
+            self.hybrid
+                .iter()
+                .map(|&(a, b, x, v)| TalentEffect::Hybrid(a, b, x, v)),
+        );
+        effects.extend(self.pairs.iter().map(|&(a, b, v)| TalentEffect::Pair(a, b, v)));
+        effects.extend(self.crit_burn.iter().map(|&(t, v)| TalentEffect::CritBurn(t, v)));
+        let scalars = [
+            (self.chill_freeze, TalentEffect::ChillFreeze as fn(f32) -> TalentEffect),
+            (self.frozen_crit, TalentEffect::FrozenCrit),
+            (self.thermal, TalentEffect::Thermal),
+            (self.execute, TalentEffect::Execute),
+            (self.leech, TalentEffect::Leech),
+            (self.kill_haste, TalentEffect::KillHaste),
+        ];
+        effects.extend(
+            scalars
+                .into_iter()
+                .filter(|(v, _)| *v > 1e-4)
+                .map(|(v, make)| make(v)),
+        );
+        effects.extend(self.crit_streak.iter().map(|&t| TalentEffect::CritStreak(t)));
+        effects.extend(
+            self.offer_weight
+                .iter()
+                .map(|&(t, v)| TalentEffect::OfferWeight(t, v)),
+        );
+        effects.extend(
+            self.augment_weight
+                .iter()
+                .map(|&(a, v)| TalentEffect::AugmentWeight(a, v)),
+        );
+        effects.extend(
+            self.unlocks
+                .iter()
+                .map(|&(a, t)| TalentEffect::Unlock(a, t.iter().collect())),
+        );
+        if self.rerolls > 0 {
+            effects.push(TalentEffect::Rerolls(self.rerolls));
+        }
+        if self.gold > 0 {
+            effects.push(TalentEffect::Gold(self.gold));
+        }
+        let mut lines: Vec<String> = effects.iter().flat_map(|e| e.lines()).collect();
+        for k in &self.keystones {
+            lines.push(format!("{} (keystone):", k.name()));
+            lines.extend(k.lines().into_iter().map(|l| format!("  {l}")));
+        }
+        lines
+    }
+
     pub fn has(&self, k: Keystone) -> bool {
         self.keystones.contains(&k)
     }
@@ -985,6 +1056,18 @@ impl TalentProfile {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_adds_up_nodes_of_one_kind() {
+        let mut b = TalentBonuses::default();
+        for _ in 0..3 {
+            b.add(&TalentEffect::Stat(Stat::Damage, 0.01));
+        }
+        b.add(&TalentEffect::Rerolls(1));
+        let lines = b.summary();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("3%"), "{lines:?}");
+    }
 
     /// A small web: two classes, a ring of four, and a branch.
     ///

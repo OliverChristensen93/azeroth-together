@@ -48,7 +48,7 @@ pub(super) struct MoreText;
 
 /// A card, by its index in the hand.
 #[derive(Component)]
-pub(super) struct CardButton(u8);
+pub(super) struct CardButton(pub(super) u8);
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HandButton {
@@ -138,7 +138,8 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),
+            // The dimming is under it, with the rays ([`super::flair`]).
+            BackgroundColor(Color::NONE),
             GlobalZIndex(300),
             Visibility::Hidden,
         ))

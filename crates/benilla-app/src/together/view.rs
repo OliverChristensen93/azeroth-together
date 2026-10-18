@@ -13,7 +13,7 @@ use benilla_world::world_point::{Subject, WorldPoint};
 use bevy::prelude::*;
 use together_sim::{
     Event, InteractState, InteractableKind, PickupKind, PlayerId, PotLoot, PowerUp, Target,
-    ELITE_SCALE, V2,
+    CHAMPION_SCALE, ELITE_SCALE, V2,
 };
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
@@ -129,6 +129,10 @@ const ELITE_ENTRY_BASE: u32 = 0x8000;
 
 /// Creature entries of bosses, the same way: ranked boss, which gives theirs a skull.
 const BOSS_ENTRY_BASE: u32 = 0xC000;
+
+/// Creature entries of champions: ranked rare elite, a silver dragon, and titled "Champion".
+const CHAMPION_ENTRY_BASE: u32 = 0xA000;
+const RANK_RARE_ELITE: u32 = 2;
 
 /// `CreatureTemplate.rank` of an elite and of a boss.
 const RANK_ELITE: u32 = 1;
@@ -322,6 +326,9 @@ pub(super) fn apply_events(
             | Event::ChallengeWon { .. }
             | Event::BossCame { .. }
             | Event::BossDied { .. }
+            | Event::Surrounded { .. }
+            | Event::ChampionCame { .. }
+            | Event::ChampionDied { .. }
             | Event::EscortDone { .. } => {}
             Event::PotBroken { by, loot, .. } => {
                 // What came out, over whoever broke it: everyone sees what a friend found.
@@ -505,8 +512,15 @@ pub(super) fn sync(
         let def = &content.enemies[enemy.def];
         // One creature template per enemy kind, and one more for its elites: the entry names it.
         let base = enemy.def as u32 + 1;
+        let champion = world.champions.contains(&enemy.id);
         let (entry, rank, scale) = if enemy.boss {
             (BOSS_ENTRY_BASE + base, RANK_BOSS, def.scale)
+        } else if champion {
+            (
+                CHAMPION_ENTRY_BASE + base,
+                RANK_RARE_ELITE,
+                def.scale * ELITE_SCALE * CHAMPION_SCALE,
+            )
         } else if enemy.elite {
             (ELITE_ENTRY_BASE + base, RANK_ELITE, def.scale * ELITE_SCALE)
         } else {
@@ -517,7 +531,7 @@ pub(super) fn sync(
                 entry,
                 Some(CreatureRecord {
                     name: def.name.clone(),
-                    subname: None,
+                    subname: champion.then(|| "Champion".to_string()),
                     creature_type: 0,
                     pet_family: 0,
                     rank,
@@ -753,6 +767,31 @@ fn sync_shrines(
         keep
     });
 }
+/// A carried banner's model rides on its carrier, so its hull would sit around the hero's head
+/// and the camera's sweep would snap the camera in to first person: while carried it collides
+/// with nothing.
+pub(super) fn unhull_carried_banners(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    views: Res<Views>,
+    hulls: Query<(), With<avian3d::prelude::Collider>>,
+) {
+    for it in &sim.world.interactables {
+        if !matches!(it.state, InteractState::Escort { .. }) {
+            continue;
+        }
+        let Some(view) = views.interactables.get(&it.id) else {
+            continue;
+        };
+        if hulls.contains(view.model) {
+            commands.entity(view.model).remove::<(
+                avian3d::prelude::Collider,
+                avian3d::prelude::RigidBody,
+            )>();
+        }
+    }
+}
+
 /// Whether a spot is dry ground in the open: `None` until the terrain under it has loaded.
 fn usable(world_point: &WorldPoint, at: V2) -> Option<bool> {
     let probe = units::ground_to_bevy(at, 0.0);

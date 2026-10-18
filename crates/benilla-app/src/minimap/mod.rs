@@ -13,6 +13,8 @@ pub(crate) mod blips;
 /// Where a party member is, shared with the world map so the two surfaces never disagree.
 pub(crate) use blips::party_member_pos;
 mod composite;
+mod extras;
+pub(crate) use extras::{ExtraBlip, ExtraRing, ExtraShape, MinimapExtras};
 mod interior;
 /// The minimap ping, engine-owned and pinned to a world point.
 mod ping;
@@ -340,7 +342,7 @@ fn emit_minimap(
     world: benilla_world::world_point::WorldPoint,
     asset_server: Res<AssetServer>,
     death_net: Res<crate::death::DeathNet>,
-    blip_inputs: blips::BlipInputs,
+    (blip_inputs, extras): (blips::BlipInputs, Res<MinimapExtras>),
     mut composite: ResMut<composite::MinimapComposite>,
     rig: Option<Res<composite::CompositeRig>>,
     mut quads: ResMut<UiQuads>,
@@ -676,6 +678,15 @@ fn emit_minimap(
                 &mut quads,
             );
         }
+        // A game mode's own blips and rings ([`extras`]), under the player arrow.
+        extras::emit(
+            ctx,
+            &extras,
+            assets.object_icons.as_ref(),
+            assets.poi.as_ref(),
+            mask.as_ref(),
+            &mut quads,
+        );
     }
 
     // The player arrow: centered, spun to the facing. WoW orientation 0 = north (screen up),
@@ -876,6 +887,7 @@ impl Plugin for MinimapPlugin {
             .init_resource::<MinimapInside>()
             .init_resource::<MinimapPing>()
             .init_resource::<composite::MinimapComposite>()
+            .init_resource::<MinimapExtras>()
             .add_systems(Startup, setup_minimap.after(AssetSet::Open))
             .add_systems(Startup, composite::setup_composite)
             .add_systems(
