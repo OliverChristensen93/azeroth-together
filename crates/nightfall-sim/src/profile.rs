@@ -363,7 +363,7 @@ impl Profile {
                 self.stash_add(st, content);
             }
         }
-        let older = self.recovery.take().filter(|r| r.map != content.map.key);
+        let older = self.take_body_here(content);
         self.recovery = match &o.recovery {
             Some(r) => Some(SavedRecovery {
                 map: r.map.clone(),
@@ -398,14 +398,26 @@ impl Profile {
         }
         inv.clear_found();
         self.loadout = saved_inventory(&inv, content);
-        if self
-            .recovery
-            .as_ref()
-            .is_some_and(|r| r.map == content.map.key)
-        {
-            self.recovery = None;
-        }
+        self.recovery = self.take_body_here(content);
         true
+    }
+
+    /// This map's body leaves the profile, its one chance used up; the body of another map is
+    /// handed back to stay. What the chance never covered is not lost with it: items the content
+    /// does not know, or a body whose place is not a number, were never offered, so they go to
+    /// the stash.
+    fn take_body_here(&mut self, content: &Content) -> Option<SavedRecovery> {
+        let body = self.recovery.take()?;
+        if body.map != content.map.key {
+            return Some(body);
+        }
+        let placed = body.at.0.is_finite() && body.at.1.is_finite() && body.at.2.is_finite();
+        for s in body.items {
+            if !placed || content.item(&s.item).is_none() {
+                self.stash_add(s, content);
+            }
+        }
+        None
     }
 
     pub fn stash_capacity(&self, content: &Content) -> usize {
@@ -958,6 +970,55 @@ mod tests {
         p.begin_raid(0, &c);
         p.settle(&out, &c);
         assert_eq!(p.recovery.as_ref().unwrap().map, "elsewhere");
+    }
+
+    #[test]
+    fn a_body_that_is_dropped_keeps_what_it_never_offered() {
+        let body = |at: f32| SavedRecovery {
+            map: "test".into(),
+            at: (at, 0.0, 0.0),
+            items: vec![stack("dragon_egg", 1), stack("gem", 2)],
+        };
+        let c = content("");
+        let out = outcome(
+            &c,
+            Inventory::new(&c),
+            Vec::new(),
+            Fate::Extracted { exit: "x".into() },
+        );
+        // Dropped by settle: the egg was never offered, the gems were and had their chance.
+        let mut p = fresh();
+        p.recovery = Some(body(1.0));
+        p.begin_raid(0, &c);
+        assert!(p.settle(&out, &c));
+        assert_eq!(p.recovery, None);
+        assert_eq!(p.stash, vec![stack("dragon_egg", 1)]);
+        // Dropped by settle_missing: the same.
+        let mut p = fresh();
+        p.recovery = Some(body(1.0));
+        p.begin_raid(0, &c);
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.recovery, None);
+        assert_eq!(p.stash, vec![stack("dragon_egg", 1)]);
+        // A body with no place was never offered at all: everything in it is kept.
+        let mut p = fresh();
+        p.recovery = Some(body(f32::NAN));
+        p.begin_raid(0, &c);
+        assert!(p.settle(&out, &c));
+        assert_eq!(p.stash, vec![stack("dragon_egg", 1), stack("gem", 2)]);
+        // A body replaced by a new death is dropped the same way.
+        let mut p = fresh();
+        p.recovery = Some(body(1.0));
+        p.begin_raid(0, &c);
+        let mut died = outcome(&c, Inventory::new(&c), Vec::new(), Fate::Died);
+        died.recovery = Some(Recovery {
+            map: "test".into(),
+            at: V3::new(5.0, 6.0, 7.0),
+            items: vec![Stack::new(KNIFE, 1)],
+        });
+        assert!(p.settle(&died, &c));
+        assert_eq!(p.stash, vec![stack("dragon_egg", 1)]);
+        assert_eq!(p.recovery.unwrap().items, vec![stack("knife", 1)]);
     }
 
     #[test]
