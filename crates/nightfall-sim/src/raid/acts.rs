@@ -267,8 +267,8 @@ impl World {
         if !lantern_kept {
             h.carry.lantern = None;
         }
-        // At most `max_drinks`: the most a hero is shown (and Conjure Water leaves them) carrying.
-        h.fight.drinks = drinks.min(u32::from(content.rules.combat.max_drinks)) as u8;
+        // The backpack's real count, saturated (the cap is Conjure Water's, not the display's).
+        h.fight.drinks = drinks.min(u32::from(u8::MAX)) as u8;
         // Never below 1, whatever the gear says, so a hero is never born dead by it.
         let max = (content.classes[h.class].base_hp + bonus.health).max(1.0);
         let change = max - h.max_hp;

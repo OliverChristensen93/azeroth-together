@@ -991,21 +991,27 @@ fn the_drinks_shown_follow_the_pack_through_conjuring_and_drinking() {
 }
 
 #[test]
-fn drinks_of_any_kind_count_against_the_cap_and_the_shown_count_stops_at_it() {
+fn drinks_of_any_kind_count_against_the_cap_and_the_shown_count_is_the_packs() {
     let mut w = world();
     join(&mut w, 0, "mage", 5.0, 5.0);
     let cap = u32::from(w.content().rules.combat.max_drinks);
-    // More drinks than may be shown: the display stops at the cap, the pack keeps them all.
+    let conjured = item(&w, "conjured");
+    // More drinks than the cap: the hero shows what the pack really holds.
     w.give_loadout(0, &loadout(&w, &[("water", 25)], &[], &[]));
     assert_eq!(w.pack(0).unwrap().count_of(item(&w, "water")), 25);
-    assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), cap);
-    // So conjuring adds none; with one fewer than the cap it adds one.
+    assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), 25);
+    // Conjuring above the cap adds none, and at it neither; one short of it, one.
     let water = w.content().ability("water").unwrap();
     w.land(0, water, None, None);
-    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "conjured")), 0);
-    w.give_loadout(0, &loadout(&w, &[("water", 19)], &[], &[]));
+    assert_eq!(w.pack(0).unwrap().count_of(conjured), 0);
+    w.give_loadout(0, &loadout(&w, &[("water", cap as u16)], &[], &[]));
+    assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), cap);
     w.land(0, water, None, None);
-    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "conjured")), 1);
+    assert_eq!(w.pack(0).unwrap().count_of(conjured), 0);
+    w.give_loadout(0, &loadout(&w, &[("water", cap as u16 - 1)], &[], &[]));
+    w.land(0, water, None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(conjured), 1);
+    assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), cap);
 }
 
 #[test]
@@ -1033,18 +1039,18 @@ fn conjuring_into_a_full_pack_puts_the_drinks_on_the_ground_at_the_feet() {
     assert!(piles[0].at.distance(V2::new(5.0, 5.0)) < 1e-4);
     let held: Vec<Stack> = piles[0].stacks.iter().flatten().copied().collect();
     assert_eq!(held, vec![Stack::found(conjured, 2)]);
-    // A second conjuring joins the same pile (a new slot), and with room in the pack none is
-    // put on the ground.
+    // A second conjuring adds to the same stack of the same pile, not a slot of its own.
     w.land(0, water, None, None);
-    let held: u32 = w
+    let piles: Vec<&Container> = w
         .raid
         .containers
         .iter()
         .filter(|c| c.holder == Holder::Pile)
-        .flat_map(|c| c.stacks.iter().flatten())
-        .map(|s| u32::from(s.count))
-        .sum();
-    assert_eq!(held, 4);
+        .collect();
+    assert_eq!(piles.len(), 1);
+    let held: Vec<Stack> = piles[0].stacks.iter().flatten().copied().collect();
+    assert_eq!(held, vec![Stack::found(conjured, 4)]);
+    // With room made in the pack the next drinks go there, and the pile stays as it was.
     let mut inv = w.pack(0).unwrap().clone();
     let at = inv.first_of(ItemKind::Material, w.content()).unwrap();
     inv.take(at);
@@ -1133,4 +1139,172 @@ fn landing_a_meal_or_a_conjuring_on_an_absent_hero_does_nothing() {
     w.land(7, w.content().ability("eat").unwrap(), None, None);
     w.land(7, w.content().ability("water").unwrap(), None, None);
     assert!(w.pack(7).is_none());
+}
+
+/// Every stack lying in piles, with the number of piles.
+fn pile_stacks(raid: &Raid) -> (usize, Vec<Stack>) {
+    let piles: Vec<&Container> = raid
+        .containers
+        .iter()
+        .filter(|c| c.holder == Holder::Pile)
+        .collect();
+    let stacks = piles
+        .iter()
+        .flat_map(|c| c.stacks.iter().flatten().copied())
+        .collect();
+    (piles.len(), stacks)
+}
+
+#[test]
+fn repeated_conjuring_into_a_full_pack_fills_one_piles_stacks_not_a_slot_a_cast() {
+    let mut w = world();
+    join(&mut w, 0, "mage", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("rock", 20)], &[], &[]));
+    let water = w.content().ability("water").unwrap();
+    let conjured = item(&w, "conjured");
+    for _ in 0..5 {
+        w.land(0, water, None, None);
+    }
+    assert_eq!(pile_stacks(&w.raid), (1, vec![Stack::found(conjured, 10)]));
+    // Past a full stack (20), the rest starts the next one in the same pile.
+    for _ in 0..6 {
+        w.land(0, water, None, None);
+    }
+    assert_eq!(
+        pile_stacks(&w.raid),
+        (
+            1,
+            vec![Stack::found(conjured, 20), Stack::found(conjured, 2)]
+        )
+    );
+    // A brought stack of the same item is not merged with found ones.
+    let mut raid = w.raid.clone();
+    raid.drop_on_ground(
+        V3::at(V2::new(5.0, 5.0), 0.0),
+        Stack::new(conjured, 3),
+        w.content(),
+    );
+    let (n, stacks) = pile_stacks(&raid);
+    assert_eq!(n, 1);
+    assert_eq!(stacks.len(), 3);
+}
+
+/// A mage at (5, 5) with `pack`, hurt and out of mana, who has eaten (the meal begun by a
+/// landing). Health 100 of 800, mana 0 of 1000.
+fn hungry(w: &mut World, pack: &[(&str, u16)]) {
+    join(w, 0, "mage", 5.0, 5.0);
+    w.give_loadout(0, &loadout(w, pack, &[], &[]));
+    w.heroes[0].hp = 100.0;
+    w.heroes[0].fight.power = 0.0;
+}
+
+#[test]
+fn a_second_eat_press_in_the_middle_of_a_meal_is_busy_and_eats_nothing() {
+    let mut w = world();
+    hungry(&mut w, &[("bread", 3), ("water", 3)]);
+    let press = |w: &mut World, seq: u8| {
+        let h = w.hero(0).unwrap();
+        let at = HeroPose {
+            pos: h.pos,
+            facing: h.facing,
+            z: h.z,
+        };
+        w.set_input(
+            0,
+            PlayerInput {
+                pose: Some(at),
+                gait: Gait::Still,
+                cast: Some(CastPress {
+                    seq,
+                    slot: 12,
+                    target: None,
+                    at: None,
+                }),
+                ..Default::default()
+            },
+        );
+        w.step();
+    };
+    let (bread, water) = (item(&w, "bread"), item(&w, "water"));
+    press(&mut w, 1);
+    assert!(w.hero(0).unwrap().fight.eating > 0.0);
+    assert_eq!(w.pack(0).unwrap().count_of(bread), 2);
+    assert_eq!(w.pack(0).unwrap().count_of(water), 2);
+    w.drain_events();
+    stand(&mut w, 0, 5.0, 5.0);
+    steps(&mut w, 30);
+    // The second press: refused as Busy, and nothing more is eaten or drunk.
+    press(&mut w, 2);
+    assert!(w.drain_events().iter().any(|e| matches!(
+        e,
+        crate::Event::Refused {
+            why: crate::Refusal::Busy,
+            ..
+        }
+    )));
+    assert_eq!(w.pack(0).unwrap().count_of(bread), 2);
+    assert_eq!(w.pack(0).unwrap().count_of(water), 2);
+    assert_eq!(u32::from(w.hero(0).unwrap().fight.drinks), 2);
+    assert!(w.hero(0).unwrap().fight.eating > 0.0);
+}
+
+#[test]
+fn a_meal_is_eaten_at_the_start_and_an_interrupted_one_is_only_part_restored() {
+    let mut w = world();
+    hungry(&mut w, &[("bread", 1), ("water", 1)]);
+    let eat = w.content().ability("eat").unwrap();
+    let (bread, water) = (item(&w, "bread"), item(&w, "water"));
+    w.land(0, eat, None, None);
+    // Gone at once, before a bite of it is felt.
+    assert_eq!(w.pack(0).unwrap().count_of(bread), 0);
+    assert_eq!(w.pack(0).unwrap().count_of(water), 0);
+    assert_eq!(w.hero(0).unwrap().hp, 100.0);
+    // Sit for a second, then walk off.
+    for _ in 0..30 {
+        stand(&mut w, 0, 5.0, 5.0);
+        w.step();
+    }
+    walk(&mut w, 0, 5.2, 5.0);
+    w.step();
+    steps(&mut w, 60);
+    let h = w.hero(0).unwrap();
+    assert_eq!(h.fight.eating, 0.0);
+    assert!(w.combat.hero(0).unwrap().meal.is_none());
+    // The whole bread is 480 of health and the whole water 1000 of mana; a second of the
+    // 15-second meal gave a small part, and the food stays gone.
+    assert!(h.hp > 100.0 && h.hp < 100.0 + 480.0 * 0.5, "{}", h.hp);
+    assert!(
+        h.fight.power > 0.0 && h.fight.power < 500.0,
+        "{}",
+        h.fight.power
+    );
+    assert_eq!(w.pack(0).unwrap().count_of(bread), 0);
+    assert_eq!(w.pack(0).unwrap().count_of(water), 0);
+}
+
+#[test]
+fn a_free_meal_restores_all_health_without_food_and_no_mana_and_still_eats_food_when_there_is() {
+    let mut w = world_with("free_meal: true", "");
+    hungry(&mut w, &[]);
+    let eat = w.content().ability("eat").unwrap();
+    let hi = w.hero_slot(0).unwrap();
+    assert!(w.check(hi, eat, None, None).is_ok());
+    w.land(0, eat, None, None);
+    let meal = w.combat.hero(0).unwrap().meal.unwrap();
+    // All of the maximum over the meal, and not a drop of mana: no drink was drunk.
+    assert!((meal.health * 15.0 - 800.0).abs() < 1e-2);
+    assert_eq!(meal.mana, 0.0);
+    for _ in 0..(16 * 30) {
+        stand(&mut w, 0, 5.0, 5.0);
+        w.step();
+    }
+    assert_eq!(w.hero(0).unwrap().hp, 800.0);
+    // With food in the pack the food is eaten, and gives its own share rather than all.
+    let mut w = world_with("free_meal: true", "");
+    hungry(&mut w, &[("bread", 2)]);
+    w.land(0, w.content().ability("eat").unwrap(), None, None);
+    assert_eq!(w.pack(0).unwrap().count_of(item(&w, "bread")), 1);
+    let meal = w.combat.hero(0).unwrap().meal.unwrap();
+    assert!((meal.health - 800.0 * 0.6 / 15.0).abs() < 1e-3);
+    assert_eq!(meal.mana, 0.0);
 }

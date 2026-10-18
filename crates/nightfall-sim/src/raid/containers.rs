@@ -68,9 +68,31 @@ impl Raid {
         id
     }
 
-    /// `stack` on the ground at `at`: onto a pile there with room, or a new pile.
-    pub(crate) fn drop_on_ground(&mut self, at: V3, stack: Stack, content: &Content) {
+    /// `stack` on the ground at `at`: first onto an equal stack (the same item, found or brought)
+    /// with room in a pile there, then into an empty slot of a pile there, or a new pile. So
+    /// drops of one thing build up in one stack, not one slot each.
+    pub(crate) fn drop_on_ground(&mut self, at: V3, mut stack: Stack, content: &Content) {
         let here = at.ground();
+        let most = content
+            .items
+            .get(usize::from(stack.item))
+            .map_or(u16::MAX, |d| d.stack.max(1));
+        for c in self
+            .containers
+            .iter_mut()
+            .filter(|c| c.holder == Holder::Pile && c.at.distance(here) <= PILE_JOIN)
+        {
+            for s in c.stacks.iter_mut().flatten() {
+                if s.item == stack.item && s.found == stack.found && s.count < most {
+                    let n = (most - s.count).min(stack.count);
+                    s.count += n;
+                    stack.count -= n;
+                }
+            }
+        }
+        if stack.count == 0 {
+            return;
+        }
         let near = self.containers.iter().position(|c| {
             c.holder == Holder::Pile
                 && c.at.distance(here) <= PILE_JOIN

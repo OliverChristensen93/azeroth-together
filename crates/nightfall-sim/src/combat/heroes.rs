@@ -110,6 +110,10 @@ impl World {
         if f.casting.is_some() {
             return Err(Refusal::Busy);
         }
+        // A second Eat while one is on would burn another meal: it is Busy, as a cast under way is.
+        if f.eating > 0.0 && a.has(|e| matches!(e, Effect::Eat { .. })) {
+            return Err(Refusal::Busy);
+        }
         if a.has(|e| matches!(e, Effect::Eat { .. }))
             && !content.rules.run.free_meal
             && !self.raid.has_meal(
