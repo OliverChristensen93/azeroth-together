@@ -324,6 +324,10 @@ mod set_guard_tests {
             "benilla_app::nightfall::stash_panel::show",
             "hides the stash panel whenever another game is up",
         ),
+        (
+            "benilla_app::nightfall::gear::load_line",
+            "hides the load line whenever no run is up",
+        ),
     ];
 
     #[test]

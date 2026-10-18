@@ -39,6 +39,7 @@ fn armour_slot(inventory_type: u8) -> Option<u8> {
 const WEAPON_SLOTS: [u8; 3] = [15, 16, 17];
 
 /// One piece to wear: its equipment slot and look.
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Piece {
     pub slot: u8,
     pub display: u32,
@@ -148,6 +149,11 @@ pub(super) fn spawn_player_body(
     ))
 }
 
+/// The `PLAYER_VISIBLE_ITEM_*` field holding equipment slot `slot`'s entry: 0 there shows nothing.
+pub(super) fn visible_entry_field(slot: u8) -> u16 {
+    FIELD_VISIBLE_ITEM_BASE + 2 + VISIBLE_ITEM_STRIDE * u16::from(slot)
+}
+
 /// File each piece's stand-in template and return the `PLAYER_VISIBLE_ITEM_*` field pairs that
 /// wear them.
 pub(super) fn wear(items: &mut Items, pieces: &[Piece]) -> Vec<(u16, u32)> {
@@ -158,10 +164,7 @@ pub(super) fn wear(items: &mut Items, pieces: &[Piece]) -> Vec<(u16, u32)> {
             if items.template_cached(entry).is_none() {
                 items.insert_template(entry, Some(stand_in(p)));
             }
-            (
-                FIELD_VISIBLE_ITEM_BASE + 2 + VISIBLE_ITEM_STRIDE * u16::from(p.slot),
-                entry,
-            )
+            (visible_entry_field(p.slot), entry)
         })
         .collect()
 }

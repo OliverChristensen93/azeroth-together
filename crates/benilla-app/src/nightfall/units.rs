@@ -33,6 +33,19 @@ pub(super) const FACTION_PLAYER: u32 = 1;
 pub(super) const FACTION_MONSTER: u32 = 14;
 
 const HIGH_CREATURE: u64 = 0xF130 << 48;
+const HIGH_GAMEOBJECT: u64 = 0xF110 << 48;
+const FIELD_GO_DISPLAY: u16 = 8;
+const FIELD_GO_STATE: u16 = 14;
+const FIELD_GO_TYPE: u16 = 21;
+/// `GO_STATE_ACTIVE`: open, a chest's lid up.
+const GO_STATE_ACTIVE: u32 = 0;
+const GO_STATE_READY: u32 = 1;
+/// `GAMEOBJECT_TYPE_CHEST`: WoW shows its loot cursor over it, and a right-click reaches us.
+pub(super) const GO_TYPE_CHEST: u32 = 3;
+/// `GAMEOBJECT_TYPE_GENERIC`: a model and nothing to use (an exit's ring).
+// Task 12 draws the exits' rings with it.
+#[expect(dead_code, reason = "Task 12 draws the exits' rings")]
+pub(super) const GO_TYPE_GENERIC: u32 = 5;
 
 /// WoW's `(x, y, z)` (x north, y west, z up) to Bevy's (y up, −z forward).
 pub(super) fn wow_to_bevy(p: [f32; 3]) -> Vec3 {
@@ -202,6 +215,58 @@ pub(super) fn set_vitals(
     *shown = now;
 }
 
+/// A GameObject's guid from its serial.
+pub(super) fn object_guid(serial: u64) -> u64 {
+    HIGH_GAMEOBJECT | serial
+}
+
+/// A GameObject showing `GameObjectDisplayInfo` row `display`, of WoW type `go_type`, drawn shut.
+pub(super) fn spawn_object(
+    commands: &mut Commands,
+    serial: u64,
+    display: u32,
+    scale: f32,
+    pos: Vec3,
+    go_type: u32,
+) -> Entity {
+    let guid = object_guid(serial);
+    let pairs = [
+        (0, guid as u32),
+        (1, (guid >> 32) as u32),
+        (2, 0x21),
+        (4, scale.to_bits()),
+        (FIELD_GO_DISPLAY, display),
+        (FIELD_GO_STATE, GO_STATE_READY),
+        (FIELD_GO_TYPE, go_type),
+    ];
+    commands
+        .spawn((
+            Guid(guid),
+            NetEntity {
+                kind: benilla_protocol::EntityKind::GameObject,
+                display_id: Some(display),
+                scale,
+            },
+            ObjectStore(ObjectFields::from_pairs(&pairs)),
+            Transform::from_translation(pos),
+            Visibility::default(),
+            NightfallEntity,
+        ))
+        .id()
+}
+
+/// A container drawn open (searched) or shut.
+pub(super) fn set_go_open(store: &mut ObjectStore, open: bool) {
+    let state = if open {
+        GO_STATE_ACTIVE
+    } else {
+        GO_STATE_READY
+    };
+    store
+        .0
+        .merge(ObjectFields::from_pairs(&[(FIELD_GO_STATE, state)]));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +281,23 @@ mod tests {
         assert_eq!(unit_of(hero), Some(UnitRef::Hero(2)));
         assert_eq!(unit_of(3), None);
         assert_eq!(unit_of(0xF110_0000_0000_0007), None);
+    }
+
+    #[test]
+    fn an_object_carries_its_display_state_and_type_where_wow_reads_them() {
+        let mut store = ObjectStore(ObjectFields::from_pairs(&[
+            (FIELD_GO_DISPLAY, 259),
+            (FIELD_GO_STATE, GO_STATE_READY),
+            (FIELD_GO_TYPE, GO_TYPE_CHEST),
+        ]));
+        assert_eq!(store.0.gameobject_displayid(), Some(259));
+        assert_eq!(store.0.gameobject_type_id(), GO_TYPE_CHEST as i32);
+        assert_eq!(store.0.gameobject_state(), Some(1), "shut");
+        set_go_open(&mut store, true);
+        assert_eq!(store.0.gameobject_state(), Some(0), "open");
+        set_go_open(&mut store, false);
+        assert_eq!(store.0.gameobject_state(), Some(1), "shut again");
+        // A container's guid is never taken for a hero or an enemy.
+        assert_eq!(unit_of(object_guid(0x20_0007)), None);
     }
 }

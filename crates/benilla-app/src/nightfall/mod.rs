@@ -11,6 +11,7 @@
 
 mod atmosphere;
 mod auras;
+mod backpack;
 mod bar;
 mod conceal;
 mod dodge;
@@ -19,7 +20,9 @@ mod enemies;
 mod fallen;
 mod fight;
 mod fx;
+mod gear;
 mod grade;
+mod loot_view;
 mod marks;
 mod menu;
 mod run;
@@ -263,6 +266,10 @@ impl Plugin for NightfallPlugin {
             .init_resource::<conceal::TargetGrace>()
             .init_resource::<stash_panel::StashOpen>()
             .init_resource::<stash_panel::StashLock>()
+            .init_resource::<run::Autoplay>()
+            .init_resource::<loot_view::ContainerViews>()
+            .init_resource::<loot_view::AutoLoot>()
+            .init_resource::<backpack::BackpackOpen>()
             .add_plugins(grade::plugin)
             .add_systems(
                 Startup,
@@ -270,8 +277,15 @@ impl Plugin for NightfallPlugin {
                     menu::spawn_roots,
                     terrain::spawn_line,
                     stash_panel::spawn_root,
+                    backpack::spawn_root,
+                    gear::spawn_line,
                 ),
             )
+            .add_systems(OnExit(Phase::Playing), loot_view::forget)
+            // Ungated: hides the load line whenever no run is up.
+            .add_systems(Update, gear::load_line)
+            // Ungated by the run: hides the panels outside one.
+            .add_systems(Update, backpack::show.in_set(NightfallSet))
             // Ungated: hides Nightfall's screens whenever another game is up.
             .add_systems(Update, menu::show_roots)
             // Ungated: hides the stash panel whenever another game is up.
@@ -320,7 +334,11 @@ impl Plugin for NightfallPlugin {
             .add_systems(Update, ui::tune_ui.in_set(NightfallSet))
             .add_systems(
                 OnExit(GameMode::Nightfall),
-                (atmosphere::leave, ui::show_on_exit),
+                (
+                    atmosphere::leave,
+                    ui::show_on_exit,
+                    backpack::restore_wow_bags,
+                ),
             )
             .add_systems(
                 Update,
@@ -368,6 +386,31 @@ impl Plugin for NightfallPlugin {
                     // After this frame's events are taken and every body they name is drawn.
                     .after(run::take_events)
                     .after(enemies::place)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                (
+                    loot_view::draw,
+                    loot_view::right_click,
+                    loot_view::autoloot,
+                    gear::wear,
+                    gear::lanterns,
+                    backpack::toggle,
+                    backpack::quiet_wow_bags,
+                    backpack::clicks,
+                    backpack::rebuild,
+                    backpack::hover,
+                )
+                    .chain()
+                    // The bodies and the world are drawn and stepped this frame.
+                    .after(view::sync)
+                    // `toggle` and `quiet_wow_bags` hold the Lua VM, which the engine's schedule
+                    // test wants after the UI's input.
+                    .after(crate::ui_script::UiInput)
+                    // Its commands land before the run can end and despawn the containers.
+                    .before(run::leave_run)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )

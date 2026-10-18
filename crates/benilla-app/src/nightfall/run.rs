@@ -258,9 +258,8 @@ impl LocalInput {
         });
     }
 
-    /// `act`, after the ones already waiting.
-    // The backpack and loot panels queue acts; until they are drawn (a later task) nothing does.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Task 11 queues acts"))]
+    /// `act`, after the ones already waiting and the one in flight: a click while the host has not
+    /// yet taken the last one waits its turn, and never replaces it.
     pub fn queue(&mut self, act: Act) {
         if self.acts.len() < MAX_QUEUED {
             self.acts.push_back(act);
@@ -324,6 +323,20 @@ fn autowalk(entry: V2, from: V2, elapsed: f32, speed: f32, dt: f32) -> V2 {
     let to = goal - from;
     let dist = to.length();
     from + to.normalize_or_zero() * (speed * 0.5 * dt).min(dist)
+}
+
+/// `NIGHTFALL_AUTOPLAY`'s orders from the loot and the exits: stand still (searching), or walk to
+/// a spot instead of the circle.
+#[derive(Resource, Default)]
+pub(super) struct Autoplay {
+    pub hold: bool,
+    pub goal: Option<V2>,
+}
+
+/// `NIGHTFALL_AUTOPLAY`: a step from `from` toward `goal`, at half speed, never past it.
+pub(super) fn autowalk_to(goal: V2, from: V2, speed: f32, dt: f32) -> V2 {
+    let to = goal - from;
+    from + to.normalize_or_zero() * (speed * 0.5 * dt).min(to.length())
 }
 
 /// The raid's seed: `NIGHTFALL_SEED` when set (a test run rolls the same loot every time), else
@@ -472,6 +485,7 @@ pub(super) fn feed_pose(
     world_point: WorldPoint,
     views: Res<Views>,
     sim: Res<Sim>,
+    auto: Res<Autoplay>,
     mut player: ResMut<crate::player::Player>,
     mut input: ResMut<LocalInput>,
     mut bodies: Query<&mut Transform>,
@@ -494,15 +508,18 @@ pub(super) fn feed_pose(
     };
     let at = bevy_to_ground(tf.translation);
     let mut pos = at;
-    if autoplay() {
+    if autoplay() && !auto.hold {
         let speed = sim.world.hero(sim.me).map_or(7.0, |h| h.speed);
-        pos = autowalk(
-            V2::new(entry[0], entry[1]),
-            pos,
-            sim.world.elapsed,
-            speed,
-            time.delta_secs(),
-        );
+        pos = match auto.goal {
+            Some(goal) => autowalk_to(goal, pos, speed, time.delta_secs()),
+            None => autowalk(
+                V2::new(entry[0], entry[1]),
+                pos,
+                sim.world.elapsed,
+                speed,
+                time.delta_secs(),
+            ),
+        };
     }
     pos = map.bounds.clamp(pos);
     if pos != at {
@@ -525,9 +542,14 @@ pub(super) fn feed_pose(
         // Bevy's up is WoW's z.
         z: tf.translation.y,
     });
-    // The autoplay walk moves the body itself, holding no key: it says its own gait.
+    // The autoplay walk moves the body itself, holding no key: it says its own gait, or stillness
+    // while it stands to search.
     input.gait = if autoplay() {
-        super::stance::auto_gait().gait()
+        if auto.hold {
+            Gait::Still
+        } else {
+            super::stance::auto_gait().gait()
+        }
     } else {
         super::stance::gait_of(player.move_flags())
     };
@@ -690,6 +712,33 @@ mod tests {
         assert!((next.distance(entry) - 3.5).abs() < 1e-4);
         let near = autowalk(entry, goal - V2::new(0.1, 0.0), 0.0, 7.0, 1.0);
         assert!(near.distance(goal) < 1e-4);
+    }
+
+    #[test]
+    fn autowalk_to_a_goal_stops_on_it() {
+        let goal = V2::new(10.0, 0.0);
+        let next = autowalk_to(goal, V2::ZERO, 7.0, 1.0);
+        assert!((next.x - 3.5).abs() < 1e-4);
+        assert_eq!(autowalk_to(goal, V2::new(9.9, 0.0), 7.0, 1.0), goal);
+    }
+
+    #[test]
+    fn a_click_while_an_act_is_in_flight_waits_its_turn() {
+        let mut input = LocalInput::default();
+        input.queue(Act::Open(1));
+        input.advance(Some(0));
+        let in_flight = input.act;
+        assert_eq!(in_flight.map(|p| p.act), Some(Act::Open(1)));
+        // Clicks while it is out queue behind it, in order; none replaces it.
+        input.queue(Act::TakeAll);
+        input.queue(Act::Close);
+        input.advance(Some(0));
+        assert_eq!(input.act, in_flight);
+        assert_eq!(input.acts, [Act::TakeAll, Act::Close]);
+        // Taken: the next goes, and only then.
+        input.advance(Some(1));
+        assert_eq!(input.act.map(|p| p.act), Some(Act::TakeAll));
+        assert_eq!(input.acts, [Act::Close]);
     }
 
     #[test]
