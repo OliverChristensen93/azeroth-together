@@ -91,6 +91,19 @@ fn keep_aside(path: &Path, tag: &str, text: &str) -> Option<String> {
     )
 }
 
+/// A damaged backup, already kept aside, put out of the way: replaced by the stash file's text
+/// when that is a good stash (atomically), else removed. Whether that was done; if not the
+/// backup stays and is kept aside again next time.
+fn replace_backup(path: &Path) -> bool {
+    let bak = backup_of(path);
+    match crate::local_state::read_to_string(path) {
+        Ok(text) if Profile::from_ron(&text).is_ok() => {
+            crate::local_state::write_atomic(&bak, &text).is_ok()
+        }
+        _ => crate::local_state::remove_file(&bak).is_ok(),
+    }
+}
+
 /// The stash at `path`, and its backup, which a save would replace. A backup from a newer
 /// Nightfall, or one that cannot be read, or one damaged and not to be kept aside, makes the
 /// session read-only; a damaged one that was kept aside is just said. When the stash file itself
@@ -120,9 +133,16 @@ pub(super) fn load(path: &Path) -> Loaded {
             notes.push(format!("Your stash's backup could not be read ({e}); it is left as it is, and this session does not save."));
         }
         Backup::Damaged { text, why } => match keep_aside(path, "bak-broken", &text) {
-            Some(kept) => notes.push(format!(
-                "Your stash's backup was damaged ({why}): it was kept as {kept}."
-            )),
+            Some(kept) => {
+                // The copy is safe: the damaged backup is replaced now, by the good stash file,
+                // or removed when there is none. Left, every launch that does not save would
+                // copy it aside again, and the copies would pile up.
+                let replaced = replace_backup(path);
+                notes.push(format!(
+                    "Your stash's backup was damaged ({why}): it was kept as {kept}{}.",
+                    if replaced { ", and replaced" } else { "" }
+                ));
+            }
             None => {
                 loaded.writable = false;
                 notes.push(format!("Your stash's backup is damaged ({why}) and could not be set aside: it is left as it is, and this session does not save."));
@@ -175,8 +195,8 @@ fn load_main(path: &Path, backup: Option<Profile>) -> Loaded {
         Ok(profile) => Loaded {
             profile,
             note: None,
-                    writable: true,
-                    real: true,
+            writable: true,
+            real: true,
         },
         Err(ProfileError::Newer { .. }) => fresh(
             Some(
@@ -768,6 +788,57 @@ mod tests {
         save(&path, &with_gold(2)).unwrap();
         std::fs::remove_file(&path).unwrap();
         assert!(!load(&path).note.unwrap().contains("new, empty"));
+    }
+
+    #[test]
+    fn a_damaged_backup_is_kept_aside_once_however_often_the_stash_is_opened() {
+        let aside = |path: &Path| {
+            std::fs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .contains("bak-broken")
+                })
+                .count()
+        };
+        // With a good stash file: the backup becomes that file's text.
+        let path = dir("once-main").join("stash.ron");
+        save(&path, &with_gold(2)).unwrap();
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        for _ in 0..3 {
+            // Opened, and never saved.
+            assert!(load(&path).writable);
+        }
+        assert_eq!(aside(&path), 1, "one copy, not one a launch");
+        assert_eq!(
+            std::fs::read_to_string(backup_of(&path)).unwrap(),
+            std::fs::read_to_string(&path).unwrap(),
+            "the backup is the stash file now"
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("ron.bak-broken")).unwrap(),
+            "(gold: "
+        );
+        assert_eq!(load(&path).profile.gold, 2);
+        // With no stash file: the backup is removed once it is safe aside.
+        let path = dir("once-none").join("stash.ron");
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        for _ in 0..3 {
+            assert!(load(&path).writable);
+        }
+        assert_eq!(aside(&path), 1);
+        assert!(!backup_of(&path).exists());
+        // With a damaged stash file as well: the backup is kept aside once and removed.
+        let path = dir("once-both").join("stash.ron");
+        std::fs::write(&path, "(gold: \"x\")").unwrap();
+        std::fs::write(backup_of(&path), "(gold: ").unwrap();
+        for _ in 0..3 {
+            let _ = load(&path);
+        }
+        assert_eq!(aside(&path), 1);
     }
 
     #[test]

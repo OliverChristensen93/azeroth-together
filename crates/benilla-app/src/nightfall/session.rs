@@ -685,6 +685,11 @@ pub(super) enum Heard {
     /// Every hero's, at the raid's end.
     RunOver(Vec<HeroOutcome>),
     Ended,
+    /// The host's lobby, which may come with (or after) `Ended` in one poll, before the lobby
+    /// system has run.
+    Lobby(Vec<LobbyPlayer>),
+    /// The host started the next run (number `raid`), possibly in the same poll as `Ended`.
+    Start(u32),
     Lost(String),
 }
 
@@ -715,6 +720,8 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
                 heard.push(Heard::State(snapshot, seen, marks, events));
             }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
+            ClientEvent::Message(ServerMsg::Lobby { players }) => heard.push(Heard::Lobby(players)),
+            ClientEvent::Message(ServerMsg::Start { raid }) => heard.push(Heard::Start(raid)),
             ClientEvent::Message(ServerMsg::Outcome(o)) => heard.push(Heard::Outcome(o)),
             ClientEvent::Message(ServerMsg::RunOver { outcomes }) => {
                 heard.push(Heard::RunOver(outcomes));
@@ -726,15 +733,39 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
     heard
 }
 
+/// What `pick` finds in the last of `heard` that came after the last `Ended` (nothing without one).
+/// A host that ends a run and starts the next within one poll of ours sends `Ended`, its lobby and
+/// `Start` together: the lobby system, which reads them, has not run yet.
+fn after_ended<'a, T>(heard: &'a [Heard], pick: impl Fn(&'a Heard) -> Option<T>) -> Option<T> {
+    let at = heard.iter().rposition(|h| matches!(h, Heard::Ended))?;
+    heard[at + 1..].iter().rev().find_map(pick)
+}
+
 /// Whether the client's run is over: the host ended it (the session stays) or the connection is
-/// gone (the session ends).
+/// gone (the session ends). A lobby and a start that came right after the end are kept for the
+/// menu, so a quick next run is not missed.
 pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
     for h in heard {
         match h {
             Heard::Ended => {
                 net.status = "The host ended the run".into();
+                let lobby = after_ended(heard, |h| match h {
+                    Heard::Lobby(players) => Some(players.clone()),
+                    _ => None,
+                });
+                let start = after_ended(heard, |h| match h {
+                    Heard::Start(raid) => Some(*raid),
+                    _ => None,
+                });
                 if let Role::Client(c) = &mut net.role {
                     c.start = false;
+                    if let Some(players) = lobby {
+                        c.lobby = players;
+                    }
+                    if let Some(raid) = start {
+                        c.raid = raid;
+                        c.start = true;
+                    }
                 }
                 return true;
             }
@@ -742,7 +773,11 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                 net.leave(format!("Disconnected: {why}"));
                 return true;
             }
-            Heard::State(..) | Heard::Outcome(_) | Heard::RunOver(_) => {}
+            Heard::State(..)
+            | Heard::Outcome(_)
+            | Heard::RunOver(_)
+            | Heard::Lobby(_)
+            | Heard::Start(_) => {}
         }
     }
     false
@@ -882,6 +917,39 @@ mod tests {
         world.step();
         assert!(world.entered(1));
         assert_ne!(world.hero(1).unwrap().pos, start);
+    }
+
+    #[test]
+    fn a_start_that_comes_with_the_end_is_kept_for_the_menu() {
+        let lobby = |n: &str| {
+            Heard::Lobby(vec![LobbyPlayer {
+                player: 1,
+                hero: pick(n),
+            }])
+        };
+        let start_of = |heard: &[Heard]| {
+            after_ended(heard, |h| match h {
+                Heard::Start(raid) => Some(*raid),
+                _ => None,
+            })
+        };
+        // The host ended the run and started the next in one poll.
+        let heard = [Heard::Ended, lobby("A"), Heard::Start(2)];
+        assert_eq!(start_of(&heard), Some(2));
+        let players = after_ended(&heard, |h| match h {
+            Heard::Lobby(p) => Some(p.len()),
+            _ => None,
+        });
+        assert_eq!(players, Some(1));
+        // A start before the end belongs to the run that ended; none is no start.
+        assert_eq!(start_of(&[Heard::Start(1), Heard::Ended]), None);
+        assert_eq!(start_of(&[Heard::Ended]), None);
+        assert_eq!(start_of(&[]), None);
+        // After two ends, the last start after the last end.
+        let heard = [Heard::Ended, Heard::Start(2), Heard::Ended, Heard::Start(3)];
+        assert_eq!(start_of(&heard), Some(3));
+        let heard = [Heard::Ended, Heard::Start(2), Heard::Ended];
+        assert_eq!(start_of(&heard), None);
     }
 
     fn damage(to: UnitRef, by: Option<UnitRef>) -> Event {
