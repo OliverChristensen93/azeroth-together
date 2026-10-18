@@ -468,6 +468,12 @@ impl LootFile {
                 .position(|k| k.key == c.kind)
                 .ok_or_else(|| format!("loot.ron: no container kind \"{}\"", c.kind))?;
             let at = V2::new(c.at.0, c.at.1);
+            if c.z.is_some_and(|z| !z.is_finite()) {
+                return Err(format!(
+                    "loot.ron: the {} at ({}, {}) has a z that is not a number",
+                    c.kind, c.at.0, c.at.1
+                ));
+            }
             if !bounds.contains(at) {
                 return Err(format!(
                     "loot.ron: the {} at ({}, {}) is outside the map",

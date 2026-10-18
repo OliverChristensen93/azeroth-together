@@ -7,7 +7,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::items::{check_items, LootFile};
-use crate::{AbilityDef, Bounds, Creature, ItemDef, LootContent, V2};
+use crate::{AbilityDef, Bounds, Creature, ItemDef, ItemKind, LootContent, V2};
 
 /// One of the class's weapons as WoW's virtual item fields want it.
 #[derive(Clone, Debug, Deserialize)]
@@ -1233,6 +1233,25 @@ impl Content {
             c.free_items = kit;
         }
         let conjured = items.iter().position(|i| i.key == rules.run.conjured_drink);
+        // A mistyped key would switch Conjure Water off without a word, so it is refused. Content
+        // with no items at all (a test's) has nothing to conjure and is let through.
+        if !items.is_empty() {
+            match conjured.map(|i| items[i].kind) {
+                Some(ItemKind::Drink) => {}
+                Some(_) => {
+                    return invalid(format!(
+                        "rules.ron: run: conjured_drink \"{}\" is not a drink",
+                        rules.run.conjured_drink
+                    ))
+                }
+                None => {
+                    return invalid(format!(
+                        "rules.ron: run: conjured_drink \"{}\" names no item in items.ron",
+                        rules.run.conjured_drink
+                    ))
+                }
+            }
+        }
         Ok(Self {
             classes,
             map: MapDef {
@@ -1914,6 +1933,7 @@ mod tests {
         let swing = KIT_ENEMIES.replace("every: 2.0", "every: inf");
         refused_naming(load_kit(KIT_CLASSES, ABILITIES, RULES, &swing), "weaver");
     }
+
     const ITEMS: &str = r#"[
         (key: "knife", name: "Knife", kind: Weapon, icon: "INV_Weapon_ShortBlade_01", weight: 1.0,
          slot: Some(MainHand),
@@ -1923,6 +1943,8 @@ mod tests {
         (key: "water", name: "Water", kind: Drink, icon: "INV_Drink_07", weight: 0.5, stack: 10),
         (key: "pouch", name: "Pouch", kind: Bag, icon: "INV_Misc_Bag_09", weight: 0.5, bag_slots: 4),
         (key: "key", name: "Key", kind: Key, icon: "INV_Misc_Key_03", weight: 0.1),
+        (key: "conjured_water", name: "Conjured Draught", kind: Drink, icon: "INV_Drink_18",
+         weight: 0.1, stack: 10),
     ]"#;
     const LOOT: &str = r#"(
         kinds: [(key: "chest", name: "Chest", display: 259, search: 2.0, sound: Open)],
@@ -1965,7 +1987,25 @@ mod tests {
         assert_eq!(c.rules.run.death_loss, DeathLoss::EverythingOneRecovery);
         assert_eq!(c.rules.run.safe_slots, 2);
         assert_eq!(c.rules.run.backpack_slots, 16);
-        assert_eq!(c.conjured, None);
+        assert_eq!(c.conjured, Some(5));
+    }
+
+    #[test]
+    fn conjured_drink_must_name_a_drink_unless_there_are_no_items() {
+        let with = |key: &str| {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, run: (conjured_drink: \"{key}\"),"),
+                1,
+            );
+            load_loot(EXIT_MAP, &rules, ITEMS, LOOT)
+        };
+        assert_eq!(with("water").unwrap().conjured, Some(2));
+        refused_naming(with("conjured_watr"), "conjured_watr");
+        // Bread is an item, but not a drink.
+        refused_naming(with("bread"), "not a drink");
+        // Content with no items at all has nothing to conjure, and loads.
+        assert_eq!(load(CLASSES, MAP, RULES).unwrap().conjured, None);
     }
 
     #[test]
@@ -2070,7 +2110,53 @@ mod tests {
             items: ITEMS,
             loot: LOOT,
         });
-        assert!(matches!(r, Err(ContentError::Invalid(_))));
+        refused_naming(r, "cake");
+    }
+
+    #[test]
+    fn every_name_in_the_loot_is_resolved_and_a_refusal_names_it() {
+        let refused = |loot: String, key: &str| {
+            assert_ne!(loot, LOOT, "{key}: the replacement found nothing");
+            refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), key);
+        };
+        refused(LOOT.replace("item: \"bread\"", "item: \"cake\""), "cake");
+        refused(
+            LOOT.replace("(kind: \"chest\", table", "(kind: \"coffin\", table"),
+            "coffin",
+        );
+        refused(
+            LOOT.replace("table: \"t\", at", "table: \"ghost_table\", at"),
+            "ghost_table",
+        );
+        refused(
+            LOOT.replace("Some(\"key\")", "Some(\"skeleton_key\")"),
+            "skeleton_key",
+        );
+        refused(
+            LOOT.replace("enemy: \"skeleton\"", "enemy: \"dragon\""),
+            "dragon",
+        );
+        refused(
+            LOOT.replace(
+                "(enemy: \"skeleton\", table: \"t\")",
+                "(enemy: \"skeleton\", table: \"nowhere\")",
+            ),
+            "nowhere",
+        );
+        refused(
+            LOOT.replace(
+                "kinds: [(key: \"chest\"",
+                "kinds: [(key: \"bier\", name: \"Bier\", display: 1, search: 1.0, sound: Open), (key: \"bier\"",
+            ),
+            "bier",
+        );
+        refused(
+            LOOT.replace(
+                "tables: [(key: \"t\"",
+                "tables: [(key: \"twin\", rolls: (1, 1), items: [(item: \"bread\", weight: 1.0)]), (key: \"twin\", rolls: (1, 1), items: [(item: \"bread\", weight: 1.0)]), (key: \"t\"",
+            ),
+            "twin",
+        );
     }
 
     #[test]
@@ -2113,6 +2199,20 @@ mod tests {
             refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "nothing");
             let loot = LOOT.replace("weight: 2.0,", &format!("weight: {bad},"));
             refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "weight");
+        }
+        assert!(load_loot(
+            EXIT_MAP,
+            RULES,
+            ITEMS,
+            &LOOT.replace("at: (20.0, 20.0)", "at: (20.0, 20.0), z: Some(5.0)")
+        )
+        .is_ok());
+        for bad in ["inf", "-inf", "NaN"] {
+            let loot = LOOT.replace(
+                "at: (20.0, 20.0)",
+                &format!("at: (20.0, 20.0), z: Some({bad})"),
+            );
+            refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "z that is not");
         }
         for bad in ["inf", "NaN", "0.0"] {
             let loot = LOOT.replace("display: 259,", &format!("display: 259, scale: {bad},"));
