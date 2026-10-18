@@ -84,6 +84,42 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   aura 1786 plus shapeshift form 30 (which turns its bar to the stealth page), written by
   `auras::heroes`, which replaced `conceal::heroes`; a target that slips out of sight is kept for
   `conceal::TARGET_GRACE` (3 s), so a fight does not lose it behind a tree.
+- Nightfall's run loop (sub-project 5a, plan `docs/superpowers/plans/2026-10-17-nightfall-run-loop.md`):
+  items are `content/nightfall/items.ron` (WoW icons; worn looks as item displays or a class's
+  starting-outfit piece), containers, loot tables and enemies' bodies `loot.ron`, the exits
+  `map.ron`'s `exits` (the Night Watch cart is `late`, open from `cart_opens_at`), the numbers
+  `rules.ron`'s `run:` (`death_loss`, `safe_slots`, `weight_*`, `extract_for`, `cart_opens_at`,
+  `free_meal`). `nightfall-sim`: `inventory.rs` (the backpack, bags, safe slots, weight,
+  `split_for_death`), `raid/` (`acts.rs` the player's acts, `containers.rs` searching and bodies,
+  `extract.rs` exits, deaths, the end of a raid and each `HeroOutcome`, `mod.rs` `RaidRoll`, the
+  seed the loot is rolled by) and `profile.rs` (the stash, pure and versioned). The client keeps
+  the stash in `benilla-config/nightfall/stash.ron` (`nightfall/stash.rs`; panel `stash_panel.rs`).
+  In a raid B opens the backpack (`backpack.rs`), a right-click searches a container, a body or a
+  fallen friend (`loot_view.rs`); `exits.rs` draws the rings and the count, `end_screen.rs` the
+  outcomes. For a reader:
+  - A raid is written to the stash before it starts: `Profile::in_raid` is a
+    `SavedRaid { map, brought }` (the loadout that left), and a raid that never ends (a crash, a
+    lost connection, the host going) is found there at the next start and settled as missing, once;
+    the menu says "Your last raid ended without you: you were counted missing." A dead hero's body
+    is `recovery`, one per map, found again in their next raid on that map.
+  - A damaged `stash.ron` is kept aside as `stash.ron.broken` and the backup (`.bak`, the last
+    good file) tried; a damaged backup is kept as `.bak-broken`, once, before a save can replace
+    it. A stash or backup from a newer Nightfall is left untouched and the session is read-only;
+    a read-only session holding the real stash refuses raids (nothing of one could be kept).
+  - Co-op is host-authoritative and each player's stash stays on their own machine: the loadout
+    goes to the host in the first `Pick`, which a client sends once it is welcomed (`Hello`
+    carries only `Who`, whose shape never changes, so a host of any protocol can read a client's
+    version and refuse it). From then the client's stash panel is locked until it leaves the
+    lobby. The host trusts the loadout but `give_loadout` sanitizes it. `PROTOCOL` is 5;
+    `Start { raid }` numbers each raid and `Input { raid, .. }` carries it, so an input still on
+    its way from the last raid is dropped. Everyone is told their own `Outcome` as it settles,
+    then `RunOver` with all of them.
+  - Abandon Raid (the run bar's button): alone or hosting, the raid ends for everyone with those
+    still in counted missing, the end screen shows, and a second press goes to the menu; joined,
+    it settles you as missing and leaves the session.
+  - The end screen lists each hero's fate, time and kills; "Kept" is what they carried out
+    (`HeroOutcome::carried`) plus `overflow`, the stacks that found no slot; "Recovered" is what
+    they took back from their remains.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
@@ -189,5 +225,15 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   the hero's attacks in turn and dodges telegraphs; `NIGHTFALL_FRAIL=<player>` drops that hero 15 s
   into the run (the host's), to see a fall, the line and a revive. The dodge is WoW's key binding
   `NIGHTFALL_DODGE` (Key Bindings → Nightfall).
+- Nightfall's run loop, test hooks: `NIGHTFALL_GIVE=<item>:<n>,…` (into the stash at start),
+  `NIGHTFALL_STASH=1` and `NIGHTFALL_BACKPACK=1` (open the panels), `NIGHTFALL_SEED=<n>` (the
+  raid's loot, so a test run rolls the same every time), `NIGHTFALL_AUTOPLAY_EXTRACT=1` (the
+  autoplay walks out by the nearest open exit) and `NIGHTFALL_AUTOPLAY_ABANDON=<s>` (it presses
+  Abandon Raid that many seconds in, as a background window can't be clicked). Use
+  `BENILLA_HOME=target/nf-home` for test runs, never the player's own stash; with two
+  instances on one PC give each its own (`nf-home-host`, `nf-home-client`), since each player's
+  stash is their own. A test exit near the entry: copy `content/nightfall` to a scratch folder,
+  add an exit to its `map.ron` and point `NIGHTFALL_CONTENT` at it (never edit the shipped files
+  for a test).
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
