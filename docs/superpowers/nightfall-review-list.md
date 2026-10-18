@@ -79,3 +79,19 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 21. **The death screen has no "Release Spirit".** WoW's death popup is kept hidden (Nightfall has no
     spirit to release); a dead hero sees "Your body lies where you fell" instead. Sub-project 5 decides
     what happens next (spectating the others, the end screen).
+22. **A friend who joins sees enemy telegraphs a little late.** Their screen runs ~0.13 s behind the
+    host plus the network delay, and the dodge's 0.3 s window starts when the press reaches the host, so
+    a joined player must dodge ~0.15–0.25 s earlier by their own screen. Fixable later by drawing
+    telegraphs ahead by the playback lag. Worth feeling out in a real co-op game.
+23. **Casting while walking may break over the internet.** A slowed cast (Frostbolt, Polymorph) allows
+    ~0.44 s for the slow to reach a joined player; above ~100 ms one-way (invite relays) a walking cast
+    can break with "moved". Tune `speed_grace`/`cast_slack` in `content/nightfall/rules.ron` after a real
+    online test.
+24. **An elite worgen downed a lone level-30 mage in about 8 s** in the co-op test, before the friend could
+    revive the rogue. Elites may be too strong for one hero; they're content numbers in
+    `content/nightfall/enemies.ron`.
+25. **Searching a container works through a thin wall** (like reviving): within 3 yd counts, wall or not.
+26. **A dead hero who quits before the raid ends is counted "missing"** on their own client, not dead.
+    Rare; worth a look if it happens.
+27. **Teammates see each other's loadout in the lobby**, including where a dead hero's remains lie.
+    Everyone in a lobby is on your team, so I kept it.
