@@ -99,3 +99,10 @@ may not be what you pictured. Each line says what was decided, why, and how to c
     "Stale Black Bread", "Small Healing Draught"); plain descriptive ones stay ("Silver Locket", "Worgen
     Pelt", "Bone Fragments", "Notched Shortsword"…), and a few may coincide with WoW's own. Keys don't
     change, so renaming any is a one-line edit in `content/nightfall/items.ron`.
+29. **Abandoning a raid (or dropping out) counts as "missing": you lose what a death would, with no
+    body to recover.** It's the plan's rule so quitting can't save your loot, and abandoning is no better
+    than a disconnect. A dead hero whose player leaves before the raid ends also loses the brought items
+    they'd otherwise keep. If you'd rather be kinder to someone whose connection drops, this is the knob.
+30. **The free starter kit can be farmed a little.** Raid with an empty loadout, extract, sell the kit
+    (~8 gold), repeat. The plan accepted it (kit items are worth 1 gold each); set their `value` to 0 in
+    `content/nightfall/items.ron` if you want it gone.
