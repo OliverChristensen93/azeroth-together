@@ -39,6 +39,8 @@ impl World {
             ambush: false,
         });
         self.break_stealth(player);
+        // Every blow breaks an extraction under way, whatever else changes their health this step.
+        self.raid.strike(player);
         let ci = self.combat.hero_index(player);
         self.combat.heroes[ci].combat_for = linger;
         self.stop_eating(hi);

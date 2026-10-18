@@ -77,14 +77,13 @@ impl World {
                         exiting.push(Exiting {
                             player: h.player,
                             t: 0.0,
-                            last_hp: h.hp,
+                            struck: false,
                         });
                         exiting.len() - 1
                     }
                 };
                 let e = &mut exiting[i];
-                let hurt = h.hp < e.last_hp - 1e-4;
-                e.last_hp = h.hp;
+                let hurt = std::mem::take(&mut e.struck);
                 let ring = if h.fight.up() {
                     exit_at(&content, roll, now, h.pos)
                 } else {
@@ -132,7 +131,7 @@ impl World {
                 .get(exit)
                 .map_or_else(String::new, |e| e.name.clone()),
         };
-        let o = self.outcome(player, fate, carried, None);
+        let o = self.outcome(player, fate, self.elapsed, carried, None);
         self.raid.outcomes.push(o);
         self.remove_hero(player);
     }
@@ -146,7 +145,8 @@ impl World {
             .heroes
             .iter()
             .filter(|h| {
-                h.fight.life == Life::Dead && !self.raid.fallen.iter().any(|(p, _)| *p == h.player)
+                h.fight.life == Life::Dead
+                    && !self.raid.fallen.iter().any(|(p, _, _)| *p == h.player)
             })
             .map(|h| (h.player, h.pos, h.z))
             .collect();
@@ -174,7 +174,7 @@ impl World {
                     None,
                 )
             };
-            self.raid.fallen.push((player, body));
+            self.raid.fallen.push((player, body, self.elapsed));
             self.raid.close(player);
             if let Some(hi) = self.hero_slot(player) {
                 self.heroes[hi].carry.lantern = None;
@@ -217,12 +217,13 @@ impl World {
         carried.clear_found();
         let spill = self.raid.take_spilled(player);
         file_spill(&mut carried, spill, &content);
-        let body = self
+        // When they fell is when their raid ended, not when the rest of it did.
+        let (body, fell) = self
             .raid
             .fallen
             .iter()
-            .find(|(p, _)| *p == player)
-            .map_or(0, |(_, id)| *id);
+            .find(|(p, _, _)| *p == player)
+            .map_or((0, self.elapsed), |(_, id, t)| (*id, *t));
         let recovery = if content.rules.run.death_loss == DeathLoss::EverythingOneRecovery {
             self.raid
                 .containers
@@ -244,17 +245,21 @@ impl World {
         } else {
             None
         };
-        let o = self.outcome(player, Fate::Died, carried, recovery);
+        let o = self.outcome(player, Fate::Died, fell, carried, recovery);
         self.raid.outcomes.push(o);
     }
 
+    /// `player`'s outcome, final as `time` seconds into the raid.
     fn outcome(
         &mut self,
         player: PlayerId,
         fate: Fate,
+        time: f32,
         carried: Inventory,
         recovery: Option<Recovery>,
     ) -> HeroOutcome {
+        // A kill made earlier in this very step counts, though the step has not tallied yet.
+        self.tally_kills();
         let name = self
             .hero(player)
             .map(|h| h.name.clone())
@@ -267,7 +272,7 @@ impl World {
             player,
             name,
             fate,
-            time: self.elapsed,
+            time,
             kills: self.raid.kills_of(player),
             carried,
             recovered,
@@ -323,7 +328,7 @@ impl World {
             let death = carried.split_for_death(content.rules.run.death_loss, &content);
             carried.clear_found();
             file_spill(&mut carried, death.spill, &content);
-            let o = self.outcome(p, Fate::Missing, carried, None);
+            let o = self.outcome(p, Fate::Missing, self.elapsed, carried, None);
             self.raid.outcomes.push(o);
         }
     }

@@ -2443,3 +2443,78 @@ fn nothing_goes_on_after_the_raid_is_abandoned() {
     assert_eq!(w.outcomes().len(), 2);
     assert_eq!(w.outcomes()[1].recovery, Some(recovery));
 }
+
+#[test]
+fn a_dead_heros_time_is_when_they_died() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    join(&mut w, 1, "rogue", 20.0, 20.0);
+    stand(&mut w, 0, 50.0, 49.0);
+    stand(&mut w, 1, 20.0, 20.0);
+    steps(&mut w, 30);
+    die(&mut w, 1);
+    steps(&mut w, (11.0 / DT) as usize);
+    let out = w.take_outcomes();
+    assert_eq!(out.len(), 2);
+    let out_by_exit = out.iter().find(|o| o.player == 0).unwrap();
+    let dead = out.iter().find(|o| o.player == 1).unwrap();
+    assert!(out_by_exit.time > 9.9, "{}", out_by_exit.time);
+    assert!(
+        (0.9..1.5).contains(&dead.time),
+        "settled at the end, but dead at about a second: {}",
+        dead.time
+    );
+}
+
+#[test]
+fn a_blow_restarts_the_count_even_when_a_potion_lands_in_the_same_step() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.give_loadout(0, &loadout(&w, &[("potion", 1)], &[], &[]));
+    w.heroes[0].hp = 500.0;
+    stand(&mut w, 0, 50.0, 49.0);
+    steps(&mut w, (5.0 / DT) as usize);
+    assert!(w.hero(0).unwrap().carry.extracting > 4.9);
+    w.hurt_hero(0, 10.0);
+    act(&mut w, 0, 1, Act::Use(Place::Pack(0)));
+    w.step();
+    let h = w.hero(0).unwrap();
+    assert!(h.hp > 500.0, "the potion left them healthier than before");
+    assert!(h.carry.extracting < 0.1, "{}", h.carry.extracting);
+}
+
+#[test]
+fn taking_off_gear_in_the_ring_is_no_blow() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    w.give_loadout(0, &loadout(&w, &[], &[("helm", EquipSlot::Head)], &[]));
+    assert_eq!(w.hero(0).unwrap().hp, 1100.0);
+    steps(&mut w, (5.0 / DT) as usize);
+    act(
+        &mut w,
+        0,
+        1,
+        Act::Move {
+            from: Place::Equip(EquipSlot::Head),
+            to: Place::Pack(0),
+        },
+    );
+    w.step();
+    let h = w.hero(0).unwrap();
+    assert_eq!(h.max_hp, 1000.0);
+    assert!(h.hp <= 1000.0, "less health, as the helm's is gone");
+    assert!(h.carry.extracting > 4.9, "{}", h.carry.extracting);
+}
+
+#[test]
+fn a_kill_in_the_step_a_hero_extracts_counts() {
+    let mut w = world_with("", BRUTE_FAR);
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    while w.hero(0).unwrap().carry.extracting + 1.5 * DT < w.content().rules.run.extract_for {
+        w.step();
+    }
+    w.kill_enemy(0, Some(0));
+    w.step();
+    assert!(w.hero(0).is_none());
+    assert_eq!(w.take_outcomes()[0].kills, 1);
+}

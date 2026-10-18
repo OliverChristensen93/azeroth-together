@@ -269,8 +269,9 @@ pub(crate) struct Search {
 pub(crate) struct Exiting {
     pub(crate) player: PlayerId,
     pub(crate) t: f32,
-    /// Health at the last step: less now is a blow, which starts the count over.
-    pub(crate) last_hp: f32,
+    /// A blow landed since the last step ([`Raid::strike`]): it starts the count over, whatever
+    /// health they end with (a potion in the same step does not undo it).
+    pub(crate) struck: bool,
 }
 
 /// The raid's host-only state: never sent whole.
@@ -292,8 +293,8 @@ pub(crate) struct Raid {
     pub(crate) kills: Vec<(PlayerId, u32)>,
     /// Enemies whose body has been made.
     pub(crate) bodied: BTreeSet<u32>,
-    /// Fallen heroes and their body's container (0 for none).
-    pub(crate) fallen: Vec<(PlayerId, u32)>,
+    /// Fallen heroes, their body's container (0 for none) and when they fell.
+    pub(crate) fallen: Vec<(PlayerId, u32, f32)>,
     /// What each player took back from their remains.
     pub(crate) recovered: Vec<(PlayerId, Vec<Stack>)>,
     /// Brought stacks a dead hero kept but whose backpack no longer holds them (under `found_only`
@@ -358,6 +359,18 @@ impl Raid {
             }
         };
         &mut self.packs[i].1
+    }
+
+    /// A blow landed on `player`: their extract count starts over at the next step.
+    pub(crate) fn strike(&mut self, player: PlayerId) {
+        match self.exiting.iter_mut().find(|e| e.player == player) {
+            Some(e) => e.struck = true,
+            None => self.exiting.push(Exiting {
+                player,
+                t: 0.0,
+                struck: true,
+            }),
+        }
     }
 
     pub(crate) fn take_pack(&mut self, player: PlayerId) -> Option<Inventory> {
@@ -449,7 +462,7 @@ impl Raid {
         self.acts.retain(|(p, _)| *p != player);
         self.potions.retain(|(p, _)| *p != player);
         self.exiting.retain(|e| e.player != player);
-        self.fallen.retain(|(p, _)| *p != player);
+        self.fallen.retain(|(p, _, _)| *p != player);
         self.spilled.retain(|(p, _)| *p != player);
     }
 
