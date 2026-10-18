@@ -22,6 +22,7 @@ pub const PROFILE_VERSION: u32 = 1;
 
 /// Some of one item, by key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SavedStack {
     pub item: String,
     pub count: u16,
@@ -29,7 +30,7 @@ pub struct SavedStack {
 
 /// An inventory, by key.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SavedInventory {
     pub equip: Vec<(EquipSlot, SavedStack)>,
     pub bags: Vec<(u8, SavedStack)>,
@@ -58,6 +59,7 @@ impl SavedInventory {
 
 /// A body waiting for its player's next raid on its map.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SavedRecovery {
     pub map: String,
     pub at: (f32, f32, f32),
@@ -66,7 +68,7 @@ pub struct SavedRecovery {
 
 /// A player's things between raids.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Profile {
     /// The file's shape; a file written before it had one reads as 0.
     #[serde(default)]
@@ -691,6 +693,29 @@ mod tests {
             Profile::from_ron("(gold: \"lots\")"),
             Err(ProfileError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn a_misspelt_field_is_refused_not_read_as_empty() {
+        for text in [
+            "(stsh: [(item: \"gem\", count: 1)])",
+            "(stash: [(item: \"gem\", count: 1, extra: 2)])",
+            "(loadout: (pak: []))",
+            "(recovery: Some((map: \"x\", at: (0.0, 0.0, 0.0), items: [], why: 1)))",
+        ] {
+            assert!(
+                matches!(Profile::from_ron(text), Err(ProfileError::Parse(_))),
+                "{text}"
+            );
+        }
+        // A newer file may hold fields this build has never heard of: it is still read as newer.
+        assert_eq!(
+            Profile::from_ron("(version: 7, brand_new: 1)"),
+            Err(ProfileError::Newer {
+                found: 7,
+                known: PROFILE_VERSION
+            })
+        );
     }
 
     #[test]
