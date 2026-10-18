@@ -3,7 +3,8 @@
 //! `NIGHTFALL_JOIN=<code or address>` joins once the menu is up; `NIGHTFALL_AUTOPLAY=1` starts a
 //! run (hosting: once someone joined) and walks a slow circle; `NIGHTFALL_TRACE_POS=1` logs the
 //! hero's WoW position every 2 seconds, for measuring entry points; `NIGHTFALL_FRAIL=<player>`
-//! drops that hero 15 s into the run (the host's).
+//! drops that hero 15 s into the run (the host's); `NIGHTFALL_AUTOPLAY_ABANDON=<seconds>` presses
+//! Abandon Raid that many seconds in.
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -645,23 +646,53 @@ pub(super) fn take_events(mut sim: ResMut<Sim>, net: Res<Net>) {
     sim.events = events;
 }
 
-/// Leave Run: alone or hosting, the run ends (a host takes its party back to the lobby); joined,
-/// we leave the session.
+/// `NIGHTFALL_AUTOPLAY_ABANDON=<seconds>`: the autoplay presses Abandon Raid that many seconds into
+/// the raid, for a shot of what the button does.
+fn abandon_at() -> Option<f32> {
+    static AT: OnceLock<Option<f32>> = OnceLock::new();
+    *AT.get_or_init(|| {
+        std::env::var("NIGHTFALL_AUTOPLAY_ABANDON")
+            .ok()
+            .and_then(|s| s.parse().ok())
+    })
+}
+
+/// Abandon Raid: alone or hosting, the raid ends now for everyone (spec §8.1: those still in are
+/// missing) and the end screen shows; once it is over, the button goes back to the menu. Joined,
+/// we walk out of the session, counted missing (no outcome will come for us).
 pub(super) fn leave_run(
     clicks: Res<GlueClicks>,
     buttons: Query<Entity, With<LeaveRun>>,
     mut net: ResMut<Net>,
     mut end: ResMut<EndRun>,
+    mut sim: ResMut<Sim>,
+    mut stash: ResMut<Stash>,
 ) {
-    if !buttons.iter().any(|e| clicks.hit(e)) {
+    let auto = sim.over.is_none() && abandon_at().is_some_and(|t| sim.world.elapsed >= t);
+    if !auto && !buttons.iter().any(|e| clicks.hit(e)) {
         return;
     }
+    abandon_raid(&mut sim, &mut net, &mut end, &mut stash);
+}
+
+/// What the Abandon Raid button does. The host (or a player alone) abandons the world and then
+/// delivers: every joined player is sent their own outcome (missing) and then everyone's, before
+/// anything tells them the run has ended. The end screen is the run being over, not leaving it.
+fn abandon_raid(sim: &mut Sim, net: &mut Net, end: &mut EndRun, stash: &mut Stash) {
     if net.is_client() {
-        net.leave("You left the run");
-    } else {
-        net.broadcast_ended();
+        stash.profile.settle_missing(&content());
+        stash.save();
+        net.leave("You left the raid");
+        end.0 = true;
+        return;
     }
-    end.0 = true;
+    if sim.over.is_some() {
+        net.broadcast_ended();
+        end.0 = true;
+        return;
+    }
+    sim.world.abandon();
+    deliver(sim, net);
 }
 
 /// Back to the menu once the run is over: everything it spawned goes, and the controller lets go.
@@ -885,6 +916,45 @@ mod tests {
         deliver(&mut sim, &mut net);
         assert!(sim.mine.is_none(), "our outcome came once");
         assert_eq!(sim.over.as_ref().map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn abandoning_a_raid_alone_or_hosting_ends_it_for_everyone_then_goes_back() {
+        let content = super::super::shipped_content();
+        let mut world = World::new(content.clone());
+        world
+            .begin_raid(RaidRoll::standard(&content, 1))
+            .expect("the standard roll fits the map");
+        world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+        world.add_hero(1, "mage", "Friend", 1, 0).unwrap();
+        let mut sim = Sim::for_test(world);
+        let mut net = Net::default();
+        let mut end = EndRun::default();
+        let mut stash = Stash::open_at(None, &content);
+
+        // The first press: the raid is over for both heroes, ours and the end screen's all ready,
+        // and the session goes on (the end screen is shown, the menu is not).
+        abandon_raid(&mut sim, &mut net, &mut end, &mut stash);
+        assert!(sim.world.is_over());
+        assert!(!end.0, "the end screen shows first");
+        assert!(
+            matches!(
+                sim.mine.as_ref().map(|o| &o.fate),
+                Some(nightfall_sim::Fate::Missing)
+            ),
+            "our own outcome is delivered at once"
+        );
+        let over = sim.over.as_ref().expect("the end screen has everyone");
+        assert_eq!(over.len(), 2);
+        assert!(over
+            .iter()
+            .all(|o| matches!(o.fate, nightfall_sim::Fate::Missing)));
+        // The world delivered every outcome: none is left waiting to go out after the run ends.
+        assert!(sim.world.take_outcomes().is_empty());
+
+        // Pressed again with the raid over, the button goes back to the menu.
+        abandon_raid(&mut sim, &mut net, &mut end, &mut stash);
+        assert!(end.0);
     }
 
     #[test]

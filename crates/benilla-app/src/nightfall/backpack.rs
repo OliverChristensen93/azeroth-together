@@ -266,7 +266,9 @@ pub(super) fn show(
     mut loot: Query<&mut Node, (With<LootBody>, Without<PackBody>)>,
     mut pack: Query<&mut Node, (With<PackBody>, Without<LootBody>)>,
 ) {
-    let playing = *phase.get() == Phase::Playing;
+    // Once the raid is over (the end screen is up) nothing of it is looted any more.
+    let over = sim.as_ref().is_some_and(|s| s.over.is_some());
+    let playing = *phase.get() == Phase::Playing && !over;
     let looting = playing
         && sim
             .as_ref()

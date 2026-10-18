@@ -47,7 +47,6 @@ const GO_STATE_READY: u32 = 1;
 /// `GAMEOBJECT_TYPE_CHEST`: WoW shows its loot cursor over it, and a right-click reaches us.
 pub(super) const GO_TYPE_CHEST: u32 = 3;
 /// `GAMEOBJECT_TYPE_GENERIC`: a model and nothing to use (an exit's ring).
-#[expect(dead_code, reason = "Task 12 draws the exits' rings")]
 pub(super) const GO_TYPE_GENERIC: u32 = 5;
 
 /// WoW's `(x, y, z)` (x north, y west, z up) to Bevy's (y up, −z forward).

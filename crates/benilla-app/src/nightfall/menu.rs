@@ -61,7 +61,7 @@ pub(super) enum MenuAction {
     Back,
 }
 
-/// The run bar's button: end the run (a host takes everyone back to the lobby).
+/// The run bar's button: Abandon Raid ([`super::run::leave_run`]).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct LeaveRun;
 
@@ -264,7 +264,7 @@ pub(super) fn build_menu(
                 &art,
                 &font,
                 LeaveRun,
-                "Leave Run",
+                "Abandon Raid",
                 140.0,
                 32.0,
                 GlueBtnKind::Small,

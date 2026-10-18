@@ -16,7 +16,9 @@ mod bar;
 mod conceal;
 mod dodge;
 mod dress;
+mod end_screen;
 mod enemies;
+mod exits;
 mod fallen;
 mod fight;
 mod fx;
@@ -267,6 +269,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<stash_panel::StashOpen>()
             .init_resource::<stash_panel::StashLock>()
             .init_resource::<run::Autoplay>()
+            .init_resource::<exits::ExitViews>()
             .init_resource::<loot_view::ContainerViews>()
             .init_resource::<loot_view::AutoLoot>()
             .init_resource::<backpack::BackpackOpen>()
@@ -281,7 +284,36 @@ impl Plugin for NightfallPlugin {
                     gear::spawn_line,
                 ),
             )
-            .add_systems(OnExit(Phase::Playing), loot_view::forget)
+            .add_systems(OnExit(Phase::Playing), (loot_view::forget, exits::forget))
+            .add_systems(Startup, (exits::spawn_lines, end_screen::spawn_root))
+            // Ungated by the run: they hide when none is up.
+            .add_systems(
+                Update,
+                (exits::lines, end_screen::show).in_set(NightfallSet),
+            )
+            .add_systems(
+                Update,
+                (
+                    exits::draw,
+                    exits::remains_marker,
+                    end_screen::continue_click,
+                    end_screen::out_of_raid,
+                )
+                    // The Continue click ends the run in the frame it comes.
+                    .before(run::back_to_menu)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                exits::autoexit
+                    // After the world is stepped, and before the loot's detour takes the goal over
+                    // (and clears only a goal it set), so the two never fight over it.
+                    .after(view::sync)
+                    .before(loot_view::autoloot)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
             // Ungated: hides the load line whenever no run is up.
             .add_systems(Update, gear::load_line)
             // Ungated by the run: hides the panels outside one.
