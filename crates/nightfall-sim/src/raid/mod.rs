@@ -480,8 +480,9 @@ impl World {
 
     /// The raid's loot as `player` sees it: the containers within the snapshot reach of their hero
     /// ([`World::reach`]: the view distance and [`crate::KEEP_EXTRA`] past it, which is also what
-    /// [`World::in_reach`] and their snapshot's enemies use; their own remains, nobody else's), the one they have open, and the exits; every
-    /// container for `None`. A client's mirror answers with what its host sent.
+    /// [`World::in_reach`] and their snapshot's enemies use; their own remains, nobody else's), the
+    /// one they have open, and the exits; every container for `None`. A client's mirror answers
+    /// with what its host sent.
     pub fn loot_view(&self, player: Option<PlayerId>) -> LootView {
         if let Some(view) = &self.raid.mirror {
             return view.clone();

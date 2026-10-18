@@ -25,6 +25,10 @@ impl World {
             return;
         }
         let content = self.content().clone();
+        // Refused whole, and answered: nothing moves.
+        if self.gear_would_floor(player, hi, act, &content) {
+            return;
+        }
         match act {
             Act::Move { from, to } => {
                 let _ = self
@@ -204,11 +208,40 @@ impl World {
         self.raid.containers[ci].stacks[free] = Some(stack);
     }
 
+    /// Whether `act` would take worn gear from a hero in a way that costs so much health they
+    /// would be left at 1 or less (taking it off, swapping it, dropping it, putting it away). Such
+    /// an act is refused: held up at 1 instead, putting the gear back on would be a heal. Acts
+    /// that touch no worn gear, or cost less, never are.
+    fn gear_would_floor(&self, player: PlayerId, hi: usize, act: Act, content: &Content) -> bool {
+        let Some(inv) = self.raid.pack(player) else {
+            return false;
+        };
+        let mut after = inv.clone();
+        match act {
+            Act::Move { from, to } => {
+                if after.move_to(from, to, content).is_err() {
+                    return false;
+                }
+            }
+            Act::Drop(at @ Place::Equip(_)) | Act::Put(at @ Place::Equip(_)) => {
+                if after.take(at).is_none() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        let h = &self.heroes[hi];
+        let max = (content.classes[h.class].base_hp + after.bonus(content).health).max(1.0);
+        let change = max - h.max_hp;
+        change < 0.0 && h.hp + change <= 1.0
+    }
+
     /// `player`'s carry after a change: the weight, what they wear, their lantern (out once it
     /// left them), the drinks they carry, and their health with what they wear. A change in the
     /// most health moves their health by the same amount (as WoW does), so the health they miss
-    /// stays the same and swapping gear heals nobody; the living are held at 1 at the least, so
-    /// taking gear off never downs anyone. The downed and dead keep their health.
+    /// stays the same and swapping gear heals nobody. ([`World::take_act`] refuses a change that
+    /// would leave a living hero at 1 or less, so this never has to hold anyone up.) The downed
+    /// and dead keep their health.
     pub(crate) fn refresh_carry(&mut self, player: PlayerId) {
         let content = self.content().clone();
         let Some(hi) = self.hero_slot(player) else {
@@ -252,9 +285,8 @@ impl World {
             h.max_hp = max;
             if h.fight.up() {
                 // WoW's own rule: health follows the maximum by the same amount, so the health
-                // missing stays the same and taking gear off and on gains nothing. Taking it off
-                // never leaves a living hero below 1.
-                h.hp = (h.hp + change).max(h.hp.min(1.0)).min(max);
+                // missing stays the same and taking gear off and on gains nothing.
+                h.hp = (h.hp + change).min(max);
             } else {
                 h.hp = h.hp.min(max);
             }

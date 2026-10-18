@@ -36,6 +36,8 @@ const ITEMS: &str = r#"[
      bonus: (damage: 0.5)),
     (key: "helm", name: "Helm", kind: Armour, icon: "a", weight: 2.0, slot: Some(Head),
      bonus: (health: 100.0)),
+    (key: "cap", name: "Cap", kind: Armour, icon: "a", weight: 1.0, slot: Some(Head),
+     bonus: (health: 40.0)),
     (key: "bread", name: "Bread", kind: Food, icon: "a", weight: 0.5, stack: 10, restore: 0.6),
     (key: "water", name: "Water", kind: Drink, icon: "a", weight: 0.5, stack: 10),
     (key: "conjured", name: "Conjured Water", kind: Drink, icon: "a", weight: 0.1, stack: 20),
@@ -384,15 +386,7 @@ fn the_missing_health_stays_the_same_when_gear_changes_the_most() {
 }
 
 #[test]
-fn taking_gear_off_never_downs_the_living_but_the_downed_are_unchanged() {
-    let mut w = with_helm(1000.0);
-    act(&mut w, 0, 1, HELM_ON);
-    w.step();
-    w.heroes[0].hp = 50.0;
-    act(&mut w, 0, 2, HELM_OFF);
-    w.step();
-    assert_eq!(health(&w), (1000.0, 1.0));
-    assert!(w.heroes[0].fight.up());
+fn the_downed_are_unchanged_by_a_recount_of_their_gear() {
     // A downed hero's health and state stay as they are through a recount of their gear.
     let mut w = with_helm(1000.0);
     act(&mut w, 0, 1, HELM_ON);
@@ -410,6 +404,77 @@ fn taking_gear_off_never_downs_the_living_but_the_downed_are_unchanged() {
     w.heroes[0].fight.life = Life::Dead;
     w.refresh_carry(0);
     assert_eq!(health(&w), (1000.0, 0.0));
+}
+
+/// `with_helm`'s hero, the helm worn at full health.
+fn helmed() -> World {
+    let mut w = with_helm(1000.0);
+    act(&mut w, 0, 1, HELM_ON);
+    w.step();
+    assert_eq!(health(&w), (1100.0, 1100.0));
+    w
+}
+
+#[test]
+fn gear_that_would_leave_a_hero_at_one_or_less_stays_on() {
+    let mut w = helmed();
+    w.heroes[0].hp = 50.0;
+    let pack = w.pack(0).unwrap().clone();
+    act(&mut w, 0, 2, HELM_OFF);
+    w.step();
+    // Refused, nothing moved, and the act is still answered.
+    assert_eq!(health(&w), (1100.0, 50.0));
+    assert_eq!(w.pack(0), Some(&pack));
+    assert_eq!(w.hero(0).unwrap().carry.acted, 2);
+    // So is dropping it, as is a hero at exactly 101 (it would leave them at 1).
+    act(&mut w, 0, 3, Act::Drop(Place::Equip(EquipSlot::Head)));
+    w.step();
+    assert_eq!(w.pack(0), Some(&pack));
+    w.heroes[0].hp = 101.0;
+    act(&mut w, 0, 4, HELM_OFF);
+    w.step();
+    assert_eq!(w.pack(0), Some(&pack));
+    assert_eq!(health(&w), (1100.0, 101.0));
+}
+
+#[test]
+fn gear_that_leaves_a_hero_above_one_comes_off_and_on_without_a_gain() {
+    let mut w = helmed();
+    w.heroes[0].hp = 150.0;
+    act(&mut w, 0, 2, HELM_OFF);
+    w.step();
+    assert_eq!(health(&w), (1000.0, 50.0));
+    act(&mut w, 0, 3, HELM_ON);
+    w.step();
+    assert_eq!(health(&w), (1100.0, 150.0));
+}
+
+#[test]
+fn a_swap_of_worn_pieces_that_costs_health_obeys_the_same_refusal() {
+    let mut w = helmed();
+    // A cap (+40) beside the helm in the backpack: swapping it in costs 60 health.
+    let cap = Stack::new(item(&w, "cap"), 1);
+    let content = w.content().clone();
+    assert!(w.raid.pack_mut(0, &content).add(cap, &content).is_none());
+    let swap = Act::Move {
+        from: Place::Pack(0),
+        to: Place::Equip(EquipSlot::Head),
+    };
+    w.heroes[0].hp = 60.0;
+    let pack = w.pack(0).unwrap().clone();
+    act(&mut w, 0, 2, swap);
+    w.step();
+    assert_eq!(health(&w), (1100.0, 60.0));
+    assert_eq!(w.pack(0), Some(&pack));
+    // With health to spare the same swap goes through, and costs exactly those 60.
+    w.heroes[0].hp = 61.0 + 100.0;
+    act(&mut w, 0, 3, swap);
+    w.step();
+    assert_eq!(health(&w), (1040.0, 101.0));
+    assert_eq!(
+        w.hero(0).unwrap().carry.worn,
+        vec![(EquipSlot::Head, cap.item)]
+    );
 }
 
 #[test]
