@@ -161,3 +161,73 @@ fn the_shipped_content_has_its_items_loot_exits_and_kits() {
         assert!(!class.free_items.is_empty(), "{} has a free kit", class.key);
     }
 }
+
+fn shipped_inn(c: &Content) -> nightfall_sim::InnContent {
+    use nightfall_sim::{InnContent, InnSources};
+    InnContent::from_ron(
+        InnSources {
+            hub: include_str!("../../../content/nightfall/hub.ron"),
+            contracts: include_str!("../../../content/nightfall/contracts.ron"),
+            stations: include_str!("../../../content/nightfall/stations.ron"),
+        },
+        c,
+    )
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[test]
+fn the_shipped_inn_loads_against_the_shipped_raid() {
+    let c = shipped();
+    let inn = shipped_inn(&c);
+    assert_eq!(inn.place.map, 0);
+    assert!(inn.contracts.len() >= 3);
+    assert!(inn.stations.iter().any(|s| s.open));
+    assert!(!inn.companions.is_empty());
+    assert!(inn
+        .trader
+        .stock
+        .iter()
+        .all(|&(i, p)| i < c.items.len() && p > 0));
+}
+
+/// A kill contract with a circle can only be done if some enemy of that kind spawns inside it,
+/// or the contracts behind it (the kennel's, and so the companion) can never be reached.
+#[test]
+fn every_shipped_kill_contract_has_its_enemies_inside_its_circle() {
+    use nightfall_sim::Objective;
+    let c = shipped();
+    let inn = shipped_inn(&c);
+    for contract in &inn.contracts {
+        for o in &contract.objectives {
+            let Objective::Kill {
+                enemy,
+                count,
+                near: Some((at, radius)),
+            } = o
+            else {
+                continue;
+            };
+            let kind = &c.enemies[*enemy].key;
+            let near: u32 = c
+                .spawns
+                .iter()
+                .filter(|s| &s.kind == kind)
+                .filter(|s| {
+                    let (x, y) = match &s.behaviour {
+                        nightfall_sim::Behaviour::Sentry { at, .. }
+                        | nightfall_sim::Behaviour::Sleeper { at, .. } => *at,
+                        nightfall_sim::Behaviour::Wander { center, .. } => *center,
+                        nightfall_sim::Behaviour::Patrol { route, .. } => route[0],
+                    };
+                    V2::new(x, y).distance(*at) <= *radius
+                })
+                .map(|s| s.count)
+                .sum();
+            assert!(
+                near >= *count,
+                "\"{}\": {near} {kind} spawn within its circle, {count} asked",
+                contract.key
+            );
+        }
+    }
+}

@@ -49,22 +49,30 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use bevy::prelude::*;
-use nightfall_sim::{Content, ContentSources};
+use nightfall_sim::{Content, ContentSources, InnContent, InnSources};
 
 use crate::game_pick::GameMode;
 
 static CONTENT: OnceLock<Arc<Content>> = OnceLock::new();
-/// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot), for
-/// the hash a client and host compare.
-static CONTENT_TEXTS: OnceLock<[String; 8]> = OnceLock::new();
+/// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot, then the
+/// inn's hub, contracts and stations), for the hash a client and host compare.
+static CONTENT_TEXTS: OnceLock<[String; 11]> = OnceLock::new();
+static INN: OnceLock<Arc<InnContent>> = OnceLock::new();
 
-pub(super) fn content_texts() -> &'static [String; 8] {
+pub(super) fn content_texts() -> &'static [String; 11] {
     CONTENT_TEXTS.get().expect("nightfall::prepare ran")
 }
 
 /// The game's content, as [`prepare`] loaded it.
 pub(super) fn content() -> Arc<Content> {
     CONTENT.get().expect("nightfall::prepare ran").clone()
+}
+
+/// The inn's content, as [`prepare`] loaded it.
+// Nothing reads it yet: the inn scene (sub-project 5b, Task 7) is its first reader and drops this.
+#[expect(dead_code, reason = "sub-project 5b, Task 7 reads the inn")]
+pub(super) fn inn() -> Arc<InnContent> {
+    INN.get().expect("nightfall::prepare ran").clone()
 }
 
 /// The class a launch starts on: `NIGHTFALL_CLASS`, else the first.
@@ -151,6 +159,18 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         "loot.ron",
         include_str!("../../../../content/nightfall/loot.ron"),
     )?;
+    let hub = read(
+        "hub.ron",
+        include_str!("../../../../content/nightfall/hub.ron"),
+    )?;
+    let contracts = read(
+        "contracts.ron",
+        include_str!("../../../../content/nightfall/contracts.ron"),
+    )?;
+    let stations = read(
+        "stations.ron",
+        include_str!("../../../../content/nightfall/stations.ron"),
+    )?;
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         map: &map,
@@ -161,6 +181,15 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         items: &items,
         loot: &loot,
     })
+    .map_err(|e| e.to_string())?;
+    let inn = InnContent::from_ron(
+        InnSources {
+            hub: &hub,
+            contracts: &contracts,
+            stations: &stations,
+        },
+        &content,
+    )
     .map_err(|e| e.to_string())?;
     if let Some(key) = class_key() {
         if content.class(&key).is_none() {
@@ -174,7 +203,10 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         None => println!("nightfall: content compiled in"),
     }
     let _ = CONTENT.set(Arc::new(content));
-    let _ = CONTENT_TEXTS.set([classes, map, rules, enemies, spawns, abilities, items, loot]);
+    let _ = INN.set(Arc::new(inn));
+    let _ = CONTENT_TEXTS.set([
+        classes, map, rules, enemies, spawns, abilities, items, loot, hub, contracts, stations,
+    ]);
     Ok(())
 }
 

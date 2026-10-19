@@ -1,0 +1,81 @@
+// The inn between raids (spec §8.4): Goldshire's Lion's Pride Inn, on map 0 (Elwynn). Everything
+// about the place is here and only here: where heroes appear, the rooms they are kept inside, the
+// door whose ring opens the raid board, the evening's light, and where each NPC stands. Moving the
+// hub is a content edit: the Scarlet Raven Tavern block at the end of this file is Darkshire's.
+//
+// measure: every position and the bounds, in the game (NIGHTFALL_TRACE_POS=1 logs where the hero
+// stands); the numbers below are the inn's ground floor as far as known.
+//
+// NPCs are characters of a race and sex in a class's starting outfit (`body`), so they always
+// look like someone; `role` is what a right-click opens: Banker (the stash), Trader, Contracts
+// (the giver's contracts), Station("key") (that station). `facing` is degrees from north toward
+// west.
+(
+    place: (
+        name: "The Lion's Pride Inn",
+        map: 0,
+        spawn: (-9459.0, 22.0, 57.6),
+        facing: 90.0,
+        bounds: [(-9474.0, 6.0), (-9445.0, 6.0), (-9445.0, 38.0), (-9474.0, 38.0)],
+        door: (at: (-9447.5, 19.0), radius: 2.0),
+        // 19:30, a warm evening, against the night outside.
+        minute: 1170,
+        view_distance: 250.0,
+    ),
+    npcs: [
+        (key: "farley", name: "Innkeeper Orlan Pike", title: "Keeps your things",
+         role: Banker, body: (race: 1, sex: 0, class_id: 1), at: (-9462.7, 16.2, 57.0), facing: 90.0),
+        (key: "brog", name: "Haldor Coppermug", title: "Trades in anything",
+         role: Trader, body: (race: 3, sex: 0, class_id: 1), at: (-9467.0, 30.0, 57.0), facing: 0.0),
+        (key: "ebonlock", name: "Captain Isolde Greyvane", title: "The Night Watch",
+         role: Contracts, body: (race: 1, sex: 1, class_id: 2), at: (-9452.0, 30.0, 57.0), facing: 180.0),
+        (key: "eva", name: "Seer Wynne Hollow", title: "Sees what waits in the dark",
+         role: Contracts, body: (race: 1, sex: 1, class_id: 8), at: (-9470.0, 20.0, 57.0), facing: 270.0),
+        (key: "abercrombie", name: "Dorrin Gravelle", title: "Wants what the dead leave",
+         role: Contracts, body: (race: 1, sex: 0, class_id: 9), at: (-9470.0, 12.0, 57.0), facing: 270.0),
+        (key: "smith", name: "Torvald Anvilmoor", title: "Workbench",
+         role: Station("workbench"), body: (race: 3, sex: 0, class_id: 1), at: (-9449.0, 9.0, 57.0)),
+        (key: "alchemist", name: "Tilda Brew", title: "Alchemy",
+         role: Station("alchemy"), body: (race: 7, sex: 1, class_id: 8), at: (-9455.0, 9.0, 57.0)),
+        (key: "cook", name: "Old Ruth", title: "The cooking fire",
+         role: Station("cooking"), body: (race: 1, sex: 1, class_id: 5), at: (-9460.0, 34.0, 57.0)),
+        (key: "lamplighter", name: "Wick", title: "Lanterns",
+         role: Station("lantern_maker"), body: (race: 7, sex: 0, class_id: 9), at: (-9466.0, 9.0, 57.0)),
+        (key: "cartographer", name: "Mara Lines", title: "The map table",
+         role: Station("map_table"), body: (race: 1, sex: 1, class_id: 4), at: (-9452.0, 24.0, 57.0)),
+        (key: "kennelmaster", name: "Odric the Wolfwarden", title: "The kennel",
+         role: Station("kennel"), body: (race: 3, sex: 0, class_id: 3), at: (-9449.0, 34.0, 57.0)),
+    ],
+    // Contracts a player may have taken at once (spec §8.5: one or two).
+    contracts_at_once: 2,
+    // What the trader sells, gold each; and the share of an item's value they pay for it.
+    trader: (
+        stock: [
+            (item: "tough_bread", price: 2),
+            (item: "spring_water", price: 2),
+            (item: "minor_healing_potion", price: 15),
+            (item: "minor_mana_potion", price: 15),
+            (item: "linen_pouch", price: 12),
+            (item: "hooded_lantern", price: 25),
+        ],
+        sells_for: 1.0,
+    ),
+    // The kennel's companions (spec §8.2). measure: a wolf's CreatureDisplayInfo id (903 is WolfSkinTimber,
+    // the Wolf model); the scale makes it a pup.
+    companions: [
+        (key: "watch_hound", name: "Watch Wolf", display: 903, scale: 0.6),
+    ],
+)
+
+// Darkshire's Scarlet Raven Tavern instead (measure: every number): replace `place` above with
+//     place: (
+//         name: "The Scarlet Raven Tavern",
+//         map: 0,
+//         spawn: (-10516.0, -1163.0, 41.3),
+//         facing: 0.0,
+//         bounds: [(-10528.0, -1175.0), (-10504.0, -1175.0), (-10504.0, -1150.0), (-10528.0, -1150.0)],
+//         door: (at: (-10506.0, -1162.0), radius: 2.0),
+//         minute: 1170,
+//         view_distance: 250.0,
+//     ),
+// and move each NPC's `at` inside those bounds.

@@ -1,0 +1,31 @@
+// Contracts (spec §8.5): Duskwood's characters give them in the inn, one or two taken at a time.
+// Objectives: Kill(enemy, count, near: Some((x, y, radius))) over any number of raids; Bring(item,
+// count) to the giver, taken from the stash and loadout as it is turned in; Extract(exit) out
+// alive by that exit (any for None) while it is taken. Rewards pay gold and unlock stations.
+[
+    (key: "brightwood_pack", giver: "ebonlock", name: "Thin the Brightwood pack",
+     text: "The Nightbane hunt the Brightwood road. Kill four of them there, and the Watch will pay, and lend the inn its smith.",
+     // measure: Brightwood Grove's centre and reach.
+     objectives: [Kill(enemy: "nightbane_worgen", count: 4, near: Some((-10280.0, -1250.0, 150.0)))],
+     reward: (gold: 60, unlocks: ["workbench"]), repeatable: true),
+    (key: "raven_hill_remains", giver: "abercrombie", name: "Remains from Raven Hill",
+     text: "Bring me bones from Raven Hill. Ten will do. Do not ask what for.",
+     objectives: [Bring(item: "bone_fragments", count: 10)],
+     reward: (gold: 40, unlocks: ["alchemy", "cooking"]), repeatable: true),
+    (key: "ladims_tome", giver: "eva", name: "The tome in the gravewarden's grave",
+     text: "A gravewarden was buried with a book. Dig it up, and get out by the Westfall road before the dead notice.",
+     needs: ["raven_hill_remains"],
+     objectives: [Bring(item: "ladims_tome", count: 1), Extract(exit: Some("westfall_road"))],
+     reward: (gold: 120, unlocks: ["lantern_maker", "map_table"])),
+    (key: "the_watchs_hound", giver: "ebonlock", name: "A wolf for the Watch",
+     text: "Take four pelts off the worgen and come back alive. Odric will give you one of his wolves.",
+     needs: ["brightwood_pack"],
+     objectives: [Bring(item: "worgen_pelt", count: 4), Extract(exit: None)],
+     reward: (gold: 50, unlocks: ["kennel"])),
+    // Stitches walks the road once the night's clock reaches its last stage (sub-project 6);
+    // this contract waits for him in enemies.ron:
+    // (key: "stitches", giver: "ebonlock", name: "Stitches",
+    //  text: "It walks from Raven Hill to Darkshire. Stop it.",
+    //  objectives: [Kill(enemy: "stitches", count: 1)],
+    //  reward: (gold: 500)),
+]

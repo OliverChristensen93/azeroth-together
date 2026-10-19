@@ -1,0 +1,47 @@
+// The inn's stations (spec §8.5): each upgraded level by level with gold and materials from the
+// stash, kept forever. A level gives StashSlots(n), Recipe("key") (made at that station), Intel
+// (the map table's look at the next raid) or Companion("key") (hub.ron's companions). `open`
+// stations can be upgraded from the start; the others once a contract unlocks them. A station's
+// keeper is the NPC whose role is Station(its key); the stash's is the banker.
+(
+    stations: [
+        (key: "stash", name: "The Stash", keeper: "farley", open: true, levels: [
+            (gold: 50, items: [("linen_cloth", 10)], gives: [StashSlots(20)]),
+            (gold: 150, items: [("iron_scrap", 10), ("linen_cloth", 10)], gives: [StashSlots(30)]),
+        ]),
+        (key: "workbench", name: "Workbench", keeper: "smith", levels: [
+            (gold: 40, items: [("iron_scrap", 5)],
+             gives: [Recipe("linen_pouch"), Recipe("scavengers_leggings")]),
+            (gold: 120, items: [("worgen_pelt", 6), ("iron_scrap", 8)],
+             gives: [Recipe("duskwood_satchel"), Recipe("watchmans_tunic")]),
+        ]),
+        (key: "alchemy", name: "Alchemy", keeper: "alchemist", levels: [
+            (gold: 40, items: [("bone_fragments", 5)], gives: [Recipe("minor_healing_potion")]),
+            (gold: 90, items: [("spider_silk", 8)], gives: [Recipe("minor_mana_potion")]),
+        ]),
+        (key: "cooking", name: "The cooking fire", keeper: "cook", levels: [
+            (gold: 25, items: [("linen_cloth", 4)], gives: [Recipe("smoked_venison")]),
+        ]),
+        (key: "lantern_maker", name: "Lanterns", keeper: "lamplighter", levels: [
+            (gold: 60, items: [("iron_scrap", 6)], gives: [Recipe("shuttered_lantern")]),
+            (gold: 140, items: [("iron_scrap", 10), ("spider_silk", 6)], gives: [Recipe("bright_lantern")]),
+        ]),
+        (key: "map_table", name: "The map table", keeper: "cartographer", levels: [
+            (gold: 80, items: [("linen_cloth", 6)], gives: [Intel]),
+        ]),
+        (key: "kennel", name: "The kennel", keeper: "kennelmaster", levels: [
+            (gold: 100, items: [("worgen_pelt", 2)], gives: [Companion("watch_hound")]),
+        ]),
+    ],
+    recipes: [
+        (key: "linen_pouch", station: "workbench", makes: ("linen_pouch", 1), needs: [("linen_cloth", 6)], gold: 3),
+        (key: "scavengers_leggings", station: "workbench", makes: ("scavengers_leggings", 1), needs: [("linen_cloth", 4), ("worgen_pelt", 2)], gold: 10),
+        (key: "duskwood_satchel", station: "workbench", makes: ("duskwood_satchel", 1), needs: [("linen_cloth", 8), ("worgen_pelt", 3)], gold: 20),
+        (key: "watchmans_tunic", station: "workbench", makes: ("watchmans_tunic", 1), needs: [("iron_scrap", 8), ("worgen_pelt", 2)], gold: 30),
+        (key: "minor_healing_potion", station: "alchemy", makes: ("minor_healing_potion", 2), needs: [("bone_fragments", 3), ("spider_silk", 1)], gold: 4),
+        (key: "minor_mana_potion", station: "alchemy", makes: ("minor_mana_potion", 2), needs: [("spider_silk", 3)], gold: 4),
+        (key: "smoked_venison", station: "cooking", makes: ("smoked_venison", 4), needs: [("worgen_pelt", 1)], gold: 1),
+        (key: "shuttered_lantern", station: "lantern_maker", makes: ("shuttered_lantern", 1), needs: [("iron_scrap", 3), ("linen_cloth", 2)], gold: 10),
+        (key: "bright_lantern", station: "lantern_maker", makes: ("bright_lantern", 1), needs: [("iron_scrap", 4), ("spider_silk", 2)], gold: 20),
+    ],
+)

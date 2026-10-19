@@ -34,4 +34,8 @@
     // measure: Naraxis's lair in Twilight Grove.
     (place: "Near the entry: Naraxis", kind: "naraxis",
      behaviour: Wander(center: (-10110.0, -760.0), radius: 8.0)),
+    // measure: Brightwood Grove, where the Night Watch's contract sends heroes. A worgen pack in
+    // the contract's circle (contracts.ron "brightwood_pack"), over baked, walkable ground.
+    (place: "Brightwood Grove: a worgen pack", kind: "nightbane_worgen", count: 6,
+     behaviour: Wander(center: (-10280.0, -1250.0), radius: 25.0)),
 ]
