@@ -5252,7 +5252,7 @@ A test stash with the map table built, to read the intel in the inn; the autopla
 ```bash
 mkdir -p target/nf-home-intel/nightfall
 cat > target/nf-home-intel/nightfall/stash.ron <<'EOF'
-(version: 2, class: "rogue", gold: 0, stash: [], inn: (intel: true, stations: [("map_table", 1)]))
+(version: 3, class: "rogue", gold: 0, stash: [], inn: (intel: true, stations: [("map_table", 1)]))
 EOF
 WOW_DATA=D:/Games/azeroth-together/WoW/Data BENILLA_HOME=target/nf-home-intel WOW_BG=1 WOW_WIN=1280x720 NIGHTFALL=1 NIGHTFALL_AUTOPLAY=1 NIGHTFALL_SEED=7 NIGHTFALL_MONSTERS=morladim NIGHTFALL_WEATHER=mist WOW_LIVE_SHOT=target/night-intel.png WOW_LIVE_SHOT_AT=10 WOW_LIVE_SHOT_COUNT=10 WOW_LIVE_SHOT_EVERY=2 ./target/release/azeroth-together.exe > target/night-intel.log 2>&1 &
 ```

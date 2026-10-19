@@ -1510,7 +1510,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: The profile, version 2: the inn's progress, and the companion along
+### Task 3: The profile, version 3 (as built): the inn's progress, and the companion along
 
 **Files:**
 - Modify: `crates/nightfall-sim/src/profile.rs`, `crates/nightfall-sim/src/lib.rs`
@@ -4718,7 +4718,7 @@ A test stash with the kennel built (a companion) and a stack for it:
 ```bash
 mkdir -p target/nf-home-pet/nightfall
 cat > target/nf-home-pet/nightfall/stash.ron <<'EOF'
-(version: 2, class: "rogue", gold: 0, stash: [],
+(version: 3, class: "rogue", gold: 0, stash: [],
  loadout: (pet: Some((item: "ruby_shard", count: 3))),
  inn: (companion: Some("watch_wolf"), stations: [("kennel", 1)]))
 EOF
@@ -4846,7 +4846,7 @@ In `CLAUDE.md`'s Nightfall section, add:
   right-click: the banker (stash, stash station), the trader, contract givers (`contracts.ron`),
   station keepers (`stations.ron`: levels, recipes, intel, the kennel's companion). The door's
   ring opens the raid board (contracts, the map table's intel, the party, Ready). `nightfall-sim`'s
-  `inn.rs`, `contracts.rs` and `stations.rs` are the rules; the stash file is version 2
+  `inn.rs`, `contracts.rs` and `stations.rs` are the rules; the stash file is version 3
   (`inn:`). The spike on WoW's own windows: docs/superpowers/notes/2026-10-17-nightfall-wow-windows-spike.md.
 ```
 
@@ -4900,5 +4900,5 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 | §8.5 contracts from Ebonlock, Madame Eva, Abercrombie (and Stitches), one or two at a time, paying gold and unlocking stations | Tasks 1 (`contracts.ron`; Stitches commented for sub-project 6), 4, 9 |
 | §8.5 stations upgraded with gold and found materials, kept forever: stash, workbench, alchemy, cooking fire, lantern-maker (brighter, quieter), map table (intel), kennel (companion) | Tasks 1 (`stations.ron`), 2 (a lantern's own `seen`), 5, 9, 10 (intel on the board) |
 | §8.2 the companion: unlocked at the inn, follows, carries one item never lost | Tasks 2 (the slot), 3 (the profile), 11 (drawn, brought, its slot in the panels) |
-| §8.3 the stash per player, gold; co-op stashes on their own machines | Task 3 (version 2), Task 13 (two homes) |
+| §8.3 the stash per player, gold; co-op stashes on their own machines | Task 3 (version 3), Task 13 (two homes) |
 | The user's note: the hub could be Darkshire's | Task 1 (`hub.ron`'s commented Scarlet Raven Tavern; every place number in content), rulings |
