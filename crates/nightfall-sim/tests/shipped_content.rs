@@ -362,3 +362,28 @@ fn the_night_is_in_the_shipped_content() {
         "the howling brings more wanderers"
     );
 }
+
+#[test]
+fn the_westfall_road_is_open_from_the_start_in_every_raid() {
+    // Ladim's tome is handed in at the Westfall road: no roll may shut it, open it late or
+    // close it with the hunt.
+    let c = shipped();
+    let road = c
+        .map
+        .exits
+        .iter()
+        .position(|e| e.key == "westfall_road")
+        .expect("the Westfall road");
+    assert!(c.map.exits[road].pinned);
+    let mut hunt_closed_another = false;
+    for seed in 0..2000 {
+        let r = nightfall_sim::RaidRoll::roll(&c, seed);
+        assert!(r.exit_open(road, 0.0), "seed {seed}");
+        assert!(
+            r.closes.is_none_or(|(x, _)| usize::from(x) != road),
+            "seed {seed}"
+        );
+        hunt_closed_another |= r.closes.is_some();
+    }
+    assert!(hunt_closed_another, "the hunt still closes other exits");
+}

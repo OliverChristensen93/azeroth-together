@@ -366,6 +366,7 @@ mod tests {
                     opens_at: 0.0,
                 },
             ],
+            ..Default::default()
         };
         assert_eq!(
             intel_marks(&roll),

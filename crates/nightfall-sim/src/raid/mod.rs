@@ -9,7 +9,7 @@ mod extract;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use containers::{in_reach, search_of};
+pub(crate) use containers::{in_reach, search_of, seed_for};
 
 use std::collections::BTreeSet;
 
@@ -186,9 +186,10 @@ pub struct ExitPlan {
     pub opens_at: f32,
 }
 
-/// What makes this raid this raid (spec §8.1): the seed its loot is rolled from, the entry, and
-/// which exits open when. Sub-project 6 rolls the exits, the weather and the signature monsters
-/// here; until then [`RaidRoll::standard`] is every raid.
+/// What makes this raid this raid (spec §8.1): the seed its loot is rolled from, the entry, which
+/// exits open when and which one closes as the hunt lands, the weather, and which signature
+/// monsters are out. [`RaidRoll::roll`] rolls them; [`RaidRoll::standard`] is every exit open,
+/// the first weather, and only the monsters that always come.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RaidRoll {
     pub seed: u64,
@@ -196,10 +197,17 @@ pub struct RaidRoll {
     pub entry: usize,
     /// One per map exit.
     pub exits: Vec<ExitPlan>,
+    /// The weather, an index into the night's weathers (0 when there are none).
+    pub weather: u8,
+    /// The signature monsters out, indices into `Content::monsters`, in order.
+    pub monsters: Vec<u8>,
+    /// The exit that closes as the hunt lands, and when (spec §7.2: "one exit may close").
+    pub closes: Option<(u8, f32)>,
 }
 
 impl RaidRoll {
-    /// The first entry, every exit open, the late ones at `cart_opens_at`.
+    /// The first entry, every exit open, the late ones at `cart_opens_at`, the first weather,
+    /// the monsters that always come, nothing closing.
     pub fn standard(content: &Content, seed: u64) -> Self {
         let cart = content.rules.run.cart_opens_at;
         Self {
@@ -214,7 +222,26 @@ impl RaidRoll {
                     opens_at: if e.late { cart } else { 0.0 },
                 })
                 .collect(),
+            weather: 0,
+            monsters: content
+                .monsters
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.always)
+                .map(|(i, _)| i as u8)
+                .collect(),
+            closes: None,
         }
+    }
+
+    /// Whether exit `exit` is open `now` seconds into the raid: opened, and not closed by the hunt.
+    pub fn exit_open(&self, exit: usize, now: f32) -> bool {
+        self.exits
+            .get(exit)
+            .is_some_and(|p| p.open && now >= p.opens_at)
+            && self
+                .closes
+                .is_none_or(|(x, at)| usize::from(x) != exit || now < at)
     }
 }
 
@@ -536,6 +563,16 @@ impl World {
                 content.map.exits.len()
             ));
         }
+        if let Some(m) = roll
+            .monsters
+            .iter()
+            .find(|&&m| usize::from(m) >= content.monsters.len())
+        {
+            return Err(format!("no monster {m} in monsters.ron"));
+        }
+        if usize::from(roll.weather) >= content.rules.night.weather.len().max(1) {
+            return Err(format!("no weather {} in rules.ron", roll.weather));
+        }
         self.raid = Raid::new(&content, roll);
         Ok(())
     }
@@ -645,10 +682,16 @@ impl World {
                     open: false,
                     opens_at: 0.0,
                 });
+                let closed = self
+                    .raid
+                    .roll
+                    .closes
+                    .is_some_and(|(x, at)| usize::from(x) == i && self.elapsed >= at);
                 ExitMark {
                     exit: i as u8,
-                    open: plan.open && self.elapsed >= plan.opens_at,
-                    opens_in: plan.open.then(|| (plan.opens_at - self.elapsed).max(0.0)),
+                    open: self.raid.roll.exit_open(i, self.elapsed),
+                    opens_in: (plan.open && !closed)
+                        .then(|| (plan.opens_at - self.elapsed).max(0.0)),
                 }
             })
             .collect();

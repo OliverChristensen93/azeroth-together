@@ -1401,6 +1401,7 @@ mod tests {
             seed: 9,
             entry: 0,
             exits: Vec::new(),
+            ..Default::default()
         };
         let lobby = |n: &str| {
             Heard::Lobby(
@@ -1482,6 +1483,7 @@ mod tests {
             seed: 5,
             entry: 0,
             exits: Vec::new(),
+            ..Default::default()
         };
         let heard = [Heard::Ended, Heard::Lobby(Vec::new(), plan.clone())];
         assert!(client_left_run(&mut net, &heard));
@@ -1563,6 +1565,7 @@ mod tests {
             seed: 1,
             entry: 0,
             exits: Vec::new(),
+            ..Default::default()
         });
         assert_eq!(net.planned_raid().map(|r| r.seed), Some(1));
         // Alone, the Start is the Ready; hosting needs the party, a client never starts.

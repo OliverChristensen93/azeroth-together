@@ -969,6 +969,9 @@ pub struct ExitDef {
     pub radius: f32,
     /// Opens at `cart_opens_at`, not at the start (Darkshire's cart).
     pub late: bool,
+    /// The raid's roll never shuts it, opens it late or closes it with the hunt: a contract
+    /// needs this way out (the Westfall road, Ladim's tome).
+    pub pinned: bool,
 }
 
 fn four() -> f32 {
@@ -984,6 +987,8 @@ struct ExitFile {
     radius: f32,
     #[serde(default)]
     late: bool,
+    #[serde(default)]
+    pinned: bool,
 }
 
 /// The most enemies one spawn line places.
@@ -1185,6 +1190,7 @@ impl Content {
                 at,
                 radius: e.radius,
                 late: e.late,
+                pinned: e.pinned,
             });
         }
         if rules.hero_level == 0 {

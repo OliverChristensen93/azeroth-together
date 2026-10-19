@@ -264,6 +264,7 @@ mod tests {
                     open: true,
                     opens_at: 1080.0,
                 }],
+                ..Default::default()
             },
         };
         let bytes = postcard::to_stdvec(&msg).unwrap();

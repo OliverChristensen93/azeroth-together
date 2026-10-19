@@ -3,7 +3,10 @@
 //! content; the host's rules come in the files beside it.
 
 mod places;
+mod roll;
 mod rules;
+#[cfg(test)]
+mod tests;
 
 pub(crate) use places::{there_and_back, MonsterFile, RoadFile, ZoneFile};
 pub use places::{MonsterDef, RoadDef, ZoneDef};

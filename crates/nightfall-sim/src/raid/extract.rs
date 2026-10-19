@@ -7,8 +7,8 @@ use crate::{
     Content, DeathLoss, Event, Inventory, Life, Loudness, PlayerId, Stack, World, DT, V2, V3,
 };
 
-/// The exit (an index into the map's exits) whose open ring `pos` stands in now. Rings are flat:
-/// no exit stands over another floor.
+/// The exit (an index into the map's exits) whose ring `pos` stands in while it is open now
+/// (opened, and not closed by the hunt). Rings are flat: no exit stands over another floor.
 pub(crate) fn exit_at(content: &Content, roll: &RaidRoll, now: f32, pos: V2) -> Option<usize> {
     content
         .map
@@ -16,10 +16,7 @@ pub(crate) fn exit_at(content: &Content, roll: &RaidRoll, now: f32, pos: V2) -> 
         .iter()
         .enumerate()
         .find(|(i, e)| {
-            roll.exits
-                .get(*i)
-                .is_some_and(|p| p.open && now >= p.opens_at)
-                && pos.distance(e.at) <= e.radius
+            roll.exit_open(*i, now) && pos.distance(e.at) <= e.radius
         })
         .map(|(i, _)| i)
 }

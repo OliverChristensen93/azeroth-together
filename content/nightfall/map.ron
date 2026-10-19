@@ -21,12 +21,13 @@
     lit: [],
     // The ways out (spec §8.1): stand `extract_for` seconds in a ring of `radius` yards (4 when
     // left out). `late` opens at rules.ron's `cart_opens_at`. measure: every exit, in the game.
+    // `pinned`: the raid roll never shuts it, opens it late or closes it (a contract needs it).
     // The Deadwind road is placed on the baked valley floor 20 yards inside the east edge: walkable
     // in the bake (a flat spot, 4 and 10 yard rings walkable). Every exit is reached by a path from
     // the entry over the baked ground (crates/nightfall-bake/tests/exits.rs, with WOW_DATA).
     exits: [
         (key: "bridge", name: "The bridge to Elwynn", at: (-9930.0, -480.0)),
-        (key: "westfall_road", name: "The Westfall road", at: (-10650.0, 760.0)),
+        (key: "westfall_road", name: "The Westfall road", at: (-10650.0, 760.0), pinned: true),
         (key: "deadwind_road", name: "The Deadwind road", at: (-10570.0, -1830.0)),
         (key: "darkshire_cart", name: "The Night Watch cart", at: (-10560.0, -1150.0), late: true),
     ],
