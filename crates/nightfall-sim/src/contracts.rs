@@ -84,7 +84,9 @@ impl Profile {
             .collect()
     }
 
-    /// Whether contract `c` may be taken now.
+    /// Whether contract `c` may be taken now. It does not check for a raid under way (only
+    /// [`Profile::take_contract`] does), so a panel must gate its Take button on
+    /// `take_contract`'s result, never on this alone.
     pub fn offer(&self, c: usize, inn: &InnContent) -> Result<(), ContractError> {
         let def = inn.contracts.get(c).ok_or(ContractError::Unknown)?;
         let state = self.contract(c, inn);
@@ -210,15 +212,30 @@ impl Profile {
         needs
     }
 
-    /// Whether objective `o` of a taken contract with `progress` is met.
-    fn met(&self, o: &Objective, progress: u32, content: &Content) -> bool {
+    /// What a Bring objective of `def` for item index `item` needs held: the total over all of
+    /// `def`'s Bring objectives for that item (two for one item need both amounts at once), with
+    /// the item's name and key. `None` for an item the content lacks.
+    fn bring_total<'a>(
+        def: &ContractDef,
+        item: usize,
+        content: &'a Content,
+    ) -> Option<(&'a str, &'a str, u32)> {
+        let d = content.items.get(item)?;
+        let total = Self::bring_needs(def, content)
+            .into_iter()
+            .find(|(k, _)| *k == d.key)
+            .map_or(0, |(_, n)| n);
+        Some((d.name.as_str(), d.key.as_str(), total))
+    }
+
+    /// Whether objective `o` of taken contract `def`, with `progress`, is met. A Bring is met by
+    /// the contract's whole need of that item, exactly what [`Profile::turn_in`] takes.
+    fn met(&self, def: &ContractDef, o: &Objective, progress: u32, content: &Content) -> bool {
         match o {
             Objective::Kill { count, .. } => progress >= *count,
             Objective::Extract { .. } => progress >= 1,
-            Objective::Bring { item, count } => content
-                .items
-                .get(*item)
-                .is_some_and(|i| self.held(&i.key) >= *count),
+            Objective::Bring { item, .. } => Self::bring_total(def, *item, content)
+                .is_some_and(|(_, key, total)| self.held(key) >= total),
         }
     }
 
@@ -249,12 +266,13 @@ impl Profile {
                         },
                         p.min(*count)
                     ),
-                    Objective::Bring { item, count } => {
-                        let (name, held) = content
-                            .items
-                            .get(*item)
-                            .map_or(("?", 0), |d| (d.name.as_str(), self.held(&d.key)));
-                        format!("Bring {name}: {} / {count}", held.min(*count))
+                    Objective::Bring { item, .. } => {
+                        // The whole need of that item, so the line says what the turn-in takes.
+                        let (name, held, total) = Self::bring_total(def, *item, content)
+                            .map_or(("?", 0, 0), |(name, key, total)| {
+                                (name, self.held(key), total)
+                            });
+                        format!("Bring {name}: {} / {total}", held.min(total))
                     }
                     Objective::Extract { exit } => match exit {
                         Some(e) => format!(
@@ -264,7 +282,7 @@ impl Profile {
                         None => "Get out alive".to_string(),
                     },
                 };
-                (line, state.is_some() && self.met(o, p, content))
+                (line, state.is_some() && self.met(def, o, p, content))
             })
             .collect()
     }
@@ -280,10 +298,7 @@ impl Profile {
                 .objectives
                 .iter()
                 .enumerate()
-                .all(|(i, o)| self.met(o, s.progress.get(i).copied().unwrap_or(0), content))
-            && Self::bring_needs(def, content)
-                .iter()
-                .all(|(key, n)| self.held(key) >= *n)
+                .all(|(i, o)| self.met(def, o, s.progress.get(i).copied().unwrap_or(0), content))
     }
 
     /// Contract `c` turned in: what it asks to be brought taken, its gold paid (saturating at
@@ -306,6 +321,8 @@ impl Profile {
         if !self.contract_ready(c, inn, content) {
             return Err(ContractError::NotReady);
         }
+        // The snapshot guards only a mismatch between the content and its indices (an item the
+        // content lacks cannot be ready, so a take failing here would be such a mismatch).
         let before = (self.stash.clone(), self.loadout.clone());
         for (key, n) in Self::bring_needs(def, content) {
             if !self.take_items(&key, n) {
@@ -468,6 +485,9 @@ pub(crate) mod tests {
                     (key: "twice", giver: "watch", name: "Cloth, twice over",
                      objectives: [Bring(item: "cloth", count: 4), Bring(item: "cloth", count: 4)],
                      reward: (gold: 3)),
+                    (key: "strays", giver: "watch", name: "Strays anywhere",
+                     objectives: [Kill(enemy: "spider", count: 2, near: None)],
+                     reward: (gold: 1)),
                 ]"#,
                 stations: r#"(
                     stations: [
@@ -490,6 +510,7 @@ pub(crate) mod tests {
     const OUT: usize = 2;
     const CLOTH: usize = 3;
     const TWICE: usize = 4;
+    const STRAYS: usize = 5;
 
     fn outcome(fate: Fate, slain: Vec<(u16, V2)>) -> HeroOutcome {
         HeroOutcome {
@@ -591,6 +612,39 @@ pub(crate) mod tests {
             vec![1],
             "the one on the edge only"
         );
+    }
+
+    #[test]
+    fn a_kill_that_is_not_a_number_never_counts_with_or_without_a_circle() {
+        let c = raid();
+        let mut inn = inn(&c);
+        let mut p = Profile::default();
+        p.take_contract(STRAYS, &inn).unwrap();
+        let o = outcome(
+            Fate::Died,
+            vec![
+                (1, V2::new(f32::NAN, 5.0)),
+                (1, V2::new(5.0, f32::NEG_INFINITY)),
+                (0, V2::new(5.0, 5.0)),
+                (1, V2::new(1000.0, -1000.0)),
+            ],
+        );
+        after_raid(&mut p, &o, &inn, &c);
+        assert_eq!(
+            p.contract(STRAYS, &inn).unwrap().progress,
+            vec![1],
+            "no circle: any place, but a number, and the right kind"
+        );
+        // A circle whose centre is not a number holds nothing.
+        let mut q = Profile::default();
+        q.take_contract(PACK, &inn).unwrap();
+        let Objective::Kill { near, .. } = &mut inn.contracts[PACK].objectives[0] else {
+            panic!("the pack contract kills");
+        };
+        *near = Some((V2::new(f32::NAN, 50.0), 20.0));
+        let o = outcome(Fate::Died, vec![(0, V2::new(50.0, 50.0)); 3]);
+        after_raid(&mut q, &o, &inn, &c);
+        assert_eq!(q.contract(PACK, &inn).unwrap().progress, vec![0]);
     }
 
     #[test]
@@ -746,9 +800,17 @@ pub(crate) mod tests {
         };
         p.take_contract(TWICE, &inn).unwrap();
         assert!(!p.contract_ready(TWICE, &inn, &c), "5 of the 8 it asks");
+        // The lines say what the turn-in will take, so neither is ticked with 5 of the 8.
+        let short = ("Bring Cloth: 5 / 8".to_string(), false);
+        assert_eq!(
+            p.objective_lines(TWICE, &inn, &c),
+            vec![short.clone(), short]
+        );
         assert_eq!(p.turn_in(TWICE, &inn, &c), Err(ContractError::NotReady));
         assert_eq!(p.stash, vec![cloth(5)], "nothing taken");
         p.stash.push(cloth(3));
+        let full = ("Bring Cloth: 8 / 8".to_string(), true);
+        assert_eq!(p.objective_lines(TWICE, &inn, &c), vec![full.clone(), full]);
         assert_eq!(p.turn_in(TWICE, &inn, &c), Ok(3));
         assert!(p.stash.is_empty(), "all eight taken");
     }

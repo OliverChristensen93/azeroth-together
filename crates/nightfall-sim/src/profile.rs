@@ -2057,6 +2057,8 @@ mod tests {
         assert_eq!(tally(&p).get("gem"), Some(&3), "kept once");
         // The same, with the stack moved to the backpack: it follows the death rules (a missing
         // raid leaves no body, so the backpack's gem is gone), and the fold does not bring it back.
+        // The rule relied on is the default `DeathLoss::EverythingOneRecovery`: a death puts the
+        // pack on a body, and `settle_missing` has no body to give back.
         let mut p = Profile::default();
         p.inn.companion = Some("hound".into());
         p.loadout.pet = Some(stack("gem", 3));
