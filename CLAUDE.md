@@ -86,7 +86,7 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `together/tooltip.rs` (WoW's own action-button tooltip is turned off in `ui.rs`);
   `TOGETHER_TIP_SLOT=<n>` shows button n's for a test shot (`TOGETHER_TIP_SHIFT=1` as if Shift
   were held). The tomes and items carried are a strip of icons under the player frame, and the
-  stat sheet opens with its Stats button or Tab (`together/inventory.rs`; `TOGETHER_STATS=1`
+  stat sheet opens with its Stats button or C, the talent sheet with Talents or N (`together/inventory.rs`; `TOGETHER_STATS=1`
   opens it).
   The talent web between runs ([docs/TALENT-WEB.md](docs/TALENT-WEB.md)): `content/talents.ron`,
   `together-sim/src/talents.rs` (model) and `world/combat/talents.rs` (in-run hooks), the menu's

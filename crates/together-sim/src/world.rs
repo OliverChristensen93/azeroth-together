@@ -19,6 +19,7 @@ mod gear;
 mod affixes;
 mod hazards;
 mod horde;
+mod pause;
 pub(crate) mod champions;
 pub use champions::CHAMPION_SCALE;
 mod meter;
@@ -114,6 +115,12 @@ const SPENT_LINGER: f32 = 6.0;
 const SPAWN_RING: (f32, f32) = (34.0, 42.0);
 /// Seconds between spawn batches.
 const SPAWN_EVERY: f32 = 0.12;
+/// The share of its health a living hero gets back at each level-up.
+const LEVEL_UP_HEAL: f32 = 0.1;
+/// How far a camp's elite or a champion follows a hero from its camp before it gives up the
+/// chase, runs home out of reach (at this times its speed) and heals, as WoW's mobs evade.
+pub const CAMP_LEASH: f32 = 35.0;
+const EVADE_SPEED: f32 = 1.6;
 /// Seconds between workings-out of the horde's way around obstacles.
 const FLOW_EVERY: f32 = 0.4;
 /// The run's length; enemy health and damage grow toward it.
@@ -182,6 +189,12 @@ pub struct PlayerInput {
     /// movement, until an input says otherwise.
     #[serde(default)]
     pub menu: bool,
+    /// Ready to go on after a pause ([`World::tend_pause`]). Used once.
+    #[serde(default)]
+    pub ready: bool,
+    /// The player gives up: their hero falls for good. Used once.
+    #[serde(default)]
+    pub give_up: bool,
 }
 
 /// A hero's position and facing as its player's client reports them.
@@ -596,6 +609,8 @@ pub struct Snapshot {
     #[serde(default)]
     pub menu_pause: bool,
     #[serde(default)]
+    pub pause_ready: Vec<PlayerId>,
+    #[serde(default)]
     pub surround: f32,
     pub buffs: Vec<(PowerUp, f32)>,
     pub heroes: Vec<Hero>,
@@ -731,8 +746,14 @@ pub struct World {
     pub difficulty: Difficulty,
     /// Seconds into the run the boss comes next.
     pub next_boss: f32,
-    /// A living player has the game menu open, and the run waits for them.
+    /// A player opened the game menu, and the run waits until every living hero's player has
+    /// said Ready: those who have, so far.
     pub menu_pause: bool,
+    pub pause_ready: Vec<PlayerId>,
+    /// Players who gave up: their heroes cannot be raised.
+    pub quit: Vec<PlayerId>,
+    /// Elites running home to their camp, out of reach until they get there ([`CAMP_LEASH`]).
+    pub evading: Vec<u32>,
     /// What stands in the horde's way, once the host's client has filled it in; and seconds
     /// until its flow field is worked out again.
     pub obstacles: Option<crate::obstacles::Obstacles>,
@@ -793,6 +814,9 @@ impl World {
             difficulty: Difficulty::default(),
             next_boss: BOSS_EVERY,
             menu_pause: false,
+            pause_ready: Vec::new(),
+            quit: Vec::new(),
+            evading: Vec::new(),
             obstacles: None,
             flow_timer: 0.0,
             champions: Vec::new(),
@@ -1032,6 +1056,8 @@ impl World {
         held.banish = input.banish.or(held.banish);
         held.gear_on = input.gear_on.or(held.gear_on);
         held.menu = input.menu;
+        held.ready |= input.ready;
+        held.give_up |= input.give_up;
     }
 
     /// `player` left: their hero goes, and the run no longer waits on them.
@@ -1053,6 +1079,7 @@ impl World {
             difficulty: self.difficulty,
             next_boss: self.next_boss,
             menu_pause: self.menu_pause,
+            pause_ready: self.pause_ready.clone(),
             surround: self.surround,
             buffs: self.buffs.clone(),
             heroes: self.heroes.clone(),
@@ -1093,6 +1120,7 @@ impl World {
         self.difficulty = snapshot.difficulty;
         self.next_boss = snapshot.next_boss;
         self.menu_pause = snapshot.menu_pause;
+        self.pause_ready = snapshot.pause_ready;
         self.surround = snapshot.surround;
         self.buffs = snapshot.buffs;
         self.heroes = snapshot.heroes;
@@ -1175,11 +1203,7 @@ impl World {
     pub fn step(&mut self) {
         self.apply_picks();
         self.switch_gear();
-        let inputs = &self.inputs;
-        self.menu_pause = self
-            .heroes
-            .iter()
-            .any(|h| h.alive && inputs.get(&h.player).is_some_and(|i| i.menu));
+        self.tend_pause();
         if self.held() || self.game_over() {
             return;
         }
@@ -1547,6 +1571,9 @@ impl World {
                 hero.ward = (hero.ward - DT).max(0.0);
                 continue;
             }
+            if self.quit.contains(&hero.player) {
+                continue;
+            }
             let by = living
                 .iter()
                 .find(|(p, at)| *p != hero.player && at.distance(hero.pos) <= REVIVE_RANGE)
@@ -1766,16 +1793,35 @@ impl World {
                 .expect("living is not empty");
             let to = target - e.pos;
             let dist = to.length();
-            // A camp's elite guards it: with no hero near, it goes back and waits there.
-            if let Some(home) = e.home.filter(|_| dist > ELITE_AGGRO) {
-                let back = home - e.pos;
-                e.moving = back.length() > 1.0;
-                if e.moving {
-                    e.facing = back.normalize_or_zero();
-                    e.pos += e.facing * (e.speed * DT).min(back.length());
+            // A camp's elite (or a champion) guards its camp. It fights a hero who comes near or
+            // hurts it, but only so far from home: past its leash it runs back out of reach and
+            // heals, as WoW's mobs evade. With no fight on, it waits at home.
+            if let Some(home) = e.home {
+                let evading = self.evading.contains(&e.id);
+                if !evading && e.pos.distance(home) > CAMP_LEASH {
+                    self.evading.push(e.id);
                 }
-                e.pos += shove[i] * (DT * 8.0).min(0.5);
-                continue;
+                let evading = self.evading.contains(&e.id);
+                let fighting = dist <= ELITE_AGGRO || e.hp < e.max_hp;
+                if evading || !fighting {
+                    let back = home - e.pos;
+                    e.moving = back.length() > 1.0;
+                    if e.moving {
+                        let pace = if evading { EVADE_SPEED } else { 1.0 };
+                        e.facing = back.normalize_or_zero();
+                        e.pos += e.facing * (e.speed * pace * DT).min(back.length());
+                    } else if evading {
+                        // Home: whole again, and ready for the next fight.
+                        self.evading.retain(|&id| id != e.id);
+                        e.hp = e.max_hp;
+                        e.status = Status::default();
+                        e.act = hazards::Act::default();
+                    }
+                    if !evading {
+                        e.pos += shove[i] * (DT * 8.0).min(0.5);
+                    }
+                    continue;
+                }
             }
             let contact = dist <= HERO_RADIUS + e.radius + 0.35;
             if e.status.held() {
@@ -1931,6 +1977,10 @@ impl World {
     }
 
     fn damage_enemy(&mut self, by: PlayerId, ability: usize, id: u32, amount: f32, crit: bool) {
+        // Running home from a broken leash, it cannot be hurt.
+        if self.evading.contains(&id) {
+            return;
+        }
         let Some(e) = self.enemies.iter_mut().find(|e| e.id == id) else {
             return;
         };
@@ -2155,6 +2205,10 @@ impl World {
         while self.xp >= xp_to_next(self.level) {
             self.xp -= xp_to_next(self.level);
             self.level += 1;
+            // Every living hero catches its breath.
+            for hero in self.heroes.iter_mut().filter(|h| h.alive) {
+                hero.hp = (hero.hp + hero.max_hp * LEVEL_UP_HEAL).min(hero.max_hp);
+            }
             // The fallen too: their hands wait until they are raised.
             for h in 0..self.heroes.len() {
                 self.offer(h, Source::LevelUp);
@@ -2696,6 +2750,16 @@ mod tests {
         );
         steps(&mut w, 20);
         assert!(w.enemy(999).unwrap().hp < 1000.0, "never landed");
+    }
+
+    #[test]
+    fn a_level_up_gives_back_a_tenth_of_health() {
+        let mut w = world();
+        w.heroes[0].hp = w.heroes[0].max_hp * 0.5;
+        w.xp = xp_to_next(1);
+        w.level_up();
+        let h = &w.heroes[0];
+        assert!((h.hp - h.max_hp * (0.5 + LEVEL_UP_HEAL)).abs() < 1e-3, "{}", h.hp);
     }
 
     #[test]

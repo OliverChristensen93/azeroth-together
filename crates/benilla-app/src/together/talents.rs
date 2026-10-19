@@ -1000,6 +1000,7 @@ pub(super) fn setup_award(mut commands: Commands, asset_server: Res<AssetServer>
 /// During a run: remember how far it got, and when it is over, give our hero's class its renown.
 pub(super) fn track_run(
     sim: Option<Res<Sim>>,
+    gave_up: Res<super::pause::GaveUp>,
     mut talents: ResMut<Talents>,
     mut award: ResMut<RunAward>,
 ) {
@@ -1016,7 +1017,7 @@ pub(super) fn track_run(
         world.elapsed,
         world.kills,
     ));
-    if world.game_over() && !award.done {
+    if (world.game_over() || gave_up.0) && !award.done {
         give(&mut talents, &mut award);
     }
 }
@@ -1056,11 +1057,13 @@ fn give(talents: &mut Talents, award: &mut RunAward) {
 /// The renown line shows once the run is over.
 pub(super) fn show_award(
     sim: Option<Res<Sim>>,
+    gave_up: Res<super::pause::GaveUp>,
     award: Res<RunAward>,
     mut panel: Query<&mut Visibility, With<AwardPanel>>,
     mut text: Query<&mut Text, With<AwardText>>,
 ) {
-    let show = award.done && sim.is_some_and(|s| s.world.game_over()) && !award.text.is_empty();
+    let over = sim.is_some_and(|s| s.world.game_over()) || gave_up.0;
+    let show = award.done && over && !award.text.is_empty();
     for mut v in &mut panel {
         let want = if show {
             Visibility::Inherited

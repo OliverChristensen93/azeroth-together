@@ -18,6 +18,10 @@ end
 if ActionButton_SetTooltip then
     ActionButton_SetTooltip = function() GameTooltip:Hide() end
 end
+-- C and N are the run's stat and talent sheets (together::inventory): WoW's own character and
+-- talent frames have nothing to show here.
+ToggleCharacter = function() end
+ToggleTalentFrame = function() end
 for i = 1, NUM_CHAT_WINDOWS do
     local frame = getglobal("ChatFrame" .. i)
     if frame then

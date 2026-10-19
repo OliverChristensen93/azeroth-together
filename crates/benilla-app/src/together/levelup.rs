@@ -511,7 +511,7 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 sub: format!("Item  ·  copy {} of {max}", held + 1),
                 badge: format!("{}/{max}", held + 1),
                 bright: true,
-                description: "Kept for the rest of the run.".into(),
+                description: String::new(),
                 lines,
                 footer: "Copies stack".into(),
             }

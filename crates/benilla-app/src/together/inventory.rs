@@ -1,6 +1,6 @@
 //! What the hero carries and what it adds up to: a strip of its tomes and items under WoW's
 //! player frame, each with its tooltip under the mouse ([`super::tooltip`]), the stat sheet,
-//! opened by the strip's Stats button or Tab, and beside it the talent sheet, opened by its
+//! opened by the strip's Stats button or C, and beside it the talent sheet, opened by its
 //! Talents button or N: every bonus the hero's talents give, each kind added up into one line.
 //! The stat sheet opens by itself while cards are up, and both stay above the level-up screen,
 //! so a card can be weighed against what the hero has.
@@ -340,7 +340,7 @@ pub(super) fn refresh(
         *shown = None;
         return;
     };
-    if keys.just_pressed(KeyCode::Tab) || button.iter().any(|i| *i == Interaction::Pressed) {
+    if keys.just_pressed(KeyCode::KeyC) || button.iter().any(|i| *i == Interaction::Pressed) {
         open.0 = !open.0;
     }
     if keys.just_pressed(KeyCode::KeyN) || talent_button.iter().any(|i| *i == Interaction::Pressed)

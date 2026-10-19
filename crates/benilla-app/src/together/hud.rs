@@ -260,18 +260,21 @@ pub(super) fn refresh(
     mut cards: Query<&mut Text, With<CardsText>>,
     mut panel: Query<&mut Visibility, With<CenterPanel>>,
     net: Res<super::session::Net>,
+    gave_up: Res<super::pause::GaveUp>,
 ) {
     let world = &sim.world;
     let Some(hero) = world.hero(sim.me) else {
         return;
     };
-    let center = if world.game_over() {
-        let fallen = if world.heroes.len() > 1 {
-            "The party has fallen."
-        } else {
-            "You have fallen."
+    let center = if world.game_over() || gave_up.0 {
+        let fallen = match (gave_up.0, net.is_client(), world.heroes.len() > 1) {
+            (true, true, _) => "You left the run.",
+            (true, false, true) => "You ended the party's run.",
+            (true, false, false) => "You ended the run.",
+            (false, _, true) => "The party has fallen.",
+            (false, _, false) => "You have fallen.",
         };
-        let next = if net.is_client() {
+        let next = if net.is_client() && !gave_up.0 {
             "The host takes everyone back to the menu"
         } else {
             "Press Enter to return to the menu"

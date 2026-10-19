@@ -1,6 +1,8 @@
 //! Champions: mini-bosses between the bosses. From the rules' `champion_from` seconds in, and
-//! every `champion_every` after, one comes: an elite of a kind a few tiers above the horde's,
-//! tougher still and bigger, using its kind's mechanics. It leaves a cache where it falls, like a
+//! every `champion_every` after, one appears: an elite of a kind a few tiers above the horde's,
+//! tougher still and bigger, using its kind's mechanics. It stands at a spot of its own, away
+//! from the heroes, and guards it like a camp's elite: it fights whoever comes near, but past
+//! its leash ([`CAMP_LEASH`]) it runs home and heals. It leaves a cache where it falls, like a
 //! boss. Clients know one by [`EnemyState::champion`].
 
 use super::*;
@@ -36,19 +38,44 @@ impl World {
             return;
         }
         self.next_champion = self.elapsed + self.content.rules.champion_every.max(10.0);
-        let (near, heading) = living[self.rng.index(living.len())];
-        let angle = self.spawn_angle(heading);
-        let pos = self.inside(near + V2::from_angle(angle, SPAWN_RING.0));
+        let pos = self.champion_spot(&living);
         let def = self.tier_ahead(CHAMPION_TIERS_AHEAD);
-        let id = self.spawn_enemy(def, pos, near, true);
+        let id = self.spawn_enemy(def, pos, pos + V2::new(1.0, 0.0), true);
         let party = 1.0 + 0.6 * (living.len() - 1) as f32;
         if let Some(e) = self.enemies.last_mut() {
             e.hp *= CHAMPION_HEALTH * party;
             e.max_hp *= CHAMPION_HEALTH * party;
             e.radius *= CHAMPION_SCALE;
+            e.home = Some(pos);
         }
         self.champions.push(id);
         self.events.push(Event::ChampionCame { id, def });
+    }
+
+    /// Where a champion stands: of a few open spots over the arena, clear of its shrines and
+    /// camps, the one furthest from the nearest hero, so it is a place to go to.
+    fn champion_spot(&mut self, living: &[(V2, V2)]) -> V2 {
+        let content = self.content.clone();
+        let zone = &content.zones[self.zone];
+        let center = self.center();
+        let ring = ((zone.leash * 0.25).clamp(6.0, 30.0), (zone.leash - 8.0).max(8.0));
+        let mut taken: Vec<V2> = self.interactables.iter().map(|i| i.pos).collect();
+        taken.extend(self.camps.iter().map(|c| c.pos));
+        let mut best: Option<(V2, f32)> = None;
+        for _ in 0..8 {
+            let at = crate::interact::spot(zone, center, ring, &taken, &mut self.rng);
+            if self.obstacles.as_ref().is_some_and(|o| !o.reachable(at)) {
+                continue;
+            }
+            let near = living
+                .iter()
+                .map(|(p, _)| p.distance(at))
+                .fold(f32::INFINITY, f32::min);
+            if best.is_none_or(|(_, d)| near > d) {
+                best = Some((at, near));
+            }
+        }
+        best.map_or(center, |(at, _)| at)
     }
 
     /// Enemy `id` died at `pos`: a champion leaves a cache. Whether it was one.
@@ -96,5 +123,37 @@ mod tests {
             .any(|i| i.kind == InteractableKind::Cache));
         assert!(w.drain_events().contains(&Event::ChampionDied { id }));
         assert!(w.next_champion > w.elapsed);
+    }
+
+    #[test]
+    fn a_champion_dragged_past_its_leash_runs_home_and_heals() {
+        let mut w = World::new(Arc::new(sample()), "elwynn", 11).unwrap();
+        w.add_hero(0, "mage").unwrap();
+        w.interactables.clear();
+        w.enemies.clear();
+        w.elapsed = w.content.rules.champion_from;
+        w.spawn_champions();
+        let id = w.champions[0];
+        let home = w.enemy(id).unwrap().home.unwrap();
+        // Hurt, and pulled far from home by a hero standing well away.
+        {
+            let e = w.enemies.iter_mut().find(|e| e.id == id).unwrap();
+            e.hp = e.max_hp * 0.5;
+            e.pos = home + V2::new(CAMP_LEASH + 2.0, 0.0);
+        }
+        w.heroes[0].pos = home + V2::new(CAMP_LEASH + 6.0, 0.0);
+        w.move_enemies();
+        assert!(w.evading.contains(&id));
+        // Out of reach on the way home.
+        let hp = w.enemy(id).unwrap().hp;
+        w.damage_enemy(0, 0, id, 50.0, false);
+        assert_eq!(w.enemy(id).unwrap().hp, hp);
+        for _ in 0..600 {
+            w.move_enemies();
+        }
+        let e = w.enemy(id).unwrap();
+        assert!(e.pos.distance(home) <= 1.5, "{:?} vs {home:?}", e.pos);
+        assert_eq!(e.hp, e.max_hp);
+        assert!(!w.evading.contains(&id));
     }
 }

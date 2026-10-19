@@ -402,7 +402,7 @@ pub(super) fn refresh(
     {
         if let Some(e) = world.enemy(id) {
             warning = Some(format!(
-                "A champion comes: {}\nIt guards a cache",
+                "A champion has appeared: {}\nFind it on your minimap: it guards a cache",
                 content.enemies[e.def].name
             ));
         }

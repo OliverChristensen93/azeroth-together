@@ -325,6 +325,9 @@ pub(super) struct LocalInput {
     /// The game menu is open ([`pause`]), or a boss's entrance ([`bossintro`]): the run waits.
     pub(super) menu: bool,
     pub(super) boss_intro: bool,
+    /// Ready to go on after a pause; and giving up the run (joined). Each sent once.
+    pub(super) ready: bool,
+    pub(super) give_up: bool,
 }
 
 /// Play Solo was clicked: [`start_run`] begins the run.
@@ -340,7 +343,7 @@ impl Plugin for TogetherPlugin {
             .insert_resource(menu::Selection::new(&content()))
             .init_resource::<StartRequest>()
             .init_resource::<EndRun>()
-            .init_resource::<pause::LeaveRun>()
+            .init_resource::<pause::GaveUp>()
             .init_resource::<bossintro::BossIntro>()
             .init_resource::<session::Net>()
             .init_resource::<lobby::JoinDialog>()
@@ -367,6 +370,7 @@ impl Plugin for TogetherPlugin {
                     runpanel::setup,
                     gear_tip::setup,
                     bossintro::setup,
+                    pause::setup,
                     cooldowns::setup,
                     flair::setup,
                     menu::spawn_root,
@@ -396,6 +400,7 @@ impl Plugin for TogetherPlugin {
                 ),
             )
             .add_systems(Update, cooldowns::refresh)
+            .add_systems(Update, pause::ready_panel)
             .add_systems(Update, flair::animate)
             // Equipment: the stash on disk, icons, tooltips and the run's gear bar.
             .add_systems(
@@ -914,6 +919,8 @@ fn step_sim(
             gear_on: input.gear_on.take(),
             pose: input.pose,
             menu: input.menu || input.boss_intro,
+            ready: std::mem::take(&mut input.ready),
+            give_up: std::mem::take(&mut input.give_up),
             ..Default::default()
         };
         let heard = session::client_exchange(&mut net, held);
@@ -950,6 +957,8 @@ fn step_sim(
                 gear_on: input.gear_on.take(),
                 pose: Some(pose),
                 menu: input.menu || input.boss_intro,
+                ready: std::mem::take(&mut input.ready),
+                give_up: std::mem::take(&mut input.give_up),
                 ..Default::default()
             };
             sim.world.set_input(sim.me, held);
@@ -969,8 +978,9 @@ fn step_sim(
 }
 
 /// A run's input does not carry into the next.
-fn reset_input(mut input: ResMut<LocalInput>) {
+fn reset_input(mut input: ResMut<LocalInput>, mut gave_up: ResMut<pause::GaveUp>) {
     *input = LocalInput::default();
+    gave_up.0 = false;
 }
 
 /// A joined client's run ended from outside (the host ended it, or the connection went): the
@@ -996,16 +1006,14 @@ fn back_to_menu(
     mut over_since: Local<Option<f32>>,
     mut net: ResMut<session::Net>,
     mut end: ResMut<EndRun>,
-    mut leave: ResMut<pause::LeaveRun>,
+    gave_up: Res<pause::GaveUp>,
 ) {
-    // Main Menu from the game menu: the run ends here, for a host's party too.
-    let leaving = std::mem::take(&mut leave.0);
-    if leaving {
-        pause::leave_session(&mut net);
-    }
-    let ended_outside = std::mem::take(&mut end.0) || leaving;
+    let ended_outside = std::mem::take(&mut end.0);
     if !ended_outside {
-        if !sim.world.game_over() || net.is_client() {
+        // The run is over for us: everyone fell, or we chose Main Menu (and the results are up).
+        // A joined player who did not give up waits for the host to end it.
+        let over = sim.world.game_over() || gave_up.0;
+        if !over || (net.is_client() && !gave_up.0) {
             *over_since = None;
             return;
         }
@@ -1015,7 +1023,7 @@ fn back_to_menu(
         if !keys.just_pressed(KeyCode::Enter) && !auto {
             return;
         }
-        net.broadcast_ended();
+        pause::leave_session(&mut net);
     }
     *over_since = None;
     for e in &spawned {

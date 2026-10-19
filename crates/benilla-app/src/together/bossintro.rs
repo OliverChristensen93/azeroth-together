@@ -212,6 +212,8 @@ pub(super) fn refresh(
         let gone = world.enemy(id).is_none() || !world.hero(sim.me).is_some_and(|h| h.alive);
         if pressed || gone {
             intro.showing = None;
+            // Continue is our Ready: the run goes on once everyone has pressed it.
+            input.ready = true;
         }
     }
     input.boss_intro = intro.open();

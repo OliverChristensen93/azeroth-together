@@ -121,7 +121,46 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
   The menu lists your race's racials under the class text.
 - **Tome text:** "Raises your armor for the run." is now "Raises your armor."
 
+## Round 2: your answers, done
+
+- **Fix: the game showed only the sky** when started from
+  `D:\Games\azeroth-together\target\release`. A dev build looks for the game data in the folder
+  it was built from, and this worktree has none. The launcher now uses the main checkout's
+  `WoW\Data` when it's started from a worktree build without `WOW_DATA` set
+  (`crates/azeroth-together/src/main.rs`).
+- **4. Champions and camp elites keep to their spot.** A champion now appears at a spot of its
+  own, as far from the heroes as the arena allows, and stays there. It's marked on the minimap
+  (an orange dot, kept on the rim), and its warning says to find it there. Camp elites and
+  champions behave like WoW mobs:
+  - They fight a hero who comes within 20 yd or who hits them.
+  - Past 35 yd from their spot they give up, run home at 1.6× speed, take no damage on the way
+    (evade), and heal to full when they arrive.
+  - `CAMP_LEASH` is in `world.rs`.
+- **5.** The boss entrance waits for everyone's Continue. Continue now counts as your Ready.
+- **6. Pause and Ready.** Escape pauses the run for everyone. Once your menu closes, a
+  "Paused" panel shows a Ready button (Enter or Space) and who the party is still waiting for.
+  The run goes on when everyone is ready. Playing alone, it goes on as soon as the menu closes.
+- **8. Main Menu shows the results first.** Confirming ends the run and brings up the results
+  screen with the renown earned. Enter then goes to the menu.
+  - A host ends the run for the whole party.
+  - A joined player's hero falls for good, so it can't be raised. That player sees their own
+    results and leaves; the others play on.
+  - The popup reads "Exiting to the main menu will end the run, but reward you for your progress
+    so far."
+- **10.** Every level-up heals each living hero for 10% of its max health.
+- **12. Keys.** WoW's own talent and character frames are off. The stat sheet moved from Tab to
+  **C**, and the talent sheet is on **N**. The Controls help lists both, plus Esc.
+- **18.** "For the run" is gone everywhere, including the item cards' "Kept for the rest of the
+  run."
+- **Seen working since:** the banner camera fix. A test frame shows the hero carrying the banner
+  with the camera at its normal distance, and the destination flag on the minimap.
+- **Not seen on screen:** the Ready panel in co-op and the Main Menu results screen. Sim tests
+  cover pausing until everyone is ready and giving up for good (423 passing).
+
 ## Part 2: Decisions to review
+
+Answered: 4, 5, 6, 7 (yes), 8, 9 (fine for now), 10, 11 (fine for now), 12 and 18 (see Round 2).
+Still open: 1-3, 13-17 and 19.
 
 1. **Enemy speed: ×1.35 with a 6.65 yd/s cap rather than full player speed.** You remembered WoW
    mobs as running at player speed, and they do. But in a survivors game, enemies at 7.0 mean a
