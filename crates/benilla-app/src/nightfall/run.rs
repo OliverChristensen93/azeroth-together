@@ -5,7 +5,8 @@
 //! soon as its pick is in) and walks a slow circle; `NIGHTFALL_TRACE_POS=1` logs the
 //! hero's WoW position every 2 seconds, for measuring entry points; `NIGHTFALL_FRAIL=<player>`
 //! drops that hero 15 s into the run (the host's); `NIGHTFALL_AUTOPLAY_ABANDON=<seconds>` presses
-//! Abandon Raid that many seconds in.
+//! Abandon Raid that many seconds in (every raid; autoplay also presses Continue on the end
+//! screen, so a host goes on to the next raid).
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -425,10 +426,11 @@ pub(super) fn start_run(
             return;
         }
         // The raid as the host planned it in the lobby: where it enters the map.
+        info!("nightfall: a raid begins (joined)");
         commands.insert_resource(Sim::mirror(me, net.planned_raid().as_ref()));
         player.active = false;
         input.new_run();
-        inn_state.ready = false;
+        inn_state.reset();
         next.set(Phase::Playing);
         return;
     }
@@ -477,10 +479,11 @@ pub(super) fn start_run(
         .planned_raid()
         .unwrap_or_else(|| RaidRoll::standard(&content(), raid_seed(&time)));
     net.solo_raid = None;
+    info!("nightfall: a raid begins ({} heroes)", roster.len());
     commands.insert_resource(Sim::hosted(&roster, roll));
     player.active = false;
     input.new_run();
-    inn_state.ready = false;
+    inn_state.reset();
     next.set(Phase::Playing);
 }
 
@@ -782,6 +785,18 @@ pub(super) fn back_to_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_raid_enters_where_its_roll_says_or_at_the_first_entry() {
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let first = content().map.entries[0];
+        assert_eq!(entry_of(None), first);
+        let mut roll = RaidRoll::standard(&content(), 1);
+        assert_eq!(entry_of(Some(&roll)), first);
+        // An entry the map has not (a roll from other content) falls back to the first.
+        roll.entry = 9999;
+        assert_eq!(entry_of(Some(&roll)), first);
+    }
 
     #[test]
     fn a_fresh_mirror_shows_no_containers_before_its_first_snapshot() {

@@ -350,14 +350,14 @@ pub(super) fn menu_clicks(
                 inn_state.ready = true;
             }
         }
-        MenuAction::Unready => inn_state.ready = false,
+        MenuAction::Unready => inn_state.reset(),
         MenuAction::Leave => {
             net.leave("");
-            inn_state.ready = false;
+            inn_state.reset();
         }
         MenuAction::Back => {
             net.leave("");
-            inn_state.ready = false;
+            inn_state.reset();
             next_mode.set(GameMode::Pick);
         }
     }

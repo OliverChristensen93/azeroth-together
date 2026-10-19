@@ -276,6 +276,7 @@ mod tests {
 
     /// A rogue's body on the shipped content, with an enemy (id 5, kind 0) beside it.
     fn stage() -> (World, Entity, Entity) {
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
         let mut sim = nightfall_sim::World::new(super::super::shipped_content());
         sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
         sim.enemies.push(nightfall_sim::Enemy {

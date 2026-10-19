@@ -489,6 +489,7 @@ mod tests {
 
     #[test]
     fn a_queued_use_action_becomes_one_fresh_press_and_leaves_the_engines_calls() {
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
         use bevy::ecs::system::RunSystemOnce;
 
         let serial = super::super::enemies::enemy_guid_serial(3, 7);

@@ -220,8 +220,12 @@ pub(super) fn continue_click(
     buttons: Query<&Interaction, (Changed<Interaction>, With<EndContinue>)>,
     mut net: ResMut<Net>,
     mut end: ResMut<EndRun>,
+    sim: Res<Sim>,
 ) {
-    if buttons.iter().any(|i| *i == Interaction::Pressed) {
+    // A test run (`NIGHTFALL_AUTOPLAY`) presses it itself, for the host or alone, so raids follow
+    // one another.
+    let auto = super::run::autoplay() && !net.is_client() && sim.over.is_some();
+    if auto || buttons.iter().any(|i| *i == Interaction::Pressed) {
         net.broadcast_ended();
         end.0 = true;
     }

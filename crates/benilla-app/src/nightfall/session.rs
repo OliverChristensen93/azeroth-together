@@ -50,6 +50,64 @@ pub(super) struct InnState {
     pub ready: bool,
 }
 
+impl InnState {
+    /// Not ready (and no pose): a raid began, the session ended, or none was joined yet.
+    pub fn reset(&mut self) {
+        self.ready = false;
+    }
+}
+
+/// Whether the host takes a joiner's Ready: only once their pick is in (a hello carries no
+/// loadout).
+fn ready_after(ready: bool, picked: bool) -> bool {
+    ready && picked
+}
+
+/// A joiner's Ready as the host holds it after their pick `now` arrives: gone when what they bring
+/// changed from `was`.
+fn ready_after_pick(ready: bool, was: &HeroPick, now: &HeroPick) -> bool {
+    ready && same_bringing(was, now)
+}
+
+/// Our own Ready after our pick changed: gone, unless it is the first pick (`sent_before` false).
+fn ready_after_own_pick(ready: bool, sent_before: bool) -> bool {
+    ready && !sent_before
+}
+
+/// The Ready to tell the host now, if any: not before our pick is sent (so the host holds what we
+/// bring), and again whenever it differs from what we last told it (`sent_ready` is cleared when a
+/// raid ends, so a Ready for the next raid is sent even if it equals the last).
+fn ready_to_send(ready: bool, pick_sent: bool, sent_ready: Option<bool>) -> Option<bool> {
+    (sent_ready != Some(ready) && (!ready || pick_sent)).then_some(ready)
+}
+
+/// Whether `l` is how the lobby lists a player with these parts.
+fn listed(
+    l: &LobbyPlayer,
+    player: PlayerId,
+    hero: &HeroPick,
+    pose: Option<HeroPose>,
+    ready: bool,
+) -> bool {
+    l.player == player && l.hero == *hero && l.pose == pose && l.ready == ready
+}
+
+/// A pose from a client made safe: finite, a unit facing, a height in WoW's range, the place
+/// kept by `clamp` (the inn's bounds). `None` when it is not finite.
+fn sane_pose(
+    pose: HeroPose,
+    clamp: impl Fn(nightfall_sim::V2) -> nightfall_sim::V2,
+) -> Option<HeroPose> {
+    if !(pose.pos.is_finite() && pose.facing.is_finite() && pose.z.is_finite()) {
+        return None;
+    }
+    Some(HeroPose {
+        pos: clamp(pose.pos),
+        facing: pose.facing.normalize_or_zero(),
+        z: pose.z.clamp(-1000.0, 3000.0),
+    })
+}
+
 /// Whether the lobby goes out now: it changed, and the last went at least [`LOBBY_EVERY`] ago.
 fn lobby_due(changed: bool, since_last: Option<f32>) -> bool {
     changed && since_last.is_none_or(|s| s >= LOBBY_EVERY)
@@ -678,27 +736,22 @@ pub(super) fn lobby(
                             // What they bring changed: whatever they were ready with is not
                             // this. (A client freezes its loadout while ready, so only one that
                             // does not keep to that gets here; it must ready again.)
-                            if !same_bringing(&p.hero, &hero) {
-                                p.ready = false;
-                            }
+                            p.ready = ready_after_pick(p.ready, &p.hero, &hero);
                             p.hero = hero;
                             p.picked = true;
                         }
                     }
                     HostEvent::Message(conn, ClientMsg::InnPose(pose)) => {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
-                            if pose.pos.is_finite() && pose.facing.is_finite() && pose.z.is_finite()
-                            {
-                                // Kept inside the inn, as our own hero is.
-                                let pos = inn().place.bounds.clamp(pose.pos);
-                                p.pose = Some(HeroPose { pos, ..pose });
+                            if let Some(pose) = sane_pose(pose, |p| inn().place.bounds.clamp(p)) {
+                                p.pose = Some(pose);
                             }
                         }
                     }
                     HostEvent::Message(conn, ClientMsg::Ready(ready)) => {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
                             // Only with a pick in: a hello carries no loadout.
-                            p.ready = ready && p.picked;
+                            p.ready = ready_after(ready, p.picked);
                         }
                     }
                     HostEvent::Left(conn) => {
@@ -710,20 +763,28 @@ pub(super) fn lobby(
                     HostEvent::Message(_, ClientMsg::Input { .. }) | HostEvent::Joined(..) => {}
                 }
             }
-            let mut players = vec![LobbyPlayer {
-                player: 0,
-                hero: own,
-                pose: inn_state.pose,
-                ready: inn_state.ready,
-            }];
-            players.extend(h.peers.iter().map(|p| LobbyPlayer {
-                player: p.player,
-                hero: p.hero.clone(),
-                pose: p.pose,
-                ready: p.ready,
-            }));
-            let changed = h.sent.as_ref() != Some(&players);
-            if lobby_due(changed, h.sent_at.map(|t| t.elapsed().as_secs_f32())) {
+            // Compared with what went last before any loadout is cloned: most frames nothing changed.
+            let same = h.sent.as_ref().is_some_and(|s| {
+                s.len() == 1 + h.peers.len()
+                    && listed(&s[0], 0, &own, inn_state.pose, inn_state.ready)
+                    && h.peers
+                        .iter()
+                        .zip(&s[1..])
+                        .all(|(p, l)| listed(l, p.player, &p.hero, p.pose, p.ready))
+            });
+            if lobby_due(!same, h.sent_at.map(|t| t.elapsed().as_secs_f32())) {
+                let mut players = vec![LobbyPlayer {
+                    player: 0,
+                    hero: own,
+                    pose: inn_state.pose,
+                    ready: inn_state.ready,
+                }];
+                players.extend(h.peers.iter().map(|p| LobbyPlayer {
+                    player: p.player,
+                    hero: p.hero.clone(),
+                    pose: p.pose,
+                    ready: p.ready,
+                }));
                 host.broadcast(&ServerMsg::Lobby {
                     players: players.clone(),
                     raid: h.planned.clone(),
@@ -770,19 +831,17 @@ pub(super) fn lobby(
             }
             if let Some(why) = gone {
                 net.leave(why);
-                inn_state.ready = false;
+                inn_state.reset();
                 return;
             }
             if c.me.is_none() {
                 // Not welcomed (yet): nothing of an earlier session's Ready carries over.
-                inn_state.ready = false;
+                inn_state.reset();
             }
             if c.me.is_some() && c.sent_pick.as_ref() != Some(&own) {
                 // A pick that changes after it was sent (the class, say) is no longer the one we
                 // were ready with.
-                if c.sent_pick.is_some() {
-                    inn_state.ready = false;
-                }
+                inn_state.ready = ready_after_own_pick(inn_state.ready, c.sent_pick.is_some());
                 c.client.lock().unwrap().send(&ClientMsg::Pick(own.clone()));
                 c.sent_pick = Some(own);
             }
@@ -802,14 +861,11 @@ pub(super) fn lobby(
                     }
                 }
                 // Ready goes after the pick on the wire (above), so the host holds what we bring.
-                if c.sent_ready != Some(inn_state.ready)
-                    && (!inn_state.ready || c.sent_pick.is_some())
+                if let Some(ready) =
+                    ready_to_send(inn_state.ready, c.sent_pick.is_some(), c.sent_ready)
                 {
-                    c.client
-                        .lock()
-                        .unwrap()
-                        .send(&ClientMsg::Ready(inn_state.ready));
-                    c.sent_ready = Some(inn_state.ready);
+                    c.client.lock().unwrap().send(&ClientMsg::Ready(ready));
+                    c.sent_ready = Some(ready);
                 }
             }
         }
@@ -1052,6 +1108,9 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                     // The host wants a pick from us after this raid, even if it is the same one: it
                     // cleared ours when the raid started.
                     c.sent_pick = None;
+                    // The host cleared our Ready too: the next one must go out even if it equals
+                    // the last we sent, or a second raid never starts.
+                    c.sent_ready = None;
                     if let Some((players, raid)) = lobby {
                         c.lobby = players;
                         c.planned = Some(raid);
@@ -1310,7 +1369,74 @@ mod tests {
     }
 
     #[test]
+    fn a_raid_ending_makes_the_client_tell_its_ready_again() {
+        let mut net = Net::default();
+        net.join("127.0.0.1:9");
+        if let Role::Client(c) = &mut net.role {
+            c.sent_ready = Some(true);
+            c.sent_pick = Some(pick("Me"));
+        }
+        assert!(client_left_run(&mut net, &[Heard::Ended]));
+        let Role::Client(c) = &net.role else { panic!() };
+        assert_eq!(c.sent_ready, None);
+        assert_eq!(c.sent_pick, None);
+        // So an autoplay joiner's Ready(true) for the second raid goes out.
+        assert_eq!(ready_to_send(true, true, c.sent_ready), Some(true));
+    }
+
+    #[test]
+    fn the_four_ready_rules() {
+        // The host takes Ready only after a pick.
+        assert!(!ready_after(true, false));
+        assert!(ready_after(true, true));
+        assert!(!ready_after(false, true));
+        // The host clears Ready on a pick that changes what they bring (not on a rename).
+        let a = pick("Me");
+        let mut renamed = a.clone();
+        renamed.name = "X".into();
+        let mut other = a.clone();
+        other.class = "mage".into();
+        assert!(ready_after_pick(true, &a, &renamed));
+        assert!(!ready_after_pick(true, &a, &other));
+        assert!(!ready_after_pick(false, &a, &a));
+        // The client holds Ready back until its pick is sent, sends changes, and re-sends after a
+        // reset; Not Ready needs no pick.
+        assert_eq!(ready_to_send(true, false, None), None);
+        assert_eq!(ready_to_send(true, true, None), Some(true));
+        assert_eq!(ready_to_send(true, true, Some(true)), None);
+        assert_eq!(ready_to_send(false, true, Some(true)), Some(false));
+        assert_eq!(ready_to_send(false, false, Some(true)), Some(false));
+        assert_eq!(ready_to_send(false, false, None), Some(false));
+        // The client un-readies when its pick changes after one was sent.
+        assert!(!ready_after_own_pick(true, true));
+        assert!(ready_after_own_pick(true, false));
+        assert!(!ready_after_own_pick(false, true));
+    }
+
+    #[test]
+    fn an_inn_pose_is_made_sane() {
+        use nightfall_sim::V2;
+        let clamp = |p: V2| V2::new(p.x.clamp(-10.0, 10.0), p.y);
+        let bad = HeroPose {
+            pos: V2::new(f32::NAN, 0.0),
+            facing: V2::new(1.0, 0.0),
+            z: 0.0,
+        };
+        assert_eq!(sane_pose(bad, clamp), None);
+        let wild = HeroPose {
+            pos: V2::new(50.0, 1.0),
+            facing: V2::new(40.0, 0.0),
+            z: 1.0e9,
+        };
+        let sane = sane_pose(wild, clamp).unwrap();
+        assert_eq!(sane.pos, V2::new(10.0, 1.0));
+        assert!((sane.facing.length() - 1.0).abs() < 1e-4);
+        assert_eq!(sane.z, 3000.0);
+    }
+
+    #[test]
     fn alone_the_inn_plans_the_next_raid_and_replans_it_after_each() {
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
         let mut net = Net::default();
         assert_eq!(net.planned_raid(), None);
         net.solo_raid = Some(RaidRoll {
