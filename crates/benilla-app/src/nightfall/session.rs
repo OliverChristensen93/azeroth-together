@@ -77,6 +77,7 @@ pub(super) struct Peer {
     pub hero: HeroPick,
     /// Their first [`ClientMsg::Pick`] has come, so `hero` holds what they bring. A hello carries
     /// no loadout (see [`nightfall_sim::messages::Who`]), so until it a run must not start.
+    /// Cleared again when each raid starts: the next one needs a pick made after this one ended.
     pub picked: bool,
     /// The events since this player's last state, sent with the next one it keeps up for.
     pending: Vec<Event>,
@@ -125,6 +126,14 @@ fn first_unpicked<'a>(peers: impl IntoIterator<Item = (bool, &'a str)>) -> Optio
         .into_iter()
         .find(|(picked, _)| !picked)
         .map(|(_, name)| name)
+}
+
+/// A new raid needs a fresh pick from every joiner: what a joiner brought last time is settled
+/// (and may have changed) before they pick again, so none counts for the next raid.
+fn clear_picks<'a>(picked: impl IntoIterator<Item = &'a mut bool>) {
+    for p in picked {
+        *p = false;
+    }
 }
 
 /// The lowest player number not taken (the host is 0).
@@ -310,6 +319,8 @@ impl Net {
         if let Role::Host(h) = &mut self.role {
             h.steps = 0;
             h.raid = h.raid.wrapping_add(1);
+            // The next Start waits for each joiner's pick after this raid, not the one before it.
+            clear_picks(h.peers.iter_mut().map(|p| &mut p.picked));
             let raid = h.raid;
             h.host.lock().unwrap().broadcast(&ServerMsg::Start { raid });
         }
@@ -765,6 +776,9 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                 });
                 if let Role::Client(c) = &mut net.role {
                     c.start = false;
+                    // The host wants a pick from us after this raid, even if it is the same one: it
+                    // cleared ours when the raid started.
+                    c.sent_pick = None;
                     if let Some(players) = lobby {
                         c.lobby = players;
                     }
@@ -885,6 +899,20 @@ mod tests {
         assert!(lobby_holds(&lobby(renamed), Some(1), &old));
         // Alone or hosting there is no host to disagree.
         assert!(Net::default().host_holds(&ours));
+    }
+
+    #[test]
+    fn a_new_raid_waits_for_every_joiners_fresh_pick() {
+        let mut picks = [(true, "A"), (true, "B")];
+        assert_eq!(first_unpicked(picks), None, "both have picked");
+        let mut flags = [true, true];
+        clear_picks(flags.iter_mut());
+        picks = [(flags[0], "A"), (flags[1], "B")];
+        assert_eq!(first_unpicked(picks), Some("A"), "the next start waits");
+        // One picks again after the raid, the other has not yet.
+        flags[0] = true;
+        picks = [(flags[0], "A"), (flags[1], "B")];
+        assert_eq!(first_unpicked(picks), Some("B"));
     }
 
     #[test]
