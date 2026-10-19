@@ -12,6 +12,7 @@ mod abilities;
 mod bounds;
 mod combat;
 mod content;
+mod contracts;
 mod enemies;
 mod heightmap;
 mod inn;
@@ -40,6 +41,7 @@ pub use content::{
     MapDef, MoveDef, Rules, RunRules, SenseRules, SpawnDef, StanceTable, StepNoise, Swing,
     WeaponDef, WorldRules,
 };
+pub use contracts::ContractError;
 pub use enemies::{Enemy, PATROL_BUDGET, STEP_FLOORS, WANDER_BUDGET};
 pub use heightmap::{
     Floors, Grid, HeightMap, HeightMapBuilder, Navigator, PathPlan, Span, SpanList, CELL, HEADROOM,
