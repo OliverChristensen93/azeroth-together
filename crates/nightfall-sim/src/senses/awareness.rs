@@ -264,6 +264,15 @@ impl Mind {
                 0.0
             };
         }
+        // Someone who is not there to be sensed (a hero who got out, and was heard once as they
+        // went) is neither seen nor heard again: the suspicion of them drains like any other.
+        for s in self
+            .of
+            .iter_mut()
+            .filter(|s| !sensed.iter().any(|x| x.player == s.player))
+        {
+            s.level = (s.level - r.drain * dt).max(0.0);
+        }
         if let State::Alerted {
             player,
             last_seen,

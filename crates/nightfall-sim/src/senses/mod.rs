@@ -74,10 +74,11 @@ impl Senses {
         }
     }
 
-    /// A player left: nothing of their hero stays, and no enemy keeps a thought of them.
+    /// A player left: nothing of their hero stays, and no enemy keeps a thought of them. Their
+    /// noises made this step stay: a noise marks a place, and the beat that gets a hero out of an
+    /// exit is made in the step they go, so the enemies still hear it (see `step_enemies`).
     pub(crate) fn forget(&mut self, player: PlayerId) {
         self.heroes.retain(|h| h.player != player);
-        self.noises.retain(|n| n.by != player);
         self.shouts.retain(|(_, s)| s.player != player);
         for m in &mut self.minds {
             m.forget(player);

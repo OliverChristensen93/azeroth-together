@@ -25,7 +25,7 @@ use super::Senses;
 use crate::combat::{Engage, Hold};
 use crate::enemies::{self, heading, Brain, Enemy, ARRIVE, WANDER_BUDGET};
 use crate::heightmap::{HeightMap, Navigator, PathPlan};
-use crate::{Content, Hero, SenseRules, CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3};
+use crate::{Content, Hero, PlayerId, SenseRules, CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3};
 
 /// Seconds between turns while an enemy looks around.
 const LOOK_EVERY: f32 = 2.5;
@@ -92,6 +92,14 @@ pub(crate) fn step_enemies(
     let fog = content.rules.atmosphere.fog_end;
     let map = nav.map().clone();
     let noises = std::mem::take(&mut s.noises);
+    // Whoever made a noise and has since left (got out, dropped off) is still heard once: a noise
+    // marks a place, and the beat that gets a hero out is made as they go.
+    let mut gone: Vec<PlayerId> = Vec::new();
+    for n in &noises {
+        if !heroes.iter().any(|h| h.player == n.by) && !gone.contains(&n.by) {
+            gone.push(n.by);
+        }
+    }
     let mut shouts = std::mem::take(&mut s.shouts);
     let mut sensed: Vec<Sensed> = Vec::with_capacity(heroes.len());
     for (i, e) in enemies.iter().enumerate() {
@@ -107,6 +115,15 @@ pub(crate) fn step_enemies(
                 .iter()
                 .map(|h| sense(e, mind, eye, h, &noises, &map, fog, r)),
         );
+        for &player in &gone {
+            if let Some(heard) = overheard(e, eye, player, &noises, &map, r) {
+                sensed.push(Sensed {
+                    player,
+                    heard: Some(heard),
+                    ..Sensed::default()
+                });
+            }
+        }
         if let Some(shout) = mind.think(&sensed, DT, &r.awareness) {
             shouts.push((i, shout));
         }
@@ -178,6 +195,31 @@ pub(crate) fn step_enemies(
         e.asleep = false;
         react(e, mind, &mut s.ways[i], &map, nav, content, &mut asks, g);
     }
+}
+
+/// The loudest noise of `player`, who has left, that enemy `e` hears this step: the place it came
+/// from. Nothing is seen of someone who is not there.
+fn overheard(
+    e: &Enemy,
+    eye: V3,
+    player: PlayerId,
+    noises: &[Noise],
+    map: &HeightMap,
+    r: &SenseRules,
+) -> Option<V3> {
+    if !e.pos.is_finite() || !eye.is_finite() || map.grid().column_of(e.pos).is_none() {
+        return None;
+    }
+    noises
+        .iter()
+        .filter(|n| {
+            n.by == player
+                && n.at.is_finite()
+                && map.grid().column_of(n.at.ground()).is_some()
+                && hears(eye, n, Some(map), r.walls)
+        })
+        .max_by(|a, b| a.radius.total_cmp(&b.radius))
+        .map(|n| n.at)
 }
 
 /// What enemy `e` sees and hears of hero `h` this step.

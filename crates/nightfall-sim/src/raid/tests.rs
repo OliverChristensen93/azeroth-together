@@ -2763,3 +2763,29 @@ fn a_leaver_who_dropped_a_stack_a_friend_took_is_not_given_it_back() {
         assert!(p0.loadout.safe.is_empty(), "{mode}: the gems are not back");
     }
 }
+
+#[test]
+fn the_final_beat_of_an_extraction_is_heard_and_then_forgotten() {
+    // A brute 18 yards from the ring, facing away. The beat that gets a hero out is made in the
+    // step they go, and `remove_hero` forgets every thought of them: the enemy must still have
+    // heard it.
+    let post =
+        r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (50.0, 31.0), facing: 0.0)),"#;
+    let mut w = world_with("", post);
+    join(&mut w, 0, "rogue", 50.0, 49.0);
+    // The count is a step from its end.
+    let end = w.content().rules.run.extract_for;
+    w.raid.exiting[0].t = end - DT / 2.0;
+    w.step();
+    assert!(w.hero(0).is_none(), "out");
+    assert!(w.is_over());
+    let noise = w.content().rules.senses.awareness.noise;
+    assert!(
+        w.senses.suspicion_of(0, 0) >= noise - 0.01,
+        "the brute heard the last beat: {}",
+        w.senses.suspicion_of(0, 0)
+    );
+    // Nobody is there to be heard again: the suspicion of them drains away.
+    steps(&mut w, (6.0 / DT) as usize);
+    assert_eq!(w.senses.suspicion_of(0, 0), 0.0);
+}
