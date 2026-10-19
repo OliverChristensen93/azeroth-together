@@ -126,3 +126,20 @@ may not be what you pictured. Each line says what was decided, why, and how to c
     the elites Fenros and Naraxis are Duskwood's own too. The innkeeper and trader, which the spec doesn't
     name, got our own names, and items got plain names of our own (item 28). Say if you'd rather use WoW's
     names everywhere (e.g. Innkeeper Farley) or nowhere.
+38. **Selling moved to the trader** (updates items 31 and 32). The stash's Shift-click no longer sells;
+    the inn's trader buys and sells. Buying and selling touch only your stash and purse, so they still work
+    after you press Ready; turning in a contract that takes from your loadout, or a companion upgrade, waits
+    until you un-Ready. One click on a trader row still sells the whole stack with no "are you sure?".
+39. **The inn's places were measured from the building's data, not by walking it.** The bounds, the door
+    and the 11 NPC spots sit inside Goldshire inn's hall (worked out from the inn model's placement and room
+    boxes); the hero starts on the dining-room floor. NPCs may stand in furniture: one walk-through would
+    tell. All in `content/nightfall/hub.ron`, marked `measure:`.
+40. **Panels: 360 px wide, below the inn bar at the top centre.** The banker's strip clears the stash panel
+    only at about 1280 px wide or more; a tall station keeper's panel scrolls.
+41. **WoW's own gossip and merchant windows can be fed without a server** (the spike, Task 12, notes in
+    `docs/superpowers/notes/2026-10-17-nightfall-wow-windows-spike.md`): both drew in shots. The bank and bags
+    would need us to answer item moves like a server (days of work), so the inn keeps its own panels. Switching
+    the trader and givers to WoW's windows is a later choice.
+42. **Ready is pressed at the raid board by the door**, which shows the map, the contracts taken, the party and
+    who is ready. If the stash can't be saved when a raid starts (another window holds it), Ready is taken
+    back instead of retrying.
