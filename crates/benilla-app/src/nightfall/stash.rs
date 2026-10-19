@@ -20,6 +20,7 @@ use nightfall_sim::{Content, Loadout, Profile, ProfileError, SavedStack};
 
 use super::content;
 use super::run::Sim;
+use super::stash_lock::{self, StashLock};
 
 /// The stash as read, and what to say about it.
 pub(super) struct Loaded {
@@ -299,6 +300,17 @@ fn parse_give(text: &str, content: &Content) -> (Vec<SavedStack>, Vec<String>) {
     (stacks, warnings)
 }
 
+/// Whether this game has the stash to itself.
+enum Lock {
+    /// No lock was taken: a stash with no folder, one in a test, or a folder that takes no lock file.
+    Unlocked,
+    /// The lock file is ours until the stash is dropped.
+    #[allow(dead_code)]
+    Held(StashLock),
+    /// Another game on this home is using the stash: this one may read it and no more.
+    ShutOut,
+}
+
 /// The player's stash, as this session has it.
 #[derive(Resource)]
 pub(super) struct Stash {
@@ -308,6 +320,8 @@ pub(super) struct Stash {
     /// This session may not save, and the profile is the player's real stash (a newer, unreadable or
     /// unkeepable backup holds the save back): their raids are off, not played unsaved.
     keeps_real: bool,
+    /// Who has the stash among the games on this home ([`super::stash_lock`]).
+    lock: Lock,
     /// What the menu says about the stash: a file that did not read, a raid counted missing, a
     /// move refused.
     pub note: Option<String>,
@@ -324,7 +338,26 @@ impl Stash {
             return Self::open_at(None, &content);
         }
         let path = crate::local_state::home().map(|h| h.join("nightfall").join("stash.ron"));
-        let mut stash = Self::open_at(path, &content);
+        // The lock first: opening settles a raid the stash still holds as under way, and that raid
+        // may be one another game on this home is playing.
+        let lock = path
+            .as_deref()
+            .map(|p| stash_lock::acquire(&stash_lock::lock_path(p)));
+        let mut stash = match lock {
+            Some(Err(stash_lock::Refused::Held { pid })) => {
+                warn!("nightfall: the stash is in use by process {pid}");
+                return Self::shut_out(path, pid);
+            }
+            Some(Err(stash_lock::Refused::Unavailable(why))) => {
+                warn!("nightfall: no stash lock ({why}): the stash is used without one");
+                Self::open_at(path, &content)
+            }
+            Some(Ok(held)) => Stash {
+                lock: Lock::Held(held),
+                ..Self::open_at(path, &content)
+            },
+            None => Self::open_at(path, &content),
+        };
         if let Ok(give) = std::env::var("NIGHTFALL_GIVE") {
             let (stacks, warnings) = parse_give(&give, &content);
             for w in warnings {
@@ -336,6 +369,26 @@ impl Stash {
             stash.save();
         }
         stash
+    }
+
+    /// The stash of a game that finds another using it: read as it is on disk, with nothing
+    /// settled, set aside or saved (that is the other game's to do), and no raids.
+    fn shut_out(path: Option<PathBuf>, pid: u32) -> Self {
+        let profile = path
+            .as_deref()
+            .and_then(|p| crate::local_state::read_to_string(p).ok())
+            .and_then(|text| Profile::from_ron(&text).ok())
+            .unwrap_or_default();
+        Stash {
+            profile,
+            path,
+            writable: false,
+            keeps_real: true,
+            lock: Lock::ShutOut,
+            note: Some(format!(
+                "Another Nightfall is using this stash (process {pid}): you can look at it here, but raids are off until it is closed."
+            )),
+        }
     }
 
     /// The stash at `path` (none: nothing read, nothing saved), a raid it still holds as under way
@@ -357,6 +410,7 @@ impl Stash {
             path,
             writable: loaded.writable,
             keeps_real: loaded.real && !loaded.writable,
+            lock: Lock::Unlocked,
             note: loaded.note,
         };
         if stash.profile.settle_missing(content) {
@@ -391,6 +445,12 @@ impl Stash {
                 true
             }
         }
+    }
+
+    /// Another game on this home has the stash: this one reads it, and settles and saves nothing
+    /// of it (a raid on disk is the other game's, under way).
+    pub fn is_shut_out(&self) -> bool {
+        matches!(self.lock, Lock::ShutOut)
     }
 
     /// The profile written to disk: `Ok(true)` when it was, `Ok(false)` when there was nothing to
@@ -437,7 +497,11 @@ impl Stash {
         // backup keeps the save back), does not raid: nothing of the raid could be kept, the haul
         // would be lost with the session and the loadout copied. They still see their stash.
         if self.keeps_real {
-            let why = "Your stash can't be saved this session (see above), so raids are off; fix the file or remove the backup and restart.";
+            let why = if self.is_shut_out() {
+                "Another Nightfall is using this stash (see above), so raids are off here; close it and restart."
+            } else {
+                "Your stash can't be saved this session (see above), so raids are off; fix the file or remove the backup and restart."
+            };
             if self.say(why) {
                 warn!("nightfall: {why}");
             }
@@ -499,6 +563,9 @@ fn note_pack(
     let Some(pack) = pack else {
         return false;
     };
+    if stash.is_shut_out() {
+        return false;
+    }
     if !stash.profile.note_carry(pack, content) {
         return false;
     }
@@ -512,6 +579,10 @@ pub(super) fn after_raid(mut stash: ResMut<Stash>) {
 
 /// [`after_raid`] with its content in hand.
 fn count_missing(stash: &mut Stash, content: &Content) {
+    // A raid on disk that another game is playing is not ours to count missing.
+    if stash.is_shut_out() {
+        return;
+    }
     if stash.profile.settle_missing(content) {
         stash.note = Some("You left the raid before its end: you were counted missing.".into());
         stash.save();
@@ -616,6 +687,7 @@ mod tests {
             path: Some(path.clone()),
             writable: l.writable,
             keeps_real: l.real && !l.writable,
+            lock: Lock::Unlocked,
             note: l.note,
         };
         stash.profile.gold = 1;
@@ -654,6 +726,7 @@ mod tests {
             path: Some(path.clone()),
             writable: l.writable,
             keeps_real: l.real && !l.writable,
+            lock: Lock::Unlocked,
             note: l.note,
         };
         stash.profile.gold = 4;
@@ -755,6 +828,7 @@ mod tests {
             path: Some(blocker.join("stash.ron")),
             writable: true,
             keeps_real: false,
+            lock: Lock::Unlocked,
             note: Some("old news".into()),
         };
         stash.profile.stash_add(stack("ruby_shard", 3), &content);
@@ -1206,5 +1280,42 @@ mod tests {
         let mut gone = on_disk.clone();
         assert!(gone.settle_missing(&content));
         assert!(gone.loadout.safe.is_empty() && gone.stash.is_empty());
+    }
+    #[test]
+    fn a_stash_another_game_is_using_is_read_and_left_alone() {
+        let content = shipped();
+        let path = dir("shut-out").join("stash.ron");
+        // The other game is mid-raid: its stash on disk holds the raid under way.
+        let mut other = Stash::open_at(Some(path.clone()), &content);
+        other.profile.gold = 9;
+        other.profile.loadout = SavedInventory {
+            pack: vec![stack("tough_bread", 2)],
+            ..SavedInventory::default()
+        };
+        let brought = told(&other, 0, &content);
+        assert_eq!(other.begin_raid(0, &brought, &content), Ok(true));
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        // This game finds the lock held: it reads, and changes nothing.
+        let mut mine = Stash::shut_out(Some(path.clone()), 4242);
+        assert!(mine.is_shut_out() && mine.read_only());
+        assert_eq!(mine.profile.gold, 9, "it shows the stash");
+        assert!(
+            mine.profile.in_raid.is_some(),
+            "and does not settle the other's raid"
+        );
+        assert!(mine.note.as_ref().unwrap().contains("Another Nightfall"));
+        count_missing(&mut mine, &content);
+        assert!(mine.profile.in_raid.is_some(), "not counted missing");
+        assert!(!mine.save());
+        let err = mine.begin_raid(0, &brought, &content).unwrap_err();
+        assert!(err.contains("Another Nightfall"), "{err}");
+        assert!(!note_pack(&mut mine, Some(&brought.inventory), &content));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            on_disk,
+            "the file is the other's"
+        );
+        // A stash that was not shut out is not.
+        assert!(!other.is_shut_out());
     }
 }

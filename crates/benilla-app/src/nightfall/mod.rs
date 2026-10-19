@@ -32,6 +32,7 @@ mod senses_hud;
 mod session;
 mod stance;
 mod stash;
+mod stash_lock;
 mod stash_panel;
 mod telegraphs;
 mod terrain;
