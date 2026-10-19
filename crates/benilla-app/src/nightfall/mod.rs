@@ -28,6 +28,7 @@ mod inn;
 mod loot_view;
 mod marks;
 mod menu;
+mod npcs;
 mod run;
 mod senses_hud;
 mod session;
@@ -37,6 +38,7 @@ mod stash_lock;
 mod stash_panel;
 mod telegraphs;
 mod terrain;
+mod trader;
 mod ui;
 mod units;
 mod view;
@@ -308,6 +310,8 @@ impl Plugin for NightfallPlugin {
             .init_resource::<session::Net>()
             .init_resource::<session::InnState>()
             .init_resource::<inn::InnViews>()
+            .init_resource::<npcs::NpcViews>()
+            .init_resource::<npcs::InnPanel>()
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
@@ -331,6 +335,7 @@ impl Plugin for NightfallPlugin {
                     menu::spawn_roots,
                     terrain::spawn_line,
                     stash_panel::spawn_root,
+                    trader::spawn_root,
                     backpack::spawn_root,
                     gear::spawn_line,
                 ),
@@ -373,6 +378,8 @@ impl Plugin for NightfallPlugin {
             .add_systems(Update, menu::show_roots)
             // Ungated: hides the stash panel whenever another game is up.
             .add_systems(Update, stash_panel::show)
+            // Ungated: hides the trader's panel whenever another game is up.
+            .add_systems(Update, trader::show)
             .add_systems(Update, widgets::fill_icons.in_set(NightfallSet))
             .add_systems(
                 Update,
@@ -387,6 +394,23 @@ impl Plugin for NightfallPlugin {
                 )
                     .chain()
                     .after(session::lobby)
+                    .before(run::start_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Inn)),
+            )
+            .add_systems(
+                Update,
+                // The NPCs, their panels and the trader. After the lock is read, so a trade this
+                // frame sees this frame's; before the run can start, as the stash panel.
+                (
+                    npcs::spawn,
+                    npcs::right_click,
+                    npcs::walk_away,
+                    trader::clicks,
+                    trader::rebuild,
+                )
+                    .chain()
+                    .after(stash_panel::refresh_lock)
                     .before(run::start_run)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Inn)),
@@ -413,8 +437,8 @@ impl Plugin for NightfallPlugin {
             // Back at the menu with a raid still on the books (we left, the host went): it was
             // never settled by an outcome, so it is counted missing, once.
             .add_systems(OnEnter(Phase::Inn), stash::after_raid)
-            .add_systems(OnExit(Phase::Inn), inn::leave)
-            .add_systems(OnExit(GameMode::Nightfall), inn::leave)
+            .add_systems(OnExit(Phase::Inn), (inn::leave, npcs::forget))
+            .add_systems(OnExit(GameMode::Nightfall), (inn::leave, npcs::forget))
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
             .add_systems(Update, ui::tune_ui.in_set(NightfallSet))
             .add_systems(

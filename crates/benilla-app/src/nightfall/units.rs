@@ -31,6 +31,9 @@ const FIELD_BYTES_2: u16 = 164;
 /// `UnitFactionGroup`, and the zone's PvP type is judged against it.
 pub(super) const FACTION_PLAYER: u32 = 1;
 pub(super) const FACTION_MONSTER: u32 = 14;
+/// `FactionTemplate.dbc` 35: friendly to everyone, so nobody attacks it and no one can attack it
+/// (the inn's people).
+pub(super) const FACTION_FRIENDLY: u32 = 35;
 
 const HIGH_CREATURE: u64 = 0xF130 << 48;
 /// The high word of a GameObject's guid.

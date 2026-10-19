@@ -1,7 +1,7 @@
 //! The menu's stash panel (spec §8.3): the stash on the left; on the right the loadout the next
 //! raid brings (worn, bags, backpack, safe slots), its weight, and what the free kit would give
-//! when it is empty. A click moves a stack between them; Shift and a click sells a stash stack.
-//! Our own panel; in sub-project 5b the inn's banker opens it.
+//! when it is empty. A click moves a stack between them. Selling is the trader's ([`super::trader`]).
+//! Our own panel; the inn's banker opens it.
 //!
 //! Two things turn the moves off, and the panel says which ([`Lock`]): a joined player is ready,
 //! so their pick is with the host (a change now could be copied or lost, depending on whether the
@@ -10,7 +10,9 @@
 
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
-use nightfall_sim::{inventory_of, Content, EquipSlot, Inventory, Place, Stack, StashError};
+use nightfall_sim::{
+    inventory_of, Content, EquipSlot, Inventory, Place, Profile, Stack, StashError,
+};
 
 use super::menu::Selection;
 use super::session::{InnState, Net};
@@ -114,9 +116,9 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                // From the top: the menu's own title and buttons sit at the bottom, and stay clear.
+                // From below the inn bar (top centre, about 190 px tall), so it never covers the bar.
                 justify_content: JustifyContent::FlexStart,
-                padding: UiRect::top(Val::Px(18.0)),
+                padding: UiRect::top(Val::Px(200.0)),
                 row_gap: Val::Px(6.0),
                 ..default()
             },
@@ -247,7 +249,7 @@ pub(super) fn rebuild(
                 }
             });
             col.spawn(text(font, format!("{} gold", p.gold), 13.0, GOLD));
-            col.spawn(text(font, "Click: take  ·  Shift-click: sell", 11.0, GREY));
+            col.spawn(text(font, "Click: take  ·  sell at the trader", 11.0, GREY));
         });
         b.spawn(column()).with_children(|col| {
             let class = &content.classes[selection.class];
@@ -371,59 +373,81 @@ fn shift_hint(inv: &Inventory, at: Place) -> &'static str {
     }
 }
 
-/// One click on `slot`, and what it did: Shift sells a stash stack, or sends a loadout stack
-/// between the backpack and the safe slots as it does in a raid ([`shift_target`]); without Shift
-/// a stack goes to the loadout, or back to the stash. A move that went is saved at once, and one
-/// that cannot be saved is undone (the profile put back as it was, as [`Stash::begin_raid`] does:
-/// a move the disk does not have would be lost at the next launch, and a sale would be gold from
-/// nothing); one the profile refused says why in the stash's note. With the panel [`Lock`]ed
-/// nothing happens at all (the panel already says why), so a locked click never touches the
-/// profile or the disk.
-fn act(stash: &mut Stash, slot: StashSlot, shift: bool, lock: Option<Lock>, content: &Content) {
-    if lock.is_some() {
-        return;
+/// Whether the panel's [`Lock`] refuses a change: read-only refuses every one; the lobby's
+/// freeze (the pick is with the host) refuses only what touches the loadout, so the trader and
+/// the stations, which work on the stash and the purse alone, still trade while ready.
+pub(super) fn refused_by(lock: Option<Lock>, touches_loadout: bool) -> bool {
+    match lock {
+        None => false,
+        Some(Lock::ReadOnly) => true,
+        Some(Lock::Lobby) => touches_loadout,
+    }
+}
+
+/// One change to the profile, the way every panel that moves items or gold makes it (the stash
+/// panel, the trader, the stations, the contracts): refused outright under a [`Lock`] that covers
+/// it (nothing touched, nothing saved, the panel's red line already says why); otherwise made on
+/// the profile, then saved at once, and a change that cannot be saved is undone (the profile put
+/// back as it was, as [`Stash::begin_raid`] does: a change the disk does not have would be lost
+/// at the next launch, and a sale would be gold from nothing). `change` answers the line to say
+/// (empty for none) or the reason it was refused, which goes in the stash's note, the profile
+/// having been left as it was (the caller's changes are whole-or-nothing, but the clone makes it
+/// so whatever they do). Whether the change stands.
+pub(super) fn act_on_profile(
+    stash: &mut Stash,
+    lock: Option<Lock>,
+    touches_loadout: bool,
+    change: impl FnOnce(&mut Profile) -> Result<String, &'static str>,
+) -> bool {
+    if refused_by(lock, touches_loadout) {
+        return false;
     }
     let before = stash.profile.clone();
-    let done = match slot {
-        StashSlot::Stash(n) if shift => stash
-            .profile
-            .sell(n, content)
-            .map(|g| format!("Sold for {g} gold.")),
-        StashSlot::Stash(n) => stash
-            .profile
-            .take_from_stash(n, content)
-            .map(|_| String::new()),
-        StashSlot::Loadout(at) if shift => {
-            let (inv, _) = inventory_of(&stash.profile.loadout, content);
-            match shift_target(&inv, at) {
-                Some(to) => stash
-                    .profile
-                    .loadout_move(at, to, content)
-                    .map(|_| String::new()),
-                None => Err(StashError::LoadoutFull),
-            }
-        }
-        StashSlot::Loadout(at) => stash
-            .profile
-            .put_in_stash(at, content)
-            .map(|_| String::new()),
-    };
-    match done {
+    match change(&mut stash.profile) {
         Ok(line) => match stash.try_save() {
-            Ok(_) => stash.note = (!line.is_empty()).then_some(line),
+            Ok(_) => {
+                stash.note = (!line.is_empty()).then_some(line);
+                true
+            }
             Err(e) => {
                 stash.profile = before;
                 let why = format!("Your stash could not be saved ({e}): nothing was changed.");
                 warn!("nightfall: {why}");
                 stash.note = Some(why);
+                false
             }
         },
-        Err(e) => stash.note = Some(e.message().into()),
+        Err(why) => {
+            stash.profile = before;
+            stash.note = Some(why.into());
+            false
+        }
     }
 }
 
-/// A click moves a stack, Shift and a click sells it; Close closes. What went wrong (or the gold
-/// a sale made) goes in the stash's note.
+/// One click on `slot`, and what it did: Shift sends a loadout stack between the backpack and the
+/// safe slots as it does in a raid ([`shift_target`]); a stash stack goes to the loadout, and a
+/// loadout stack back to the stash. (Selling is the trader's.) A change goes through
+/// [`act_on_profile`], and every one of these touches the loadout, so any lock refuses it.
+fn act(stash: &mut Stash, slot: StashSlot, shift: bool, lock: Option<Lock>, content: &Content) {
+    act_on_profile(stash, lock, true, |p| {
+        let done = match slot {
+            StashSlot::Stash(n) => p.take_from_stash(n, content),
+            StashSlot::Loadout(at) if shift => {
+                let (inv, _) = inventory_of(&p.loadout, content);
+                match shift_target(&inv, at) {
+                    Some(to) => p.loadout_move(at, to, content),
+                    None => Err(StashError::LoadoutFull),
+                }
+            }
+            StashSlot::Loadout(at) => p.put_in_stash(at, content),
+        };
+        done.map(|_| String::new()).map_err(StashError::message)
+    });
+}
+
+/// A click moves a stack (Shift: between the backpack and the safe slots); Close closes. What went
+/// wrong goes in the stash's note.
 pub(super) fn clicks(
     slots: Query<(&Interaction, &StashSlot), Changed<Interaction>>,
     close: Query<&Interaction, (Changed<Interaction>, With<StashClose>)>,
@@ -475,7 +499,7 @@ pub(super) fn hover(
                     Some(k) => format!(
                         "{}{}",
                         widgets::describe(&content.items[k], s.count),
-                        hint("  (click: take · shift-click: sell)")
+                        hint("  (click: take)")
                     ),
                     None => format!(
                         "{} ×{}: this game no longer knows it; it is kept",
@@ -621,12 +645,8 @@ mod tests {
             "the write fails, not nothing-to-write"
         );
         let before = stash.profile.clone();
-        // A move, and a sale (gold from nothing, if it stuck).
         act(&mut stash, StashSlot::Stash(0), false, None, &content);
         assert_eq!(stash.profile, before);
-        act(&mut stash, StashSlot::Stash(1), true, None, &content);
-        assert_eq!(stash.profile, before);
-        assert_eq!(stash.profile.gold, 0);
         let note = stash.note.as_deref().unwrap();
         assert!(note.contains("could not be saved"), "{note}");
     }
@@ -646,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn a_move_and_a_sale_are_saved_at_once() {
+    fn a_move_is_saved_at_once() {
         let content = super::super::shipped_content();
         let (mut stash, path) = stash_with_things("saved");
         // Take the blade: worn, and on disk.
@@ -656,14 +676,6 @@ mod tests {
         let on_disk = super::super::stash::load(&path).profile;
         assert_eq!(on_disk.loadout, stash.profile.loadout);
         assert_eq!(on_disk.stash, stash.profile.stash);
-        // Sell the shards: the gold, said and on disk.
-        let before = stash.profile.gold;
-        act(&mut stash, StashSlot::Stash(0), true, None, &content);
-        assert!(stash.profile.gold > before, "the shards fetch gold");
-        assert!(stash.note.as_deref().unwrap().starts_with("Sold for"));
-        let on_disk = super::super::stash::load(&path).profile;
-        assert_eq!(on_disk.gold, stash.profile.gold);
-        assert!(on_disk.stash.is_empty());
         // Put the blade back.
         act(
             &mut stash,
@@ -673,7 +685,7 @@ mod tests {
             &content,
         );
         assert!(stash.profile.loadout.is_empty());
-        assert_eq!(super::super::stash::load(&path).profile.stash.len(), 1);
+        assert_eq!(super::super::stash::load(&path).profile.stash.len(), 2);
     }
 
     #[test]
@@ -695,12 +707,12 @@ mod tests {
         });
         act(&mut stash, StashSlot::Stash(0), true, None, &content);
         assert_eq!(stash.note.as_deref(), Some(StashError::InRaid.message()));
-        assert_eq!(stash.profile.gold, 0);
-        assert_eq!(super::super::stash::load(&path).profile.gold, 0);
+        assert_eq!(stash.profile.stash, before.stash);
+        assert_eq!(super::super::stash::load(&path).profile.stash, before.stash);
     }
 
     #[test]
-    fn a_locked_panel_moves_and_sells_nothing_and_saves_nothing() {
+    fn a_locked_panel_moves_nothing_and_saves_nothing() {
         let content = super::super::shipped_content();
         let (mut stash, path) = stash_with_things("locked");
         let before = stash.profile.clone();

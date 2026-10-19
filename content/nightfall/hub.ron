@@ -3,13 +3,19 @@
 // door whose ring opens the raid board, the evening's light, and where each NPC stands. Moving the
 // hub is a content edit: the Scarlet Raven Tavern block at the end of this file is Darkshire's.
 //
-// measure: every position and the bounds, in the game (NIGHTFALL_TRACE_POS=1 logs where the hero
-// stands); the numbers below are the inn's ground floor as far as known. Measured by a shot of
-// the hero: the dining-room floor at (-9466, 22) is open, its floor at z 56.3, and the spawn is 1.3
-// above it (a hero put down exactly on a floor falls through it; the old spawn stood in the hearth);
-// the floor runs inside at x = -9459 (y 14 and 30) and outside is grass at (-9452, 22), so the east
-// bound (-9445) and the NPC spots with x past -9455 are probably too far out. The bounds, the door
-// ring and the NPC spots are NOT measured: walk to them and read the trace.
+// measure: the building is Goldshire's inn (GoldshireInn.wmo, MODF #71414 in Azeroth_31_49.adt) at
+// (-9464.25, 24.40, 56.53), heading -97 degrees. Its model space maps to the world as
+//     X = -9464.248 + 0.1219 lx - 0.9925 ly      Y = 24.398 + 0.9925 lx + 0.1219 ly
+// (the engine's own placement: a rotation about up of heading - 180 degrees), floor z 56.3 on the
+// ground floor. The ground floor's groups, from the WMO's MOGI boxes: the hall (group 5) lx -17.1
+// to 14.4, ly -11.1 to 15.5; a nook (group 1) lx 10 to 14.2, ly -4.9 to 2.8; a passage (group 0)
+// lx 14.1 to 20.5, ly -4.9 to -0.4, which ends in the street door (portal 0, lx 20.4, ly -2.6) onto
+// the porch. The bounds below are those boxes joined (a shade generous: walls stop a hero, the
+// bounds only keep one in). Checked against the shots of the hero: (-9466, 22), (-9459, 14) and
+// (-9459, 30) are inside the hall; (-9452, 22) is outside (ly -12.5, past the south wall). The old
+// spawn near (-9459, 22) stood in the hearth, around lx -1.7, ly -5.5: keep clear of it. A hero put
+// down exactly at floor height falls through, so the spawn is 1.3 above it. NPC spots are in the hall
+// along its walls, not measured against its furniture: check them with a shot after moving any.
 //
 // NPCs are characters of a race and sex in a class's starting outfit (`body`), so they always
 // look like someone; `role` is what a right-click opens: Banker (the stash), Trader, Contracts
@@ -21,35 +27,38 @@
         map: 0,
         spawn: (-9466.0, 22.0, 57.6),
         facing: 90.0,
-        bounds: [(-9474.0, 6.0), (-9445.0, 6.0), (-9445.0, 38.0), (-9474.0, 38.0)],
-        door: (at: (-9447.5, 19.0), radius: 2.0),
+        bounds: [
+            (-9455.3, 6.1), (-9451.5, 37.3), (-9457.6, 38.1), (-9456.9, 44.1),
+            (-9461.4, 44.7), (-9462.1, 38.6), (-9477.9, 40.6), (-9481.7, 9.3),
+        ],
+        door: (at: (-9459.3, 43.5), radius: 2.0),
         // 19:30, a warm evening, against the night outside.
         minute: 1170,
         view_distance: 250.0,
     ),
     npcs: [
         (key: "pike", name: "Innkeeper Orlan Pike", title: "Keeps your things",
-         role: Banker, body: (race: 1, sex: 0, class_id: 1), at: (-9462.7, 16.2, 57.0), facing: 90.0),
+         role: Banker, body: (race: 1, sex: 0, class_id: 1), at: (-9477.6, 14.0, 56.4), facing: 35.0),
         (key: "coppermug", name: "Haldor Coppermug", title: "Trades in anything",
-         role: Trader, body: (race: 3, sex: 0, class_id: 1), at: (-9467.0, 30.0, 57.0), facing: 0.0),
+         role: Trader, body: (race: 3, sex: 0, class_id: 1), at: (-9477.4, 19.5, 56.4), facing: 12.0),
         (key: "ebonlock", name: "Commander Althea Ebonlock", title: "The Night Watch",
-         role: Contracts, body: (race: 1, sex: 1, class_id: 2), at: (-9452.0, 30.0, 57.0), facing: 180.0),
+         role: Contracts, body: (race: 1, sex: 1, class_id: 2), at: (-9477.2, 26.0, 56.4), facing: 340.0),
         (key: "eva", name: "Madame Eva", title: "Sees what waits in the dark",
-         role: Contracts, body: (race: 1, sex: 1, class_id: 8), at: (-9470.0, 20.0, 57.0), facing: 270.0),
+         role: Contracts, body: (race: 1, sex: 1, class_id: 8), at: (-9475.9, 31.9, 56.4), facing: 315.0),
         (key: "abercrombie", name: "Abercrombie", title: "Wants what the dead leave",
-         role: Contracts, body: (race: 1, sex: 0, class_id: 9), at: (-9470.0, 12.0, 57.0), facing: 270.0),
+         role: Contracts, body: (race: 1, sex: 0, class_id: 9), at: (-9469.8, 12.0, 56.4), facing: 69.0),
         (key: "smith", name: "Torvald Anvilmoor", title: "Workbench",
-         role: Station("workbench"), body: (race: 3, sex: 0, class_id: 1), at: (-9449.0, 9.0, 57.0)),
+         role: Station("workbench"), body: (race: 3, sex: 0, class_id: 1), at: (-9463.8, 11.3, 56.4), facing: 101.0),
         (key: "alchemist", name: "Tilda Brew", title: "Alchemy",
-         role: Station("alchemy"), body: (race: 7, sex: 1, class_id: 8), at: (-9455.0, 9.0, 57.0)),
+         role: Station("alchemy"), body: (race: 7, sex: 1, class_id: 8), at: (-9457.9, 10.5, 56.4), facing: 125.0),
         (key: "cook", name: "Old Ruth", title: "The cooking fire",
-         role: Station("cooking"), body: (race: 1, sex: 1, class_id: 5), at: (-9460.0, 34.0, 57.0)),
+         role: Station("cooking"), body: (race: 1, sex: 1, class_id: 5), at: (-9456.3, 15.4, 56.4), facing: 146.0),
         (key: "lamplighter", name: "Wick", title: "Lanterns",
-         role: Station("lantern_maker"), body: (race: 7, sex: 0, class_id: 9), at: (-9466.0, 9.0, 57.0)),
+         role: Station("lantern_maker"), body: (race: 7, sex: 0, class_id: 9), at: (-9454.8, 27.3, 56.4), facing: 205.0),
         (key: "cartographer", name: "Mara Lines", title: "The map table",
-         role: Station("map_table"), body: (race: 1, sex: 1, class_id: 4), at: (-9452.0, 24.0, 57.0)),
+         role: Station("map_table"), body: (race: 1, sex: 1, class_id: 4), at: (-9455.2, 32.4, 56.4), facing: 224.0),
         (key: "kennelmaster", name: "Odric the Wolfwarden", title: "The kennel",
-         role: Station("kennel"), body: (race: 3, sex: 0, class_id: 3), at: (-9449.0, 34.0, 57.0)),
+         role: Station("kennel"), body: (race: 3, sex: 0, class_id: 3), at: (-9471.1, 34.3, 56.4), facing: 293.0),
     ],
     // Contracts a player may have taken at once (spec §8.5: one or two).
     contracts_at_once: 2,
