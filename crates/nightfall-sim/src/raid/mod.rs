@@ -307,6 +307,10 @@ pub(crate) struct Raid {
     /// really in the raid. A hero who leaves before this (their client declined or crashed before
     /// committing the loadout from its stash) drops nothing for their friends to take.
     pub(crate) entered: Vec<PlayerId>,
+    /// Players who had a hero in this raid and have none now (out by an exit, or gone): they
+    /// watch the others, and are sent the heroes and the exits and nothing else. A player who
+    /// never had one (the lobby, a menu) is not among them.
+    pub(crate) parted: Vec<PlayerId>,
     /// Every hero's settled outcome, in the order they were settled.
     pub(crate) outcomes: Vec<HeroOutcome>,
     /// Outcomes before this index have been handed out.
@@ -574,6 +578,9 @@ impl World {
             return view.clone();
         }
         let content = self.content();
+        // A player with no hero left (out, or gone) is shown the exits and no containers, not even
+        // their own remains: nothing of the raid is theirs to reach.
+        let parted = player.is_some_and(|p| self.is_parted(p));
         let near = player.and_then(|p| self.hero(p)).map(|h| h.pos);
         // The same reach as `World::in_reach`, the events and the snapshot's enemies.
         let reach = self.reach();
@@ -581,6 +588,7 @@ impl World {
             .raid
             .containers
             .iter()
+            .filter(|_| !parted)
             .filter(|c| match c.holder {
                 Holder::Remains(owner) => player.is_none_or(|p| p == owner),
                 _ => true,
@@ -597,7 +605,9 @@ impl World {
                 locked: c.lock.is_some(),
             })
             .collect();
-        let open = player.and_then(|p| self.raid.open_view(p));
+        let open = player
+            .filter(|_| !parted)
+            .and_then(|p| self.raid.open_view(p));
         let exits = (0..content.map.exits.len())
             .map(|i| {
                 let plan = self.raid.roll.exits.get(i).copied().unwrap_or(ExitPlan {
@@ -654,5 +664,8 @@ impl World {
             }
         }
         self.raid.forget(player);
+        if !self.raid.parted.contains(&player) {
+            self.raid.parted.push(player);
+        }
     }
 }

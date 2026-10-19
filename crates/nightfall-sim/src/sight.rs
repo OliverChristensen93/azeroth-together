@@ -43,13 +43,24 @@ impl World {
         self.content().rules.atmosphere.view_distance + KEEP_EXTRA
     }
 
+    /// Whether `player` had a hero in this raid and has none now: out by an exit, or gone. They
+    /// watch the others (the heroes) and see the exits, and the host sends them no more.
+    pub(crate) fn is_parted(&self, player: PlayerId) -> bool {
+        self.hero(player).is_none() && self.raid.parted.contains(&player)
+    }
+
     /// Whether `unit` is within `player`'s reach: the same distance [`World::snapshot_for`] keeps
     /// enemies and telegraphs at, around their hero. A player without a hero reaches every unit
-    /// there is; a unit that is not in the world is out of reach. The host sends a player only
-    /// the events of units in reach, so a modified client learns nothing of far-off fights.
+    /// there is (the run has not begun for them); one who had a hero and has none now (out, or
+    /// gone) reaches the heroes and no enemy. A unit that is not in the world is out of reach.
+    /// The host sends a player only the events of units in reach, so a modified client learns
+    /// nothing of far-off fights.
     pub fn in_reach(&self, player: PlayerId, unit: UnitRef) -> bool {
         let Some(me) = self.hero(player) else {
-            return true;
+            return match unit {
+                UnitRef::Hero(p) => !self.is_parted(player) || self.hero(p).is_some(),
+                UnitRef::Enemy(_) => !self.is_parted(player),
+            };
         };
         let at = match unit {
             UnitRef::Hero(p) => self.hero(p).map(|h| h.pos),
@@ -59,10 +70,13 @@ impl World {
     }
 
     /// `player`'s snapshot: every hero, and the enemies within the view distance of their hero
-    /// and [`KEEP_EXTRA`] past it (all of them for a player without one), so a big map's enemies
-    /// never crowd a line and the client's margin for those it draws has them.
+    /// and [`KEEP_EXTRA`] past it (all of them for a player without one, before the run has begun
+    /// for them), so a big map's enemies never crowd a line and the client's margin for those it
+    /// draws has them. A player who had a hero and has none now (out, or gone) is sent the
+    /// heroes and the exits and nothing else: no enemy, telegraph, container or pack.
     pub fn snapshot_for(&self, player: PlayerId) -> Snapshot {
         let near = self.hero(player).map(|h| h.pos);
+        let parted = self.is_parted(player);
         let reach = self.reach();
         Snapshot {
             elapsed: self.elapsed,
@@ -70,13 +84,13 @@ impl World {
             enemies: self
                 .enemies
                 .iter()
-                .filter(|e| near.is_none_or(|p| p.distance(e.pos) <= reach))
+                .filter(|e| !parted && near.is_none_or(|p| p.distance(e.pos) <= reach))
                 .cloned()
                 .collect(),
             telegraphs: self
                 .telegraphs
                 .iter()
-                .filter(|t| near.is_none_or(|p| p.distance(t.at.ground()) <= reach))
+                .filter(|t| !parted && near.is_none_or(|p| p.distance(t.at.ground()) <= reach))
                 .copied()
                 .collect(),
             // Only their own backpack: nobody learns what a friend carries. The loot is the
@@ -289,7 +303,7 @@ mod tests {
         );
         assert!(
             w.in_reach(7, UnitRef::Enemy(2)),
-            "no hero: everything is in reach"
+            "a player who never had a hero (the lobby): everything is in reach"
         );
     }
 

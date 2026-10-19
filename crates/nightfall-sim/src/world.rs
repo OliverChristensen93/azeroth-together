@@ -201,6 +201,7 @@ impl World {
         if self.hero(player).is_some() {
             return Err(WorldError::PlayerTaken(player));
         }
+        self.raid.parted.retain(|p| *p != player);
         let map = &self.content.map;
         // The raid's entry; `begin_raid` refuses one the map lacks, and the standard roll is 0.
         let at = map

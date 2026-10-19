@@ -470,6 +470,82 @@ mod tests {
         // second.
         assert!(bytes < 3700, "{bytes} bytes");
     }
+    #[test]
+    fn a_player_without_a_hero_is_sent_the_heroes_and_the_exits_only() {
+        let content = Arc::new(
+            Content::from_ron(ContentSources {
+                classes: include_str!("../../../content/nightfall/classes.ron"),
+                map: include_str!("../../../content/nightfall/map.ron"),
+                rules: include_str!("../../../content/nightfall/rules.ron"),
+                enemies: include_str!("../../../content/nightfall/enemies.ron"),
+                spawns: include_str!("../../../content/nightfall/spawns.ron"),
+                abilities: include_str!("../../../content/nightfall/abilities.ron"),
+                items: include_str!("../../../content/nightfall/items.ron"),
+                loot: include_str!("../../../content/nightfall/loot.ron"),
+            })
+            .unwrap(),
+        );
+        let mut w = World::new(content.clone());
+        w.begin_raid(crate::RaidRoll::standard(&content, 1))
+            .unwrap();
+        for p in 0..4 {
+            w.add_hero(p, "rogue", "Twelve chars", 1, 0).unwrap();
+        }
+        // Enemies near the heroes (the content's own wait on a baked map this test has not got).
+        let near = w.hero(0).unwrap().pos;
+        for id in 1..=5 {
+            w.enemies.push(Enemy {
+                id,
+                kind: 0,
+                pos: near,
+                z: 0.0,
+                facing: V2::new(1.0, 0.0),
+                hp: 900.0,
+                max_hp: 900.0,
+                speed: 0.0,
+                asleep: false,
+                fight: EnemyFight::default(),
+            });
+        }
+        w.step();
+        let state = |w: &World, p| ServerMsg::State {
+            snapshot: w.snapshot_for(p),
+            seen: w.seen_by(p),
+            marks: w.marks_for(p),
+            events: Vec::new(),
+        };
+        // Before the run has begun for a player (no hero yet, never had one) nothing changes: the
+        // lobby and the menu are sent the whole world.
+        let stranger = w.snapshot_for(9);
+        assert_eq!(stranger.enemies.len(), w.snapshot().enemies.len());
+        assert!(!w.snapshot().enemies.is_empty());
+        assert!(!stranger.loot.marks.is_empty());
+        // A hero gets out, and their client waits for the others.
+        w.remove_hero(3);
+        let waiting = w.snapshot_for(3);
+        assert!(waiting.enemies.is_empty() && waiting.telegraphs.is_empty());
+        assert!(waiting.loot.marks.is_empty() && waiting.loot.open.is_none());
+        assert!(waiting.pack.is_none());
+        assert_eq!(waiting.heroes.len(), 3, "the others, to watch");
+        assert_eq!(waiting.loot.exits.len(), content.map.exits.len());
+        assert!(w.seen_by(3).is_empty() && w.marks_for(3).is_empty());
+        assert!(!w.in_reach(3, UnitRef::Enemy(1)));
+        assert!(w.in_reach(3, UnitRef::Hero(0)));
+        assert!(
+            !w.in_reach(3, UnitRef::Hero(3)),
+            "the hero who left is gone"
+        );
+        // And the others are still sent what they were.
+        assert!(!w.snapshot_for(0).enemies.is_empty());
+        let bytes = postcard::to_stdvec(&state(&w, 3)).unwrap().len();
+        assert!(
+            bytes < 600,
+            "{bytes} bytes for a player waiting out the run"
+        );
+        // A hero who comes back (a rejoin) is a player in the raid again.
+        w.add_hero(3, "rogue", "Twelve chars", 1, 0).unwrap();
+        assert!(!w.snapshot_for(3).enemies.is_empty());
+    }
 
     #[test]
     fn a_state_with_events_survives_the_wire() {

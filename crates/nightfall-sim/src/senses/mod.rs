@@ -278,6 +278,10 @@ impl World {
     /// What each enemy thinks of `player`'s hero, for the marks over their heads (spec §5.5). The
     /// host's: a client's mirror has no minds and gets its own player's marks from its host.
     pub fn marks_for(&self, player: PlayerId) -> Vec<Mark> {
+        // Nobody out of the raid is shown what the enemies think.
+        if self.is_parted(player) {
+            return Vec::new();
+        }
         let r = &self.content().rules.senses.awareness;
         self.enemies
             .iter()
