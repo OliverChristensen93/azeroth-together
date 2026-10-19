@@ -10,6 +10,7 @@
 //! the fight (`crate::combat`) comes as an [`Engage`] each step: out of the fight it neither
 //! looks, thinks nor moves; held still, it stands turned to its hero; distracted, it stands turned
 //! to the spot while calm or wary; and a chase stops the engage's reach short, at its speed.
+//! An enemy with a road sight (the Dark Riders) sees a hero standing on a road much further, past the fog.
 //!
 //! Every path an enemy's senses ask for goes through [`Navigator::plan_path`], so it shares the
 //! step's floor budget with the orders' searches ([`crate::enemies`]) and a failed search is not
@@ -111,13 +112,19 @@ pub(crate) fn step_enemies(
         }
         let mind = &mut s.minds[i];
         let eye = V3::at(e.pos, e.z + EYE_HEIGHT);
+        // The Dark Riders see far along their roads (spec §7.3): a hero on a road, as far as
+        // `road_sight` at visibility 100, past the fog.
+        let far = content.enemies[e.kind].road_sight;
         // Every hero, seen or not: an alerted enemy must be told it lost sight of its hero.
         sensed.clear();
-        sensed.extend(
-            heroes
-                .iter()
-                .map(|h| sense(e, mind, eye, h, &noises, &map, fog, notice, r)),
-        );
+        sensed.extend(heroes.iter().map(|h| {
+            let (reach, scale) = if far > 0.0 && content.map.on_road(h.pos) {
+                (fog.max(far), notice * far / r.notice_range)
+            } else {
+                (fog, notice)
+            };
+            sense(e, mind, eye, h, &noises, &map, reach, scale, r)
+        }));
         for &player in &gone {
             if let Some(heard) = overheard(e, eye, player, &noises, &map, r) {
                 sensed.push(Sensed {

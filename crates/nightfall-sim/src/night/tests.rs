@@ -1253,3 +1253,68 @@ fn a_noise_that_moved_a_little_keeps_the_hunters_path() {
     w.brains[0].send(V3::new(40.0, 40.0, 0.0));
     assert!(!w.brains[0].has_path(), "a far one is a new errand");
 }
+
+#[test]
+fn a_rider_sees_far_along_its_road_and_not_off_it() {
+    let marked = |kind: &str, y: f32| {
+        let mut w = world("", &sentry(kind, 10.0, 60.0, 0.0));
+        join(&mut w, 0, 60.0, y);
+        for _ in 0..secs(3.0) {
+            put(&mut w, 0, 60.0, y, AWAY, Gait::Run);
+            w.step();
+        }
+        !w.marks_for(0).is_empty()
+    };
+    assert!(marked("rider", 60.0), "a runner on the road, 50 yards off, is seen");
+    assert!(!marked("rider", 75.0), "the same runner off the road is past the fog");
+    assert!(!marked("brute", 60.0), "a brute sees no further on a road");
+}
+
+#[test]
+fn a_rider_rides_its_road_end_to_end_and_back() {
+    let line = r#"(place: "Road", kind: "rider", behaviour: Road(road: "road")),"#;
+    let mut w = world("", line);
+    let (mut far, mut back, mut off) = (0.0f32, f32::MAX, 0.0f32);
+    for k in 0..secs(30.0) {
+        w.step();
+        let p = w.enemies[0].pos;
+        off = off.max((p.y - 60.0).abs());
+        far = far.max(p.x);
+        if k > secs(15.0) {
+            back = back.min(p.x);
+        }
+    }
+    assert!(far > 110.0, "it reached the far end: {far}");
+    assert!(back < 20.0, "and came back: {back}");
+    assert!(off <= 3.0, "it kept to the road: {off}");
+}
+
+#[test]
+fn stitches_comes_with_the_last_stage_walks_his_road_and_telegraphs() {
+    let night = r#"stages: [(key: "dusk", name: "Dusk", at: 0.0),
+        (key: "stitches", name: "Stitches", at: 2.0, warn: 1.0)], arrive_unseen: 30.0"#;
+    let monsters = r#"(key: "stitches", name: "Stitches", always: true, spawns: [
+        (place: "Road", kind: "stitches", stage: Some("stitches"), behaviour: Road(road: "road"))]),"#;
+    let mut w = world_on(open(), night, "", monsters, standard);
+    join(&mut w, 0, 60.0, 110.0);
+    steps(&mut w, secs(1.5));
+    assert!(w.enemies.is_empty(), "not before his stage");
+    steps(&mut w, secs(2.0));
+    assert_eq!(w.enemies.len(), 1);
+    // He lands at his road's start and has walked a few yards in the 1.5 s since (M16).
+    assert!(w.enemies[0].pos.distance(V2::new(1.0, 60.0)) < 5.0, "at his road's start");
+    steps(&mut w, secs(10.0));
+    assert!(w.enemies[0].pos.x > 15.0, "walking it: {:?}", w.enemies[0].pos);
+    // Next to him, he fights with a blow shown on the ground first.
+    let at = w.enemies[0].pos;
+    put(&mut w, 0, at.x + 2.0, at.y, AWAY, Gait::Still);
+    w.step();
+    w.alert(w.enemies[0].id, 0);
+    let mut shown = false;
+    for _ in 0..secs(6.0) {
+        put(&mut w, 0, at.x + 2.0, at.y, AWAY, Gait::Still);
+        w.step();
+        shown |= !w.telegraphs.is_empty();
+    }
+    assert!(shown, "his smash showed on the ground before it landed");
+}
