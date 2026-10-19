@@ -27,8 +27,15 @@ pub const WANDER_BUDGET: usize = 4_000;
 /// wanderers'. A search starts only while what is left covers its whole budget, so no step
 /// spends more on paths than this (about 10 ms on the real map) however many enemies are lost.
 pub const STEP_FLOORS: usize = PATROL_BUDGET + 2 * WANDER_BUDGET;
+/// Floors an errand's search may look at: what a step has left after a patrol's, so that a
+/// hunter sent where no way leads can never keep the patrols from planning that step.
+pub const ERRAND_BUDGET: usize = STEP_FLOORS - PATROL_BUDGET;
 /// Within this many yards of a point, an enemy is there.
 pub(crate) const ARRIVE: f32 = 0.6;
+/// A hunt goal this near one that had no way there is refused too (yards).
+const REFUSED_NEAR: f32 = 8.0;
+/// A hunt goal this near the errand it is on is the same errand (yards).
+const SAME_ERRAND: f32 = 4.0;
 /// How far apart a group of sentries stands around its post.
 const GROUP_SPACING: f32 = 1.5;
 /// Seconds before a sentry tries again to reach a post it found no path to.
@@ -127,6 +134,9 @@ pub(crate) struct Brain {
     might: f32,
     /// Where it runs now on the night's errand (the hunt, spec §7.2), before its order again.
     errand: Option<V3>,
+    /// The errand goal that had no way there: the hunt may send it again to elsewhere, but not
+    /// here, where a search would only fail again and eat the step's floors.
+    refused: Option<V3>,
     rng: Rng,
 }
 
@@ -141,6 +151,12 @@ impl Brain {
         self.might
     }
 
+    /// Whether it has a path now.
+    #[cfg(test)]
+    pub(crate) fn has_path(&self) -> bool {
+        self.path.is_some()
+    }
+
     /// Whether it is on an errand, running to where the hunt sent it.
     #[cfg(test)]
     pub(crate) fn on_errand(&self) -> bool {
@@ -151,7 +167,18 @@ impl Brain {
     /// goes, so its next plan is the errand's. Sent where it already runs, it keeps its path
     /// (the hunt calls every few seconds while a noise is remembered).
     pub(crate) fn send(&mut self, to: V3) {
-        if self.errand == Some(to) {
+        // A goal it found no way to is not tried again; the hunt asking for another clears it.
+        if let Some(r) = self.refused {
+            if r.ground().distance(to.ground()) <= REFUSED_NEAR {
+                return;
+            }
+            self.refused = None;
+        }
+        // A noise that has only moved a little (a hero walking) leaves it running its path.
+        if self
+            .errand
+            .is_some_and(|old| old.ground().distance(to.ground()) <= SAME_ERRAND)
+        {
             return;
         }
         self.errand = Some(to);
@@ -437,6 +464,7 @@ fn recruit(
         held: false,
         might,
         errand: None,
+        refused: None,
         rng,
     };
     Some((enemy, brain))
@@ -560,7 +588,7 @@ fn plan(
             return;
         }
         planner.asked += 1;
-        match nav.plan_path(here, goal, false, PATROL_BUDGET) {
+        match nav.plan_path(here, goal, false, ERRAND_BUDGET) {
             PathPlan::Found(path) => {
                 *budget -= 1;
                 b.path = Some(path);
@@ -573,8 +601,12 @@ fn plan(
                 *budget -= 1;
                 planner.failed_searches += 1;
                 b.errand = None;
+                b.refused = Some(goal);
             }
-            PathPlan::KnownNoPath => b.errand = None,
+            PathPlan::KnownNoPath => {
+                b.errand = None;
+                b.refused = Some(goal);
+            }
         }
         return;
     }
@@ -1013,6 +1045,7 @@ mod tests {
             held: false,
             might: 1.0,
             errand: None,
+            refused: None,
             rng: Rng::new(1),
         }];
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
@@ -1124,6 +1157,7 @@ mod tests {
                 held: false,
                 might: 1.0,
                 errand: None,
+                refused: None,
                 rng: Rng::new(i as u64),
             });
         }

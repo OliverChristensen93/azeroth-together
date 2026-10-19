@@ -64,6 +64,8 @@ impl World {
         self.night.try_in = TRY_EVERY;
         let content = self.content().clone();
         let clear = content.rules.night.arrive_unseen;
+        // Only the line's anchor is tested; a patrol or wanderer's members may land a little
+        // nearer a hero than `arrive_unseen` (known, small: the spread of one line).
         for si in std::mem::take(&mut self.night.waiting) {
             let at = enemies::anchor(&content.spawns[si]);
             let near = self

@@ -1051,6 +1051,9 @@ pub(crate) fn non_negative(x: f32) -> bool {
     x.is_finite() && x >= 0.0
 }
 
+/// Most extra loot rolls a risk zone may give a container.
+const MAX_LOOT_ROLLS: u8 = 8;
+
 /// The night's places in `map.ron`: risk zones, roads and the ravens' flocks.
 type Places = (Vec<ZoneDef>, Vec<RoadDef>, Vec<V2>);
 
@@ -1061,9 +1064,12 @@ fn places_of(map: &MapFile, bounds: &Bounds) -> Result<Places, String> {
     for z in &map.zones {
         let area = Bounds::new(z.area.iter().map(|&(x, y)| V2::new(x, y)).collect())
             .map_err(|why| format!("map.ron: zone \"{}\": {why}", z.key))?;
-        if zones.iter().any(|o| o.key == z.key) || !(positive(z.hp) && positive(z.damage)) {
+        if zones.iter().any(|o| o.key == z.key)
+            || !(positive(z.hp) && positive(z.damage))
+            || z.loot_rolls > MAX_LOOT_ROLLS
+        {
             return Err(format!(
-                "map.ron: zone \"{}\" is listed once, with hp and damage above 0",
+                "map.ron: zone \"{}\" is listed once, with hp and damage above 0 and at most 8 loot_rolls",
                 z.key
             ));
         }
@@ -2626,6 +2632,17 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_zone_may_not_roll_a_hundred_extra_loots() {
+        let ok = NIGHT_MAP.replace("loot_rolls: 1", "loot_rolls: 8");
+        assert!(load_night(&ok, &night_rules(), MONSTERS).is_ok());
+        let bad = NIGHT_MAP.replace("loot_rolls: 1", "loot_rolls: 9");
+        assert!(matches!(
+            load_night(&bad, &night_rules(), MONSTERS),
+            Err(ContentError::Invalid(_))
+        ));
     }
 
     #[test]

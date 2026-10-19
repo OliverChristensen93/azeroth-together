@@ -15,6 +15,7 @@ pub(crate) struct Loud {
 }
 
 impl World {
+    /// (A quieter noise that comes while a louder one is still remembered is lost for good.)
     /// The step's noises, kept when one is the loudest of late. It must run before the enemies'
     /// senses take the step's noises (`step_enemies` empties the list), and after every noise of
     /// the step is made. One older than the memory is forgotten.
@@ -68,6 +69,7 @@ impl World {
             let calm = self.senses.is_calm(i);
             if content.enemies[e.kind].hunter
                 && e.hp > 0.0
+                && !e.asleep
                 && free
                 && calm
                 && e.pos.distance(loud.at.ground()) <= n.hunt.reach

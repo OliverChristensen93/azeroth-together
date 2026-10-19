@@ -859,10 +859,14 @@ fn a_hunter_rests_where_the_noise_was_then_goes_home() {
     let mut w = hunt_world(HUNT_NIGHT);
     // Far from where it goes, so nothing it sees there holds it.
     put(&mut w, 0, 110.0, 10.0, V2::new(1.0, 0.0), Gait::Still);
-    steps(&mut w, secs(30.0));
+    // 127 yards at 8 a second is 16 seconds; it is there by 25, resting.
+    steps(&mut w, secs(25.0));
     let at_noise = w.enemies[0].pos.distance(V2::new(10.0, 10.0));
-    let home = w.enemies[0].pos.distance(V2::new(100.0, 100.0));
-    assert!(at_noise < 3.0 || home < at_noise, "{:?}", w.enemies[0].pos);
+    assert!(at_noise < 3.0, "it went to the noise: {:?}", w.enemies[0].pos);
+    // The noise is forgotten at 30 s; it rests 4 s more, then walks home, so it is on the way.
+    steps(&mut w, secs(20.0));
+    let on_way = w.enemies[0].pos.distance(V2::new(10.0, 10.0));
+    assert!(on_way > 10.0, "it set off home: {:?}", w.enemies[0].pos);
     // The noise is forgotten 30 s after it was made; the worgen rests 4 s more, then walks the
     // 127 yards home at 2.5 yards a second.
     steps(&mut w, secs(65.0));
@@ -1168,4 +1172,84 @@ fn breaking_her_sight_or_killing_her_stops_the_wail() {
     face(&mut w, 0, 20.0, 30.0, TOWARD, 3.0);
     assert!(alarms(&mut w).is_empty());
     assert!(!w.senses.minds[1].is_alerted());
+}
+
+/// Calls the hunt once at the noise in `hunt_world`, with the first hunter's hold as given;
+/// whether it was sent.
+fn hunt_calls_with(hold: crate::combat::Hold) -> bool {
+    let mut w = hunt_world(HUNT_NIGHT);
+    w.night.stage = 1;
+    w.night.hunt_in = 0.0;
+    w.night.loudest = Some(super::hunt::Loud {
+        at: V3::new(10.0, 10.0, 0.0),
+        radius: 20.0,
+        t: w.elapsed,
+    });
+    w.combat.enemies[0].engage.hold = hold;
+    w.step_hunt();
+    w.brains[0].on_errand()
+}
+
+#[test]
+fn a_hunter_held_by_the_fight_is_not_sent() {
+    use crate::combat::Hold;
+    assert!(hunt_calls_with(Hold::Free), "a free one is sent");
+    assert!(!hunt_calls_with(Hold::Out), "a stunned one is not");
+    assert!(!hunt_calls_with(Hold::Still), "a rooted or casting one is not");
+}
+
+#[test]
+fn a_sleeping_hunter_is_not_sent() {
+    let mut w = hunt_world(HUNT_NIGHT);
+    w.night.stage = 1;
+    w.night.hunt_in = 0.0;
+    w.night.loudest = Some(super::hunt::Loud {
+        at: V3::new(10.0, 10.0, 0.0),
+        radius: 20.0,
+        t: w.elapsed,
+    });
+    w.enemies[0].asleep = true;
+    w.step_hunt();
+    assert!(!w.brains[0].on_errand());
+}
+
+/// The hunt's noise sealed in a room no one can enter: a worgen is sent once, finds no way, and is
+/// not sent again while that noise is remembered, nor does the search eat what patrols need.
+#[test]
+fn a_hunter_sent_where_no_way_leads_is_refused_once_and_costs_little() {
+    let mut m = flat(120.0);
+    m.add_box(V2::new(90.0, 90.0), V2::new(110.0, 92.0), 0.0, 4.0);
+    m.add_box(V2::new(90.0, 108.0), V2::new(110.0, 110.0), 0.0, 4.0);
+    m.add_box(V2::new(90.0, 90.0), V2::new(92.0, 110.0), 0.0, 4.0);
+    m.add_box(V2::new(108.0, 90.0), V2::new(110.0, 110.0), 0.0, 4.0);
+    let mut w = world_on(m.finish(), HUNT_NIGHT, &sentry("worgen", 20.0, 100.0, 0.0), "", standard);
+    join(&mut w, 0, 10.0, 10.0);
+    w.make_noise(0, V3::new(100.0, 100.0, 0.0), crate::Loudness::Loud);
+    let mut worst = 0;
+    for _ in 0..secs(40.0) {
+        let before = w.floors_looked_at();
+        w.step();
+        worst = worst.max(w.floors_looked_at() - before);
+    }
+    assert_eq!(w.failed_searches(), 1, "refused after the first failure");
+    assert!(
+        worst <= crate::enemies::ERRAND_BUDGET as u64,
+        "{worst} floors in a step leaves less than a patrol's search needs"
+    );
+    assert!(!w.brains[0].on_errand());
+    // A noise elsewhere is another matter.
+    w.make_noise(0, V3::new(10.0, 100.0, 0.0), crate::Loudness::Loud);
+    steps(&mut w, secs(3.0));
+    assert!(w.enemies[0].pos.distance(V2::new(20.0, 100.0)) > 1.0, "it went to the new noise");
+}
+
+#[test]
+fn a_noise_that_moved_a_little_keeps_the_hunters_path() {
+    let mut w = hunt_world(HUNT_NIGHT);
+    steps(&mut w, secs(3.0));
+    assert!(w.brains[0].on_errand());
+    w.brains[0].send(V3::new(12.0, 11.0, 0.0));
+    assert!(w.brains[0].has_path(), "a step away is the same errand");
+    w.brains[0].send(V3::new(40.0, 40.0, 0.0));
+    assert!(!w.brains[0].has_path(), "a far one is a new errand");
 }

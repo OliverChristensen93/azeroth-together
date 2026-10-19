@@ -41,7 +41,11 @@ impl World {
             if hp <= 0.0 {
                 continue;
             }
-            if self.heroes.iter().any(|h| self.looks_at(h, at, z, fog, cone)) {
+            if self
+                .heroes
+                .iter()
+                .any(|h| self.looks_at(h, at, z, fog, cone))
+            {
                 self.combat.enemies[i].engage.hold = Hold::Out;
                 continue;
             }
