@@ -19,7 +19,8 @@ pub(crate) use noise::Noise;
 pub(crate) use react::step_enemies;
 pub use visibility::{Gait, Stance};
 
-use awareness::{Mind, Shout, State};
+pub(crate) use awareness::State;
+use awareness::{Mind, Shout};
 use noise::step_radius;
 use react::Way;
 use visibility::{visibility, Light};
@@ -50,7 +51,7 @@ pub(crate) struct Senses {
     /// The noises made since the enemies last listened.
     pub(crate) noises: Vec<Noise>,
     /// Each enemy's mind, beside it in the world's enemies.
-    minds: Vec<Mind>,
+    pub(crate) minds: Vec<Mind>,
     /// Each enemy's way while its senses hold it.
     ways: Vec<Way>,
     /// Shouts raised between steps (an alert from a hit), given out at the next.

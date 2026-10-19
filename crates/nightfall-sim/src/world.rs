@@ -254,6 +254,7 @@ impl World {
         self.inputs.retain(|(p, _)| *p != player);
         self.senses.forget(player);
         self.combat.forget(player);
+        self.night.trails.retain(|t| t.player != player);
     }
 
     pub fn hero(&self, player: PlayerId) -> Option<&Hero> {

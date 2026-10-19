@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-#[allow(unused_imports)]
 use crate::heightmap::testmap::{flat, pond};
 use crate::heightmap::HeightMap;
 #[allow(unused_imports)]
@@ -882,4 +881,159 @@ fn a_louder_noise_forgotten_gives_way_to_a_quieter_later_one() {
     w.make_noise(0, V3::new(10.0, 100.0, 0.0), crate::Loudness::Quiet);
     steps(&mut w, secs(1.0));
     assert_eq!(w.night.loudest.unwrap().at, V3::new(10.0, 100.0, 0.0));
+}
+
+/// `player`'s hero walks from point to point at `speed` yards a second, one input a step, in
+/// stealth when `sneak` (silent, and hardly seen).
+fn walk_path(w: &mut World, player: PlayerId, points: &[V2], speed: f32, sneak: bool) {
+    let step = speed / TICK_HZ as f32;
+    for leg in points.windows(2) {
+        let (a, b) = (leg[0], leg[1]);
+        let d = a.distance(b);
+        let n = (d / step).ceil().max(1.0) as usize;
+        let facing = (b - a).normalize_or_zero();
+        for k in 1..=n {
+            let p = a + (b - a) * (k as f32 / n as f32);
+            if let Some(h) = w.heroes.iter_mut().find(|h| h.player == player) {
+                h.stealthed = sneak;
+            }
+            put(w, player, p.x, p.y, facing, Gait::Walk);
+            w.step();
+        }
+    }
+}
+
+/// `player` stands where they are for `s` seconds, sneaking still when `sneak`.
+fn wait(w: &mut World, player: PlayerId, s: f32, sneak: bool) {
+    let h = w.hero(player).unwrap();
+    let (p, f) = (h.pos, h.facing);
+    for _ in 0..secs(s) {
+        if let Some(h) = w.heroes.iter_mut().find(|h| h.player == player) {
+            h.stealthed = sneak;
+        }
+        put(w, player, p.x, p.y, f, Gait::Still);
+        w.step();
+    }
+}
+
+fn crumbs(w: &World, player: PlayerId) -> Vec<crate::night::Crumb> {
+    w.night
+        .trails
+        .iter()
+        .find(|t| t.player == player)
+        .map(|t| t.crumbs.iter().copied().collect())
+        .unwrap_or_default()
+}
+
+/// A blind sleeper of `kind` at `(x, y)`: it hears and smells, but never sees, so only what the
+/// test means to bring it can.
+fn sleeper(kind: &str, x: f32, y: f32) -> String {
+    format!(
+        r#"(place: "Post", kind: "{kind}", behaviour: Sleeper(at: ({x:.1}, {y:.1}), facing: 0.0)),"#
+    )
+}
+
+#[test]
+fn trails_are_laid_as_heroes_walk_and_fade() {
+    let mut w = world("", "");
+    join(&mut w, 0, 10.0, 10.0);
+    walk_path(&mut w, 0, &[V2::new(10.0, 10.0), V2::new(10.0, 30.0)], 4.0, false);
+    let c = crumbs(&w, 0);
+    assert!((10..=12).contains(&c.len()), "a crumb every 2 yards: {}", c.len());
+    assert!(c.windows(2).all(|p| p[0].t <= p[1].t));
+    wait(&mut w, 0, 31.0, false);
+    assert!(crumbs(&w, 0).len() <= 1, "faded after 30 seconds");
+}
+
+#[test]
+fn no_scent_is_left_in_water_or_on_a_road() {
+    let mut b = flat(120.0);
+    pond(&mut b, V2::new(5.0, 20.0), V2::new(15.0, 26.0));
+    let mut w = world_on(b.finish(), "", "", "", standard);
+    join(&mut w, 0, 10.0, 10.0);
+    walk_path(&mut w, 0, &[V2::new(10.0, 10.0), V2::new(10.0, 75.0)], 4.0, false);
+    let c = crumbs(&w, 0);
+    assert!(c.iter().all(|k| !(20.5..=25.5).contains(&k.at.y)), "none in the pond");
+    assert!(c.iter().all(|k| !(57.5..=62.5).contains(&k.at.y)), "none on the road");
+    let stretches: Vec<u32> = c.iter().map(|k| k.stretch).collect();
+    assert_eq!(stretches.first(), Some(&0));
+    assert_eq!(stretches.last(), Some(&2), "the pond and the road each broke the trail");
+}
+
+/// A blind tracker at (20, 20) and a sneaking rogue who passes 2.5 yards beside it along `path`,
+/// then stands still at its end. Blind, so that only the scent can bring the tracker: a seeing
+/// one would find the rogue by sight, over water and roads alike.
+fn tracker_world(map: HeightMap, path: &[V2], speed: f32, night: &str) -> World {
+    let mut w = world_on(map, night, &sleeper("tracker", 20.0, 20.0), "", standard);
+    join(&mut w, 0, path[0].x, path[0].y);
+    walk_path(&mut w, 0, path, speed, true);
+    w
+}
+
+#[test]
+fn a_tracker_follows_a_sneaking_rogue_by_scent() {
+    let end = V2::new(50.0, 40.0);
+    let path = [V2::new(17.5, 10.0), V2::new(17.5, 40.0), end];
+    let mut w = tracker_world(open(), &path, 1.8, "");
+    wait(&mut w, 0, 40.0, true);
+    assert!(
+        w.enemies[0].pos.distance(end) < 4.0,
+        "the tracker found them: {:?}",
+        w.enemies[0].pos
+    );
+    // A brute in its place, as blind, would never have known.
+    let mut b = world_on(open(), "", &sleeper("brute", 20.0, 20.0), "", standard);
+    join(&mut b, 0, path[0].x, path[0].y);
+    walk_path(&mut b, 0, &path, 1.8, true);
+    wait(&mut b, 0, 40.0, true);
+    assert_eq!(b.enemies[0].pos, V2::new(20.0, 20.0));
+}
+
+#[test]
+fn water_breaks_the_trail() {
+    let end = V2::new(50.0, 45.0);
+    let mut m = flat(120.0);
+    pond(&mut m, V2::new(12.0, 27.0), V2::new(23.0, 33.0));
+    let path = [V2::new(17.5, 10.0), V2::new(17.5, 45.0), end];
+    let mut w = tracker_world(m.finish(), &path, 1.8, "");
+    wait(&mut w, 0, 60.0, true);
+    let t = w.enemies[0].pos;
+    assert!(t.y < 27.0, "it stopped at the pond's near bank: {t:?}");
+    assert!(t.distance(end) > 10.0);
+}
+
+#[test]
+fn a_road_breaks_the_trail() {
+    let end = V2::new(50.0, 75.0);
+    let path = [V2::new(17.5, 45.0), V2::new(17.5, 75.0), end];
+    let mut w = world_on(open(), "", &sleeper("tracker", 20.0, 50.0), "", standard);
+    join(&mut w, 0, path[0].x, path[0].y);
+    walk_path(&mut w, 0, &path, 1.8, true);
+    wait(&mut w, 0, 60.0, true);
+    let t = w.enemies[0].pos;
+    assert!(t.y < 57.0, "it stopped at the road's near side: {t:?}");
+    assert!(t.distance(end) > 10.0);
+}
+
+#[test]
+fn a_trail_too_old_is_lost() {
+    // Scent lasts 8 seconds; the rogue runs a long loop at 8 yards a second, the tracker trots
+    // after at 4.5, and falls further behind than the scent lasts.
+    let end = V2::new(90.0, 25.0);
+    let path = [
+        V2::new(17.5, 10.0),
+        V2::new(17.5, 40.0),
+        V2::new(110.0, 40.0),
+        V2::new(110.0, 10.0),
+        V2::new(40.0, 10.0),
+        V2::new(40.0, 25.0),
+        end,
+    ];
+    let mut w = tracker_world(open(), &path, 8.0, "scent: (lasts: 8.0)");
+    wait(&mut w, 0, 60.0, true);
+    assert!(
+        w.enemies[0].pos.distance(end) > 15.0,
+        "it lost them on the way: {:?}",
+        w.enemies[0].pos
+    );
 }

@@ -166,6 +166,27 @@ impl Mind {
         self.there = false;
     }
 
+    /// A scent of `player`'s hero at `place` (a tracker, spec §7.3): its suspicion of them held
+    /// halfway from `check` to `alert`, so this step's drain leaves it checking, and the place to
+    /// check moved to the scent, so it walks the trail. One already alerted keeps its chase.
+    pub(crate) fn sniff(&mut self, player: PlayerId, place: V3, r: &AwarenessRules) {
+        if self.is_alerted() {
+            return;
+        }
+        let e = self.entry(player);
+        e.level = e.level.max((r.check + r.alert) * 0.5);
+        let moved = e.place.ground().distance(place.ground()) > 0.5;
+        e.place = place;
+        if let State::Checking { player: p, place: at } = &mut self.state {
+            if *p == player {
+                *at = place;
+            }
+        }
+        if moved {
+            self.there = false;
+        }
+    }
+
     /// `player` slipped away (Vanish, spec §6.3): alerted to them, it searches where it last saw
     /// them instead, as if it had lost them; seeing them again finds them again.
     pub(crate) fn lose(&mut self, player: PlayerId, r: &AwarenessRules) {

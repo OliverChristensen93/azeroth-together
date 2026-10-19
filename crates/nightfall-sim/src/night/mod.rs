@@ -8,10 +8,13 @@ mod clock;
 mod hunt;
 mod places;
 mod roll;
+mod scent;
 mod rules;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use scent::Crumb;
 pub(crate) use places::{there_and_back, MonsterFile, RoadFile, ZoneFile};
 pub use places::{MonsterDef, RoadDef, ZoneDef};
 pub use rules::{
@@ -86,6 +89,8 @@ pub(crate) struct Night {
     pub(crate) loudest: Option<hunt::Loud>,
     /// Seconds to the hunt's next call.
     pub(crate) hunt_in: f32,
+    /// Each hero's scent trail.
+    pub(crate) trails: Vec<scent::Trail>,
 }
 
 impl World {
@@ -135,6 +140,7 @@ impl World {
         }
         self.step_clock();
         self.step_arrivals();
+        self.lay_scent();
     }
 
     /// The night's hold on the enemies, after the fight's own ([`World::hold_enemies`]) and before
@@ -143,6 +149,7 @@ impl World {
         if self.night.mirror.is_some() || self.map().is_none() {
             return;
         }
+        self.follow_scent();
         self.step_hunt();
     }
 }
