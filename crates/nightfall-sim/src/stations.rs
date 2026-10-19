@@ -98,8 +98,9 @@ impl Profile {
         self.stash.retain(|s| s.count > 0);
     }
 
-    /// Station `s` up one level: its price paid, its gifts given. The new level. A companion
-    /// gift replaces the one already kept; every other gift only adds.
+    /// Station `s` up one level: its price paid (the gold, and the materials from the stash,
+    /// not the loadout), its gifts given. The new level. A companion gift replaces the one
+    /// already kept; every other gift only adds.
     pub fn upgrade_station(
         &mut self,
         s: usize,
@@ -147,8 +148,9 @@ impl Profile {
             .is_some_and(|d| self.inn.recipes.contains(&d.key))
     }
 
-    /// Recipe `r` made: its materials and gold paid, what it makes into the stash. The room is
-    /// counted after the materials are gone, since they free theirs.
+    /// Recipe `r` made: its gold and its materials (from the stash, not the loadout) paid, what
+    /// it makes into the stash. The room is counted after the materials are gone, since they
+    /// free theirs.
     pub fn craft(
         &mut self,
         r: usize,
@@ -392,7 +394,7 @@ mod tests {
         assert_eq!(p.sell_to_trader(0, &inn, &c), Err(StationError::Worthless));
         assert_eq!(p.stashed("bread"), 1, "a refused sale keeps the bread");
         p.stash.push(stack("cloth", 4));
-        // Four cloth worth 10 each, at the trader's half.
+        // Four cloth worth 10 each; this fixture's trader pays 0.5 of value (the shipped one 1.0).
         assert_eq!(p.sell_to_trader(1, &inn, &c), Ok(20));
         assert_eq!(p.gold, 21);
         assert_eq!(p.buy(9, &inn, &c), Err(StationError::Unknown));
@@ -540,5 +542,91 @@ mod tests {
             Err(StationError::Missing)
         );
         assert_eq!(p.can_pay(0, &[(cloth, 4), (cloth, 4)], &c), Ok(()));
+    }
+
+    /// A stash a raid's return grew one slot past its capacity.
+    fn over_full_stash(c: &Content, cloth: u16) -> Vec<SavedStack> {
+        let mut stash = full_stash(c, cloth);
+        stash[1] = stack("bread", 3);
+        stash.push(stack("tome", 1));
+        stash
+    }
+
+    #[test]
+    fn an_over_full_stash_still_takes_what_only_merges_into_a_stack() {
+        let c = raid();
+        let inn = inn(&c);
+        let mut p = Profile {
+            gold: 100,
+            stash: over_full_stash(&c, 20),
+            inn: InnProgress {
+                recipes: vec!["pouch".into()],
+                ..InnProgress::default()
+            },
+            ..Profile::default()
+        };
+        assert!(p.stash.len() > p.stash_capacity(&c));
+        // Bread merges into the stack of 3; a pouch needs a new slot.
+        assert_eq!(p.buy(0, &inn, &c), Ok(()));
+        assert_eq!(p.stashed("bread"), 4);
+        let before = p.clone();
+        assert_eq!(p.buy(1, &inn, &c), Err(StationError::StashFull));
+        assert_eq!(p.craft(0, &inn, &c), Err(StationError::StashFull));
+        assert_eq!(p, before);
+        // A recipe that makes bread merges too, and pays.
+        let bread = c.item("bread").unwrap();
+        let mut baker = inn.clone();
+        baker.recipes[0].makes = (bread, 2);
+        assert_eq!(p.craft(0, &baker, &c), Ok(()));
+        assert_eq!((p.stashed("bread"), p.stashed("cloth")), (6, 14));
+        assert_eq!(p.gold, 100 - 2 - 5);
+    }
+
+    #[test]
+    fn a_companion_gift_replaces_the_companion_already_kept() {
+        let c = raid();
+        let mut inn = inn(&c);
+        inn.companions.push(crate::CompanionDef {
+            key: "cat".into(),
+            name: "Cat".into(),
+            display: 1,
+            scale: 1.0,
+        });
+        inn.stations[1].levels[1].gives = vec![Gift::Companion(1)];
+        let mut p = Profile {
+            gold: 90,
+            stash: vec![stack("cloth", 4)],
+            inn: InnProgress {
+                stations: vec![("bench".into(), 1)],
+                companion: Some("hound".into()),
+                ..InnProgress::default()
+            },
+            ..Profile::default()
+        };
+        assert_eq!(p.upgrade_station(1, &inn, &c), Ok(2));
+        assert_eq!(p.inn.companion.as_deref(), Some("cat"));
+    }
+
+    #[test]
+    fn a_recipe_naming_an_item_twice_takes_both_counts_when_made() {
+        let c = raid();
+        let mut inn = inn(&c);
+        let cloth = c.item("cloth").unwrap();
+        inn.recipes[0].needs = vec![(cloth, 3), (cloth, 3)];
+        let mut p = Profile {
+            gold: 5,
+            stash: vec![stack("cloth", 5)],
+            inn: InnProgress {
+                recipes: vec!["pouch".into()],
+                ..InnProgress::default()
+            },
+            ..Profile::default()
+        };
+        // Five cloth pay either line alone but not both: nothing is taken.
+        assert_eq!(p.craft(0, &inn, &c), Err(StationError::Missing));
+        assert_eq!((p.gold, p.stashed("cloth")), (5, 5));
+        p.stash = vec![stack("cloth", 8)];
+        assert_eq!(p.craft(0, &inn, &c), Ok(()));
+        assert_eq!((p.gold, p.stashed("cloth"), p.stashed("pouch")), (0, 2, 1));
     }
 }

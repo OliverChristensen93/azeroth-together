@@ -716,7 +716,8 @@ impl Profile {
         Ok(value)
     }
 
-    /// Whether `s` fits the stash: onto stacks of it with room, then into free slots.
+    /// Whether `s` fits the stash: onto stacks of it with room, then into free slots. What only
+    /// merges into stacks always fits, even in a stash a raid's return grew past its slots.
     pub(crate) fn stash_has_room(&self, s: &SavedStack, content: &Content) -> bool {
         let max = content
             .item(&s.item)
@@ -729,7 +730,7 @@ impl Profile {
             .sum();
         let need = u32::from(s.count).saturating_sub(free);
         let slots = need.div_ceil(u32::from(max)) as usize;
-        self.stash.len() + slots <= self.stash_capacity(content)
+        slots == 0 || self.stash.len() + slots <= self.stash_capacity(content)
     }
 
     /// `s` into the stash, onto stacks of it first. Never refused: what a raid brings back is

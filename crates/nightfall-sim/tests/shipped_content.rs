@@ -317,3 +317,21 @@ fn buying_from_the_shipped_trader_and_selling_back_never_profits() {
         }
     }
 }
+
+/// Nothing the trader sells is a material a recipe needs: otherwise gold could buy materials,
+/// craft them into something worth more, and sell that, a loop that needs no raid.
+#[test]
+fn no_shipped_trader_stock_is_a_recipe_material() {
+    let c = shipped();
+    let inn = shipped_inn(&c);
+    for &(item, _) in &inn.trader.stock {
+        for r in &inn.recipes {
+            assert!(
+                r.needs.iter().all(|&(n, _)| n != item),
+                "the trader sells \"{}\", which \"{}\" needs",
+                c.items[item].key,
+                r.key
+            );
+        }
+    }
+}
