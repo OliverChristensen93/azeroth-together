@@ -572,3 +572,314 @@ fn the_hunt_closes_its_exit_and_says_so_once() {
         .collect();
     assert_eq!(closed, vec![&Event::ExitClosed { exit: 1 }]);
 }
+
+/// Every list that runs beside the world's enemies, as long as it, ids unique.
+fn lists_in_step(w: &World) {
+    let n = w.enemies.len();
+    assert_eq!(w.brains.len(), n, "brains");
+    assert!(w.senses.rows_match(n), "minds and ways");
+    assert_eq!(w.combat.enemies.len(), n, "fights");
+    let mut ids: Vec<u32> = w.enemies.iter().map(|e| e.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), n, "ids are unique");
+}
+
+const GHOST: &str = r#"
+    (key: "ghost", name: "Ghost", odds: 0.5, spawns: [
+        (place: "Ghost", kind: "brute", behaviour: Sentry(at: (50.0, 50.0), facing: 0.0))]),
+"#;
+
+#[test]
+fn only_the_monsters_out_are_placed_whenever_the_raid_begins() {
+    let none = world_on(open(), "", "", GHOST, standard);
+    assert!(none.enemies.is_empty());
+    let out = world_on(open(), "", "", GHOST, |c| RaidRoll {
+        monsters: vec![0],
+        ..standard(c)
+    });
+    assert_eq!(out.enemies.len(), 1);
+    lists_in_step(&out);
+    // The map first, the raid after: the raid's own monsters, placed again.
+    let c = content("", "", GHOST);
+    let mut w = World::new(Arc::new(c.clone()));
+    w.attach_map(Arc::new(open()));
+    assert!(w.enemies.is_empty());
+    w.begin_raid(RaidRoll {
+        monsters: vec![0],
+        ..standard(&c)
+    })
+    .unwrap();
+    assert_eq!(w.enemies.len(), 1);
+    lists_in_step(&w);
+    // And the next raid, without it, starts over.
+    w.begin_raid(standard(&c)).unwrap();
+    assert!(w.enemies.is_empty());
+    lists_in_step(&w);
+}
+
+#[test]
+fn a_content_mistake_is_told_once_however_often_the_enemies_are_placed() {
+    // A post over a hole has no floor to stand on.
+    let spawns = sentry("brute", 10.0, 10.0, 0.0);
+    let c = content("", &spawns, "");
+    let mut b = flat(120.0);
+    for col in b.columns_in(V2::new(8.0, 8.0), V2::new(12.0, 12.0)) {
+        b.set_ground(col, f32::NAN);
+    }
+    let mut w = World::new(Arc::new(c.clone()));
+    w.attach_map(Arc::new(b.finish()));
+    let once = w.warnings().len();
+    assert!(once >= 1, "{:?}", w.warnings());
+    w.begin_raid(standard(&c)).unwrap();
+    w.begin_raid(standard(&c)).unwrap();
+    assert_eq!(w.warnings().len(), once, "{:?}", w.warnings());
+}
+
+const NIGHT_WITH_LATE: &str = r#"stages: [(key: "dusk", name: "Dusk", at: 0.0),
+    (key: "late", name: "Late", at: 1.0, warn: 0.0)], arrive_unseen: 20.0"#;
+
+#[test]
+fn newcomers_wait_unseen_and_keep_every_list_in_step() {
+    let spawns = format!(
+        r#"{}(place: "Late", kind: "brute", stage: Some("late"), behaviour: Sentry(at: (60.0, 30.0), facing: 0.0)),"#,
+        sentry("brute", 10.0, 100.0, 0.0)
+    );
+    let mut w = world(NIGHT_WITH_LATE, &spawns);
+    assert_eq!(w.enemies.len(), 1, "the newcomer is not there at the start");
+    join(&mut w, 0, 62.0, 30.0);
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.enemies.len(), 1, "it waits while a hero stands where it comes");
+    put(&mut w, 0, 10.0, 10.0, V2::new(1.0, 0.0), Gait::Still);
+    steps(&mut w, secs(1.5));
+    assert_eq!(w.enemies.len(), 2);
+    lists_in_step(&w);
+    assert_eq!(w.enemies[1].id, 2);
+    assert_eq!(w.enemies[1].pos, V2::new(60.0, 30.0));
+    // It thinks like the rest: a hero walking in front of it is noticed.
+    for _ in 0..secs(5.0) {
+        put(&mut w, 0, 70.0, 30.0, V2::new(-1.0, 0.0), Gait::Walk);
+        w.step();
+    }
+    assert!(w.marks_for(0).iter().any(|m| m.enemy == 2));
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.enemies.len(), 2, "it came once");
+}
+
+#[test]
+fn a_hero_who_is_down_does_not_keep_a_newcomer_out() {
+    let spawns = r#"(place: "Late", kind: "brute", stage: Some("late"), behaviour: Sentry(at: (60.0, 30.0), facing: 0.0)),"#;
+    let mut w = world(NIGHT_WITH_LATE, spawns);
+    join(&mut w, 0, 62.0, 30.0);
+    w.hurt_hero(0, 1.0e6);
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.enemies.len(), 1, "a downed hero is not looking");
+}
+
+#[test]
+fn a_stage_brings_only_the_lines_this_raid_wants_and_the_first_stage_is_there_at_the_start() {
+    let monsters = r#"
+        (key: "ghost", name: "Ghost", odds: 0.5, spawns: [
+            (place: "Ghost", kind: "brute", stage: Some("late"),
+             behaviour: Sentry(at: (60.0, 30.0), facing: 0.0))]),
+        (key: "wraith", name: "Wraith", odds: 0.5, spawns: [
+            (place: "Wraith", kind: "brute", stage: Some("late"),
+             behaviour: Sentry(at: (30.0, 30.0), facing: 0.0))]),
+    "#;
+    let spawns = r#"(place: "Dusk", kind: "brute", stage: Some("dusk"),
+        behaviour: Sentry(at: (90.0, 30.0), facing: 0.0)),"#;
+    let mut w = world_on(open(), NIGHT_WITH_LATE, spawns, monsters, |c| RaidRoll {
+        monsters: vec![0],
+        ..standard(c)
+    });
+    assert_eq!(w.enemies.len(), 1, "a line of the first stage is there from the start");
+    join(&mut w, 0, 5.0, 100.0);
+    steps(&mut w, secs(4.0));
+    let at: Vec<V2> = w.enemies.iter().map(|e| e.pos).collect();
+    assert_eq!(at, vec![V2::new(90.0, 30.0), V2::new(60.0, 30.0)], "only the ghost came");
+    lists_in_step(&w);
+}
+
+#[test]
+fn a_newcomer_has_the_fight_its_kind_begins_with() {
+    // The banshee's wail is ready at once (`first: Some(0.0)`); the default is half its wait.
+    let spawns = r#"(place: "Late", kind: "banshee", stage: Some("late"),
+        behaviour: Sentry(at: (60.0, 30.0), facing: 0.0)),"#;
+    let mut w = world(NIGHT_WITH_LATE, spawns);
+    join(&mut w, 0, 5.0, 100.0);
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.enemies.len(), 1);
+    assert_eq!(w.combat.enemies[0].moves_in, vec![0.0]);
+    lists_in_step(&w);
+}
+
+/// The health of a brute at `(x, y)` and the blows it strikes at a hero beside it.
+fn brute_at(x: f32, y: f32) -> ((f32, f32), Vec<f32>) {
+    let mut w = world("", &sentry("brute", x, y, 180.0));
+    let max = (w.enemies[0].hp, w.enemies[0].max_hp);
+    join(&mut w, 0, x - 1.5, y);
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, secs(3.0));
+    let blows = events_of(&mut w, |e| match e {
+        Event::Damage {
+            to: crate::UnitRef::Hero(0),
+            amount,
+            ..
+        } => Some(*amount),
+        _ => None,
+    });
+    (max, blows)
+}
+
+#[test]
+fn a_risk_zone_makes_enemies_tougher_and_its_loot_richer() {
+    let (max, blows) = brute_at(100.0, 100.0);
+    assert_eq!(max, (1500.0, 1500.0));
+    assert!(!blows.is_empty() && blows.iter().all(|&a| a == 50.0), "{blows:?}");
+    // Outside the zone: its own health and blows.
+    let (max, blows) = brute_at(20.0, 100.0);
+    assert_eq!(max, (1000.0, 1000.0));
+    assert!(!blows.is_empty() && blows.iter().all(|&a| a == 40.0), "{blows:?}");
+    let w = world("", "");
+    let stacks = |at: V2| {
+        w.raid
+            .containers
+            .iter()
+            .find(|c| c.at == at)
+            .map(|c| c.stacks.iter().flatten().count())
+    };
+    assert_eq!(stacks(V2::new(10.0, 10.0)), Some(1));
+    assert_eq!(stacks(V2::new(100.0, 100.0)), Some(2));
+}
+
+#[test]
+fn a_hurt_from_nowhere_is_not_made_heavier_by_a_zone() {
+    let mut w = world("", "");
+    join(&mut w, 0, 100.0, 100.0);
+    w.hurt_hero(0, 10.0);
+    let hurt = events_of(&mut w, |e| match e {
+        Event::Damage {
+            amount, by: None, ..
+        } => Some(*amount),
+        _ => None,
+    });
+    assert_eq!(hurt, vec![10.0]);
+}
+
+#[test]
+fn a_newcomer_in_a_risk_zone_is_as_tough_and_as_heavy_as_one_placed_at_the_start() {
+    let spawns = r#"(place: "Late", kind: "brute", stage: Some("late"),
+        behaviour: Sentry(at: (100.0, 100.0), facing: 180.0)),"#;
+    let mut w = world(NIGHT_WITH_LATE, spawns);
+    join(&mut w, 0, 5.0, 5.0);
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.enemies.len(), 1);
+    assert_eq!((w.enemies[0].hp, w.enemies[0].max_hp), (1500.0, 1500.0));
+    assert_eq!(w.brains[0].might(), 1.25);
+}
+
+/// The hunt from the first second, the hunters called every second.
+const HUNT_NIGHT: &str = r#"stages: [(key: "dusk", name: "Dusk", at: 0.0),
+    (key: "hunt", name: "The hunt", at: 1.0, warn: 0.0, hunt: true)],
+    hunt: (every: 1.0, memory: 30.0, reach: 200.0, rest: 4.0)"#;
+
+/// A hunting worgen far in the north-east and a brute beside it, a hero far in the south-west
+/// who makes a loud noise none of them hears.
+fn hunt_world(night: &str) -> World {
+    let spawns = format!(
+        "{}{}",
+        sentry("worgen", 100.0, 100.0, 0.0),
+        sentry("brute", 100.0, 90.0, 0.0)
+    );
+    let mut w = world(night, &spawns);
+    join(&mut w, 0, 10.0, 10.0);
+    w.make_noise(0, V3::new(10.0, 10.0, 0.0), crate::Loudness::Loud);
+    w
+}
+
+#[test]
+fn the_hunt_sends_hunters_toward_the_loudest_noise() {
+    let mut w = hunt_world(HUNT_NIGHT);
+    steps(&mut w, secs(8.0));
+    let to_noise = |w: &World, i: usize| w.enemies[i].pos.distance(V2::new(10.0, 10.0));
+    assert!(
+        to_noise(&w, 0) < 100.0,
+        "the worgen ran toward it: {:?}",
+        w.enemies[0].pos
+    );
+    assert_eq!(
+        w.enemies[1].pos,
+        V2::new(100.0, 90.0),
+        "the brute is no hunter"
+    );
+    lists_in_step(&w);
+}
+
+#[test]
+fn no_hunt_before_its_stage_nor_after_the_noise_is_forgotten_nor_beyond_its_reach() {
+    let early = HUNT_NIGHT.replace("at: 1.0, warn: 0.0, hunt", "at: 100.0, warn: 0.0, hunt");
+    let mut w = hunt_world(&early);
+    steps(&mut w, secs(8.0));
+    assert_eq!(w.enemies[0].pos, V2::new(100.0, 100.0));
+    let forgetful = HUNT_NIGHT
+        .replace("at: 1.0, warn: 0.0, hunt", "at: 3.0, warn: 0.0, hunt")
+        .replace("memory: 30.0", "memory: 1.0");
+    let mut w = hunt_world(&forgetful);
+    steps(&mut w, secs(8.0));
+    assert_eq!(w.enemies[0].pos, V2::new(100.0, 100.0));
+    // The worgen is 127 yards from the noise.
+    let short = HUNT_NIGHT.replace("reach: 200.0", "reach: 100.0");
+    let mut w = hunt_world(&short);
+    steps(&mut w, secs(8.0));
+    assert_eq!(w.enemies[0].pos, V2::new(100.0, 100.0));
+}
+
+#[test]
+fn the_hunt_goes_to_the_loudest_noise_not_the_latest() {
+    let mut w = hunt_world(HUNT_NIGHT);
+    steps(&mut w, secs(1.0));
+    // A quiet one later, somewhere else.
+    w.make_noise(0, V3::new(10.0, 100.0, 0.0), crate::Loudness::Quiet);
+    steps(&mut w, secs(1.0));
+    let loud = w.night.loudest.expect("a noise is remembered");
+    assert_eq!(loud.at, V3::new(10.0, 10.0, 0.0));
+}
+
+#[test]
+fn a_hunter_who_finds_someone_on_the_way_forgets_the_noise() {
+    let mut w = hunt_world(HUNT_NIGHT);
+    steps(&mut w, secs(3.0));
+    assert!(w.brains[0].on_errand(), "the worgen is running to the noise");
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, secs(1.0));
+    assert!(!w.brains[0].on_errand(), "its senses have it now");
+}
+
+#[test]
+fn a_hunter_rests_where_the_noise_was_then_goes_home() {
+    let mut w = hunt_world(HUNT_NIGHT);
+    // Far from where it goes, so nothing it sees there holds it.
+    put(&mut w, 0, 110.0, 10.0, V2::new(1.0, 0.0), Gait::Still);
+    steps(&mut w, secs(30.0));
+    let at_noise = w.enemies[0].pos.distance(V2::new(10.0, 10.0));
+    let home = w.enemies[0].pos.distance(V2::new(100.0, 100.0));
+    assert!(at_noise < 3.0 || home < at_noise, "{:?}", w.enemies[0].pos);
+    // The noise is forgotten 30 s after it was made; the worgen rests 4 s more, then walks the
+    // 127 yards home at 2.5 yards a second.
+    steps(&mut w, secs(65.0));
+    assert!(
+        w.enemies[0].pos.distance(V2::new(100.0, 100.0)) < 1.0,
+        "back at its post"
+    );
+}
+
+#[test]
+fn a_louder_noise_forgotten_gives_way_to_a_quieter_later_one() {
+    let mut w = hunt_world(HUNT_NIGHT.replace("memory: 30.0", "memory: 2.0").as_str());
+    steps(&mut w, secs(1.0));
+    assert_eq!(w.night.loudest.unwrap().at, V3::new(10.0, 10.0, 0.0));
+    steps(&mut w, secs(4.0));
+    w.make_noise(0, V3::new(10.0, 100.0, 0.0), crate::Loudness::Quiet);
+    steps(&mut w, secs(1.0));
+    assert_eq!(w.night.loudest.unwrap().at, V3::new(10.0, 100.0, 0.0));
+}

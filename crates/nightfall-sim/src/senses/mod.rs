@@ -102,6 +102,13 @@ impl Senses {
         self.minds.get(i).is_some_and(Mind::is_alerted)
     }
 
+    /// Whether enemy `i` is calm: noticing nobody, checking nothing, searching for no one.
+    pub(crate) fn is_calm(&self, i: usize) -> bool {
+        self.minds
+            .get(i)
+            .is_some_and(|m| matches!(m.state, State::Calm))
+    }
+
     /// The hero enemy `i` is after, and where it last saw them, when it is alerted.
     pub(crate) fn target_of(&self, i: usize) -> Option<(PlayerId, V3)> {
         match self.minds.get(i)?.state {

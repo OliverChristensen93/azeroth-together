@@ -323,14 +323,11 @@ impl Combat {
     }
 }
 
-/// An enemy's fight as it begins: its moves half ready, so none opens with its big move at once.
+/// An enemy's fight as it begins: each move first ready at its `first` (half its wait unless the
+/// content says), so none opens with its big move at once.
 fn fresh_fight(content: &Content, e: &Enemy) -> EnemyCombat {
     EnemyCombat {
-        moves_in: content.enemies[e.kind]
-            .kit
-            .iter()
-            .map(|&(_, every)| every * 0.5)
-            .collect(),
+        moves_in: content.enemies[e.kind].kit_first.clone(),
         engage: Engage::free(content.rules.senses.chase_reach),
         ..EnemyCombat::default()
     }

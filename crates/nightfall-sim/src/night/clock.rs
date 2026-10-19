@@ -32,6 +32,7 @@ impl World {
             self.events.push(Event::NightFell {
                 stage: self.night.stage as u8,
             });
+            self.stage_landed(self.night.stage);
         }
         if let Some((exit, at)) = self.raid.roll.closes {
             if !self.night.closed && t >= at {

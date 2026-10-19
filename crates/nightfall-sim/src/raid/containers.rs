@@ -34,6 +34,15 @@ fn pick(dice: &mut Dice, lo: u16, hi: u16) -> u16 {
     lo + ((dice.unit() * span as f32) as u32).min(span - 1) as u16
 }
 
+/// How many times a table is rolled for a container or body at `at`: once, and once more for
+/// each `loot_rolls` of the risk zone it lies in (spec §8.1).
+fn rolls_at(content: &Content, at: V2) -> usize {
+    1 + content
+        .map
+        .zone_at(at)
+        .map_or(0, |z| usize::from(z.loot_rolls))
+}
+
 /// A table's roll (spec §8.1): `rolls` picks, each an entry by weight or nothing, its count
 /// within its range; the same item twice is one stack, as far as its stack size lets it be.
 /// Everything rolled is found (spec §8.2: world loot counts as found). An entry naming no item
@@ -117,13 +126,22 @@ impl Raid {
                 continue;
             };
             let mut dice = Dice::new(seed_for(raid.roll.seed, i as u64));
-            let stacks = roll_table(table, &mut dice, content);
+            let slots = usize::from(kind.slots);
+            let mut stacks = Vec::new();
+            let rolls = rolls_at(content, p.at);
+            for _ in 0..rolls {
+                stacks.extend(roll_table(table, &mut dice, content));
+            }
+            // A zone's extra rolls fill the container, no more; one roll keeps all it found.
+            if rolls > 1 {
+                stacks.truncate(slots);
+            }
             raid.add_container(
                 Holder::Placed(p.kind as u16),
                 p.at,
                 p.z,
                 stacks,
-                usize::from(kind.slots),
+                slots,
                 false,
                 p.lock.map(|l| l as u16),
             );
@@ -321,9 +339,16 @@ impl World {
                 continue;
             };
             let mut dice = Dice::new(seed_for(self.raid.roll.seed ^ BODY_SEED, u64::from(id)));
-            let stacks = roll_table(table, &mut dice, &content);
+            let slots = usize::from(content.rules.run.container_slots);
+            let mut stacks = Vec::new();
+            let rolls = rolls_at(&content, at);
+            for _ in 0..rolls {
+                stacks.extend(roll_table(table, &mut dice, &content));
+            }
+            if rolls > 1 {
+                stacks.truncate(slots);
+            }
             if !stacks.is_empty() {
-                let slots = usize::from(content.rules.run.container_slots);
                 self.raid
                     .add_container(Holder::Body(id), at, Some(z), stacks, slots, false, None);
             }

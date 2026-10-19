@@ -142,11 +142,11 @@ pub struct World {
     /// Each player's latest input since the last step.
     inputs: Vec<(PlayerId, PlayerInput)>,
     /// What each enemy means to do, beside it in `enemies`: the host's alone, never sent.
-    brains: Vec<Brain>,
+    pub(crate) brains: Vec<Brain>,
     /// The height map and its paths, once attached: the host's alone.
     nav: Option<Navigator>,
     /// What the content asked that the map could not give (a patrol point no path reaches).
-    warnings: Vec<String>,
+    pub(crate) warnings: Vec<String>,
     /// What the enemies share in choosing their ways (the path budget, the points found sealed).
     planner: Planner,
     /// Each hero's senses and each enemy's mind: the host's alone, never sent.
@@ -264,18 +264,11 @@ impl World {
         self.enemies.iter().find(|e| e.id == id)
     }
 
-    /// The host's height map: from now on the world knows walls and floors, and the content's
-    /// enemies are placed on them (any placed before start over).
+    /// The host's height map: from now on the world knows walls and floors, and the raid's
+    /// enemies are placed on them (any placed before start over, [`World::place_enemies`]).
     pub fn attach_map(&mut self, map: Arc<HeightMap>) {
-        let (enemies, brains, warnings) = enemies::spawn_all(&self.content, &map);
-        self.enemies = enemies;
-        self.brains = brains;
-        self.warnings.extend(warnings);
         self.nav = Some(Navigator::new(map));
-        // Every enemy starts calm, with the eyes its behaviour gives it.
-        self.senses
-            .place(&self.content, self.brains.iter().map(Brain::spawn));
-        self.combat.place(&self.content, &self.enemies);
+        self.place_enemies();
     }
 
     /// One more enemy arrives in a running host: on spawn line `spawn` of the content (its kind, and
@@ -406,6 +399,8 @@ impl World {
         // mirror has no map, and no fight to run).
         if self.nav.is_some() {
             self.hold_enemies();
+            // The night's own holds, after the fight's (the hunt sends hunters).
+            self.night_holds();
             // Before the senses listen, so the noise of these blows is heard this step.
             self.strike_back();
         }
@@ -424,6 +419,9 @@ impl World {
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
         // The fog and the eyes as the night has them now (Moonrise, the weather).
         let (fog, notice) = (self.fog().end, self.notice_scale());
+        // The hunt listens to this step's noises before the enemies' senses take them: `step_enemies`
+        // empties the list, so a hunt that listened after it would hear nothing.
+        self.night_listen();
         if let Some(nav) = self
             .nav
             .as_mut()

@@ -27,6 +27,8 @@ impl World {
         if !self.heroes[hi].fight.up() || !amount.is_finite() || amount <= 0.0 {
             return;
         }
+        // An enemy's blow carries its zone's might (spec §8.1).
+        let amount = amount * self.might_of(by);
         let linger = self.content.rules.combat.combat_linger;
         let h = &mut self.heroes[hi];
         h.hp = (h.hp - amount).max(0.0);

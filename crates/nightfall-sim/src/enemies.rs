@@ -12,7 +12,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::combat::EnemyFight;
-use crate::content::Behaviour;
+use crate::content::{Behaviour, SpawnDef};
 use crate::heightmap::{HeightMap, Navigator, PathPlan, MAX_STEP};
 use crate::{Content, DT, V2, V3};
 
@@ -123,6 +123,10 @@ pub(crate) struct Brain {
     warned: bool,
     /// Held by its senses: its order waits while it turns, checks, chases or searches.
     held: bool,
+    /// Its blows are times this: its zone's `damage` where it was placed (spec §8.1).
+    might: f32,
+    /// Where it runs now on the night's errand (the hunt, spec §7.2), before its order again.
+    errand: Option<V3>,
     rng: Rng,
 }
 
@@ -132,13 +136,39 @@ impl Brain {
         self.spawn
     }
 
+    /// What its blows are times (its zone's `damage`).
+    pub(crate) fn might(&self) -> f32 {
+        self.might
+    }
+
+    /// Whether it is on an errand, running to where the hunt sent it.
+    #[cfg(test)]
+    pub(crate) fn on_errand(&self) -> bool {
+        self.errand.is_some()
+    }
+
+    /// Run to `to` (the hunt's noise), rest there, then take up its order again: its path now
+    /// goes, so its next plan is the errand's. Sent where it already runs, it keeps its path
+    /// (the hunt calls every few seconds while a noise is remembered).
+    pub(crate) fn send(&mut self, to: V3) {
+        if self.errand == Some(to) {
+            return;
+        }
+        self.errand = Some(to);
+        self.path = None;
+        self.next = 0;
+        self.wait = 0.0;
+    }
+
     /// Held by its senses, or released. Taking hold drops the path it was on, so on release it
-    /// searches its way back: to its post, or to the patrol point it was going to.
+    /// searches its way back: to its post, or to the patrol point it was going to. It also drops
+    /// an errand: what it found on the way is its senses' business now, not the noise's.
     pub(crate) fn hold(&mut self, on: bool) {
         if on && !self.held {
             self.path = None;
             self.next = 0;
             self.wait = 0.0;
+            self.errand = None;
         }
         self.held = on;
     }
@@ -205,18 +235,22 @@ fn stand_or_warn(
     Some(f)
 }
 
-/// Every enemy the content's spawns place, on the map's floors, with a warning for each that
-/// could not be placed. Ids count from 1 in the content's order.
+/// The enemies of the content's spawn lines that `lines` keeps, on the map's floors, with a
+/// warning for each that could not be placed. Ids count from `first_id` in the content's order;
+/// an enemy placed inside a risk zone (spec §8.1) has its health times the zone's `hp` and its
+/// brain carries the zone's `damage` ([`Brain::might`]).
 pub(crate) fn spawn_all(
     content: &Content,
     map: &HeightMap,
+    lines: impl Fn(usize) -> bool,
+    first_id: u32,
 ) -> (Vec<Enemy>, Vec<Brain>, Vec<String>) {
     let mut enemies = Vec::new();
     let mut brains = Vec::new();
     let mut warnings = Vec::new();
-    let mut id = 1u32;
+    let mut id = first_id;
     for (si, s) in content.spawns.iter().enumerate() {
-        if content.enemy(&s.kind).is_none() {
+        if !lines(si) || content.enemy(&s.kind).is_none() {
             continue;
         }
         // Where a point stands: on a floor a unit can stand on near the height the content gives,
@@ -334,6 +368,32 @@ pub(crate) fn spawn_all(
     (enemies, brains, warnings)
 }
 
+/// Whether spawn line `si` belongs in a raid whose signature monsters out are `out`: every line
+/// that is not a monster's, and a monster's when it is out.
+pub(crate) fn wanted(content: &Content, si: usize, out: &[u8]) -> bool {
+    content.spawns[si]
+        .monster
+        .is_none_or(|m| out.contains(&(m as u8)))
+}
+
+/// Whether spawn line `si` is placed as the raid begins: wanted, and not waiting for a later
+/// stage (the raid starts in the first, so a line of the first stage is there from the start).
+pub(crate) fn from_start(content: &Content, si: usize, out: &[u8]) -> bool {
+    content.spawns[si].stage_at.is_none_or(|s| s == 0) && wanted(content, si, out)
+}
+
+/// Where a spawn line's enemies come: a post, a route's first point, an area's centre.
+pub(crate) fn anchor(s: &SpawnDef) -> V2 {
+    let p = match &s.behaviour {
+        Behaviour::Sentry { at, .. } | Behaviour::Sleeper { at, .. } => *at,
+        Behaviour::Patrol { route, .. } => route.first().copied().unwrap_or_default(),
+        Behaviour::Wander { center, .. } => *center,
+        // Never reached: the content makes every road walk a patrol as it loads.
+        Behaviour::Road { .. } => (0.0, 0.0),
+    };
+    V2::new(p.0, p.1)
+}
+
 /// The enemy and brain of spawn line `spawn` with id `id`, standing at `at` facing `facing` and set
 /// to `order`: how [`spawn_all`] and [`World::add_enemy`] both make one, so the two cannot drift.
 fn recruit(
@@ -348,14 +408,20 @@ fn recruit(
     let s = content.spawns.get(spawn)?;
     let kind = content.enemy(&s.kind)?;
     let def = &content.enemies[kind];
+    // Where it stands decides how tough it is and how hard it hits (spec §8.1's risk zones): here,
+    // so an enemy that comes mid-raid is made the same way as one placed at the start.
+    let (toughness, might) = content
+        .map
+        .zone_at(at.ground())
+        .map_or((1.0, 1.0), |z| (z.hp, z.damage));
     let enemy = Enemy {
         id,
         kind,
         pos: at.ground(),
         z: at.z,
         facing,
-        hp: def.hp,
-        max_hp: def.hp,
+        hp: def.hp * toughness,
+        max_hp: def.hp * toughness,
         speed: 0.0,
         asleep: matches!(s.behaviour, Behaviour::Sleeper { .. }),
         fight: EnemyFight::default(),
@@ -369,6 +435,8 @@ fn recruit(
         failures: 0,
         warned: false,
         held: false,
+        might,
+        errand: None,
         rng,
     };
     Some((enemy, brain))
@@ -484,6 +552,32 @@ fn plan(
         return;
     }
     let here = V3::at(e.pos, e.z);
+    // The night's errand (the hunt) comes before the order.
+    if let Some(goal) = b.errand {
+        if here.ground().distance(goal.ground()) <= ARRIVE {
+            b.errand = None;
+            b.wait = content.rules.night.hunt.rest;
+            return;
+        }
+        planner.asked += 1;
+        match nav.plan_path(here, goal, false, PATROL_BUDGET) {
+            PathPlan::Found(path) => {
+                *budget -= 1;
+                b.path = Some(path);
+                b.next = 0;
+            }
+            // The step's floors are spent; next step it asks again.
+            PathPlan::Later => {}
+            // No way there: back to its order.
+            PathPlan::NoPath => {
+                *budget -= 1;
+                planner.failed_searches += 1;
+                b.errand = None;
+            }
+            PathPlan::KnownNoPath => b.errand = None,
+        }
+        return;
+    }
     let (goal, cache, limit) = match &mut b.order {
         Order::Sentry { post, .. } => {
             if here.ground().distance(post.ground()) <= ARRIVE {
@@ -607,7 +701,13 @@ fn walk(e: &mut Enemy, b: &mut Brain, map: &HeightMap, content: &Content) {
         }
         return;
     };
-    let speed = content.enemies[e.kind].walk_speed;
+    // An errand is run; the order is walked.
+    let def = &content.enemies[e.kind];
+    let speed = if b.errand.is_some() {
+        def.run_speed
+    } else {
+        def.walk_speed
+    };
     if follow(e, &path, &mut b.next, speed, map) {
         b.path = None;
         arrive(e, b, content);
@@ -657,6 +757,11 @@ pub(crate) fn follow(
 /// 2 yd from it; held to the post as given, the sentry would never be there and would ask for
 /// its path again every step.
 fn arrive(e: &mut Enemy, b: &mut Brain, content: &Content) {
+    // The end of an errand: it looks about where the noise was, then takes up its order again.
+    if b.errand.take().is_some() {
+        b.wait = content.rules.night.hunt.rest;
+        return;
+    }
     match &mut b.order {
         Order::Sentry { post, facing } => {
             e.facing = *facing;
@@ -906,6 +1011,8 @@ mod tests {
             failures: 0,
             warned: false,
             held: false,
+            might: 1.0,
+            errand: None,
             rng: Rng::new(1),
         }];
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
@@ -1015,6 +1122,8 @@ mod tests {
                 failures: 0,
                 warned: false,
                 held: false,
+                might: 1.0,
+                errand: None,
                 rng: Rng::new(i as u64),
             });
         }

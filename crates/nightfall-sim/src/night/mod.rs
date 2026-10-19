@@ -3,7 +3,9 @@
 //! and `places.rs`; the host's rules in the files beside them. A client's mirror runs none of
 //! them: it has the night its host sends in each snapshot ([`NightView`]), and draws its fog.
 
+mod arrivals;
 mod clock;
+mod hunt;
 mod places;
 mod roll;
 mod rules;
@@ -76,6 +78,14 @@ pub(crate) struct Night {
     pub(crate) cued: usize,
     /// The hunt's exit has closed, and said so.
     pub(crate) closed: bool,
+    /// Spawn lines whose stage has landed, waiting until no hero is near where they come.
+    pub(crate) waiting: Vec<usize>,
+    /// Seconds to the next try at placing them.
+    pub(crate) try_in: f32,
+    /// The loudest noise heard lately, for the hunt.
+    pub(crate) loudest: Option<hunt::Loud>,
+    /// Seconds to the hunt's next call.
+    pub(crate) hunt_in: f32,
 }
 
 impl World {
@@ -124,5 +134,15 @@ impl World {
             return;
         }
         self.step_clock();
+        self.step_arrivals();
+    }
+
+    /// The night's hold on the enemies, after the fight's own ([`World::hold_enemies`]) and before
+    /// they look and move. A mirror and a world without a map have none.
+    pub(crate) fn night_holds(&mut self) {
+        if self.night.mirror.is_some() || self.map().is_none() {
+            return;
+        }
+        self.step_hunt();
     }
 }
