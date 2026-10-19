@@ -286,6 +286,8 @@ pub(crate) fn spawn_all(
                         (p, order, facing)
                     })
                 }
+                // Never reached: the content makes every road walk a patrol as it loads.
+                Behaviour::Road { .. } => None,
                 Behaviour::Wander { center, radius } => {
                     let middle = V2::new(center.0, center.1);
                     let c = stand(middle).or_else(|| floor(middle));
@@ -708,6 +710,7 @@ mod tests {
             abilities: "[]",
             items: "[]",
             loot: "()",
+            monsters: "[]",
         })
         .unwrap();
         World::new(Arc::new(content))

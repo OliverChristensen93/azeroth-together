@@ -529,6 +529,7 @@ mod state_tests {
             abilities: "[]",
             items: "[]",
             loot: "()",
+            monsters: "[]",
         })
         .unwrap();
         World::new(Arc::new(content))

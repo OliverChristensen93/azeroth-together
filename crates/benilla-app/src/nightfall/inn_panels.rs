@@ -460,6 +460,7 @@ mod tests {
                 (key: "conjured_water", name: "Water", kind: Drink, icon: "a", weight: 0.1, stack: 20),
             ]"#,
             loot: "()",
+            monsters: "[]",
         })
         .unwrap();
         let inn = InnContent::from_ron(

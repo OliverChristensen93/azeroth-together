@@ -30,4 +30,56 @@
         (key: "deadwind_road", name: "The Deadwind road", at: (-10570.0, -1830.0)),
         (key: "darkshire_cart", name: "The Night Watch cart", at: (-10560.0, -1150.0), late: true),
     ],
+    // The night's places (spec §7.3, §8.1). `zones`: the risk zones first (enemies placed inside
+    // have their health and blows times hp and damage; containers and bodies inside roll their
+    // tables loot_rolls more times), then the gentler outskirts; the first holding a point
+    // counts. `roads` (6 yards wide when left out): the Dark Riders ride them and see far along
+    // them, Stitches walks one, a scent trail across one is lost. `ravens`: where flocks may
+    // settle. measure: the road points were walked along the real bake, not the roads as drawn
+    // (`cargo test --release -p nightfall-bake --test roads resample -- --ignored --nocapture`
+    // prints them): each stands on ground, outside water, 40 to 60 yards from the next, and
+    // every leg finds a path inside a patrol's budget (the same file's other test checks it).
+    // The old Raven Hill road points at (-10600, -470) and (-10590, -640) had no floor and the
+    // straight line between its points crosses ground no unit can walk, so it swings west. The east road ends at the Deadwind exit,
+    // as the baked ground east of it ends. The bridge itself is a ford in the bake (no deck), so
+    // the north road starts on the bank. Everything else here: measure in the game.
+    zones: [
+        (key: "raven_hill", name: "Raven Hill cemetery and its crypt", hp: 1.3, damage: 1.25,
+         loot_rolls: 1,
+         area: [(-10640.0, 230.0), (-10640.0, 430.0), (-10840.0, 430.0), (-10840.0, 230.0)]),
+        (key: "vul_gol", name: "Vul'Gol Ogre Mound", hp: 1.3, damage: 1.25, loot_rolls: 1,
+         area: [(-10980.0, -380.0), (-10980.0, -560.0), (-11160.0, -560.0), (-11160.0, -380.0)]),
+        (key: "outskirts", name: "The northern outskirts", hp: 0.85, damage: 0.85,
+         area: [(-9880.0, 800.0), (-9880.0, -1850.0), (-10150.0, -1850.0), (-10150.0, 800.0)]),
+    ],
+    roads: [
+        (key: "north_road", name: "The road from the bridge",
+         points: [(-9949.0, -503.0), (-9989.0, -543.0), (-10017.0, -583.0), (-10047.0, -612.0),
+                  (-10080.0, -642.0), (-10116.0, -682.0), (-10156.0, -722.0), (-10196.0, -762.0),
+                  (-10236.0, -802.0), (-10276.0, -842.0), (-10305.0, -878.0), (-10345.0, -918.0),
+                  (-10385.0, -958.0), (-10425.0, -998.0), (-10455.0, -1035.0), (-10484.0, -1067.0),
+                  (-10491.0, -1109.0), (-10540.0, -1130.0)]),
+        (key: "raven_hill_road", name: "The Raven Hill road",
+         points: [(-10723.0, 328.0), (-10734.0, 288.0), (-10749.0, 250.0), (-10771.0, 212.0),
+                  (-10766.0, 157.0), (-10762.0, 100.0), (-10762.0, 60.0), (-10772.0, 9.0),
+                  (-10772.0, -31.0), (-10772.0, -71.0), (-10786.0, -109.0), (-10794.0, -148.0),
+                  (-10792.0, -195.0), (-10795.0, -235.0), (-10807.0, -279.0), (-10805.0, -337.0),
+                  (-10807.0, -394.0), (-10812.0, -439.0), (-10821.0, -479.0), (-10811.0, -520.0),
+                  (-10786.0, -552.0), (-10753.0, -609.0), (-10738.0, -667.0), (-10738.0, -707.0),
+                  (-10729.0, -755.0), (-10703.0, -793.0), (-10676.0, -830.0), (-10647.0, -878.0),
+                  (-10604.0, -918.0), (-10570.0, -958.0), (-10570.0, -979.0), (-10550.0, -1014.0),
+                  (-10506.0, -1056.0), (-10491.0, -1103.0), (-10525.0, -1130.0), (-10540.0, -1130.0)]),
+        (key: "west_road", name: "The Westfall road",
+         points: [(-10670.0, 740.0), (-10710.0, 700.0), (-10715.0, 660.0), (-10715.0, 582.0),
+                  (-10715.0, 542.0), (-10715.0, 502.0), (-10715.0, 462.0), (-10715.0, 422.0),
+                  (-10720.0, 363.0), (-10720.0, 330.0)]),
+        (key: "east_road", name: "The Deadwind road",
+         points: [(-10541.0, -1150.0), (-10543.0, -1190.0), (-10543.0, -1239.0), (-10543.0, -1279.0),
+                  (-10543.0, -1319.0), (-10543.0, -1359.0), (-10517.0, -1399.0), (-10483.0, -1433.0),
+                  (-10468.0, -1471.0), (-10467.0, -1525.0), (-10466.0, -1581.0), (-10466.0, -1621.0),
+                  (-10466.0, -1661.0), (-10466.0, -1701.0), (-10486.0, -1749.0), (-10536.0, -1758.0),
+                  (-10570.0, -1798.0), (-10570.0, -1830.0)]),
+    ],
+    ravens: [(-10030.0, -770.0), (-10075.0, -820.0), (-10735.0, 360.0), (-10300.0, -1230.0),
+             (-10990.0, -470.0)],
 )

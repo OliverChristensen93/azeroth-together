@@ -37,5 +37,13 @@
     // measure: Brightwood Grove, where the Night Watch's contract sends heroes. A worgen pack in
     // the contract's circle (contracts.ron "brightwood_pack"), over baked, walkable ground.
     (place: "Brightwood Grove: a worgen pack", kind: "nightbane_worgen", count: 6,
-     behaviour: Wander(center: (-10280.0, -1250.0), radius: 25.0)),
+     behaviour: Wander(center: (-10300.0, -1240.0), radius: 25.0)),
+    // The howling (spec §7.2) brings more wanderers, at the pack's place. measure: (-10300, -1240)
+    // is where a whole pack finds ground to walk on in the real bake (the old centre
+    // (-10280, -1250) left a worgen with none: `cargo test --release -p nightfall-bake --test
+    // roads` plays two minutes on the bake and fails on that warning).
+    (place: "Brightwood Grove: the howling", kind: "nightbane_worgen", count: 3,
+     stage: Some("howling"), behaviour: Wander(center: (-10300.0, -1240.0), radius: 30.0)),
+    (place: "Near the entry: the howling", kind: "nightbane_worgen", count: 2,
+     stage: Some("howling"), behaviour: Wander(center: (-10090.0, -760.0), radius: 20.0)),
 ]

@@ -216,7 +216,7 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
 - Nightfall: `NIGHTFALL=1` skips the pick screen into Nightfall (any `TOGETHER_*` variable skips it
   into Survivors; with both kinds set, the `NIGHTFALL*` ones win and Nightfall starts).
   `NIGHTFALL_CLASS` (`rogue`, `mage`), `NIGHTFALL_NAME`, `NIGHTFALL_CONTENT` (a folder without
-  `map.ron` is an error, not a fallback), `NIGHTFALL_AUTOPLAY=1` (starts a run and walks a
+  `map.ron` is an error, not a fallback; since the night, a custom folder needs `monsters.ron` too), `NIGHTFALL_AUTOPLAY=1` (starts a run and walks a
   circle), `NIGHTFALL_TRACE_POS=1` (logs the hero's WoW position every 2 s, for measuring entry
   points), and co-op with `NIGHTFALL_HOST=1` / `NIGHTFALL_JOIN=<code or address>`.
   `cargo test -p nightfall-sim` runs its rules.

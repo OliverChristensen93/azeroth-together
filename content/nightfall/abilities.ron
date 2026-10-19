@@ -90,4 +90,15 @@
     (key: "war_stomp", name: "War Stomp", spell: 45, aim: Me, radius: 8.0, sound: Loud,
      telegraph: Some((shape: Circle(radius: 8.0), windup: 1.4, on_self: true)),
      effects: [Damage(min: 150.0, max: 180.0)], tags: [Control]),
+
+    // --- The night's monsters (spec §7.3) ---
+    // The banshee's wail: Psychic Scream's spell for its look and sound (measure: that it shows).
+    (key: "banshee_wail", name: "Banshee Wail", spell: 8122, aim: Enemy, range: 40.0, cast: 2.0,
+     sound: Loud, facing: Front, effects: [Alarm(radius: 60.0)], tags: [Control]),
+    (key: "stitches_cleave", name: "Cleave", spell: 845, aim: Enemy, range: 7.0, sound: Loud,
+     telegraph: Some((shape: Cone(length: 7.0, angle: 100.0), windup: 1.2)),
+     effects: [Damage(min: 380.0, max: 460.0)], tags: [Nuke]),
+    (key: "stitches_smash", name: "Smash", spell: 45, aim: Me, radius: 9.0, sound: Loud,
+     telegraph: Some((shape: Circle(radius: 9.0), windup: 1.5, on_self: true)),
+     effects: [Damage(min: 600.0, max: 750.0)], tags: [Nuke]),
 ]

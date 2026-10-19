@@ -22,10 +22,9 @@
      needs: ["brightwood_pack"],
      objectives: [Bring(item: "worgen_pelt", count: 4), Extract(exit: None)],
      reward: (gold: 50, unlocks: ["kennel"])),
-    // Stitches walks the road once the night's clock reaches its last stage (sub-project 6);
-    // this contract waits for him in enemies.ron:
-    // (key: "stitches", giver: "ebonlock", name: "Stitches",
-    //  text: "It walks from Raven Hill to Darkshire. Stop it.",
-    //  objectives: [Kill(enemy: "stitches", count: 1)],
-    //  reward: (gold: 500)),
+    // Stitches walks the road once the night's clock reaches its last stage.
+    (key: "stitches", giver: "ebonlock", name: "Stitches",
+     text: "It walks from Raven Hill to Darkshire. Stop it.",
+     objectives: [Kill(enemy: "stitches", count: 1)],
+     reward: (gold: 500)),
 ]

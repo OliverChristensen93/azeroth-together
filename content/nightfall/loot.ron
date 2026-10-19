@@ -108,6 +108,10 @@
         (enemy: "nightbane_shadow_weaver", table: "caster"),
         (enemy: "fenros", table: "elite"),
         (enemy: "naraxis", table: "elite"),
+        (enemy: "morladim", table: "elite"),
+        (enemy: "stitches", table: "elite"),
+        (enemy: "dark_rider", table: "undead"),
+        (enemy: "wailing_banshee", table: "caster"),
     ],
     // measure: a sack on the ground (the chest stands in) and a heap of bones (the vase).
     pile_display: 259,

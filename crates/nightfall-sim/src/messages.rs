@@ -351,6 +351,7 @@ mod tests {
                 abilities: include_str!("../../../content/nightfall/abilities.ron"),
                 items: include_str!("../../../content/nightfall/items.ron"),
                 loot: include_str!("../../../content/nightfall/loot.ron"),
+                monsters: include_str!("../../../content/nightfall/monsters.ron"),
             })
             .unwrap(),
         );
@@ -554,6 +555,7 @@ mod tests {
                 abilities: include_str!("../../../content/nightfall/abilities.ron"),
                 items: include_str!("../../../content/nightfall/items.ron"),
                 loot: include_str!("../../../content/nightfall/loot.ron"),
+                monsters: include_str!("../../../content/nightfall/monsters.ron"),
             })
             .unwrap(),
         );

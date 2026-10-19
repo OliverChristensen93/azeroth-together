@@ -851,6 +851,7 @@ mod tests {
             abilities: "[]",
             items: &items,
             loot: "()",
+            monsters: "[]",
         })
         .unwrap()
     }

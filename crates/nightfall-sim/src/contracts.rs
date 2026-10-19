@@ -461,6 +461,7 @@ pub(crate) mod tests {
                  stack: 20),
             ]"#,
             loot: "()",
+            monsters: "[]",
         })
         .unwrap()
     }

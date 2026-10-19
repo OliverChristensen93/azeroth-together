@@ -7,6 +7,10 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::items::{check_items, LootFile};
+use crate::night::{
+    there_and_back, MonsterDef, MonsterFile, NightRules, RoadDef, RoadFile, StepSound, ZoneDef,
+    ZoneFile,
+};
 use crate::{AbilityDef, Bounds, Creature, ItemDef, ItemKind, LootContent, V2};
 
 /// One of the class's weapons as WoW's virtual item fields want it.
@@ -116,6 +120,24 @@ pub struct MapDef {
     pub lit: Vec<LitArea>,
     /// The ways out (spec §8.1).
     pub exits: Vec<ExitDef>,
+    /// Risk zones and outskirts, the first holding a point the one that counts (spec §8.1).
+    pub zones: Vec<ZoneDef>,
+    /// The roads (spec §7.3).
+    pub roads: Vec<RoadDef>,
+    /// Where flocks of ravens may settle (spec §7.1).
+    pub flocks: Vec<V2>,
+}
+
+impl MapDef {
+    /// The zone that holds `p`: the first listed.
+    pub fn zone_at(&self, p: V2) -> Option<&ZoneDef> {
+        self.zones.iter().find(|z| z.area.contains(p))
+    }
+
+    /// Whether `p` stands on any road.
+    pub fn on_road(&self, p: V2) -> bool {
+        self.roads.iter().any(|r| r.holds(p))
+    }
 }
 
 /// A lit place: a hero standing in it is easier to see (spec §5.1: campfires, Darkshire's lamps).
@@ -137,6 +159,12 @@ struct MapFile {
     lit: Vec<(f32, f32, f32)>,
     #[serde(default)]
     exits: Vec<ExitFile>,
+    #[serde(default)]
+    zones: Vec<ZoneFile>,
+    #[serde(default)]
+    roads: Vec<RoadFile>,
+    #[serde(default)]
+    ravens: Vec<(f32, f32)>,
 }
 
 /// The light a hero carries: a small glow so a player sees their feet.
@@ -180,6 +208,9 @@ pub struct Rules {
     /// The run (spec §8, §11).
     #[serde(default)]
     pub run: RunRules,
+    /// The night (spec §7.2, §7.3, §8.1); the spec's stages when `rules.ron` leaves it out.
+    #[serde(default)]
+    pub night: NightRules,
 }
 
 /// How the host uses what it knows of the world.
@@ -571,6 +602,30 @@ pub struct EnemyDef {
     /// `moves` as (ability index, seconds), filled as content loads.
     #[serde(skip)]
     pub kit: Vec<(usize, f32)>,
+    /// Mor'Ladim's way (spec §7.3): it stands while any hero looks at it, and otherwise goes
+    /// after the nearest hero within this many yards, seen or not.
+    #[serde(default)]
+    pub watched: Option<f32>,
+    /// A tracker (spec §7.1, §7.3): once suspicious of a hero, it follows their scent.
+    #[serde(default)]
+    pub tracker: bool,
+    /// While a hunting stage lasts it goes after the loudest recent noise (spec §7.2).
+    #[serde(default)]
+    pub hunter: bool,
+    /// It notices a hero standing on a road this many yards off at visibility 100, past the
+    /// fog (the Dark Riders, spec §7.3); 0 for the usual notice range.
+    #[serde(default)]
+    pub road_sight: f32,
+    /// The mount it rides, a `CreatureDisplayInfo` id, 0 for none: the client's look.
+    #[serde(default)]
+    pub mount: u32,
+    /// A sound while it moves (Stitches' tread): the client's.
+    #[serde(default)]
+    pub step_sound: Option<StepSound>,
+    /// When each of `kit`'s moves is first ready, seconds into its fight (each move's `first`,
+    /// half its `every` when left out).
+    #[serde(skip)]
+    pub kit_first: Vec<f32>,
 }
 
 fn melee_reach() -> f32 {
@@ -582,6 +637,10 @@ fn melee_reach() -> f32 {
 pub struct MoveDef {
     pub ability: String,
     pub every: f32,
+    /// Seconds into a fight before it is first ready; half `every` when left out, so nothing
+    /// opens with its big move, unless the content wants it to (the banshee's wail, at once).
+    #[serde(default)]
+    pub first: Option<f32>,
 }
 
 /// The dodge (spec §6.1).
@@ -737,6 +796,13 @@ pub enum Behaviour {
     },
     /// Roams within `radius` yards of `center`, resting between walks.
     Wander { center: (f32, f32), radius: f32 },
+    /// Walks a road of `map.ron` from end to end and back, resting `pause` seconds at each point
+    /// (the Dark Riders, Stitches). Made a [`Behaviour::Patrol`] as the content loads.
+    Road {
+        road: String,
+        #[serde(default)]
+        pause: f32,
+    },
 }
 
 /// A group of enemies at a place.
@@ -753,6 +819,16 @@ pub struct SpawnDef {
     #[serde(default)]
     pub z: Option<f32>,
     pub behaviour: Behaviour,
+    /// The night stage (a `StageDef::key`) at which it comes, out of every hero's sight; from the
+    /// start when left out.
+    #[serde(default)]
+    pub stage: Option<String>,
+    /// `stage`, an index into the night's stages.
+    #[serde(skip)]
+    pub stage_at: Option<usize>,
+    /// The signature monster it belongs to, an index into [`Content::monsters`].
+    #[serde(skip)]
+    pub monster: Option<usize>,
 }
 
 /// What a death takes (spec §8.2), the same everywhere on the map.
@@ -923,6 +999,7 @@ pub struct ContentSources<'a> {
     pub abilities: &'a str,
     pub items: &'a str,
     pub loot: &'a str,
+    pub monsters: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -937,6 +1014,8 @@ pub struct Content {
     pub loot: LootContent,
     /// The item Conjure Water makes, when the content has it.
     pub conjured: Option<usize>,
+    /// The signature monsters (spec §7.3); their spawn lines are in `spawns`, after spawns.ron's.
+    pub monsters: Vec<MonsterDef>,
 }
 
 /// Content that does not load, and why.
@@ -967,6 +1046,64 @@ pub(crate) fn non_negative(x: f32) -> bool {
     x.is_finite() && x >= 0.0
 }
 
+/// The night's places in `map.ron`: risk zones, roads and the ravens' flocks.
+type Places = (Vec<ZoneDef>, Vec<RoadDef>, Vec<V2>);
+
+/// The night's places in `map.ron` (spec §7.3, §8.1): risk zones, roads and the ravens' flocks,
+/// each checked against the bounds.
+fn places_of(map: &MapFile, bounds: &Bounds) -> Result<Places, String> {
+    let mut zones: Vec<ZoneDef> = Vec::new();
+    for z in &map.zones {
+        let area = Bounds::new(z.area.iter().map(|&(x, y)| V2::new(x, y)).collect())
+            .map_err(|why| format!("map.ron: zone \"{}\": {why}", z.key))?;
+        if zones.iter().any(|o| o.key == z.key) || !(positive(z.hp) && positive(z.damage)) {
+            return Err(format!(
+                "map.ron: zone \"{}\" is listed once, with hp and damage above 0",
+                z.key
+            ));
+        }
+        zones.push(ZoneDef {
+            key: z.key.clone(),
+            name: z.name.clone(),
+            area,
+            hp: z.hp,
+            damage: z.damage,
+            loot_rolls: z.loot_rolls,
+        });
+    }
+    let mut roads: Vec<RoadDef> = Vec::new();
+    for r in &map.roads {
+        let points: Vec<V2> = r.points.iter().map(|&(x, y)| V2::new(x, y)).collect();
+        if roads.iter().any(|o| o.key == r.key)
+            || points.len() < 2
+            || !positive(r.width)
+            || points.iter().any(|&p| !bounds.contains(p))
+        {
+            return Err(format!(
+                "map.ron: road \"{}\" is listed once, with 2 points or more inside the bounds and a width above 0",
+                r.key
+            ));
+        }
+        roads.push(RoadDef {
+            key: r.key.clone(),
+            name: r.name.clone(),
+            width: r.width,
+            points,
+        });
+    }
+    let flocks: Vec<V2> = map.ravens.iter().map(|&(x, y)| V2::new(x, y)).collect();
+    if let Some(p) = flocks.iter().find(|p| !bounds.contains(**p)) {
+        return Err(format!(
+            "map.ron: a flock of ravens at ({}, {}) is outside the bounds",
+            p.x, p.y
+        ));
+    }
+    if flocks.len() > usize::from(u8::MAX) {
+        return Err("map.ron: at most 255 flocks of ravens".into());
+    }
+    Ok((zones, roads, flocks))
+}
+
 fn parse<T: for<'de> Deserialize<'de>>(file: &'static str, text: &str) -> Result<T, ContentError> {
     ron::from_str(text).map_err(|e| ContentError::Parse {
         file,
@@ -983,6 +1120,7 @@ impl Content {
         let rules: Rules = parse("rules.ron", src.rules)?;
         let mut enemies: Vec<EnemyDef> = parse("enemies.ron", src.enemies)?;
         let spawns: Vec<SpawnDef> = parse("spawns.ron", src.spawns)?;
+        let monster_files: Vec<MonsterFile> = parse("monsters.ron", src.monsters)?;
         let abilities: Vec<AbilityDef> = parse("abilities.ron", src.abilities)?;
         let invalid = |why: String| Err(ContentError::Invalid(why));
 
@@ -1016,6 +1154,12 @@ impl Content {
                 return invalid(format!("map.ron: entry ({x}, {y}) is outside the bounds"));
             }
         }
+        // The night's places (spec §7.3, §8.1) and its numbers.
+        let (zones, roads, flocks) = places_of(&map, &bounds).map_err(ContentError::Invalid)?;
+        rules
+            .night
+            .check()
+            .map_err(|why| ContentError::Invalid(format!("rules.ron: night: {why}")))?;
         if map.lit.iter().any(|&(_, _, r)| !positive(r)) {
             return invalid("map.ron: a lit area needs a radius above 0".into());
         }
@@ -1091,6 +1235,74 @@ impl Content {
             if e.level == 0 {
                 return invalid(format!("enemies.ron: \"{}\" needs level 1 or more", e.key));
             }
+            if e.watched.is_some_and(|r| !positive(r))
+                || !non_negative(e.road_sight)
+                || e.step_sound
+                    .as_ref()
+                    .is_some_and(|s| !(positive(s.every) && positive(s.heard)))
+                || e.moves
+                    .iter()
+                    .any(|m| m.first.is_some_and(|f| !non_negative(f)))
+            {
+                return invalid(format!(
+                    "enemies.ron: \"{}\": watched above 0, road_sight 0 or more, a step sound's every and heard above 0, a move's first 0 or more",
+                    e.key
+                ));
+            }
+        }
+        // The signature monsters' lines go after spawns.ron's, each knowing its monster; then
+        // every line's stage is looked up and every road walk made a patrol, so the checks below
+        // see them all as spawns.ron's own.
+        let mut spawns = spawns;
+        let mut monsters: Vec<MonsterDef> = Vec::new();
+        if monster_files.len() > usize::from(u8::MAX) {
+            return invalid("monsters.ron: at most 255 monsters".into());
+        }
+        for (m, f) in monster_files.into_iter().enumerate() {
+            if monsters.iter().any(|d| d.key == f.key) {
+                return invalid(format!("monsters.ron: \"{}\" is listed twice", f.key));
+            }
+            if !(0.0..=1.0).contains(&f.odds) || f.spawns.is_empty() {
+                return invalid(format!(
+                    "monsters.ron: \"{}\" needs odds from 0 to 1 and a spawn",
+                    f.key
+                ));
+            }
+            let first = spawns.len();
+            for mut s in f.spawns {
+                s.monster = Some(m);
+                spawns.push(s);
+            }
+            monsters.push(MonsterDef {
+                key: f.key,
+                name: f.name,
+                odds: f.odds,
+                always: f.always,
+                lines: (first..spawns.len()).collect(),
+            });
+        }
+        for s in &mut spawns {
+            if let Some(key) = &s.stage {
+                let Some(i) = rules.night.stages.iter().position(|st| st.key == *key) else {
+                    return invalid(format!(
+                        "spawns: \"{}\" comes at a stage \"{key}\" the night has not",
+                        s.place
+                    ));
+                };
+                s.stage_at = Some(i);
+            }
+            if let Behaviour::Road { road, pause } = &s.behaviour {
+                let Some(r) = roads.iter().find(|r| r.key == *road) else {
+                    return invalid(format!(
+                        "spawns: \"{}\" walks a road \"{road}\" map.ron has not",
+                        s.place
+                    ));
+                };
+                s.behaviour = Behaviour::Patrol {
+                    route: there_and_back(&r.points),
+                    pause: *pause,
+                };
+            }
         }
         let inside = |(x, y): (f32, f32)| bounds.contains(V2::new(x, y));
         for s in &spawns {
@@ -1133,6 +1345,9 @@ impl Content {
                     if !positive(*radius) {
                         return invalid(format!("{who}: radius must be above 0"));
                     }
+                }
+                Behaviour::Road { .. } => {
+                    return invalid(format!("{who}: a road is made a patrol as it loads"))
                 }
             }
         }
@@ -1208,6 +1423,13 @@ impl Content {
                 e.kit.push((a, m.every));
             }
         }
+        for e in &mut enemies {
+            e.kit_first = e
+                .moves
+                .iter()
+                .map(|m| m.first.unwrap_or(m.every * 0.5))
+                .collect();
+        }
         rules.combat.check().map_err(ContentError::Invalid)?;
         let items: Vec<ItemDef> = parse("items.ron", src.items)?;
         check_items(&items).map_err(ContentError::Invalid)?;
@@ -1272,6 +1494,9 @@ impl Content {
                     })
                     .collect(),
                 exits,
+                zones,
+                roads,
+                flocks,
             },
             rules,
             enemies,
@@ -1280,6 +1505,7 @@ impl Content {
             items,
             loot,
             conjured,
+            monsters,
         })
     }
 
@@ -1296,6 +1522,16 @@ impl Content {
     /// The enemy kind with this key, by index.
     pub fn enemy(&self, key: &str) -> Option<usize> {
         self.enemies.iter().position(|e| e.key == key)
+    }
+
+    /// The signature monster with this key, by index.
+    pub fn monster(&self, key: &str) -> Option<usize> {
+        self.monsters.iter().position(|m| m.key == key)
+    }
+
+    /// The night stage with this key, by index.
+    pub fn stage(&self, key: &str) -> Option<usize> {
+        self.rules.night.stages.iter().position(|s| s.key == key)
     }
 
     /// The class with this key, by index.
@@ -1362,6 +1598,7 @@ mod tests {
             abilities,
             items: "[]",
             loot: "()",
+            monsters: "[]",
         })
     }
 
@@ -1385,6 +1622,7 @@ mod tests {
             abilities: "[]",
             items: "[]",
             loot: "()",
+            monsters: "[]",
         })
     }
 
@@ -1972,6 +2210,7 @@ mod tests {
             abilities: "[]",
             items,
             loot,
+            monsters: "[]",
         })
     }
 
@@ -2160,6 +2399,7 @@ mod tests {
             abilities: "[]",
             items: ITEMS,
             loot: LOOT,
+            monsters: "[]",
         })
         .unwrap();
         assert_eq!(c.classes[0].free_items, vec![(0, 1), (1, 4)]);
@@ -2173,6 +2413,7 @@ mod tests {
             abilities: "[]",
             items: ITEMS,
             loot: LOOT,
+            monsters: "[]",
         });
         refused_naming(r, "cake");
     }
@@ -2296,5 +2537,247 @@ mod tests {
             let map = EXIT_MAP.replace("radius: 5.0", &format!("radius: {bad}"));
             refused_naming(load_loot(&map, RULES, ITEMS, LOOT), "radius");
         }
+    }
+    const NIGHT_MAP: &str = r#"(key: "test", name: "Test", map: 0,
+        bounds: [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)],
+        entries: [(50.0, 50.0, 10.0)],
+        zones: [(key: "hill", name: "The Hill", hp: 1.5, damage: 1.25, loot_rolls: 1,
+                 area: [(60.0, 60.0), (90.0, 60.0), (90.0, 90.0), (60.0, 90.0)])],
+        roads: [(key: "road", name: "The Road", points: [(10.0, 50.0), (50.0, 50.0), (90.0, 50.0)])],
+        ravens: [(20.0, 20.0)])"#;
+    const MONSTERS: &str = r#"[
+        (key: "ghost", name: "The Ghost", odds: 0.5, spawns: [
+            (place: "Hill", kind: "spider", behaviour: Wander(center: (75.0, 75.0), radius: 5.0))]),
+        (key: "walker", name: "The Walker", always: true, spawns: [
+            (place: "Road", kind: "skeleton", stage: Some("late"), behaviour: Road(road: "road"))]),
+    ]"#;
+
+    fn night_rules() -> String {
+        RULES.replacen(
+            "(hero_level: 30,",
+            r#"(hero_level: 30, night: (stages: [(key: "dusk", name: "Dusk", at: 0.0),
+                (key: "late", name: "Late", at: 60.0, warn: 10.0, fog: 0.75)]),"#,
+            1,
+        )
+    }
+
+    fn load_night(map: &str, rules: &str, monsters: &str) -> Result<Content, ContentError> {
+        Content::from_ron(ContentSources {
+            classes: CLASSES,
+            map,
+            rules,
+            enemies: ENEMIES,
+            spawns: SPAWNS,
+            abilities: "[]",
+            items: "[]",
+            loot: "()",
+            monsters,
+        })
+    }
+
+    #[test]
+    fn the_night_defaults_to_the_spec() {
+        let c = load_night(MAP, RULES, "[]").unwrap();
+        let n = &c.rules.night;
+        let at: Vec<f32> = n.stages.iter().map(|s| s.at).collect();
+        assert_eq!(at, vec![0.0, 480.0, 840.0, 1200.0, 1560.0]);
+        assert_eq!(n.stages[2].key, "moonrise");
+        assert_eq!((n.stages[2].fog, n.stages[2].notice), (0.75, 1.2));
+        assert!(n.stages[3].hunt && !n.stages[1].hunt);
+        assert!(n.weather.is_empty());
+        assert_eq!(n.scent.lasts, 30.0);
+        assert!(c.monsters.is_empty() && c.map.zones.is_empty() && c.map.roads.is_empty());
+    }
+
+    #[test]
+    fn places_and_monsters_load() {
+        let c = load_night(NIGHT_MAP, &night_rules(), MONSTERS).unwrap();
+        assert_eq!(c.map.zones[0].hp, 1.5);
+        assert_eq!(
+            c.map.zone_at(V2::new(70.0, 70.0)).map(|z| z.key.as_str()),
+            Some("hill")
+        );
+        assert!(c.map.zone_at(V2::new(10.0, 10.0)).is_none());
+        assert!(c.map.on_road(V2::new(30.0, 52.9)));
+        assert!(!c.map.on_road(V2::new(30.0, 60.0)));
+        assert_eq!(c.map.flocks, vec![V2::new(20.0, 20.0)]);
+        assert_eq!(c.monster("walker"), Some(1));
+        assert_eq!(c.stage("late"), Some(1));
+        // The monsters' lines come after spawns.ron's three.
+        assert_eq!(c.monsters[0].lines, vec![3]);
+        assert_eq!(c.monsters[1].lines, vec![4]);
+        assert!(c.monsters[1].always && !c.monsters[0].always);
+        let walker = &c.spawns[4];
+        assert_eq!((walker.monster, walker.stage_at), (Some(1), Some(1)));
+        assert_eq!(c.spawns[0].monster, None);
+        match &walker.behaviour {
+            Behaviour::Patrol { route, pause } => {
+                assert_eq!(
+                    route,
+                    &vec![(10.0, 50.0), (50.0, 50.0), (90.0, 50.0), (50.0, 50.0)]
+                );
+                assert_eq!(*pause, 0.0);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn night_content_that_cannot_work_is_refused() {
+        let bad_monsters = [
+            MONSTERS.replace("Some(\"late\")", "Some(\"dawn\")"),
+            MONSTERS.replace("road: \"road\"", "road: \"path\""),
+            MONSTERS.replace("odds: 0.5", "odds: 1.5"),
+            MONSTERS.replace("\"walker\", name", "\"ghost\", name"),
+        ];
+        for m in &bad_monsters {
+            assert!(
+                matches!(
+                    load_night(NIGHT_MAP, &night_rules(), m),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{m}"
+            );
+        }
+        let bad_rules = [
+            night_rules().replace("at: 60.0, warn: 10.0", "at: 60.0, warn: 61.0"),
+            night_rules().replace("name: \"Dusk\", at: 0.0", "name: \"Dusk\", at: 5.0"),
+            night_rules().replace("fog: 0.75", "fog: 0.0"),
+            RULES.replacen(
+                "(hero_level: 30,",
+                "(hero_level: 30, night: (weather: [(key: \"m\", name: \"M\", weight: 1.0, fog_start: 30.0, fog_end: 20.0)]),",
+                1,
+            ),
+            RULES.replacen("(hero_level: 30,", "(hero_level: 30, night: (monsters_out: (3, 1)),", 1),
+        ];
+        for r in &bad_rules {
+            assert!(
+                matches!(
+                    load_night(NIGHT_MAP, r, "[]"),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{r}"
+            );
+        }
+        let bad_maps = [
+            NIGHT_MAP.replace("(90.0, 50.0)])", "(190.0, 50.0)])"),
+            NIGHT_MAP.replace("hp: 1.5", "hp: 0.0"),
+            NIGHT_MAP.replace("ravens: [(20.0, 20.0)]", "ravens: [(-20.0, 20.0)]"),
+        ];
+        for m in &bad_maps {
+            assert!(
+                matches!(
+                    load_night(m, &night_rules(), MONSTERS),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{m}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_enemys_night_traits_load_and_are_checked() {
+        let enemies = ENEMIES.replace(
+            "(key: \"spider\",",
+            "(key: \"spider\", watched: Some(90.0), tracker: true, hunter: true, road_sight: 70.0, mount: 2404,
+              step_sound: Some((sound: File(\"a.wav\"), every: 1.5)),",
+        );
+        let c = Content::from_ron(ContentSources {
+            classes: CLASSES,
+            map: MAP,
+            rules: RULES,
+            enemies: &enemies,
+            spawns: SPAWNS,
+            abilities: "[]",
+            items: "[]",
+            loot: "()",
+            monsters: "[]",
+        })
+        .unwrap();
+        let s = &c.enemies[1];
+        assert_eq!(s.watched, Some(90.0));
+        assert!(s.tracker && s.hunter);
+        assert_eq!((s.road_sight, s.mount), (70.0, 2404));
+        assert_eq!(s.step_sound.as_ref().map(|st| st.heard), Some(60.0));
+        assert!(!c.enemies[0].tracker && c.enemies[0].watched.is_none());
+        let bad = enemies.replace("watched: Some(90.0)", "watched: Some(0.0)");
+        let r = Content::from_ron(ContentSources {
+            classes: CLASSES,
+            map: MAP,
+            rules: RULES,
+            enemies: &bad,
+            spawns: SPAWNS,
+            abilities: "[]",
+            items: "[]",
+            loot: "()",
+            monsters: "[]",
+        });
+        assert!(matches!(r, Err(ContentError::Invalid(_))));
+    }
+
+    #[test]
+    fn night_numbers_that_are_not_finite_are_refused() {
+        // `inf` parses as a float in RON; each of these would otherwise be let through.
+        let bad = [
+            "scent: (lasts: inf)",
+            "hunt: (reach: inf)",
+            "hunt: (memory: inf)",
+            "arrive_unseen: inf",
+            "look_cone: inf",
+            "ravens: (back_after: inf)",
+            "ravens: (scale: inf)",
+            "exits: (cart_jitter: inf)",
+            "exits: (late_window: (900.0, inf))",
+            "weather: [(key: \"m\", name: \"M\", weight: inf, fog_start: 1.0, fog_end: 9.0)]",
+        ];
+        for b in bad {
+            let rules = RULES.replacen(
+                "(hero_level: 30,",
+                &format!("(hero_level: 30, night: ({b}),"),
+                1,
+            );
+            assert!(
+                matches!(
+                    load_night(NIGHT_MAP, &rules, "[]"),
+                    Err(ContentError::Invalid(_))
+                ),
+                "{b}"
+            );
+        }
+        let road = NIGHT_MAP.replace("name: \"The Road\",", "name: \"The Road\", width: inf,");
+        assert!(matches!(
+            load_night(&road, &night_rules(), "[]"),
+            Err(ContentError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn an_alarm_needs_a_radius() {
+        let ability = |radius: &str| {
+            format!(
+                r#"[(key: "wail", name: "Wail", spell: 8122, aim: Enemy, range: 40.0,
+                    effects: [Alarm(radius: {radius})])]"#
+            )
+        };
+        assert!(load_kit(
+            KIT_CLASSES
+                .replace("bar: [(1, \"bolt\"), (4, \"nova\")]", "")
+                .as_str(),
+            &ability("60.0"),
+            RULES,
+            ENEMIES
+        )
+        .is_ok());
+        assert!(matches!(
+            load_kit(
+                KIT_CLASSES
+                    .replace("bar: [(1, \"bolt\"), (4, \"nova\")]", "")
+                    .as_str(),
+                &ability("0.0"),
+                RULES,
+                ENEMIES
+            ),
+            Err(ContentError::Invalid(_))
+        ));
     }
 }

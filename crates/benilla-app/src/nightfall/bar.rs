@@ -338,6 +338,7 @@ mod tests {
             ]"#,
             items: "[]",
             loot: "()",
+            monsters: "[]",
         })
         .unwrap()
     }

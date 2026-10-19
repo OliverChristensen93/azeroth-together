@@ -141,6 +141,9 @@ pub enum Effect {
     Eat { secs: f32 },
     /// `count` conjured drinks.
     ConjureWater { count: u8 },
+    /// Every other enemy within `radius` yards that is in the fight is alerted to the target
+    /// (the banshee's wail, spec §7.3). An enemy's alone: a hero's ability with it does nothing.
+    Alarm { radius: f32 },
 }
 
 impl Effect {
@@ -388,6 +391,7 @@ impl AbilityDef {
                 Effect::Blink { distance } => positive(distance),
                 Effect::Distract { secs } | Effect::Eat { secs } => positive(secs),
                 Effect::ConjureWater { count } => count > 0,
+                Effect::Alarm { radius } => positive(radius),
                 Effect::Stealth | Effect::Vanish => true,
             };
             if !works {

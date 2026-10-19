@@ -20,6 +20,7 @@ mod inventory;
 mod items;
 mod math;
 pub mod messages;
+mod night;
 mod profile;
 mod raid;
 mod senses;
@@ -58,6 +59,10 @@ pub use items::{
     PlacedContainer, Table, TableEntry,
 };
 pub use math::{V2, V3};
+pub use night::{
+    CueSound, ExitRoll, HuntRules, MonsterDef, NightRules, RavenRules, RoadDef, ScentRules,
+    StageDef, StepSound, WeatherDef, ZoneDef,
+};
 pub use profile::{
     free_kit, inventory_of, saved_inventory, ContractState, InnProgress, Profile, ProfileError,
     SavedInventory, SavedRaid, SavedRecovery, SavedStack, StashError, PROFILE_VERSION,

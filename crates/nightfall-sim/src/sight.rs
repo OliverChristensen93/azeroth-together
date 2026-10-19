@@ -175,6 +175,7 @@ mod tests {
             abilities: "[]",
             items: "[]",
             loot: "()",
+            monsters: "[]",
         })
         .unwrap();
         let mut w = World::new(Arc::new(content));

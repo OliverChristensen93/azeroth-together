@@ -10,7 +10,7 @@
      hp: 980.0, walk_speed: 2.5, run_speed: 7.0, creature: Undead,
      swing: Some((min: 38.0, max: 52.0, every: 2.0))),
     (key: "nightbane_worgen", name: "Nightbane Worgen", display: 657, level: 27,
-     hp: 940.0, walk_speed: 2.5, run_speed: 8.0,
+     hp: 940.0, walk_speed: 2.5, run_speed: 8.0, hunter: true,
      swing: Some((min: 36.0, max: 50.0, every: 2.0))),
     (key: "nightbane_shadow_weaver", name: "Nightbane Shadow Weaver", display: 203, level: 28,
      hp: 900.0, walk_speed: 2.5, run_speed: 7.5,
@@ -27,11 +27,37 @@
      swing: Some((min: 45.0, max: 60.0, every: 2.4))),
     // Duskwood's rares: elites with a telegraphed big move.
     (key: "fenros", name: "Fenros", display: 657, scale: 1.35, level: 32, hp: 2900.0,
-     walk_speed: 2.5, run_speed: 8.0, elite: true,
+     walk_speed: 2.5, run_speed: 8.0, elite: true, hunter: true,
      swing: Some((min: 70.0, max: 95.0, every: 2.2)),
      moves: [(ability: "rending_cleave", every: 9.0)]),
     (key: "naraxis", name: "Naraxis", display: 955, scale: 1.6, level: 30, hp: 3100.0,
      walk_speed: 2.2, run_speed: 7.0, creature: Beast, elite: true,
      swing: Some((min: 60.0, max: 85.0, every: 2.0)),
      moves: [(ability: "war_stomp", every: 11.0)]),
+    // The night's signature monsters (spec §7.3; monsters.ron says where and when). measure:
+    // every display id was read from CreatureDisplayInfo and CreatureModelData in the trimmed
+    // data: 915 is Banshee.m2, 12073 BoneGolem.m2 (Stitches; its display scale is 2, so `scale`
+    // here is small), 200 Skeleton.mdx for Mor'Ladim and the riders, 10718 the riders' horse
+    // (RidingUndeadWarHorse.m2, the only horse in the data), 736 the worgen model (trackers keep
+    // it). The tread is the giant's footstep, the only heavy footfall in the data.
+    (key: "morladim", name: "Mor'Ladim", display: 200, scale: 1.5, level: 35, hp: 4200.0,
+     walk_speed: 2.5, run_speed: 6.5, creature: Undead, elite: true, watched: Some(90.0),
+     swing: Some((min: 150.0, max: 190.0, every: 2.0)),
+     moves: [(ability: "rending_cleave", every: 10.0)]),
+    (key: "nightbane_tracker", name: "Nightbane Tracker", display: 736, level: 29, hp: 980.0,
+     walk_speed: 4.5, run_speed: 8.5, tracker: true, hunter: true,
+     swing: Some((min: 40.0, max: 55.0, every: 2.0))),
+    (key: "wailing_banshee", name: "Wailing Banshee", display: 915, scale: 1.1, level: 30,
+     hp: 700.0, walk_speed: 2.2, run_speed: 6.0, creature: Undead,
+     swing: Some((min: 20.0, max: 28.0, every: 2.0)),
+     moves: [(ability: "banshee_wail", every: 40.0, first: Some(0.0))]),
+    (key: "dark_rider", name: "Dark Rider", display: 200, scale: 1.1, level: 31, hp: 1400.0,
+     walk_speed: 10.0, run_speed: 12.0, creature: Undead, road_sight: 70.0, mount: 10718,
+     swing: Some((min: 60.0, max: 80.0, every: 2.0))),
+    (key: "stitches", name: "Stitches", display: 12073, scale: 1.2, level: 35, hp: 20000.0,
+     walk_speed: 2.2, run_speed: 5.5, creature: Undead, elite: true, reach: 4.0,
+     swing: Some((min: 250.0, max: 320.0, every: 2.5)),
+     moves: [(ability: "stitches_cleave", every: 7.0), (ability: "stitches_smash", every: 13.0)],
+     step_sound: Some((sound: File("Sound\\Character\\Footsteps\\GiantFootSteps\\FootstepsGiant01.wav"),
+                       every: 1.4, heard: 60.0))),
 ]

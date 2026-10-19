@@ -95,6 +95,7 @@ pub(super) fn world_with(run: &str, spawns: &str) -> World {
         abilities: ABILITIES,
         items: ITEMS,
         loot: LOOT,
+        monsters: "[]",
     })
     .unwrap();
     let mut w = World::new(Arc::new(content));

@@ -61,12 +61,13 @@ use crate::game_pick::GameMode;
 
 static CONTENT: OnceLock<Arc<Content>> = OnceLock::new();
 /// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot, then the
-/// inn's hub, contracts and stations), for the hash a client and host compare.
-static CONTENT_TEXTS: OnceLock<[String; 11]> = OnceLock::new();
+/// inn's hub, contracts and stations, then the night's monsters), for the hash a client
+/// and host compare.
+static CONTENT_TEXTS: OnceLock<[String; 12]> = OnceLock::new();
 /// The inn's content, set once by [`prepare`] and read through [`inn`].
 static INN: OnceLock<Arc<InnContent>> = OnceLock::new();
 
-pub(super) fn content_texts() -> &'static [String; 11] {
+pub(super) fn content_texts() -> &'static [String; 12] {
     CONTENT_TEXTS.get().expect("nightfall::prepare ran")
 }
 
@@ -164,6 +165,10 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         "loot.ron",
         include_str!("../../../../content/nightfall/loot.ron"),
     )?;
+    let monsters = read(
+        "monsters.ron",
+        include_str!("../../../../content/nightfall/monsters.ron"),
+    )?;
     let hub = read(
         "hub.ron",
         include_str!("../../../../content/nightfall/hub.ron"),
@@ -185,6 +190,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         abilities: &abilities,
         items: &items,
         loot: &loot,
+        monsters: &monsters,
     })
     .map_err(|e| e.to_string())?;
     let inn = InnContent::from_ron(
@@ -211,6 +217,7 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
     let _ = INN.set(Arc::new(inn));
     let _ = CONTENT_TEXTS.set([
         classes, map, rules, enemies, spawns, abilities, items, loot, hub, contracts, stations,
+        monsters,
     ]);
     Ok(())
 }
@@ -241,6 +248,7 @@ pub(super) fn bar_test_content() -> nightfall_sim::Content {
         ]"#,
         items: "[]",
         loot: "()",
+        monsters: "[]",
     })
     .unwrap()
 }
@@ -259,6 +267,7 @@ pub(super) fn shipped_content() -> Arc<Content> {
             abilities: include_str!("../../../../content/nightfall/abilities.ron"),
             items: include_str!("../../../../content/nightfall/items.ron"),
             loot: include_str!("../../../../content/nightfall/loot.ron"),
+            monsters: include_str!("../../../../content/nightfall/monsters.ron"),
         })
         .expect("the shipped content parses"),
     )

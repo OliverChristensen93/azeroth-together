@@ -176,6 +176,7 @@ mod tests {
             abilities: include_str!("../../../../content/nightfall/abilities.ron"),
             items: include_str!("../../../../content/nightfall/items.ron"),
             loot: include_str!("../../../../content/nightfall/loot.ron"),
+            monsters: include_str!("../../../../content/nightfall/monsters.ron"),
         })
         .expect("the shipped content parses");
         let mut sim = Sim::for_test(nightfall_sim::World::new(Arc::new(content)));

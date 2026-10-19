@@ -258,6 +258,7 @@ mod tests {
                 (key: "water", name: "Water", kind: Drink, icon: "a", weight: 0.5, stack: 5),
             ]"#,
             loot: "()",
+            monsters: "[]",
         })
         .unwrap()
     }

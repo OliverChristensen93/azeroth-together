@@ -12,6 +12,7 @@ pub fn shipped() -> Content {
         abilities: include_str!("../../../content/nightfall/abilities.ron"),
         items: include_str!("../../../content/nightfall/items.ron"),
         loot: include_str!("../../../content/nightfall/loot.ron"),
+        monsters: include_str!("../../../content/nightfall/monsters.ron"),
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }
@@ -218,6 +219,8 @@ fn every_shipped_kill_contract_has_its_enemies_inside_its_circle() {
                         | nightfall_sim::Behaviour::Sleeper { at, .. } => Some(*at),
                         nightfall_sim::Behaviour::Wander { center, .. } => Some(*center),
                         nightfall_sim::Behaviour::Patrol { route, .. } => route.first().copied(),
+                        // A road walk is a patrol by the time the content has loaded.
+                        nightfall_sim::Behaviour::Road { .. } => None,
                     };
                     let Some((x, y)) = place else {
                         return false;
@@ -334,4 +337,28 @@ fn no_shipped_trader_stock_is_a_recipe_material() {
             );
         }
     }
+}
+
+#[test]
+fn the_night_is_in_the_shipped_content() {
+    let c = shipped();
+    let n = &c.rules.night;
+    assert_eq!(n.stages.len(), 5);
+    assert!(n.stages[1..]
+        .iter()
+        .all(|s| s.cue.is_some() && s.line.is_some()));
+    assert!(n.weather.len() >= 3);
+    for key in ["morladim", "trackers", "banshee", "dark_riders", "stitches"] {
+        assert!(c.monster(key).is_some(), "{key}");
+    }
+    assert!(c.monsters[c.monster("stitches").unwrap()].always);
+    assert!(!c.map.roads.is_empty() && !c.map.zones.is_empty() && !c.map.flocks.is_empty());
+    assert!(c.enemies[c.enemy("stitches").unwrap()].elite);
+    assert!(c.enemies[c.enemy("morladim").unwrap()].watched.is_some());
+    assert!(
+        c.spawns
+            .iter()
+            .any(|s| s.stage_at.is_some() && s.monster.is_none()),
+        "the howling brings more wanderers"
+    );
 }

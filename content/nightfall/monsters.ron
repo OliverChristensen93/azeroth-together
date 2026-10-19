@@ -1,0 +1,34 @@
+// The night's signature monsters (spec §7.3): each raid rolls which are out, each at its `odds`
+// and between rules.ron's night.monsters_out of them; an `always` one comes every raid. Each
+// one's `spawns` are spawns.ron lines; `stage` (a night stage's key) makes a line come when that
+// stage lands, out of every hero's sight. measure: every place here, in the game with
+// NIGHTFALL_TRACE_POS=1.
+[
+    (key: "morladim", name: "Mor'Ladim", odds: 0.5, spawns: [
+        // He walks Raven Hill's cemetery, by his grave.
+        (place: "Raven Hill cemetery", kind: "morladim",
+         behaviour: Wander(center: (-10740.0, 330.0), radius: 30.0)),
+    ]),
+    (key: "trackers", name: "Nightbane trackers", odds: 0.6, spawns: [
+        // They join the patrols as the howling begins (spec §7.2).
+        (place: "The Brightwood road", kind: "nightbane_tracker", count: 2, stage: Some("howling"),
+         behaviour: Patrol(route: [(-10280.0, -1250.0), (-10220.0, -1150.0), (-10160.0, -1050.0),
+                                   (-10220.0, -1150.0)])),
+        (place: "Near the entry", kind: "nightbane_tracker", stage: Some("howling"),
+         behaviour: Patrol(route: [(-10035.0, -775.0), (-10035.0, -815.0), (-10070.0, -815.0),
+                                   (-10070.0, -775.0)])),
+    ]),
+    (key: "banshee", name: "A banshee", odds: 0.5, spawns: [
+        (place: "Raven Hill's crypt", kind: "wailing_banshee",
+         behaviour: Sentry(at: (-10700.0, 390.0), facing: 90.0)),
+    ]),
+    (key: "dark_riders", name: "The Dark Riders", odds: 0.5, spawns: [
+        (place: "The north road", kind: "dark_rider", count: 2,
+         behaviour: Road(road: "north_road", pause: 3.0)),
+    ]),
+    (key: "stitches", name: "Stitches", always: true, spawns: [
+        // The last stage of the clock: from Raven Hill to Darkshire and back (spec §7.2).
+        (place: "The Raven Hill road", kind: "stitches", stage: Some("stitches"),
+         behaviour: Road(road: "raven_hill_road", pause: 5.0)),
+    ]),
+]

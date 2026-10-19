@@ -124,4 +124,57 @@
         free_meal: false,
         conjured_drink: "conjured_water",
     ),
+    // The night (spec §7.2, §7.3, §8.1). Each stage lands `at` seconds into the raid; its cue
+    // sounds `warn` seconds before, with its line in the chat, and no timer shows anywhere. While
+    // a stage lasts, the fog's distances are times `fog` and enemies' notice range times
+    // `notice`; `hunt` sends the hunters toward the loudest noise of the last hunt.memory
+    // seconds. A raid rolls one weather by weight (rain is the engine's own, `sound` its loop
+    // kit), its exits (each not late is shut at `shut`, opens late within late_window at
+    // `late`; the late ones open within cart_jitter of cart_opens_at; one may close as the hunt
+    // lands at hunt_close; at least open_least open), and monsters_out of monsters.ron's.
+    // Newcomers wait until no hero is within arrive_unseen yards; Mor'Ladim is looked at within
+    // look_cone degrees of a hero's facing. measure: every cue's sound and the ravens' look,
+    // with `cargo run -p benilla-formats --example list_chain -- <word> wav` (or `m2`).
+    night: (
+        stages: [
+            (key: "dusk", name: "Dusk", at: 0.0),
+            (key: "howling", name: "The howling", at: 480.0, warn: 20.0,
+             cue: Some(File("Sound\\Creature\\Worgen\\mWorgenAttackD.wav")),
+            // measure: the data has no howl; the worgen's longest attack growl stands in (list_chain
+            // worgen wav: mWorgenAttackA-D, death and wound only).
+             line: Some("Somewhere in the woods, the worgen begin to howl.")),
+            // measure: no bell, toll, gong or church sound is in the trimmed data (list_chain
+            // found none), so this path is a name to drop a file at: the client logs a debug line
+            // and the cue is silent, its line still shown.
+            (key: "moonrise", name: "Moonrise", at: 840.0, warn: 20.0, fog: 0.75, notice: 1.2,
+             cue: Some(File("Sound\\Doodad\\BellTollHuman.wav")),
+             line: Some("A bell tolls in Darkshire. The moon is rising, and the mist with it.")),
+            (key: "hunt", name: "The hunt", at: 1200.0, warn: 20.0, fog: 0.75, notice: 1.2, hunt: true,
+             cue: Some(File("Sound\\Creature\\Worgen\\mWorgenAttackD.wav")),
+             line: Some("The howls answer each other now. The packs are hunting.")),
+            // measure: no abomination sound exists; FleshGolem is the closest heavy voice.
+            (key: "stitches", name: "Stitches", at: 1560.0, warn: 30.0, fog: 0.75, notice: 1.2, hunt: true,
+             cue: Some(File("Sound\\Creature\\FleshGolem\\FleshGolemAttackB.wav")),
+             line: Some("Something heavy is walking the road from Raven Hill.")),
+        ],
+        weather: [
+            (key: "clear", name: "Clear", weight: 5.0, fog_start: 10.0, fog_end: 40.0),
+            (key: "mist", name: "Mist", weight: 3.0, fog_start: 4.0, fog_end: 28.0,
+             fog_color: Some((0.10, 0.12, 0.13))),
+            (key: "rain", name: "Rain", weight: 2.0, fog_start: 6.0, fog_end: 32.0, rain: 0.7,
+             sound: 8534),
+        ],
+        exits: (shut: 0.15, late: 0.25, late_window: (900.0, 1320.0), cart_jitter: 120.0,
+                hunt_close: 0.5, open_least: 2),
+        monsters_out: (1, 3),
+        arrive_unseen: 50.0,
+        look_cone: 90.0,
+        scent: (every: 2.0, lasts: 30.0, pick: 3.0),
+        hunt: (every: 15.0, memory: 30.0, reach: 150.0, rest: 4.0),
+        // measure: the data has no crow (StormCrow has no displays or sound files); the FelBat
+        // model (display 14562, CreatureDisplayInfo) and the Mobat attack sound stand in.
+        ravens: (odds: 0.7, run_within: 8.0, fight_within: 15.0, back_after: 120.0, clear: 20.0,
+                 birds: 3, display: 14562, scale: 0.3,
+                 cry: Some(File("Sound\\Creature\\Mobat\\MobatAttackA.wav"))),
+    ),
 )
