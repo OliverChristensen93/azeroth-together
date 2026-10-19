@@ -121,3 +121,8 @@ may not be what you pictured. Each line says what was decided, why, and how to c
     Any creature display works; it's one number in `content/nightfall/hub.ron`.
 36. **A "Ready" button in the lobby** (item 33) is being built with the inn: friends can change their
     loadout until they press Ready, and the host starts only when everyone is Ready.
+37. **Names: WoW's Duskwood characters where the spec names them, our own elsewhere.** The contract givers
+    are the spec's Commander Althea Ebonlock, Madame Eva and Abercrombie (and Mor'Ladim's grave, Stitches);
+    the elites Fenros and Naraxis are Duskwood's own too. The innkeeper and trader, which the spec doesn't
+    name, got our own names, and items got plain names of our own (item 28). Say if you'd rather use WoW's
+    names everywhere (e.g. Innkeeper Farley) or nowhere.
