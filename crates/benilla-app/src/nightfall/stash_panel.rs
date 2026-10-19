@@ -42,7 +42,7 @@ pub(super) struct StashBody;
 #[derive(Component)]
 pub(super) struct StashInfo;
 
-/// The line under that: what the stash has to say (a refusal's reason, a sale's gold, why it is
+/// The line under that: what the stash has to say (a refusal's reason, why the stash is
 /// read-only). Its own line, so what the mouse is over never hides it.
 #[derive(Component)]
 pub(super) struct StashNote;
@@ -60,7 +60,7 @@ pub(super) enum StashSlot {
 #[derive(Resource)]
 pub(super) struct StashFont(Handle<Font>);
 
-/// Why the panel's moves and sales are off.
+/// Why the panel's moves are off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Lock {
     /// Joined and ready: our pick is with the host.
@@ -385,14 +385,15 @@ pub(super) fn refused_by(lock: Option<Lock>, touches_loadout: bool) -> bool {
 }
 
 /// One change to the profile, the way every panel that moves items or gold makes it (the stash
-/// panel, the trader, the stations, the contracts): refused outright under a [`Lock`] that covers
-/// it (nothing touched, nothing saved, the panel's red line already says why); otherwise made on
-/// the profile, then saved at once, and a change that cannot be saved is undone (the profile put
-/// back as it was, as [`Stash::begin_raid`] does: a change the disk does not have would be lost
-/// at the next launch, and a sale would be gold from nothing). `change` answers the line to say
-/// (empty for none) or the reason it was refused, which goes in the stash's note, the profile
-/// having been left as it was (the caller's changes are whole-or-nothing, but the clone makes it
-/// so whatever they do). Whether the change stands.
+/// panel, the trader, the stations, the contracts).
+///
+/// A [`Lock`] that covers the change refuses it outright: nothing is touched or saved, and the
+/// panel's red line already says why. Otherwise `change` is made on the profile and saved at once.
+/// A change that cannot be saved is undone, the profile put back as it was (as
+/// [`Stash::begin_raid`] does): a change the disk does not have would be lost at the next launch,
+/// and a sale would be gold from nothing. `change` answers the line to say (empty for none) or
+/// the reason it was refused; a reason goes in the stash's note, and the profile is put back as
+/// it was, so a half-done change cannot stick whatever `change` does. Whether the change stands.
 pub(super) fn act_on_profile(
     stash: &mut Stash,
     lock: Option<Lock>,

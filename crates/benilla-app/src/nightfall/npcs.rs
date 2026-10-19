@@ -9,6 +9,7 @@ use nightfall_sim::{NpcDef, NpcRole, V2};
 
 use super::inn::InnBody;
 use super::session::InnState;
+use super::stash::Stash;
 use super::stash_panel::StashOpen;
 use super::units::{self, UnitKind, UnitSpec};
 use super::{content, dress, inn};
@@ -116,6 +117,7 @@ pub(super) fn right_click(
     state: Res<InnState>,
     mut panel: ResMut<InnPanel>,
     mut stash_open: ResMut<StashOpen>,
+    mut stash_res: ResMut<Stash>,
 ) {
     if clicks.read().last().is_none() {
         return;
@@ -126,9 +128,45 @@ pub(super) fn right_click(
     let Some(i) = npc_at(&views.drawn, target) else {
         return;
     };
-    if let Some((i, stash)) = opened_by_click(&inn().npcs, i, state.pose.map(|p| p.pos)) {
+    let pos = state.pose.map(|p| p.pos);
+    let opened = opened_by_click(&inn().npcs, i, pos);
+    match click_note(opened, panel.0, pos.is_some(), stash_res.read_only()) {
+        NoteChange::Keep => {}
+        NoteChange::Clear => stash_res.note = None,
+        NoteChange::Say(line) => stash_res.note = Some(line.into()),
+    }
+    if let Some((i, stash)) = opened {
         panel.0 = Some(i);
         stash_open.0 = stash;
+    }
+}
+
+/// What a right-click does to the stash's note.
+#[derive(Debug, PartialEq, Eq)]
+enum NoteChange {
+    Keep,
+    Clear,
+    Say(&'static str),
+}
+
+/// The note a right-click leaves: a panel newly opened starts without the last panel's line (a
+/// "Sold for..." is old news); a click on the NPC whose panel is open changes nothing; a click out
+/// of reach (the hero's place being known) says so. A read-only stash's standing warning is
+/// never replaced.
+fn click_note(
+    opened: Option<(usize, bool)>,
+    open_now: Option<usize>,
+    pos_known: bool,
+    read_only: bool,
+) -> NoteChange {
+    if read_only {
+        return NoteChange::Keep;
+    }
+    match opened {
+        Some((i, _)) if open_now == Some(i) => NoteChange::Keep,
+        Some(_) => NoteChange::Clear,
+        None if pos_known => NoteChange::Say("Come closer."),
+        None => NoteChange::Keep,
     }
 }
 
@@ -201,6 +239,20 @@ mod tests {
         assert_eq!(opened_by_click(&npcs, trader, far), None);
         assert_eq!(opened_by_click(&npcs, trader, None), None);
         assert_eq!(opened_by_click(&npcs, npcs.len(), near), None);
+    }
+
+    #[test]
+    fn a_click_leaves_the_note_that_fits_it() {
+        // A panel newly opened clears the last one's line; the same panel's click keeps it.
+        assert_eq!(click_note(Some((3, false)), None, true, false), NoteChange::Clear);
+        assert_eq!(click_note(Some((3, false)), Some(1), true, false), NoteChange::Clear);
+        assert_eq!(click_note(Some((3, false)), Some(3), true, false), NoteChange::Keep);
+        // Out of reach says so; with no hero yet there is nothing to say.
+        assert_eq!(click_note(None, None, true, false), NoteChange::Say("Come closer."));
+        assert_eq!(click_note(None, None, false, false), NoteChange::Keep);
+        // A read-only stash's standing warning is never replaced.
+        assert_eq!(click_note(Some((3, false)), None, true, true), NoteChange::Keep);
+        assert_eq!(click_note(None, None, true, true), NoteChange::Keep);
     }
 
     #[test]

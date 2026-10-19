@@ -237,6 +237,11 @@ pub(super) fn clicks(
 ) {
     let content = content();
     let inn = inn();
+    // Only the trader's own panel trades: the frame `walk_away` closes it, its buttons may still
+    // report a press.
+    if !trading(&panel, &inn) {
+        return;
+    }
     for (i, b) in &buttons {
         if *i != Interaction::Pressed {
             continue;
