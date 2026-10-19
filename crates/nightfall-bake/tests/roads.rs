@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use nightfall_bake::{load_or_bake, BakeRequest};
 use nightfall_sim::{
-    Behaviour, Content, ContentSources, HeightMap, Navigator, World, PATROL_BUDGET, V2, V3,
+    Behaviour, Content, ContentSources, HeightMap, Navigator, PathPlan, World, ERRAND_BUDGET,
+    PATROL_BUDGET, V2, V3,
 };
 
 /// The longest leg of a road the content may ask a patrol for, yards: the map's comment says
@@ -281,4 +282,94 @@ fn scan_for_a_wander_centre() {
     }
     let here = best.iter().find(|(_, c)| *c == V2::new(x, y));
     println!("the old centre: {here:?}");
+}
+
+#[test]
+#[ignore = "measures a hunter's errand on the real bake; needs WOW_DATA (reads the 1.12 data)"]
+fn a_hunters_errand_across_duskwood_fits_its_budget() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let content = shipped();
+    let map = Arc::new(baked(&content, &data));
+    let mut nav = Navigator::new(map.clone());
+    const REFERENCE: usize = 120_000;
+    // Hunters start where the night puts things: the roads' points and the spawns' posts. Each
+    // is sent after a noise 60, 100 and 150 yards off, eight ways round.
+    let mut starts: Vec<V2> = content
+        .map
+        .roads
+        .iter()
+        .flat_map(|r| r.points.iter().copied())
+        .collect();
+    for s in &content.spawns {
+        match &s.behaviour {
+            Behaviour::Sentry { at, .. } | Behaviour::Sleeper { at, .. } => {
+                starts.push(V2::new(at.0, at.1))
+            }
+            Behaviour::Wander { center, .. } => starts.push(V2::new(center.0, center.1)),
+            Behaviour::Patrol { route, .. } => {
+                starts.extend(route.iter().map(|&(x, y)| V2::new(x, y)))
+            }
+            Behaviour::Road { .. } => {}
+        }
+    }
+    let starts: Vec<V2> = starts
+        .into_iter()
+        .filter(|p| bad_spot(&map, *p).is_none())
+        .step_by(3)
+        .collect();
+    let (mut tried, mut reachable, mut beyond, mut refused, mut worst) =
+        (0, 0, 0, Vec::new(), 0u64);
+    let mut cost: Vec<u64> = Vec::new();
+    for from in &starts {
+        let Some(a) = stand(&map, *from) else { continue };
+        for dist in [60.0, 100.0, 150.0] {
+            for k in 0..8 {
+                let goal = *from + V2::from_angle(k as f32 * std::f32::consts::TAU / 8.0, dist);
+                if bad_spot(&map, goal).is_some() {
+                    continue;
+                }
+                let Some(b) = stand(&map, goal) else { continue };
+                tried += 1;
+                // What the way costs on a generous budget (a goal that takes more is walled off or absurd).
+                nav.begin_step(REFERENCE);
+                let before = nav.floors_looked_at();
+                if nav.find_path(a, b, false, REFERENCE).is_none() {
+                    beyond += 1;
+                    continue;
+                }
+                let spent = nav.floors_looked_at() - before;
+                reachable += 1;
+                worst = worst.max(spent);
+                cost.push(spent);
+                // And as the hunter asks for it, on a step's leftovers.
+                nav.begin_step(ERRAND_BUDGET);
+                if !matches!(nav.plan_path(a, b, false, ERRAND_BUDGET), PathPlan::Found(_)) {
+                    refused.push(format!("{from:?} -> {goal:?} ({dist:.0} yd, needs {spent})"));
+                }
+            }
+        }
+    }
+    cost.sort_unstable();
+    let pct = |p: usize| cost.get(cost.len().saturating_sub(1) * p / 100).copied().unwrap_or(0);
+    println!(
+        "errands: {tried} tried, {reachable} found within {REFERENCE} floors, {beyond} not; floors median {} p90 {} p99 {} worst {worst}; budget {ERRAND_BUDGET}; refused {}",
+        pct(50),
+        pct(90),
+        pct(99),
+        refused.len()
+    );
+    for budget in [8_000, 16_000, 24_000, 32_000, 48_000, 64_000, 120_000] {
+        let fit = cost.iter().filter(|&&c| c <= budget as u64).count();
+        println!("  within {budget}: {fit} of {}", cost.len());
+    }
+    for r in refused.iter().take(20) {
+        println!("  refused: {r}");
+    }
+    assert!(reachable > 100, "too few reachable errands to say anything: {reachable}");
+    // Nearly every errand fits; the few that wind round water or ridges for more are refused.
+    assert!(
+        refused.len() * 50 <= reachable,
+        "{} of {reachable} errands need more than {ERRAND_BUDGET} floors (worst {worst})",
+        refused.len()
+    );
 }

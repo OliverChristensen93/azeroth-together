@@ -44,7 +44,7 @@ pub use content::{
     WeaponDef, WorldRules,
 };
 pub use contracts::ContractError;
-pub use enemies::{Enemy, PATROL_BUDGET, STEP_FLOORS, WANDER_BUDGET};
+pub use enemies::{Enemy, ERRAND_BUDGET, PATROL_BUDGET, STEP_FLOORS, WANDER_BUDGET};
 pub use heightmap::{
     Floors, Grid, HeightMap, HeightMapBuilder, Navigator, PathPlan, Span, SpanList, CELL, HEADROOM,
     MAX_FLOORS, MAX_STEP, MERGE_GAP, TERRAIN_DEPTH,

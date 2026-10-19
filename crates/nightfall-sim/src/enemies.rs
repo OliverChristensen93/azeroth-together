@@ -23,13 +23,19 @@ pub const PATROL_BUDGET: usize = 30_000;
 /// Floors a wanderer's search may look at: its walks are short, and a spot it cannot reach (in a
 /// closed house) must be given up on cheaply.
 pub const WANDER_BUDGET: usize = 4_000;
-/// Floors all of a step's searches may look at together: one patrol's search and two
+/// Floors an errand's search may look at (the hunt sends a hunter after a noise, spec §7.3). On
+/// the real Duskwood bake, errands of 60 to 150 yd from the night's posts and roads cost a median
+/// of about 1 500 floors, 9 in 10 fit in 9 300, 98.6 % in 32 000 and the worst needed 118 000
+/// (`nightfall-bake`'s `roads` test measures it); a goal that takes more than this is taken for
+/// walled off and refused.
+pub const ERRAND_BUDGET: usize = 32_000;
+/// Floors all of a step's searches may look at together: an errand's, one patrol's and two
 /// wanderers'. A search starts only while what is left covers its whole budget, so no step
-/// spends more on paths than this (about 10 ms on the real map) however many enemies are lost.
-pub const STEP_FLOORS: usize = PATROL_BUDGET + 2 * WANDER_BUDGET;
-/// Floors an errand's search may look at: what a step has left after a patrol's, so that a
-/// hunter sent where no way leads can never keep the patrols from planning that step.
-pub const ERRAND_BUDGET: usize = STEP_FLOORS - PATROL_BUDGET;
+/// spends more on paths than this (about 19 ms at worst on the real map, when a hunter's errand
+/// finds no way; it is then refused and not tried again) however many enemies are lost. An
+/// errand's whole budget is kept apart, so a hunter sent where no way leads can never keep the
+/// patrols from planning that step.
+pub const STEP_FLOORS: usize = ERRAND_BUDGET + PATROL_BUDGET + 2 * WANDER_BUDGET;
 /// Within this many yards of a point, an enemy is there.
 pub(crate) const ARRIVE: f32 = 0.6;
 /// A hunt goal this near one that had no way there is refused too (yards).
@@ -1180,7 +1186,7 @@ mod tests {
         let (mut enemies, mut brains, mut nav) = lost_sentries(&ends);
         let content = world(GATE, 4).content().clone();
         let (mut warnings, mut planner) = (Vec::new(), Planner::default());
-        for _ in 0..12 {
+        for k in 0..12 {
             let before = nav.floors_looked_at();
             super::step(
                 &mut enemies,
@@ -1192,12 +1198,15 @@ mod tests {
             );
             let spent = nav.floors_looked_at() - before;
             assert!(spent <= STEP_FLOORS as u64, "{spent} floors in one step");
-            assert!(
-                spent >= PATROL_BUDGET as u64,
-                "the budget went unused: {spent}"
-            );
+            // Two a step while there are any left (a search starts only if its whole budget fits).
+            if k < 5 {
+                assert!(
+                    spent >= 2 * PATROL_BUDGET as u64,
+                    "the budget went unused: {spent}"
+                );
+            }
         }
-        // Each got its turn, one a step, and each failed once.
+        // Each got its turn, and each failed once.
         assert_eq!(planner.failed_searches(), 12);
         assert_eq!(warnings.len(), 12, "{warnings:?}");
     }
