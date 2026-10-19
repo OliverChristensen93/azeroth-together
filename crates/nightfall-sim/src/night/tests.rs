@@ -1037,3 +1037,135 @@ fn a_trail_too_old_is_lost() {
         w.enemies[0].pos
     );
 }
+
+const TOWARD: V2 = V2::new(1.0, 0.0);
+const AWAY: V2 = V2::new(-1.0, 0.0);
+
+/// `player` stands at `(x, y)` facing `facing` for `s` seconds.
+fn face(w: &mut World, player: PlayerId, x: f32, y: f32, facing: V2, s: f32) {
+    for _ in 0..secs(s) {
+        put(w, player, x, y, facing, Gait::Still);
+        w.step();
+    }
+}
+
+#[test]
+fn mor_ladim_moves_only_while_no_hero_looks_at_him() {
+    let mut w = world("", &sentry("morladim", 60.0, 30.0, 180.0));
+    join(&mut w, 0, 30.0, 30.0);
+    face(&mut w, 0, 30.0, 30.0, TOWARD, 3.0);
+    assert_eq!(w.enemies[0].pos, V2::new(60.0, 30.0), "watched, he stands");
+    face(&mut w, 0, 30.0, 30.0, AWAY, 3.0);
+    let d = w.enemies[0].pos.distance(V2::new(30.0, 30.0));
+    assert!(d < 25.0, "unwatched, he came: {d}");
+    let at = w.enemies[0].pos;
+    face(&mut w, 0, 30.0, 30.0, TOWARD, 2.0);
+    assert!(w.enemies[0].pos.distance(at) < 0.3, "looked at again, he stops");
+}
+
+#[test]
+fn one_watcher_holds_him_while_a_friend_moves() {
+    let mut w = world("", &sentry("morladim", 60.0, 30.0, 180.0));
+    join(&mut w, 0, 30.0, 30.0);
+    join(&mut w, 1, 30.0, 40.0);
+    for k in 0..secs(4.0) {
+        put(&mut w, 0, 30.0, 30.0, TOWARD, Gait::Still);
+        let y = 40.0 + k as f32 * 0.1;
+        put(&mut w, 1, 30.0, y, V2::new(0.0, 1.0), Gait::Walk);
+        w.step();
+    }
+    assert_eq!(w.enemies[0].pos, V2::new(60.0, 30.0));
+}
+
+#[test]
+fn a_wall_or_a_fallen_watcher_does_not_hold_him() {
+    let mut m = flat(120.0);
+    m.add_box(V2::new(44.0, 20.0), V2::new(46.0, 40.0), 0.0, 4.0);
+    let mut w = world_on(m.finish(), "", &sentry("morladim", 60.0, 30.0, 180.0), "", standard);
+    join(&mut w, 0, 30.0, 30.0);
+    face(&mut w, 0, 30.0, 30.0, TOWARD, 4.0);
+    assert_ne!(w.enemies[0].pos, V2::new(60.0, 30.0), "a wall between: not watched");
+    // A downed hero facing him holds nothing; he goes after their friend, who looks away.
+    let mut w = world("", &sentry("morladim", 60.0, 30.0, 180.0));
+    join(&mut w, 0, 30.0, 30.0);
+    join(&mut w, 1, 30.0, 80.0);
+    w.hurt_hero(0, 100_000.0);
+    for _ in 0..secs(3.0) {
+        put(&mut w, 0, 30.0, 30.0, TOWARD, Gait::Still);
+        put(&mut w, 1, 30.0, 80.0, AWAY, Gait::Still);
+        w.step();
+    }
+    assert_ne!(w.enemies[0].pos, V2::new(60.0, 30.0), "a downed hero watches nothing");
+}
+
+#[test]
+fn watched_he_never_strikes() {
+    let mut w = world("", &sentry("morladim", 60.0, 30.0, 180.0));
+    join(&mut w, 0, 58.5, 30.0);
+    let hits = |w: &mut World| {
+        events_of(w, |e| match e {
+            Event::Damage {
+                to: crate::UnitRef::Hero(0),
+                ..
+            } => Some(()),
+            _ => None,
+        })
+        .len()
+    };
+    face(&mut w, 0, 58.5, 30.0, TOWARD, 6.0);
+    assert_eq!(hits(&mut w), 0, "watched from a step away, he never swings");
+    face(&mut w, 0, 58.5, 30.0, AWAY, 3.0);
+    assert!(hits(&mut w) >= 1, "the moment nobody looks, he does");
+}
+
+/// A banshee at (30, 30), a brute 50 yards from her and another 70, all facing away from a hero
+/// 10 yards in front of her; the hero is past both brutes' sight.
+fn banshee_world(map: HeightMap) -> World {
+    let spawns = format!(
+        "{}{}{}",
+        sentry("banshee", 30.0, 30.0, 180.0),
+        sentry("brute", 80.0, 30.0, 0.0),
+        sentry("brute", 30.0, 100.0, 90.0)
+    );
+    let mut w = world_on(map, "", &spawns, "", standard);
+    join(&mut w, 0, 20.0, 30.0);
+    w.drain_events();
+    w
+}
+
+fn alarms(w: &mut World) -> Vec<(u32, PlayerId)> {
+    events_of(w, |e| match e {
+        Event::Alarm { enemy, player } => Some((*enemy, *player)),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_banshees_wail_reaches_sixty_yards_and_no_further() {
+    let mut w = banshee_world(open());
+    w.alert(w.enemies[0].id, 0);
+    face(&mut w, 0, 20.0, 30.0, TOWARD, 3.0);
+    assert_eq!(alarms(&mut w), vec![(w.enemies[0].id, 0)]);
+    assert!(w.senses.minds[1].alerted_to(0), "the brute 50 yards off is after the hero");
+    assert!(!w.senses.minds[2].is_alerted(), "the one 70 yards off heard nothing");
+}
+
+#[test]
+fn breaking_her_sight_or_killing_her_stops_the_wail() {
+    let mut m = flat(120.0);
+    m.add_box(V2::new(24.0, 34.0), V2::new(26.0, 50.0), 0.0, 4.0);
+    let mut w = banshee_world(m.finish());
+    w.alert(w.enemies[0].id, 0);
+    face(&mut w, 0, 20.0, 30.0, TOWARD, 0.5);
+    // Behind the wall before her cast ends.
+    face(&mut w, 0, 20.0, 44.0, TOWARD, 3.0);
+    assert!(alarms(&mut w).is_empty());
+    assert!(!w.senses.minds[1].is_alerted());
+    let mut w = banshee_world(open());
+    w.alert(w.enemies[0].id, 0);
+    face(&mut w, 0, 20.0, 30.0, TOWARD, 0.5);
+    w.kill_enemy(0, Some(0));
+    face(&mut w, 0, 20.0, 30.0, TOWARD, 3.0);
+    assert!(alarms(&mut w).is_empty());
+    assert!(!w.senses.minds[1].is_alerted());
+}

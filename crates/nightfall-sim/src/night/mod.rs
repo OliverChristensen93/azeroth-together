@@ -9,6 +9,7 @@ mod hunt;
 mod places;
 mod roll;
 mod scent;
+mod signature;
 mod rules;
 #[cfg(test)]
 mod tests;
@@ -149,6 +150,8 @@ impl World {
         if self.night.mirror.is_some() || self.map().is_none() {
             return;
         }
+        // Mor'Ladim first: a watched one is out of the fight for everything after.
+        self.watch_morladim();
         self.follow_scent();
         self.step_hunt();
     }

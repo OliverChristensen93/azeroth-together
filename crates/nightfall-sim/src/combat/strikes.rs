@@ -283,6 +283,14 @@ impl World {
             self.blow_lands(id, p, amount);
             hits.push(UnitRef::Hero(p));
         }
+        // A wail (spec §7.3) wakes everything near, when it landed on its hero.
+        let alarm = self.content.abilities[a].effects.iter().find_map(|e| match e {
+            Effect::Alarm { radius } => Some(*radius),
+            _ => None,
+        });
+        if let (Some(radius), true) = (alarm, hits.contains(&UnitRef::Hero(player))) {
+            self.alarm(ei, player, radius);
+        }
         self.ability_sounds(ei, a, player);
         self.events.push(Event::CastGo {
             by: UnitRef::Enemy(id),
