@@ -133,6 +133,23 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   docs/superpowers/notes/2026-10-17-nightfall-wow-windows-spike.md. Test switches:
   `NIGHTFALL_PANEL=<npc key>` (`pike`, `coppermug`, `ebonlock`, ...) opens that NPC's panel and
   `NIGHTFALL_BOARD=1` holds the raid board open, for a shot.
+- Nightfall's night (sub-project 6, protocol 7): `rules.ron`'s `night:` has the clock's stages (each
+  cued `warn` seconds before it lands, with a chat line; Moonrise's `fog` and `notice`; the hunt),
+  the weathers and their weights, the roll's chances for exits (shut, late, the hunt's closing),
+  `monsters_out`, scent, the hunt and the ravens. `map.ron` has the risk `zones` (health, blows,
+  extra loot rolls), the `roads` and the flocks of `ravens`; `monsters.ron` the signature
+  monsters (odds, `always`, their spawn lines; `stage:` on a line makes it come when that stage
+  lands, out of sight). A custom `NIGHTFALL_CONTENT` folder needs `monsters.ron` too. Enemy traits
+  in `enemies.ron`: `watched` (Mor'Ladim), `tracker`, `hunter`, `road_sight` (the Dark Riders),
+  `mount`, `step_sound`; the banshee's wail is an ability with `Alarm(radius)`.
+  `nightfall-sim/src/night/` is the rules (`RaidRoll::roll`, the clock, arrivals, the hunt, scent,
+  Mor'Ladim, the alarm, ravens); the height map knows water from the ADT liquids (`BAKE_VERSION`
+  2). Every night event (`NightCue`, `NightFell`, `ExitClosed`, `RavensFlew`, `Alarm`) goes to
+  every player. The client draws the fog and weather from each snapshot's `NightView` and plays
+  cues through `sound::SoundCue` (the engine's one new file). Test hooks: `NIGHTFALL_WEATHER=<key>`,
+  `NIGHTFALL_MONSTERS=<key>,...` (the planned raid's), `NIGHTFALL_NIGHT_AT=<seconds>` (a hosted
+  raid's clock starts there). Positions, displays and sounds marked `measure:` are stand-ins until
+  checked in the game.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and
