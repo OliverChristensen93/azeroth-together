@@ -110,7 +110,7 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
     goes to the host in the first `Pick`, which a client sends once it is welcomed (`Hello`
     carries only `Who`, whose shape never changes, so a host of any protocol can read a client's
     version and refuse it). From then the client's stash panel is locked until it leaves the
-    lobby. The host trusts the loadout but `give_loadout` sanitizes it. `PROTOCOL` is 5;
+    lobby. The host trusts the loadout but `give_loadout` sanitizes it. `PROTOCOL` is 6;
     `Start { raid }` numbers each raid and `Input { raid, .. }` carries it, so an input still on
     its way from the last raid is dropped. Everyone is told their own `Outcome` as it settles,
     then `RunOver` with all of them.
@@ -120,6 +120,19 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   - The end screen lists each hero's fate, time and kills; "Kept" is what they carried out
     (`HeroOutcome::carried`) plus `overflow`, the stacks that found no slot; "Recovered" is what
     they took back from their remains.
+- Nightfall's inn (sub-project 5b): between raids the party walks the hub `content/nightfall/hub.ron`
+  places (Goldshire's Lion's Pride Inn; its place, bounds, door, light and every NPC's spot live
+  only there, and a commented Darkshire block shows the move). NPCs open our own panels with a
+  right-click: the banker (stash, stash station), the trader, contract givers (`contracts.ron`),
+  station keepers (`stations.ron`: levels, recipes, intel, the kennel's companion). The door's
+  ring opens the raid board (contracts, the map table's intel, the party, Ready). `nightfall-sim`'s
+  `inn.rs`, `contracts.rs` and `stations.rs` are the rules; the stash file is version 3
+  (`inn:`). The client: `nightfall/inn.rs` (the scene, friends' bodies), `npcs.rs`, `trader.rs`,
+  `inn_panels.rs`, `board.rs`, `companion.rs`. Poses in the inn travel as `ServerMsg::InnPoses`
+  (at most 10 a second), not in the Lobby. The spike on WoW's own windows:
+  docs/superpowers/notes/2026-10-17-nightfall-wow-windows-spike.md. Test switches:
+  `NIGHTFALL_PANEL=<npc key>` (`pike`, `coppermug`, `ebonlock`, ...) opens that NPC's panel and
+  `NIGHTFALL_BOARD=1` holds the raid board open, for a shot.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and

@@ -1,7 +1,7 @@
 # Nightfall: design
 
 Date: 2026-10-16. Status: approved; revised the same day after research into single-player and co-op
-extraction games (§1.1). Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md). Sub-project 2 built (plan docs/superpowers/plans/2026-10-17-nightfall-world-knowledge.md). Sub-project 3 built (plan docs/superpowers/plans/2026-10-17-nightfall-senses.md). Sub-project 4 built (plan docs/superpowers/plans/2026-10-17-nightfall-combat.md). Sub-project 5a built (plan docs/superpowers/plans/2026-10-17-nightfall-run-loop.md); 5b, the inn, is docs/superpowers/plans/2026-10-17-nightfall-inn.md. Branch: `stealth-extraction`.
+extraction games (§1.1). Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md). Sub-project 2 built (plan docs/superpowers/plans/2026-10-17-nightfall-world-knowledge.md). Sub-project 3 built (plan docs/superpowers/plans/2026-10-17-nightfall-senses.md). Sub-project 4 built (plan docs/superpowers/plans/2026-10-17-nightfall-combat.md). Sub-project 5a built (plan docs/superpowers/plans/2026-10-17-nightfall-run-loop.md); Sub-project 5b built (plan docs/superpowers/plans/2026-10-17-nightfall-inn.md). Branch: `stealth-extraction`.
 
 *Nightfall* (working title) is a second game inside Azeroth Together: a co-op stealth extraction game
 in Duskwood at night. It shares the engine, the netcode and the launcher with the survivors games and
@@ -531,8 +531,7 @@ All in `content/nightfall/rules.ron`, read at startup:
 - **Rival kits:** simplified or full class kits; both possible through content (§7.4). Decide after
   playtests.
 - **Death loss:** which of the three `death_loss` modes is the default (§8.2). Decide after playtests.
-- **WoW's own windows in the inn:** whether gossip, quest, merchant and bank windows can be fed
-  without a server (§8.4). A spike in sub-project 5.
+- **WoW's own windows in the inn:** spiked in sub-project 5b (docs/superpowers/notes/2026-10-17-nightfall-wow-windows-spike.md); the inn uses our own panels until a later plan says otherwise.
 - **Dodge key:** decided in sub-project 4: a WoW key binding (NIGHTFALL_DODGE), Caps Lock and the mouse's back button by default, both free in 1.12's default bindings; rebound in WoW's own Key Bindings window.
 - **The name:** *Nightfall* is a working title.
 

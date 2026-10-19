@@ -57,4 +57,4 @@ for `2026-10-17-nightfall-inn.md`. One line each: what; why; cost if wrong.
 
 ## The stash file
 
-- Version 2 adds `inn:` (contracts, stations, recipes, stash bonus, intel, companion, the raid last applied) and the loadout's `pet`; a version 1 file reads with an empty inn; a 5a build refuses a version 2 file (5a's newer-file guard), never overwriting it; cost if wrong: none found.
+- Version 3 adds `inn:` (contracts, stations, recipes, stash bonus, intel, companion, the raid last applied) and the loadout's `pet`; a version 1 or 2 file reads with an empty inn; a 5a build refuses a version 3 file (5a's newer-file guard), never overwriting it; cost if wrong: none found.
