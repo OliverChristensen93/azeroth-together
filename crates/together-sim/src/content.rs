@@ -453,6 +453,24 @@ pub struct Rules {
     pub champion_from: f32,
     #[serde(default = "champion_every")]
     pub champion_every: f32,
+    /// Health, in ordinary enemies: an elite of its own kind's, and a champion and a boss of the
+    /// horde's strongest kind at the time.
+    #[serde(default = "elite_health")]
+    pub elite_health: f32,
+    #[serde(default = "champion_health")]
+    pub champion_health: f32,
+    #[serde(default = "boss_health")]
+    pub boss_health: f32,
+}
+
+fn elite_health() -> f32 {
+    8.0
+}
+fn champion_health() -> f32 {
+    15.0
+}
+fn boss_health() -> f32 {
+    50.0
 }
 
 fn champion_from() -> f32 {
@@ -493,6 +511,9 @@ impl Default for Rules {
             surround_secs: surround_secs(),
             champion_from: champion_from(),
             champion_every: champion_every(),
+            elite_health: elite_health(),
+            champion_health: champion_health(),
+            boss_health: boss_health(),
         }
     }
 }

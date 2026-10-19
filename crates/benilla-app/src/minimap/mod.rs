@@ -686,6 +686,7 @@ fn emit_minimap(
             assets.poi.as_ref(),
             mask.as_ref(),
             &mut quads,
+            &mut hover,
         );
     }
 

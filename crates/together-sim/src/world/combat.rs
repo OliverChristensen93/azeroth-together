@@ -1155,9 +1155,9 @@ impl World {
             st.frozen_by = Some(by);
             st.permafrost |= spec.permafrost;
         }
-        if spec.stun > 0.0 && !boss {
+        if spec.stun > 0.0 {
             let elite = elite && !spec.fx.full_control;
-            st.stun = st.stun.max(control_secs(spec.stun, elite, false));
+            st.stun = st.stun.max(control_secs(spec.stun, elite, boss));
         }
         if spec.burn > 0.0 {
             // A faster burn (Quickened) ticks sooner for the same total; a faster tick rate
@@ -1939,10 +1939,16 @@ pub(super) struct Death {
     pub status: Status,
 }
 
-/// The slowed speed of a Chilled enemy.
-pub(super) fn chilled(speed: f32, status: &Status) -> f32 {
+/// The slowed speed of a Chilled enemy; an elite or a boss (`tough`) feels half the slow.
+pub(super) fn chilled(speed: f32, status: &Status, tough: bool) -> f32 {
     if status.chill > 0.0 {
-        speed * (1.0 - status.slow.max(CHILL_SLOW))
+        let slow = status.slow.max(CHILL_SLOW);
+        let slow = if tough {
+            slow * crate::spell::TOUGH_SLOW
+        } else {
+            slow
+        };
+        speed * (1.0 - slow)
     } else {
         speed
     }

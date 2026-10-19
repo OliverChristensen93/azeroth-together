@@ -7,8 +7,8 @@
 
 use super::*;
 
-/// A champion's health, on top of an elite's, and its size.
-pub const CHAMPION_HEALTH: f32 = 3.0;
+/// A champion's size, on top of an elite's. Its health is the rules' `champion_health` of the
+/// horde's strongest.
 pub const CHAMPION_SCALE: f32 = 1.3;
 /// A champion is of a kind this many tiers above the strongest the horde fields now; a camp's
 /// elite, this many.
@@ -16,6 +16,15 @@ const CHAMPION_TIERS_AHEAD: usize = 3;
 pub(super) const CAMP_TIERS_AHEAD: usize = 2;
 
 impl World {
+    /// The health of an ordinary enemy of the horde's strongest kind now, grown for the run's
+    /// progress and the party's difficulty: what champions' and bosses' health is counted in.
+    pub(super) fn horde_health(&self) -> f32 {
+        let (_, top) = self.tiers();
+        let def = &self.content.enemies[self.zone().enemy_ix[top]];
+        let progress = (self.elapsed / RUN_SECS).min(1.0);
+        def.hp * (1.0 + progress * 0.75) * (1.0 + self.difficulty.enemy_health)
+    }
+
     /// The zone's enemy kind `ahead` tiers above the horde's strongest now, held to its roster.
     pub(super) fn tier_ahead(&self, ahead: usize) -> usize {
         let (_, top) = self.tiers();
@@ -42,9 +51,10 @@ impl World {
         let def = self.tier_ahead(CHAMPION_TIERS_AHEAD);
         let id = self.spawn_enemy(def, pos, pos + V2::new(1.0, 0.0), true);
         let party = 1.0 + 0.6 * (living.len() - 1) as f32;
+        let hp = self.content.rules.champion_health * self.horde_health() * party;
         if let Some(e) = self.enemies.last_mut() {
-            e.hp *= CHAMPION_HEALTH * party;
-            e.max_hp *= CHAMPION_HEALTH * party;
+            e.hp = hp;
+            e.max_hp = hp;
             e.radius *= CHAMPION_SCALE;
             e.home = Some(pos);
         }
@@ -106,9 +116,8 @@ mod tests {
         let id = *w.champions.first().expect("a champion came");
         let e = w.enemy(id).unwrap();
         assert!(e.elite);
-        let def = e.def;
-        let elite_hp = w.content.enemies[def].hp * ELITE_HEALTH;
-        assert!(e.max_hp > elite_hp * 2.5, "{} vs {}", e.max_hp, elite_hp);
+        let want = w.content.rules.champion_health * w.horde_health();
+        assert!((e.max_hp - want).abs() < 1.0, "{} vs {want}", e.max_hp);
         assert!(w
             .snapshot()
             .enemies

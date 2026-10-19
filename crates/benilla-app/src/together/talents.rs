@@ -25,7 +25,9 @@ use together_sim::{renown_for_run, NodeKind, Tag, TalentProfile, TalentWeb, LOAD
 use super::menu::{framed, MenuBuilt, MenuRoot, Selection};
 use super::{content, Phase, Sim};
 use crate::glue::art::{GlueArt, DIM, GOLD};
-use crate::glue::widgets::{glue_button, outlined_text, GlueBtnKind, GlueText};
+use crate::glue::widgets::{
+    glue_button, markup_spans, outlined_text, GlueBtnKind, GlueText, OutlineCopy,
+};
 use crate::glue::GlueClicks;
 
 static WEB: OnceLock<Arc<TalentWeb>> = OnceLock::new();
@@ -202,6 +204,11 @@ pub(super) struct TalentTip;
 #[derive(Component)]
 pub(super) struct TalentTipText;
 
+/// The tooltip's text as glue markup (`|cff…|r` colours): [`tip_spans`] turns it into coloured
+/// spans whenever it changes.
+#[derive(Component, Default)]
+pub(super) struct TipMarkup(String);
+
 pub(super) struct TalentsPlugin;
 
 impl Plugin for TalentsPlugin {
@@ -215,6 +222,7 @@ impl Plugin for TalentsPlugin {
                     build_screen,
                     input,
                     refresh.before(crate::glue::GlueVisuals),
+                    tip_spans.before(crate::glue::GlueVisuals),
                 )
                     .chain()
                     .run_if(in_state(Phase::Menu)),
@@ -525,7 +533,7 @@ pub(super) fn build_screen(
                                     ..default()
                                 },
                                 (),
-                                TalentTipText,
+                                (TalentTipText, TipMarkup::default()),
                                 GlueText {
                                     text: "",
                                     size: 12.0,
@@ -723,6 +731,7 @@ pub(super) fn refresh(
             Has<TalentTitle>,
             Has<TalentPoints>,
             Has<TalentTipText>,
+            Option<&mut TipMarkup>,
         ),
         Or<(With<TalentTitle>, With<TalentPoints>, With<TalentTipText>)>,
     >,
@@ -894,13 +903,20 @@ pub(super) fn refresh(
         talents.profile.active_slot(class) + 1
     );
     let title = format!("Talent Web: {}", class_def.name);
-    for (mut text, is_title, is_points, is_tip) in &mut texts {
+    for (mut text, is_title, is_points, is_tip, markup) in &mut texts {
         let want = if is_title {
             title.clone()
         } else if is_points {
             points_line.clone()
         } else if is_tip {
-            tip_text.clone().unwrap_or_default()
+            // Markup: [`tip_spans`] colours it.
+            let want = tip_text.clone().unwrap_or_default();
+            if let Some(mut m) = markup {
+                if m.0 != want {
+                    m.0 = want;
+                }
+            }
+            continue;
         } else {
             continue;
         };
@@ -1077,6 +1093,42 @@ pub(super) fn show_award(
     for mut t in &mut text {
         if t.0 != award.text {
             t.0 = award.text.clone();
+        }
+    }
+}
+
+/// The tooltip's markup as coloured spans: the first in the text itself, the rest as its spans,
+/// and the plain text in its outline copies, as the glue strings are built
+/// (`glue::widgets::outlined_text`).
+#[allow(clippy::type_complexity)]
+pub(super) fn tip_spans(
+    mut commands: Commands,
+    mut tips: Query<
+        (Entity, &TipMarkup, &mut Text, &mut TextColor, &TextFont, &ChildOf),
+        (With<TalentTipText>, Changed<TipMarkup>),
+    >,
+    mut copies: Query<(&ChildOf, &mut Text), (With<OutlineCopy>, Without<TalentTipText>)>,
+) {
+    for (e, markup, mut text, mut color, font, parent) in &mut tips {
+        let spans = markup_spans(&markup.0, Color::WHITE, true);
+        let flat: String = spans.iter().map(|(t, _)| t.as_str()).collect();
+        let Some((first, rest)) = spans.split_first() else {
+            continue;
+        };
+        text.0 = first.0.clone();
+        color.0 = first.1;
+        commands.entity(e).despawn_related::<Children>();
+        let font = font.clone();
+        let rest = rest.to_vec();
+        commands.entity(e).with_children(|s| {
+            for (t, c) in rest {
+                s.spawn((TextSpan::new(t), font.clone(), TextColor(c)));
+            }
+        });
+        for (p, mut t) in &mut copies {
+            if p.parent() == parent.parent() && t.0 != flat {
+                t.0 = flat.clone();
+            }
         }
     }
 }

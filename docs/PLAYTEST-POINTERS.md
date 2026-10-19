@@ -121,6 +121,36 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
   The menu lists your race's racials under the class text.
 - **Tome text:** "Raises your armor for the run." is now "Raises your armor."
 
+## Round 3
+
+- **Talent tooltips** showed raw colour codes (`|cffffc800…|r`). The hover text was written
+  straight into the label instead of being turned into coloured text. It's now parsed into
+  coloured spans. (A bug from the talent-web merge, not seen on screen since: needs a mouse
+  over a node.)
+- **Minimap hover names.** Every mark this mode puts on the minimap has a name in the
+  minimap's own tooltip, like a tracked NPC: "Hogger (boss)", "Mangy Wolf (champion)", "Defias
+  Thug (elite)", "War Banner: carry it here", "Cache", and for a dwarf every shrine, chest and
+  pot by name. (Not seen on screen: needs the mouse over a mark.)
+- **Elite target frames.** Elites, champions and bosses never showed WoW's elite dragon. Our
+  creature guids lacked the creature entry in the bits the client reads the creature record
+  from, so the target frame looked up "creature 0" and read rank normal. The name came out
+  right only because names use another field. Guids now carry the entry: elites and bosses get
+  the gold dragon, and champions the rare-elite one. Seen on screen: Hogger's target frame has
+  the dragon.
+- **Health.** Elites have 8× the health of an ordinary enemy of their own kind (was 4×).
+  Champions have 15×, and bosses 50×, the health of the horde's strongest kind at that moment.
+  So a boss keeps pace with the run however late it comes. The bosses' own `hp` in
+  `enemies.ron` is no longer used. All three numbers are in `rules.ron` (`elite_health`,
+  `champion_health`, `boss_health`). Decision for you: you said "elites/mini-bosses 150 for
+  a 10 hp enemy". I gave camp elites 8× rather than 15×, so the camps don't become as
+  tough as champions; raise `elite_health` if you want them equal.
+- **Crowd control on elites and bosses.**
+  - Stuns, freezes, roots and fears last a quarter as long on elites and bosses. Elites used
+    to get half.
+  - Bosses used to be immune to stuns and fears; now they take them at a quarter length too.
+  - Slows hit elites and bosses at half strength. Their duration was already shortened.
+  - Capstones that promise "full control" on elites still do.
+
 ## Round 2: your answers, done
 
 - **Fix: the game showed only the sky** when started from

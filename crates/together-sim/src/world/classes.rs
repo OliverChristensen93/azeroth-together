@@ -628,8 +628,8 @@ impl World {
         let st = &mut e.status.fx;
         let fx = &spec.fx;
         let elite = elite && !fx.full_control;
-        if fx.fear > 0.0 && !boss {
-            st.fear = st.fear.max(control_secs(fx.fear, elite, false));
+        if fx.fear > 0.0 {
+            st.fear = st.fear.max(control_secs(fx.fear, elite, boss));
             st.fear_from = from;
         }
         if fx.root > 0.0 {

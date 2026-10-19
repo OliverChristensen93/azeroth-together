@@ -29,12 +29,13 @@ pub(super) fn fill_minimap(sim: Res<Sim>, mut extras: ResMut<MinimapExtras>) {
     let content = world.content();
     let center = world.center();
     let mut blips = Vec::new();
-    let blip = |p: V2, shape, size_px, color, rim| ExtraBlip {
+    let blip = |p: V2, shape, size_px, color, rim, name: String| ExtraBlip {
         pos: [p.x, p.y],
         shape,
         size_px,
         color,
         rim,
+        name,
     };
     let white = [1.0, 1.0, 1.0, 1.0];
     let treasure = world
@@ -42,21 +43,17 @@ pub(super) fn fill_minimap(sim: Res<Sim>, mut extras: ResMut<MinimapExtras>) {
         .and_then(|h| content.race(h.race))
         .is_some_and(|r| r.treasure());
     for it in &world.interactables {
+        let name = it.kind.name().to_string();
         match (&it.state, it.kind) {
-            (InteractState::Escort { to, .. }, _) => {
-                blips.push(blip(*to, ExtraShape::Flag, 16.0, white, true));
+            (InteractState::Escort { .. }, _) => {
+                // Marked at its destination, below.
             }
             (InteractState::Ready, InteractableKind::Cache) => {
-                blips.push(blip(it.pos, ExtraShape::GoldDot, 11.0, white, true));
+                blips.push(blip(it.pos, ExtraShape::GoldDot, 11.0, white, true, name));
             }
             (InteractState::Ready, InteractableKind::WarBanner) => {
-                blips.push(blip(
-                    it.pos,
-                    ExtraShape::Flag,
-                    11.0,
-                    [0.7, 1.0, 0.7, 1.0],
-                    false,
-                ));
+                let green = [0.7, 1.0, 0.7, 1.0];
+                blips.push(blip(it.pos, ExtraShape::Flag, 11.0, green, false, name));
             }
             (InteractState::Ready, _) if treasure => {
                 let size = if it.kind == InteractableKind::Pot {
@@ -64,24 +61,27 @@ pub(super) fn fill_minimap(sim: Res<Sim>, mut extras: ResMut<MinimapExtras>) {
                 } else {
                     9.0
                 };
-                blips.push(blip(it.pos, ExtraShape::GoldDot, size, white, false));
+                blips.push(blip(it.pos, ExtraShape::GoldDot, size, white, false, name));
             }
             _ => {}
         }
+        if let InteractState::Escort { to, .. } = it.state {
+            let name = "War Banner: carry it here".to_string();
+            blips.push(blip(to, ExtraShape::Flag, 16.0, white, true, name));
+        }
     }
     for e in &world.enemies {
+        let kind = &content.enemies[e.def].name;
         if e.boss {
-            blips.push(blip(e.pos, ExtraShape::Skull, 16.0, white, true));
+            let name = format!("{kind} (boss)");
+            blips.push(blip(e.pos, ExtraShape::Skull, 16.0, white, true, name));
         } else if world.champions.contains(&e.id) {
-            blips.push(blip(
-                e.pos,
-                ExtraShape::RedDot,
-                14.0,
-                [1.0, 0.75, 0.2, 1.0],
-                true,
-            ));
+            let name = format!("{kind} (champion)");
+            let orange = [1.0, 0.75, 0.2, 1.0];
+            blips.push(blip(e.pos, ExtraShape::RedDot, 14.0, orange, true, name));
         } else if e.elite {
-            blips.push(blip(e.pos, ExtraShape::RedDot, 9.0, white, false));
+            let name = format!("{kind} (elite)");
+            blips.push(blip(e.pos, ExtraShape::RedDot, 9.0, white, false, name));
         }
     }
     extras.blips = blips;

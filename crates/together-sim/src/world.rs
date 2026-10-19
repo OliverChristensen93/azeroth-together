@@ -92,7 +92,8 @@ const GOLD_PER_XP: f32 = 1.5;
 /// Random tomes mixed into the options a level-up deals from.
 const LEVEL_UP_TOMES: usize = 2;
 /// An elite's health, experience and gold, in ordinary enemies of its kind...
-pub(crate) const ELITE_HEALTH: f32 = 4.0;
+#[cfg(test)]
+pub(crate) const ELITE_HEALTH: f32 = 8.0;
 const ELITE_REWARD: u32 = 5;
 /// ...its damage and its size.
 const ELITE_DAMAGE: f32 = 1.25;
@@ -1691,10 +1692,13 @@ impl World {
         let angle = self.rng.range(0.0, std::f32::consts::TAU);
         let pos = near + V2::from_angle(angle, SPAWN_RING.0);
         self.spawn_enemy(def, pos, near, false);
+        // As tough as the rules' `boss_health` of the horde's strongest now, and more with more
+        // heroes: the boss keeps pace with the run however late it comes.
+        let hp = self.content.rules.boss_health * self.horde_health() * party;
         let boss = self.enemies.last_mut().expect("just spawned");
         boss.boss = true;
-        boss.hp *= party;
-        boss.max_hp *= party;
+        boss.hp = hp;
+        boss.max_hp = hp;
         self.events.push(Event::BossCame { def });
     }
 
@@ -1712,7 +1716,7 @@ impl World {
         let progress = (self.elapsed / RUN_SECS).min(1.0);
         let d = self.difficulty;
         let (health, hits, size) = if elite {
-            (ELITE_HEALTH, ELITE_DAMAGE, ELITE_SCALE)
+            (self.content.rules.elite_health, ELITE_DAMAGE, ELITE_SCALE)
         } else {
             (1.0, 1.0, 1.0)
         };
@@ -1845,7 +1849,8 @@ impl World {
                 e.moving = fleeing;
                 if fleeing {
                     e.facing = away;
-                    e.pos += away * (combat::chilled(e.speed, &e.status) * DT);
+                    let tough = e.elite || e.boss;
+                    e.pos += away * (combat::chilled(e.speed, &e.status, tough) * DT);
                 }
                 e.pos += shove[i] * (DT * 8.0).min(0.5);
                 continue;
@@ -1868,7 +1873,7 @@ impl World {
             let rooted = e.status.fx.root > 0.0;
             e.moving = !contact && !rooted && dist > keep;
             let step = if e.moving {
-                e.facing * (combat::chilled(speed, &e.status) * DT)
+                e.facing * (combat::chilled(speed, &e.status, e.elite || e.boss) * DT)
             } else {
                 V2::ZERO
             };

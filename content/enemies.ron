@@ -6,7 +6,8 @@
 // `mechanics` are what its elites and bosses do beyond walking up and swinging (Charge, Caster,
 // Slam, Leap, Frenzy, Healer, Summoner, and the bosses' Patches and DeathGrip; see
 // crates/together-sim/src/mechanics.rs); ordinary enemies never use them. A boss's `hint` is the
-// sentence under its bar.
+// sentence under its bar. A boss's own `hp` is not used: bosses, champions and elites take their
+// health from rules.ron (`boss_health`, `champion_health`, `elite_health`).
 [
     // --- Elwynn Forest, weakest first ---
     (key: "young_wolf", mechanics: [Frenzy], name: "Young Wolf", display: 447, level: 1,

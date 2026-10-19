@@ -841,7 +841,8 @@ mod tests {
         w.enemies[0].boss = true;
         w.step();
         let e = w.enemy(id).unwrap();
-        assert_eq!(e.status.stun, 0.0, "a boss was stunned");
+        // A boss takes a quarter of a stun.
+        assert!(e.status.stun > 0.0 && e.status.stun < 0.5, "{}", e.status.stun);
         assert!(e.status.fx.mark >= 0.25 && e.status.fx.mark_secs > 4.0);
 
         let mut w = hero_of("rogue");

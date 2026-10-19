@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use crate::ui_pass::{UiQuad, UiQuadMask, UiQuads, UvRect};
 
-use super::blips::{BlipCtx, BLIP_BASIS_PX};
+use super::blips::{BlipCtx, MinimapBlipHover, BLIP_BASIS_PX};
 
 /// Where an out-of-range blip sits, as a share of the map's radius: the rim arrows' ring.
 const BLIP_EDGE_RATIO: f32 = 0.8;
@@ -41,6 +41,8 @@ pub(crate) struct ExtraBlip {
     /// Straight-alpha tint over the art.
     pub color: [f32; 4],
     pub rim: bool,
+    /// What the tooltip under the mouse says, as a tracked dot's name does; empty for none.
+    pub name: String,
 }
 
 /// A circle on the ground drawn on the map: the arena's edge.
@@ -67,6 +69,7 @@ pub(super) fn emit(
     poi: Option<&Handle<Image>>,
     mask: Option<&UiQuadMask>,
     quads: &mut UiQuads,
+    hover: &mut MinimapBlipHover,
 ) {
     for ring in &extras.rings {
         emit_ring(ctx, ring, mask, quads);
@@ -93,14 +96,21 @@ pub(super) fn emit(
         }
         let mut color = blip.color;
         color[3] *= ctx.alpha;
+        let rect = Rect::from_center_size(ctx.center + off, Vec2::splat(size));
         quads.overlays.push(UiQuad {
-            rect: Rect::from_center_size(ctx.center + off, Vec2::splat(size)),
+            rect,
             z_key: ctx.z,
             texture: Some(tex.clone()),
             uv: UvRect::from_tex_coords(cell),
             color,
             ..default()
         });
+        // Under the mouse: its name, in the minimap's own tooltip.
+        if let (Some(c), Some(ui)) = (ctx.cursor, ctx.cursor_ui) {
+            if !blip.name.is_empty() && rect.contains(c) {
+                *hover = MinimapBlipHover::Landmark(blip.name.clone(), ui);
+            }
+        }
     }
 }
 

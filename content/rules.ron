@@ -26,4 +26,9 @@
     // `champion_from` seconds in and every `champion_every` after: halfway between the bosses.
     champion_from: 120.0,
     champion_every: 240.0,
+    // Health in ordinary enemies: an elite has `elite_health` of its own kind's; a champion and
+    // a boss have `champion_health` and `boss_health` of the horde's strongest kind at the time.
+    elite_health: 8.0,
+    champion_health: 15.0,
+    boss_health: 50.0,
 )
