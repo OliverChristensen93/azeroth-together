@@ -51,6 +51,8 @@ const ITEMS: &str = r#"[
     (key: "lantern", name: "Lantern", kind: Lantern, icon: "a", weight: 1.0,
      light: Some((range: 18.0, intensity: 1.4))),
     (key: "key", name: "Key", kind: Key, icon: "a", weight: 0.1),
+    (key: "shutter", name: "Shuttered Lantern", kind: Lantern, icon: "a", weight: 1.0,
+     light: Some((range: 10.0, intensity: 1.0, seen: Some(1.2)))),
 ]"#;
 const LOOT: &str = r#"(
     kinds: [(key: "chest", name: "Chest", display: 259, search: 2.0, sound: Open, slots: 8),
@@ -192,6 +194,7 @@ pub(super) fn loadout(
     Loadout {
         inventory: inv,
         recovery: None,
+        pet: None,
     }
 }
 
@@ -1110,6 +1113,7 @@ fn conjuring_into_a_full_pack_puts_the_drinks_on_the_ground_at_the_feet() {
         &Loadout {
             inventory: inv,
             recovery: None,
+            pet: None,
         },
     );
     w.land(0, water, None, None);
@@ -2167,6 +2171,7 @@ fn everything_one_recovery_leaves_the_body_for_the_next_raid() {
         &Loadout {
             inventory: Inventory::new(next.content()),
             recovery: Some(r.clone()),
+            pet: None,
         },
     );
     let mine = next.loot_view(Some(0));
@@ -2227,6 +2232,7 @@ fn a_brought_stack_a_found_bag_no_longer_holds_is_kept_by_the_dead_not_lost() {
     let lo = Loadout {
         inventory: inv,
         recovery: None,
+        pet: None,
     };
     assert!(w.give_loadout(0, &lo).is_empty());
     assert_eq!(w.pack(0).unwrap().stacks().len(), 6);
@@ -2807,4 +2813,162 @@ fn a_world_begun_as_a_mirror_shows_no_loot_until_its_first_snapshot() {
     assert!(!sent.marks.is_empty());
     mirror.begin_mirror();
     assert_eq!(mirror.loot_view(Some(1)), sent);
+}
+
+#[test]
+fn the_companion_comes_into_the_raid_and_out_of_any_death() {
+    let mut w = world_with("death_loss: everything", "");
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    let mut lo = loadout(&w, &[("bread", 1)], &[], &[]);
+    lo.pet = Some(0);
+    lo.inventory.pet = Some(Some(Stack::found(item(&w, "gem"), 3)));
+    w.give_loadout(0, &lo);
+    assert_eq!(w.hero(0).unwrap().carry.pet, Some(0));
+    assert!((w.hero(0).unwrap().carry.load - 0.5).abs() < 1e-5);
+    die(&mut w, 0);
+    let out = w.take_outcomes();
+    assert_eq!(
+        out[0].carried.get(Place::Pet),
+        Some(&Stack::new(item(&w, "gem"), 3))
+    );
+    let body: Vec<Stack> = body_of(&w, 0).stacks.iter().flatten().copied().collect();
+    assert_eq!(body, vec![Stack::new(item(&w, "bread"), 1)]);
+    // Without the companion, a stack in its slot comes back as left over, not into the raid.
+    let mut w = world();
+    join(&mut w, 0, "rogue", 20.0, 20.0);
+    let mut lo = loadout(&w, &[], &[], &[]);
+    lo.inventory.pet = Some(Some(Stack::new(item(&w, "gem"), 3)));
+    assert_eq!(w.give_loadout(0, &lo), vec![Stack::new(item(&w, "gem"), 3)]);
+    assert_eq!(w.pack(0).unwrap().pet, None);
+}
+
+#[test]
+fn a_missing_raid_keeps_the_companions_stack_too() {
+    for mode in ["everything", "everything_one_recovery", "found_only"] {
+        let mut w = world_with(&format!("death_loss: {mode}"), BRUTE_FAR);
+        join(&mut w, 0, "rogue", 20.0, 20.0);
+        let mut lo = loadout(&w, &[("bread", 1)], &[], &[]);
+        lo.pet = Some(0);
+        lo.inventory.pet = Some(Some(Stack::found(item(&w, "gem"), 3)));
+        w.give_loadout(0, &lo);
+        w.abandon();
+        let out = w.take_outcomes();
+        assert_eq!(out[0].fate, Fate::Missing, "{mode}");
+        assert_eq!(
+            out[0].carried.get(Place::Pet),
+            Some(&Stack::new(item(&w, "gem"), 3)),
+            "{mode}"
+        );
+        // Kept once: not also on a body, and (weighing nothing) not weighed.
+        assert_eq!(out[0].carried.count_of(item(&w, "gem")), 3, "{mode}");
+        let bread = if mode == "found_only" { 0.5 } else { 0.0 };
+        assert!(
+            (out[0].carried.weight(w.content()) - bread).abs() < 1e-5,
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn a_profile_keeps_the_companions_stack_through_a_raid_that_goes_missing() {
+    let w = world_with("death_loss: everything", "");
+    let c = w.content().clone();
+    let pet_gems = || crate::SavedStack {
+        item: "gem".into(),
+        count: 3,
+    };
+    for noted in [false, true] {
+        let mut p = crate::Profile::default();
+        p.loadout.pet = Some(pet_gems());
+        p.loadout.pack.push(crate::SavedStack {
+            item: "bread".into(),
+            count: 2,
+        });
+        p.begin_raid(0, &c);
+        assert_eq!(p.in_raid.as_ref().unwrap().brought.pet, Some(pet_gems()));
+        let mut lo = p.raid_loadout(0, &c);
+        lo.pet = Some(0);
+        if noted {
+            let mut inv = lo.inventory.clone();
+            // The raid took the bread; the companion still carries the gems.
+            inv.take(Place::Pack(0));
+            assert!(p.note_carry(&inv, &c));
+            assert_eq!(
+                p.in_raid.as_ref().unwrap().kept.as_ref().unwrap().pet,
+                Some(pet_gems())
+            );
+        }
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.loadout.pet, Some(pet_gems()), "noted: {noted}");
+        assert_eq!(count_saved(&p.stash, "gem"), 0);
+    }
+}
+
+#[test]
+fn a_lantern_lights_from_the_backpack_not_from_the_companions_slot() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    let mut lo = loadout(&w, &[("lantern", 1)], &[], &[]);
+    lo.pet = Some(0);
+    w.give_loadout(0, &lo);
+    act(&mut w, 0, 1, Act::Use(Place::Pack(0)));
+    steps(&mut w, 2);
+    assert!(w.hero(0).unwrap().carry.lantern.is_some(), "lit");
+    // Into the companion's slot, it goes out: the companion carries things, not light.
+    act(
+        &mut w,
+        0,
+        2,
+        Act::Move {
+            from: Place::Pack(0),
+            to: Place::Pet,
+        },
+    );
+    steps(&mut w, 2);
+    assert!(w.pack(0).unwrap().get(Place::Pet).is_some(), "it moved");
+    assert_eq!(w.hero(0).unwrap().carry.lantern, None);
+    assert!((w.hero(0).unwrap().visibility - 35.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_lantern_sets_how_easy_it_makes_its_hero_to_see() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    w.give_loadout(0, &loadout(&w, &[("lantern", 1), ("shutter", 1)], &[], &[]));
+    act(&mut w, 0, 1, Act::Use(Place::Pack(0)));
+    steps(&mut w, 2);
+    // Standing still: 35, times the rules' lantern 1.6.
+    assert!((w.hero(0).unwrap().visibility - 56.0).abs() < 1e-3);
+    act(&mut w, 0, 2, Act::Use(Place::Pack(1)));
+    steps(&mut w, 2);
+    assert!((w.hero(0).unwrap().visibility - 42.0).abs() < 1e-3);
+}
+
+#[test]
+fn a_kill_says_what_and_where() {
+    let mut w = world_with("", BRUTE_FAR);
+    join(&mut w, 0, "rogue", 6.0, 54.0);
+    w.kill_enemy(0, Some(0));
+    w.step();
+    w.abandon();
+    assert_eq!(w.take_outcomes()[0].slain, vec![(0, V2::new(5.0, 55.0))]);
+}
+
+#[test]
+fn a_kill_far_from_its_hero_counts_for_them_and_a_mirror_counts_nothing() {
+    let mut host = world_with("", BRUTE_FAR);
+    join(&mut host, 0, "rogue", 55.0, 5.0);
+    host.kill_enemy(0, Some(0));
+    host.step();
+    let mut mirror = World::new(host.content().clone());
+    mirror.apply_snapshot(host.snapshot());
+    mirror.events = host.events.clone();
+    mirror.raid.counted = 0;
+    mirror.tally_kills();
+    assert!(mirror.raid.slain.is_empty());
+    assert!(mirror.raid.kills.is_empty());
+    host.abandon();
+    let out = host.take_outcomes();
+    assert_eq!(out[0].kills, 1);
+    assert_eq!(out[0].slain, vec![(0, V2::new(5.0, 55.0))]);
 }

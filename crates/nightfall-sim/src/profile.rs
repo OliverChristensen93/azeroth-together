@@ -36,6 +36,8 @@ pub struct SavedInventory {
     pub bags: Vec<(u8, SavedStack)>,
     pub pack: Vec<SavedStack>,
     pub safe: Vec<(u8, SavedStack)>,
+    /// The companion's one stack (spec §8.2), when it holds one.
+    pub pet: Option<SavedStack>,
 }
 
 impl SavedInventory {
@@ -45,9 +47,10 @@ impl SavedInventory {
             && self.bags.is_empty()
             && self.pack.is_empty()
             && self.safe.is_empty()
+            && self.pet.is_none()
     }
 
-    /// Every stack, in a fixed order: worn, bags, backpack, safe slots.
+    /// Every stack, in a fixed order: worn, bags, backpack, safe slots, the companion's.
     #[cfg(test)]
     fn stacks(&self) -> impl Iterator<Item = &SavedStack> {
         self.equip
@@ -56,6 +59,7 @@ impl SavedInventory {
             .chain(self.bags.iter().map(|(_, s)| s))
             .chain(self.pack.iter())
             .chain(self.safe.iter().map(|(_, s)| s))
+            .chain(self.pet.iter())
     }
 }
 
@@ -206,6 +210,7 @@ pub fn saved_inventory(inv: &Inventory, content: &Content) -> SavedInventory {
             Place::Bag(i) => out.bags.push((i, st)),
             Place::Pack(_) => out.pack.push(st),
             Place::Safe(i) => out.safe.push((i, st)),
+            Place::Pet => out.pet = Some(st),
         }
     }
     out
@@ -270,6 +275,10 @@ pub fn inventory_of(from: &SavedInventory, content: &Content) -> (Inventory, Vec
             }
             loose.extend(rest);
         }
+    }
+    if let Some((st, rest)) = from.pet.as_ref().and_then(&mut known) {
+        inv.pet = Some(Some(st));
+        loose.extend(rest);
     }
     inv.pack = loose.into_iter().map(Some).collect();
     for s in inv.sanitize(content) {
@@ -369,6 +378,7 @@ impl Profile {
         Loadout {
             inventory,
             recovery,
+            pet: None,
         }
     }
 
@@ -753,6 +763,7 @@ mod tests {
             overflow: Vec::new(),
             recovered,
             recovery: None,
+            slain: Vec::new(),
         }
     }
 

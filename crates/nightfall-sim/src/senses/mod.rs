@@ -208,11 +208,21 @@ fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
         .iter()
         .any(|l| l.at.distance(hero.pos) <= l.radius);
     let light = Light {
-        lantern: hero.carry.lantern.is_some(),
+        lantern: false,
         lit_area,
         flash: hs.flash > 0.0,
     };
     hero.visibility = visibility(hero.stance, light, r);
+    // A lit lantern (spec §5.1): its own factor, else the rules' (×1.6). Every factor is 1
+    // or more, so clamping last equals clamping once.
+    if let Some(def) = hero
+        .carry
+        .lantern
+        .and_then(|i| content.items.get(usize::from(i)))
+    {
+        let factor = def.light.and_then(|l| l.seen).unwrap_or(r.lantern);
+        hero.visibility = (hero.visibility * factor).min(100.0);
+    }
     hero.speed = base_speed(hero, content);
 }
 

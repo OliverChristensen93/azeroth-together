@@ -240,6 +240,7 @@ mod tests {
                     at: V3::new(1.0, 2.0, 3.0),
                     items: vec![Stack::new(2, 1)],
                 }),
+                pet: None,
             },
         });
         let bytes = postcard::to_stdvec(&pick).unwrap();
@@ -256,6 +257,7 @@ mod tests {
             overflow: vec![Stack::new(5, 2)],
             recovered: Vec::new(),
             recovery: None,
+            slain: Vec::new(),
         };
         let to_one = ServerMsg::Outcome(outcome.clone());
         let bytes = postcard::to_stdvec(&to_one).unwrap();

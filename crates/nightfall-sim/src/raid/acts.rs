@@ -259,10 +259,12 @@ impl World {
             .collect();
         let drinks = super::drinks_in(inv, &content);
         let bonus = inv.bonus(&content);
-        let lantern_kept = self.heroes[hi]
-            .carry
-            .lantern
-            .is_some_and(|l| inv.count_of(usize::from(l)) > 0);
+        let lantern_kept = self.heroes[hi].carry.lantern.is_some_and(|l| {
+            // The companion carries things, not light: a lantern in its slot goes out.
+            inv.stacks()
+                .iter()
+                .any(|(at, s)| *at != Place::Pet && s.item == l && s.count > 0)
+        });
         let h = &mut self.heroes[hi];
         h.carry.load = load;
         h.carry.worn = worn;

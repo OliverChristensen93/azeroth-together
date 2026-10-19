@@ -25,7 +25,8 @@ pub(crate) fn exit_at(content: &Content, roll: &RaidRoll, now: f32, pos: V2) -> 
 }
 
 impl World {
-    /// Every enemy killed since the last tally counts for the hero who killed it. Last in a step,
+    /// Every enemy killed since the last tally counts for the hero who killed it, with its kind
+    /// and where it fell. Last in a step,
     /// so every kill of the step counts; [`World::drain_events`] tallies what is left and starts
     /// the count over, so no kill is counted twice or missed, whoever drains the events. The count
     /// is the world's own, never a player's event stream (which is cut to their reach).
@@ -34,16 +35,19 @@ impl World {
             return;
         }
         let from = self.raid.counted.min(self.events.len());
-        let by: Vec<PlayerId> = self.events[from..]
+        let by: Vec<(PlayerId, u32)> = self.events[from..]
             .iter()
             .filter_map(|e| match e {
-                Event::EnemyDied { by: Some(p), .. } => Some(*p),
+                Event::EnemyDied { id, by: Some(p) } => Some((*p, *id)),
                 _ => None,
             })
             .collect();
         self.raid.counted = self.events.len();
-        for p in by {
+        for (p, id) in by {
             self.raid.add_kill(p);
+            if let Some(e) = self.enemies.iter().find(|e| e.id == id) {
+                self.raid.add_slain(p, e.kind as u16, e.pos);
+            }
         }
     }
 
@@ -274,6 +278,7 @@ impl World {
                 .collect(),
             recovered,
             recovery,
+            slain: self.raid.slain_of(player),
         }
     }
 

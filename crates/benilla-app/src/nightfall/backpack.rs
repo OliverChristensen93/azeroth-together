@@ -45,7 +45,7 @@ pub(super) fn smart_act(
         return Some(Act::Put(at));
     }
     match at {
-        Place::Equip(_) | Place::Bag(_) => inv.first_empty(false).and_then(to),
+        Place::Equip(_) | Place::Bag(_) | Place::Pet => inv.first_empty(false).and_then(to),
         Place::Pack(_) | Place::Safe(_) => {
             if let Some(slot) = def.slot {
                 return to(Place::Equip(slot));
@@ -767,6 +767,7 @@ mod tests {
             &nightfall_sim::Loadout {
                 inventory: Inventory::new(&c),
                 recovery: None,
+                pet: None,
             },
         );
         let mark = sim

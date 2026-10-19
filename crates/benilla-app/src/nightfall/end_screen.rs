@@ -303,6 +303,7 @@ mod tests {
             overflow: Vec::new(),
             recovered: Vec::new(),
             recovery: None,
+            slain: Vec::new(),
         }
     }
 

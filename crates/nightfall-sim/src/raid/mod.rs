@@ -32,6 +32,8 @@ pub struct Carry {
     pub extracting: f32,
     /// The last act the host took from them ([`ActPress::seq`]).
     pub acted: u8,
+    /// The companion following them, by kind, for every client to draw.
+    pub pet: Option<u8>,
 }
 
 /// Something a player does with what they carry or find.
@@ -137,6 +139,8 @@ pub struct Loadout {
     pub inventory: Inventory,
     /// Their remains from the last raid, when there are any.
     pub recovery: Option<Recovery>,
+    /// The companion along, by kind (an index into `InnContent::companions`).
+    pub pet: Option<u8>,
 }
 
 /// How a hero's raid ended.
@@ -169,6 +173,9 @@ pub struct HeroOutcome {
     pub recovered: Vec<Stack>,
     /// The body they left for their next raid.
     pub recovery: Option<Recovery>,
+    /// Each kill: the enemy's kind (an index into the content's enemies) and where it died, for
+    /// the inn's contracts.
+    pub slain: Vec<(u16, V2)>,
 }
 
 /// One exit in one raid.
@@ -294,6 +301,8 @@ pub(crate) struct Raid {
     pub(crate) exiting: Vec<Exiting>,
     /// Enemies killed, by the hero who killed them ([`World::tally_kills`]).
     pub(crate) kills: Vec<(PlayerId, u32)>,
+    /// Each kill by the hero who made it: the enemy's kind and where it died.
+    pub(crate) slain: Vec<(PlayerId, Vec<(u16, V2)>)>,
     /// Enemies whose body has been made.
     pub(crate) bodied: BTreeSet<u32>,
     /// Fallen heroes, their body's container (0 for none) and when they fell.
@@ -466,6 +475,20 @@ impl Raid {
             .map_or(0, |(_, k)| *k)
     }
 
+    pub(crate) fn add_slain(&mut self, player: PlayerId, kind: u16, at: V2) {
+        match self.slain.iter_mut().find(|(p, _)| *p == player) {
+            Some(s) => s.1.push((kind, at)),
+            None => self.slain.push((player, vec![(kind, at)])),
+        }
+    }
+
+    pub(crate) fn slain_of(&self, player: PlayerId) -> Vec<(u16, V2)> {
+        self.slain
+            .iter()
+            .find(|(p, _)| *p == player)
+            .map_or_else(Vec::new, |(_, s)| s.clone())
+    }
+
     /// `player` is gone from the raid: nothing they were doing goes on.
     pub(crate) fn forget(&mut self, player: PlayerId) {
         self.searches.retain(|s| s.player != player);
@@ -524,7 +547,15 @@ impl World {
     pub fn give_loadout(&mut self, player: PlayerId, loadout: &Loadout) -> Vec<Stack> {
         let content = self.content().clone();
         let mut inv = loadout.inventory.clone();
-        let left = inv.sanitize(&content);
+        // The companion's slot comes with the companion; without one, a stack there is left out.
+        let mut extra = Vec::new();
+        match loadout.pet {
+            Some(_) if inv.pet.is_none() => inv.pet = Some(None),
+            None => extra.extend(inv.pet.take().flatten()),
+            Some(_) => {}
+        }
+        let mut left = inv.sanitize(&content);
+        left.extend(extra);
         *self.raid.pack_mut(player, &content) = inv;
         let remains = loadout
             .recovery
@@ -553,6 +584,7 @@ impl World {
         if let Some(hi) = self.hero_slot(player) {
             let h = &mut self.heroes[hi];
             h.hp = h.max_hp;
+            h.carry.pet = loadout.pet;
         }
         left
     }

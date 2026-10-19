@@ -152,6 +152,10 @@ pub struct LightDef {
     /// Yards.
     pub range: f32,
     pub intensity: f32,
+    /// How much easier this lantern lit makes its hero to see (at least 1), in place of the
+    /// senses' `lantern` factor: the lantern-maker's shuttered lantern is seen less.
+    #[serde(default)]
+    pub seen: Option<f32>,
 }
 
 fn one_u8() -> u8 {
@@ -392,6 +396,14 @@ pub(crate) fn check_items(items: &[ItemDef]) -> Result<(), String> {
                     "items.ron: \"{k}\": a light's range and intensity are above 0"
                 ));
             }
+        }
+        if it
+            .light
+            .is_some_and(|l| l.seen.is_some_and(|s| !(s.is_finite() && s >= 1.0)))
+        {
+            return Err(format!(
+                "items.ron: \"{k}\": a lantern's `seen` is 1 or more"
+            ));
         }
     }
     Ok(())

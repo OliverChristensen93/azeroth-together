@@ -96,7 +96,7 @@
     (key: "ladims_tome", name: "Mor'Ladim's Tome", kind: Valuable, icon: "INV_Misc_Book_09",
      quality: 3, weight: 1.5, text: "Madame Eva wants it. It is cold to the touch."),
     (key: "shuttered_lantern", name: "Shuttered Lantern", kind: Lantern, icon: "INV_Misc_Lantern_01",
-     quality: 2, weight: 1.5, value: 20, light: Some((range: 13.0, intensity: 1.0))),
+     quality: 2, weight: 1.5, value: 20, light: Some((range: 13.0, intensity: 1.0, seen: Some(1.2)))),
     (key: "bright_lantern", name: "Bright Lantern", kind: Lantern, icon: "INV_Misc_Lantern_01",
      quality: 2, weight: 2.0, value: 35, light: Some((range: 26.0, intensity: 1.8))),
 ]

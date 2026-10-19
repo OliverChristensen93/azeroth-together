@@ -56,6 +56,8 @@ pub enum Place {
     Pack(u16),
     /// A safe slot, which a death never takes.
     Safe(u8),
+    /// The companion's one stack (spec §8.2).
+    Pet,
 }
 
 /// Why a move was refused.
@@ -105,6 +107,9 @@ pub struct Inventory {
     pub pack: Vec<Option<Stack>>,
     /// As many slots as the rules give; nothing takes them from a hero.
     pub safe: Vec<Option<Stack>>,
+    /// The companion's one stack: `None` without a companion. Never lost, never weighed: the
+    /// companion carries it.
+    pub pet: Option<Option<Stack>>,
 }
 
 impl Inventory {
@@ -116,6 +121,7 @@ impl Inventory {
             bags: [None; MAX_BAGS],
             pack: vec![None; usize::from(r.backpack_slots)],
             safe: vec![None; usize::from(r.safe_slots)],
+            pet: None,
         }
     }
 
@@ -138,6 +144,7 @@ impl Inventory {
             Place::Bag(i) => self.bags.get(usize::from(i))?.as_ref(),
             Place::Pack(i) => self.pack.get(usize::from(i))?.as_ref(),
             Place::Safe(i) => self.safe.get(usize::from(i))?.as_ref(),
+            Place::Pet => self.pet.as_ref()?.as_ref(),
         }
     }
 
@@ -147,6 +154,7 @@ impl Inventory {
             Place::Bag(i) => self.bags.get_mut(usize::from(i)),
             Place::Pack(i) => self.pack.get_mut(usize::from(i)),
             Place::Safe(i) => self.safe.get_mut(usize::from(i)),
+            Place::Pet => self.pet.as_mut(),
         }
     }
 
@@ -157,6 +165,7 @@ impl Inventory {
             Place::Bag(i) => usize::from(i) < self.bags.len(),
             Place::Pack(i) => usize::from(i) < self.pack.len(),
             Place::Safe(i) => usize::from(i) < self.safe.len(),
+            Place::Pet => self.pet.is_some(),
         }
     }
 
@@ -184,6 +193,9 @@ impl Inventory {
                 out.push((Place::Safe(i as u8), *st));
             }
         }
+        if let Some(Some(st)) = self.pet {
+            out.push((Place::Pet, st));
+        }
         out
     }
 
@@ -198,6 +210,7 @@ impl Inventory {
         finite(
             self.stacks()
                 .iter()
+                .filter(|(p, _)| *p != Place::Pet)
                 .filter_map(|(_, s)| {
                     let def = content.items.get(usize::from(s.item))?;
                     def.weight
@@ -331,7 +344,7 @@ impl Inventory {
         match at {
             Place::Equip(s) => def.slot == Some(s) && stack.count == 1,
             Place::Bag(_) => def.kind == ItemKind::Bag && stack.count == 1,
-            Place::Pack(_) | Place::Safe(_) => true,
+            Place::Pack(_) | Place::Safe(_) | Place::Pet => true,
         }
     }
 
@@ -468,6 +481,7 @@ impl Inventory {
             .chain(self.bags.iter_mut())
             .chain(self.pack.iter_mut())
             .chain(self.safe.iter_mut())
+            .chain(self.pet.iter_mut())
             .flatten()
         {
             s.found = false;
@@ -485,6 +499,9 @@ impl Inventory {
         let items = &content.items;
         let mut excess = Vec::new();
         let mut loose = Vec::new();
+        if let Some(slot) = self.pet.as_mut() {
+            *slot = slot.take().and_then(|s| clean(items, s, &mut excess));
+        }
         for slot in EquipSlot::ALL {
             if let Some(st) = self.equip[slot.index()]
                 .take()
@@ -1073,6 +1090,17 @@ mod tests {
         give(&c, &mut inv, &mut outside, &mut want, Stack::new(KNIFE, 1));
         inv.move_to(in_pack(&inv, GEM), Place::Safe(0), &c).unwrap();
         check(&inv, &outside, &want, "the safe slot");
+        // The companion's slot: a stack set there, swapped with the backpack's knife and back.
+        inv.pet = Some(Some(Stack::found(GEM, 3)));
+        want[GEM] += 3;
+        check(&inv, &outside, &want, "the companion's slot");
+        let knife = in_pack(&inv, KNIFE);
+        inv.move_to(knife, Place::Pet, &c).unwrap();
+        assert_eq!(inv.get(Place::Pet), Some(&Stack::new(KNIFE, 1)));
+        check(&inv, &outside, &want, "a swap into the companion's slot");
+        inv.move_to(Place::Pet, knife, &c).unwrap();
+        assert_eq!(inv.get(Place::Pet), Some(&Stack::found(GEM, 3)));
+        check(&inv, &outside, &want, "a swap out of the companion's slot");
         for mode in [
             DeathLoss::Everything,
             DeathLoss::EverythingOneRecovery,
@@ -1084,6 +1112,7 @@ mod tests {
             gone.extend(death.lost.iter().chain(&death.spill));
             assert_eq!(totals(&c, &dead, &gone), want, "death by {mode:?}");
             assert_eq!(dead.get(Place::Safe(0)), inv.get(Place::Safe(0)));
+            assert_eq!(dead.get(Place::Pet), inv.get(Place::Pet), "the companion's");
             match mode {
                 DeathLoss::FoundOnly => {
                     assert!(death.lost.iter().all(|s| s.found));
@@ -1103,6 +1132,48 @@ mod tests {
         let mut gone = outside.clone();
         gone.extend(left);
         assert_eq!(totals(&c, &cleaned, &gone), want, "sanitize");
+    }
+
+    #[test]
+    fn the_companion_keeps_its_stack_through_every_death() {
+        let c = content("");
+        for mode in [
+            DeathLoss::Everything,
+            DeathLoss::EverythingOneRecovery,
+            DeathLoss::FoundOnly,
+        ] {
+            let mut inv = Inventory::new(&c);
+            inv.pet = Some(Some(Stack::found(GEM, 4)));
+            inv.add(Stack::found(BREAD, 1), &c);
+            let death = inv.split_for_death(mode, &c);
+            assert_eq!(inv.get(Place::Pet), Some(&Stack::found(GEM, 4)), "{mode:?}");
+            assert!(death.lost.iter().all(|s| s.item != GEM as u16));
+            assert!(death.spill.iter().all(|s| s.item != GEM as u16));
+        }
+        let mut inv = Inventory::new(&c);
+        inv.pet = Some(Some(Stack::new(GEM, 10)));
+        assert_eq!(
+            inv.weight(&c),
+            0.0,
+            "the companion carries it, not the hero"
+        );
+        inv.add(Stack::new(BREAD, 2), &c);
+        inv.move_to(Place::Pack(0), Place::Pet, &c).unwrap();
+        assert_eq!(inv.get(Place::Pet), Some(&Stack::new(BREAD, 2)));
+        assert_eq!(inv.get(Place::Pack(0)), Some(&Stack::new(GEM, 10)));
+        assert!(inv.sanitize(&c).is_empty());
+        assert_eq!(inv.get(Place::Pet), Some(&Stack::new(BREAD, 2)));
+        let mut none = Inventory::new(&c);
+        none.add(Stack::new(BREAD, 1), &c);
+        assert_eq!(
+            none.move_to(Place::Pack(0), Place::Pet, &c),
+            Err(InvError::NoSuchPlace)
+        );
+        // Out of the raid, what was found there is simply carried.
+        let mut out = Inventory::new(&c);
+        out.pet = Some(Some(Stack::found(GEM, 2)));
+        out.clear_found();
+        assert_eq!(out.get(Place::Pet), Some(&Stack::new(GEM, 2)));
     }
 
     #[test]
