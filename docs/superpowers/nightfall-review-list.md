@@ -114,3 +114,6 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 33. **A "Ready" button would be the better lobby lock** (item 31): edit freely until you press Ready, the
     host can only start when everyone is Ready, and only a Ready player is locked. A natural fit for the inn
     (sub-project 5b).
+34. **One game per stash folder.** A second Nightfall started on the same save folder opens the stash
+    read-only (no raids), so two windows can't overwrite each other. If the folder can't hold the lock file,
+    the stash runs unlocked (rare). For co-op tests on one PC each window needs its own `BENILLA_HOME`.
