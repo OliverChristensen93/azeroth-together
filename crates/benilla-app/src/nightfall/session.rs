@@ -356,6 +356,15 @@ impl HostSide {
 }
 
 impl Net {
+    /// Our seat in the party: the host's and a solo player's is 0, a joiner's is the number the
+    /// host welcomed them with (0 until it has).
+    pub fn my_player(&self) -> PlayerId {
+        match &self.role {
+            Role::Client(c) => c.me.unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     pub fn is_solo(&self) -> bool {
         matches!(self.role, Role::Solo)
     }
@@ -485,14 +494,12 @@ impl Net {
         let mut out = vec![LobbyPlayer {
             player: 0,
             hero: own.clone(),
-            pose: None,
             ready: false,
         }];
         if let Role::Host(h) = &self.role {
             out.extend(h.peers.iter().map(|p| LobbyPlayer {
                 player: p.player,
                 hero: p.hero.clone(),
-                pose: None,
                 ready: false,
             }));
         }
@@ -843,13 +850,11 @@ pub(super) fn lobby(
                 let mut players = vec![LobbyPlayer {
                     player: 0,
                     hero: own,
-                    pose: None,
                     ready: inn_state.ready,
                 }];
                 players.extend(h.peers.iter().map(|p| LobbyPlayer {
                     player: p.player,
                     hero: p.hero.clone(),
-                    pose: None,
                     ready: p.ready,
                 }));
                 host.broadcast(&ServerMsg::Lobby {
@@ -885,7 +890,8 @@ pub(super) fn lobby(
                     }
                     ClientEvent::Message(ServerMsg::Refused(why)) => gone = Some(why),
                     ClientEvent::Message(ServerMsg::Lobby { players, raid }) => {
-                        c.poses.retain(|id, _| players.iter().any(|p| p.player == *id));
+                        c.poses
+                            .retain(|id, _| players.iter().any(|p| p.player == *id));
                         c.lobby = players;
                         c.planned = Some(raid);
                     }
@@ -1191,7 +1197,8 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                     c.start = false;
                     // Where friends stood before the raid is not where they stand now; the host
                     // sends the new ones once, with or just after the end.
-                    c.poses = sane_poses(poses.unwrap_or_default(), |p| inn().place.bounds.clamp(p));
+                    c.poses =
+                        sane_poses(poses.unwrap_or_default(), |p| inn().place.bounds.clamp(p));
                     // The host wants a pick from us after this raid, even if it is the same one: it
                     // cleared ours when the raid started.
                     c.sent_pick = None;
@@ -1280,13 +1287,11 @@ mod tests {
             LobbyPlayer {
                 player: 0,
                 hero: pick("Host"),
-                pose: None,
                 ready: false,
             },
             LobbyPlayer {
                 player: 1,
                 hero: pick("Me"),
-                pose: None,
                 ready: false,
             },
         ];
@@ -1310,13 +1315,11 @@ mod tests {
                 LobbyPlayer {
                     player: 0,
                     hero: pick("Host"),
-                    pose: None,
                     ready: false,
                 },
                 LobbyPlayer {
                     player: 1,
                     hero,
-                    pose: None,
                     ready: false,
                 },
             ]
@@ -1404,7 +1407,6 @@ mod tests {
                 vec![LobbyPlayer {
                     player: 1,
                     hero: pick(n),
-                    pose: None,
                     ready: false,
                 }],
                 plan.clone(),
@@ -1585,7 +1587,6 @@ mod tests {
         let sent = LobbyPlayer {
             player: 1,
             hero: pick("A"),
-            pose: None,
             ready: false,
         };
         // A walk alone: nothing the lobby lists differs, the poses do, so only InnPoses goes.
@@ -1596,7 +1597,10 @@ mod tests {
             inn_sends(lobby_changed, poses_changed, Some(5.0), Some(5.0)),
             (false, true)
         );
-        assert!(!listed(&sent, 1, &pick("B"), false), "a new loadout changes it");
+        assert!(
+            !listed(&sent, 1, &pick("B"), false),
+            "a new loadout changes it"
+        );
         assert!(!listed(&sent, 1, &pick("A"), true), "so does ready");
         // So a walk changes the poses (not the lobby): only the poses go.
         let before = pose_list(Some(at(0.0)), [(1, Some(at(1.0))), (2, None)]);
@@ -1604,9 +1608,15 @@ mod tests {
         assert_eq!(before.len(), 2, "a player with no pose is left out");
         assert_ne!(before, after);
         assert_eq!(inn_sends(false, true, Some(5.0), Some(5.0)), (false, true));
-        assert_eq!(inn_sends(false, false, Some(5.0), Some(5.0)), (false, false));
+        assert_eq!(
+            inn_sends(false, false, Some(5.0), Some(5.0)),
+            (false, false)
+        );
         // Poses keep the ten-a-second cap.
-        assert_eq!(inn_sends(false, true, Some(5.0), Some(0.05)), (false, false));
+        assert_eq!(
+            inn_sends(false, true, Some(5.0), Some(0.05)),
+            (false, false)
+        );
         // A lobby carries the poses with it, so someone just welcomed sees everyone at once.
         assert_eq!(inn_sends(true, false, None, Some(0.0)), (true, true));
     }
@@ -1665,7 +1675,6 @@ mod tests {
         let mut listed = vec![LobbyPlayer {
             player: 1,
             hero: pick("Me"),
-            pose: None,
             ready: true,
         }];
         fn peers(hero: &HeroPick) -> Vec<(PlayerId, &HeroPick)> {

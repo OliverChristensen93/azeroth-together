@@ -38,6 +38,11 @@ pub(super) fn smart_act(
         // every other (worn, a bag, the backpack) to a safe slot.
         return match at {
             Place::Safe(_) => inv.first_empty(false).and_then(to),
+            // The companion's stack comes out to the backpack first, else to a safe slot.
+            Place::Pet => inv
+                .first_empty(false)
+                .or_else(|| inv.first_empty(true))
+                .and_then(to),
             // A free safe slot, else the companion's empty slot.
             _ => inv
                 .first_empty(true)
@@ -669,6 +674,34 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn shift_on_the_companions_stack_goes_to_the_backpack_first_then_a_safe_slot() {
+        let c = content();
+        let mut inv = Inventory::new(&c);
+        inv.pet = Some(Some(Stack::new(1, 1)));
+        let from = Place::Pet;
+        assert_eq!(
+            smart_act(&inv, from, false, true, false, &c),
+            Some(Act::Move {
+                from,
+                to: Place::Pack(0)
+            }),
+            "the backpack is free"
+        );
+        // Backpack full: a safe slot.
+        let mut full = inv.clone();
+        while let Some(Place::Pack(i)) = full.first_empty(false) {
+            full.pack[usize::from(i)] = Some(Stack::new(0, 1));
+        }
+        assert_eq!(
+            smart_act(&full, from, false, true, false, &c),
+            Some(Act::Move {
+                from,
+                to: Place::Safe(0)
+            })
+        );
     }
 
     #[test]

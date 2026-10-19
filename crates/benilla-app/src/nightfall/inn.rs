@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use benilla_protocol::messages::ObjectFields;
 use bevy::prelude::*;
-use nightfall_sim::{inventory_of, Content, EquipSlot, HeroPose, PlayerId, V2};
+use nightfall_sim::{inventory_of, Bounds, Content, EquipSlot, HeroPose, PlayerId, V2};
 
 use super::gear::pieces_worn;
 use super::menu::Selection;
@@ -38,6 +38,11 @@ pub(super) struct InnViews {
     dressed: Option<(usize, Vec<(EquipSlot, u16)>)>,
     /// Each friend's body and the class, race and sex it was made for.
     friends: HashMap<PlayerId, (Entity, Look)>,
+    /// The look of each friend whose body could not be made (nothing to show for their race and
+    /// sex): not tried again every frame, only when they pick another look.
+    refused: HashMap<PlayerId, Look>,
+    /// The seat our hero was put down for (see [`seat_spot`]).
+    seat: PlayerId,
 }
 
 /// What a friend's body was made for: a class key, a race and a sex.
@@ -46,6 +51,33 @@ type Look = (String, u8, u8);
 /// Whether a body made for `have` still shows a hero of this class, race and sex.
 fn same_look(have: &Look, class: &str, race: u8, sex: u8) -> bool {
     have.0 == class && have.1 == race && have.2 == sex
+}
+
+/// Whether a body for this look was already tried for the friend and could not be made.
+fn was_refused(refused: &HashMap<PlayerId, Look>, player: PlayerId, look: &Look) -> bool {
+    refused.get(&player) == Some(look)
+}
+
+/// How far from the hub's spawn point the other seats stand, in yards.
+const SEAT_RING: f32 = 2.0;
+
+/// Where seat `player` appears: the first on the spawn point itself, the others around it on a
+/// ring, so a party does not stand inside one another. A seat that would fall outside the rooms
+/// moves in toward the spawn point until it is inside.
+fn seat_spot(spawn: V2, bounds: &Bounds, player: PlayerId) -> V2 {
+    if player == 0 {
+        return spawn;
+    }
+    let angle = f32::from(player - 1) * std::f32::consts::TAU / 3.0 + 0.5;
+    let mut radius = SEAT_RING;
+    while radius > 0.25 {
+        let spot = spawn + V2::from_angle(angle, radius);
+        if bounds.contains(spot) {
+            return spot;
+        }
+        radius *= 0.75;
+    }
+    spawn
 }
 
 /// A friend's body a step toward where they stand: quick enough to keep up at ten poses a
@@ -104,9 +136,23 @@ pub(super) fn sync(
     let level = content.rules.hero_level;
     let worn = loadout_worn(&stash, &content);
     let want = (selection.class, worn.clone());
+    // Where a seat stands in the inn: the spawn point for the first, a ring around it for the rest.
+    let s = inn.place.spawn;
+    let spot_of = |seat: PlayerId| {
+        let g = seat_spot(s.ground(), &inn.place.bounds, seat);
+        units::wow_to_bevy([g.x, g.y, s.z])
+    };
+    let seat = net.my_player();
+    // The host seats a joiner after they arrived: if they have not moved from where they first
+    // stood, they move to their own place rather than stand inside the host.
+    if seat != views.seat {
+        if views.me.is_some() && player.active && player.pos.distance(spot_of(views.seat)) < 0.5 {
+            player.pos = spot_of(seat);
+        }
+        views.seat = seat;
+    }
     if views.dressed.as_ref() != Some(&want) {
-        let s = inn.place.spawn;
-        let spawn = units::wow_to_bevy([s.x, s.y, s.z]);
+        let spawn = spot_of(seat);
         let at = if views.me.is_some() && player.active {
             player.pos
         } else {
@@ -132,12 +178,15 @@ pub(super) fn sync(
         ) else {
             return;
         };
-        let outfit_of =
-            |cid: u8| dress::pieces(cc.0.start_outfit(class.race, cid, class.sex), &[]);
+        let outfit_of = |cid: u8| dress::pieces(cc.0.start_outfit(class.race, cid, class.sex), &[]);
         let base = outfit_of(class.class_id);
         let (pieces, empty) = pieces_worn(&worn, &content, &base, outfit_of);
         let mut pairs = dress::wear(&mut items, &pieces);
-        pairs.extend(empty.into_iter().map(|w| (dress::visible_entry_field(w), 0)));
+        pairs.extend(
+            empty
+                .into_iter()
+                .map(|w| (dress::visible_entry_field(w), 0)),
+        );
         commands.entity(e).insert((InnBody, NeedsDress(pairs)));
         let guid = units::unit_guid(UnitKind::Player, INN_SERIAL_BASE);
         index.0.insert(guid, e);
@@ -158,6 +207,10 @@ pub(super) fn sync(
         let (Some(pose), Some(ci)) = (f.pose, content.class(&f.hero.class)) else {
             continue;
         };
+        let look = (f.hero.class.clone(), f.hero.race, f.hero.sex);
+        if was_refused(&views.refused, f.player, &look) {
+            continue;
+        }
         match views.friends.get(&f.player) {
             Some((_, have)) if same_look(have, &f.hero.class, f.hero.race, f.hero.sex) => continue,
             // They picked another class (or took the seat of one who left): draw them anew.
@@ -182,6 +235,7 @@ pub(super) fn sync(
             at,
             units::yaw_of(pose.facing),
         ) else {
+            views.refused.insert(f.player, look);
             continue;
         };
         commands.entity(e).insert(InnBody);
@@ -193,6 +247,9 @@ pub(super) fn sync(
             (e, (f.hero.class.clone(), f.hero.race, f.hero.sex)),
         );
     }
+    views
+        .refused
+        .retain(|p, _| friends.iter().any(|f| f.player == *p));
     views.friends.retain(|p, (e, _)| {
         let keep = friends.iter().any(|f| f.player == *p);
         if !keep {
@@ -252,7 +309,10 @@ pub(super) fn feed(
     if super::run::trace_pos() && real.elapsed_secs() - *last_trace >= 2.0 {
         *last_trace = real.elapsed_secs();
         let t = tf.translation;
-        info!("nightfall: hero in the inn at ({:.1}, {:.1}, {:.1})", -t.z, -t.x, t.y);
+        info!(
+            "nightfall: hero in the inn at ({:.1}, {:.1}, {:.1})",
+            -t.z, -t.x, t.y
+        );
     }
     let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
     state.pose = Some(HeroPose {
@@ -314,6 +374,48 @@ pub(super) fn leave(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_seat_in_the_inn_has_its_own_spot_inside_the_rooms() {
+        let inn = super::super::shipped_inn();
+        let spawn = inn.place.spawn.ground();
+        let spots: Vec<V2> = (0..super::super::session::MAX_PLAYERS as u8)
+            .map(|p| seat_spot(spawn, &inn.place.bounds, p))
+            .collect();
+        assert_eq!(spots[0], spawn, "the first seat stands on the spawn point");
+        for (i, a) in spots.iter().enumerate() {
+            assert!(inn.place.bounds.contains(*a), "seat {i} is inside");
+            for b in &spots[i + 1..] {
+                assert!(a.distance(*b) > 1.0, "seats stand apart: {a:?} {b:?}");
+            }
+        }
+        // A spawn point at a wall still seats everyone inside, moved in toward the point.
+        let wall = V2::new(spawn.x, spawn.y);
+        let tight = Bounds::new(vec![
+            V2::new(wall.x - 0.5, wall.y - 0.5),
+            V2::new(wall.x + 0.5, wall.y - 0.5),
+            V2::new(wall.x + 0.5, wall.y + 0.5),
+            V2::new(wall.x - 0.5, wall.y + 0.5),
+        ])
+        .unwrap();
+        for p in 0..4 {
+            assert!(tight.contains(seat_spot(wall, &tight, p)));
+        }
+    }
+
+    #[test]
+    fn a_friends_body_that_could_not_be_made_is_not_tried_again_until_the_look_changes() {
+        let mut refused: HashMap<PlayerId, Look> = HashMap::new();
+        let look: Look = ("mage".into(), 99, 1);
+        assert!(!was_refused(&refused, 1, &look));
+        refused.insert(1, look.clone());
+        assert!(was_refused(&refused, 1, &look));
+        assert!(!was_refused(&refused, 2, &look), "another friend");
+        assert!(
+            !was_refused(&refused, 1, &("mage".into(), 1, 1)),
+            "a new look"
+        );
+    }
 
     #[test]
     fn a_friend_glides_toward_where_they_stand_and_stops_on_it() {

@@ -134,11 +134,14 @@ pub(super) fn sync(
             }
         }
     }
+    // Gone when the hero has no companion, or no body to follow (a hero whose view went would
+    // leave it standing frozen until the run ends).
     pets.drawn.retain(|player, (_, e)| {
-        let keep = sim
-            .world
-            .hero(*player)
-            .is_some_and(|h| h.carry.pet.is_some());
+        let keep = views.heroes.contains_key(player)
+            && sim
+                .world
+                .hero(*player)
+                .is_some_and(|h| h.carry.pet.is_some());
         if !keep {
             index.0.retain(|_, v| v != e);
             commands.entity(*e).despawn();
@@ -147,7 +150,8 @@ pub(super) fn sync(
     });
 }
 
-/// A run ended: its companions went with its entities.
+/// A run ended: its companions went with its entities (and the name cache keeps its few companion
+/// records, a handful for the whole session, which is harmless).
 pub(super) fn forget(mut pets: ResMut<PetViews>) {
     *pets = PetViews::default();
 }
@@ -164,6 +168,55 @@ mod tests {
             "behind is +Z for a hero facing -Z"
         );
         assert!((spot.x - BESIDE).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_companion_is_drawn_once_and_gone_with_its_pet_or_its_hero_body() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let mut sim = nightfall_sim::World::new(super::super::content());
+        sim.add_hero(0, "rogue", "Test", 1, 0).unwrap();
+        sim.heroes[0].carry.pet = Some(0);
+        let mut world = World::new();
+        let body = world.spawn(Transform::default()).id();
+        let mut views = Views::default();
+        views.heroes.insert(0, body);
+        world.insert_resource(views);
+        world.insert_resource(Sim::for_test(sim));
+        world.insert_resource(PetViews::default());
+        world.init_resource::<NameCache>();
+        world.init_resource::<GuidIndex>();
+        world.insert_resource(Time::<Real>::default());
+        let drawn = |world: &mut World| {
+            (
+                world.query::<&PetBody>().iter(world).count(),
+                world.resource::<PetViews>().drawn.len(),
+                world.resource::<GuidIndex>().0.len(),
+            )
+        };
+
+        assert_eq!(drawn(&mut world), (0, 0, 0));
+        world.run_system_once(sync).unwrap();
+        assert_eq!(drawn(&mut world), (1, 1, 1), "one companion for the hero");
+        world.run_system_once(sync).unwrap();
+        assert_eq!(drawn(&mut world), (1, 1, 1), "not drawn again every frame");
+        // The stack is gone from the slot's owner (no companion): the animal goes.
+        world.resource_mut::<Sim>().world.heroes[0].carry.pet = None;
+        world.run_system_once(sync).unwrap();
+        assert_eq!(drawn(&mut world), (0, 0, 0));
+        // A hero whose body is gone leaves no companion standing frozen where it was.
+        world.resource_mut::<Sim>().world.heroes[0].carry.pet = Some(0);
+        world.run_system_once(sync).unwrap();
+        assert_eq!(drawn(&mut world), (1, 1, 1));
+        world.resource_mut::<Views>().heroes.clear();
+        world.run_system_once(sync).unwrap();
+        assert_eq!(
+            drawn(&mut world),
+            (0, 0, 0),
+            "despawned with the hero's body"
+        );
     }
 
     #[test]

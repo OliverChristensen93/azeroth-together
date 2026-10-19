@@ -109,7 +109,8 @@ impl Sim {
                 )
                 .is_ok()
             {
-                let left = world.give_loadout(p.player, &p.hero.loadout);
+                let told = known_companion(&p.hero.loadout, &super::inn());
+                let left = world.give_loadout(p.player, &told);
                 if !left.is_empty() {
                     warn!(
                         "nightfall: {} brought {} stacks with no room for them; left out",
@@ -796,6 +797,20 @@ pub(super) fn back_to_menu(
     next.set(Phase::Inn);
 }
 
+/// `lo` as the host takes it: a companion kind the inn has not (a modified client, or other content)
+/// is no companion, so its slot is never granted and a stack in it goes back as left out, to be
+/// stashed once by the player's own settle.
+fn known_companion(
+    lo: &nightfall_sim::Loadout,
+    inn: &nightfall_sim::InnContent,
+) -> nightfall_sim::Loadout {
+    let mut lo = lo.clone();
+    lo.pet = lo
+        .pet
+        .filter(|&k| inn.companions.get(usize::from(k)).is_some());
+    lo
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -806,6 +821,28 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_companion_kind_the_inn_has_not_is_no_companion_to_the_host() {
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let inn = super::super::shipped_inn();
+        let stack = nightfall_sim::Stack::new(content().item("ruby_shard").unwrap(), 3);
+        let mut lo = nightfall_sim::Loadout::default();
+        lo.inventory.pet = Some(Some(stack));
+        let granted = |lo: &nightfall_sim::Loadout| {
+            let mut w = World::new(content());
+            w.begin_raid(RaidRoll::standard(&content(), 1)).unwrap();
+            w.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+            let left = w.give_loadout(0, &known_companion(lo, &inn));
+            (w.pack(0).unwrap().pet.is_some(), left)
+        };
+        // A kind the inn has: the slot is granted, the stack stays in it.
+        lo.pet = Some(0);
+        assert_eq!(granted(&lo), (true, vec![]));
+        // A kind it has not: no slot, and the stack comes back left out (stashed once by settle).
+        lo.pet = Some(200);
+        assert_eq!(granted(&lo), (false, vec![stack]));
+    }
 
     #[test]
     fn a_raid_enters_where_its_roll_says_or_at_the_first_entry() {

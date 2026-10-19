@@ -3002,3 +3002,33 @@ fn a_key_in_the_companions_slot_opens_nothing_until_it_is_in_the_backpack() {
         "the same key in the backpack"
     );
 }
+
+#[test]
+fn a_potion_in_the_companions_slot_is_not_drunk_until_it_is_moved_out() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 5.0, 5.0);
+    let potion = item(&w, "potion");
+    let mut lo = loadout(&w, &[], &[], &[]);
+    lo.pet = Some(0);
+    lo.inventory.pet = Some(Some(Stack::new(potion, 2)));
+    w.give_loadout(0, &lo);
+    w.heroes[0].hp = 400.0;
+    act(&mut w, 0, 1, Act::Use(Place::Pet));
+    w.step();
+    assert_eq!(w.hero(0).unwrap().hp, 400.0, "nothing drunk from the slot");
+    assert_eq!(w.pack(0).unwrap().get(Place::Pet).map(|s| s.count), Some(2));
+    // Moved into the backpack it is drunk as any other.
+    act(
+        &mut w,
+        0,
+        2,
+        Act::Move {
+            from: Place::Pet,
+            to: Place::Pack(0),
+        },
+    );
+    w.step();
+    act(&mut w, 0, 3, Act::Use(Place::Pack(0)));
+    w.step();
+    assert_eq!(w.hero(0).unwrap().hp, 700.0);
+}

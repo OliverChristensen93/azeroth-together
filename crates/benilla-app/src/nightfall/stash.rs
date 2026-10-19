@@ -564,7 +564,9 @@ fn settle_mine(sim: &mut Sim, stash: &mut Stash, content: &Content, inn: &InnCon
     let Some(o) = sim.mine.take() else {
         return;
     };
-    if stash.profile.in_raid.is_some() {
+    // A raid that went missing (the host abandoned it) moves no contract, whoever abandons it:
+    // a joiner who abandons settles through `settle_missing`, which counts nothing either.
+    if stash.profile.in_raid.is_some() && o.fate != nightfall_sim::Fate::Missing {
         stash.profile.apply_contracts(&o, inn, content);
     }
     if stash.profile.settle(&o, content) {
@@ -1184,6 +1186,16 @@ mod tests {
         content: &std::sync::Arc<Content>,
         inn: &InnContent,
     ) -> Vec<nightfall_sim::Stack> {
+        raid_and_end(stash, content, inn, false)
+    }
+
+    /// [`raid_and_abandon`], or with `extract` the hero walks out by an exit with what they hold.
+    fn raid_and_end(
+        stash: &mut Stash,
+        content: &std::sync::Arc<Content>,
+        inn: &InnContent,
+        extract: bool,
+    ) -> Vec<nightfall_sim::Stack> {
         let told = raid_loadout_in(stash, 0, content);
         assert_eq!(
             stash.begin_raid(0, &told, content),
@@ -1196,9 +1208,16 @@ mod tests {
             .unwrap();
         world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
         let left = world.give_loadout(0, &told);
+        let held = world.pack(0).unwrap().clone();
         world.abandon();
         let mut sim = Sim::for_test(world);
         sim.mine = sim.world.take_outcomes().into_iter().next();
+        if let (true, Some(o)) = (extract, sim.mine.as_mut()) {
+            o.fate = nightfall_sim::Fate::Extracted {
+                exit: content.map.exits[0].name.clone(),
+            };
+            o.carried = held;
+        }
         assert!(sim.mine.is_some());
         settle_mine(&mut sim, stash, content, inn);
         assert!(stash.profile.in_raid.is_none());
@@ -1279,6 +1298,50 @@ mod tests {
             1,
             "and it is in the stash"
         );
+    }
+
+    #[test]
+    fn an_extracted_raid_with_an_unknown_companion_stashes_its_stack_once() {
+        let content = shipped();
+        let _ = super::super::CONTENT.set(content.clone());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let inn = super::super::shipped_inn();
+        let mut stash = Stash::open_at(Some(dir("pet-unknown-out").join("stash.ron")), &content);
+        stash.profile.inn.companion = Some("a_pet_from_a_newer_build".into());
+        stash.profile.loadout = SavedInventory {
+            pet: Some(stack("ruby_shard", 3)),
+            ..SavedInventory::default()
+        };
+        let left = raid_and_end(&mut stash, &content, &inn, true);
+        assert_eq!(left.iter().map(|s| u32::from(s.count)).sum::<u32>(), 3);
+        assert!(stash.profile.extracted == 1, "it was an extraction");
+        assert_eq!(
+            rubies(&stash.profile, &content),
+            3,
+            "kept once: not lost, not doubled"
+        );
+        assert_eq!(
+            stash
+                .profile
+                .stash
+                .iter()
+                .filter(|s| s.item == "ruby_shard")
+                .count(),
+            1
+        );
+        assert!(stash.profile.loadout.pet.is_none());
+
+        // A known companion brought out the same way keeps its stack in its slot.
+        let mut stash = Stash::open_at(Some(dir("pet-known-out").join("stash.ron")), &content);
+        stash.profile.inn.companion = Some("watch_wolf".into());
+        stash.profile.loadout = SavedInventory {
+            pet: Some(stack("ruby_shard", 3)),
+            ..SavedInventory::default()
+        };
+        let left = raid_and_end(&mut stash, &content, &inn, true);
+        assert!(left.is_empty());
+        assert_eq!(rubies(&stash.profile, &content), 3);
+        assert_eq!(stash.profile.loadout.pet.as_ref().map(|s| s.count), Some(3));
     }
 
     fn extracted_with(carried: nightfall_sim::Inventory) -> HeroOutcome {
@@ -1395,6 +1458,41 @@ mod tests {
         sim.mine = Some(died_with(vec![(worgen, there)]));
         settle_mine(&mut sim, &mut stash, &content, &inn);
         assert!(stash.profile.contract_ready(c, &inn, &content));
+    }
+
+    #[test]
+    fn a_host_abandoned_raid_moves_no_contract_but_is_still_settled() {
+        let content = shipped();
+        let inn = super::super::shipped_inn();
+        let mut stash = Stash::open_at(Some(dir("contracts-missing").join("stash.ron")), &content);
+        let c = inn.contract("brightwood_pack").unwrap();
+        stash.profile.take_contract(c, &inn).unwrap();
+        let worgen = content
+            .enemies
+            .iter()
+            .position(|e| e.key == "nightbane_worgen")
+            .unwrap() as u16;
+        let there = nightfall_sim::V2::new(-10280.0, -1250.0);
+        let brought = told(&stash, 0, &content);
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+        let mut sim = Sim::for_test(nightfall_sim::World::new(content.clone()));
+        // What the host's Abandon Raid gives a hero: Missing, with the kills they made.
+        sim.mine = Some(HeroOutcome {
+            fate: nightfall_sim::Fate::Missing,
+            ..died_with(vec![(worgen, there); 3])
+        });
+        settle_mine(&mut sim, &mut stash, &content, &inn);
+        assert!(
+            stash.profile.in_raid.is_none(),
+            "the raid is settled all the same"
+        );
+        assert!(
+            stash
+                .profile
+                .contract(c, &inn)
+                .is_none_or(|s| s.progress.iter().all(|&n| n == 0)),
+            "a joiner who abandons keeps no kills, so neither does the host"
+        );
     }
 
     #[test]

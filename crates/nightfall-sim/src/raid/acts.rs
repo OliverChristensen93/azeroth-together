@@ -56,6 +56,11 @@ impl World {
 
     /// A lantern lit or put out; a potion drunk, when the last one's wait is over.
     fn use_item(&mut self, player: PlayerId, hi: usize, at: Place, content: &Content) {
+        // The companion's slot counts for nothing in the raid: what is in it is drunk or lit only
+        // after it has been moved out.
+        if at == Place::Pet {
+            return;
+        }
         let Some(stack) = self.raid.pack(player).and_then(|i| i.get(at)).copied() else {
             return;
         };

@@ -60,14 +60,12 @@ impl Who {
     }
 }
 
-/// A player in the host's lobby.
+/// A player in the host's lobby. Where their hero stands in the inn is not here: poses travel in
+/// [`ServerMsg::InnPoses`], so a loadout is not resent every time someone walks.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LobbyPlayer {
     pub player: PlayerId,
     pub hero: HeroPick,
-    /// Where their hero stands in the inn. The host's lobby leaves it empty: poses travel in
-    /// [`ServerMsg::InnPoses`], so a loadout is not resent every time someone walks.
-    pub pose: Option<HeroPose>,
     /// Ready at the raid board.
     pub ready: bool,
 }
@@ -257,11 +255,6 @@ mod tests {
                     sex: 1,
                     loadout: Loadout::default(),
                 },
-                pose: Some(HeroPose {
-                    pos: V2::new(-9460.0, 20.0),
-                    facing: V2::new(1.0, 0.0),
-                    z: 57.6,
-                }),
                 ready: true,
             }],
             raid: RaidRoll {

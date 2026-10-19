@@ -389,6 +389,8 @@ fn loadout_view(p: &Profile, content: &Content) -> Inventory {
 fn shift_target(inv: &Inventory, at: Place) -> Option<Place> {
     match at {
         Place::Safe(_) => inv.first_empty(false),
+        // The companion's stack comes out to the backpack first, else to a safe slot.
+        Place::Pet => inv.first_empty(false).or_else(|| inv.first_empty(true)),
         // Else the companion's empty slot, when there is one.
         _ => inv
             .first_empty(true)
@@ -698,6 +700,38 @@ mod tests {
         // A companion this game does not know gets no empty slot to move into.
         stash.profile.inn.companion = Some("from_a_newer_build".into());
         assert_eq!(loadout_view(&stash.profile, &content).pet, None);
+    }
+
+    #[test]
+    fn a_shift_click_on_the_companions_stack_takes_it_to_the_backpack() {
+        let content = super::super::shipped_content();
+        let _ = super::super::CONTENT.set(content.clone());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let (mut stash, _) = stash_with_things("pet-shift");
+        stash.profile.inn.companion = Some("watch_wolf".into());
+        act(&mut stash, StashSlot::Stash(1), false, None, &content);
+        stash
+            .profile
+            .loadout_move(Place::Pack(0), Place::Pet, &content)
+            .unwrap();
+        let inv = loadout_view(&stash.profile, &content);
+        assert!(inv.get(Place::Pet).is_some() && inv.get(Place::Pack(0)).is_none());
+        // Through the panel's own click path, with Shift held.
+        act(
+            &mut stash,
+            StashSlot::Loadout(Place::Pet),
+            true,
+            None,
+            &content,
+        );
+        let inv = loadout_view(&stash.profile, &content);
+        assert!(inv.get(Place::Pet).is_none(), "out of the companion's slot");
+        assert!(inv.get(Place::Pack(0)).is_some(), "into the backpack");
+        assert_eq!(
+            inv.get(Place::Pack(0)).map(|s| s.count),
+            Some(3),
+            "all of it, once"
+        );
     }
 
     /// A stash whose folder cannot be written: its parent is a file.

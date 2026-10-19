@@ -594,6 +594,26 @@ impl InnContent {
                 gold: r.gold,
             });
         }
+        // Buying and selling straight back must never make gold, and gold must not buy a recipe's
+        // materials: otherwise a loop of buy, craft and sell would need no raid (spec §8.4).
+        for &(it, price) in &stock {
+            let def = &content.items[it];
+            if (price as f32) <= def.value as f32 * hub.trader.sells_for {
+                return Err(bad(format!(
+                    "hub.ron: the trader sells \"{}\" for {price} but pays back more (value {}, share {})",
+                    def.key, def.value, hub.trader.sells_for
+                )));
+            }
+            if let Some(r) = recipes
+                .iter()
+                .find(|r| r.needs.iter().any(|&(n, _)| n == it))
+            {
+                return Err(bad(format!(
+                    "hub.ron: the trader sells \"{}\", which recipe \"{}\" needs",
+                    def.key, r.key
+                )));
+            }
+        }
         // A recipe is made where it is learnt.
         for (si, s) in station_defs.iter().enumerate() {
             for g in s.levels.iter().flat_map(|l| &l.gives) {
@@ -801,6 +821,19 @@ mod tests {
     use crate::ContentSources;
 
     fn raid() -> Content {
+        raid_worth(0)
+    }
+
+    /// [`raid`], with the bread worth `bread` gold.
+    fn raid_worth(bread: u32) -> Content {
+        let items = r#"[
+                (key: "tome", name: "Tome", kind: Valuable, icon: "a", weight: 1.0),
+                (key: "cloth", name: "Cloth", kind: Material, icon: "a", weight: 0.1, stack: 20),
+                (key: "pouch", name: "Pouch", kind: Bag, icon: "a", weight: 0.5, bag_slots: 4),
+                (key: "bread", name: "Bread", kind: Food, icon: "a", weight: 0.2, stack: 20, value: WORTH),
+                (key: "conjured_water", name: "Water", kind: Drink, icon: "a", weight: 0.1, stack: 20),
+            ]"#
+        .replace("WORTH", &bread.to_string());
         Content::from_ron(ContentSources {
             classes: r#"[(key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0,
                 base_hp: 100.0, speed: 7.0)]"#,
@@ -816,13 +849,7 @@ mod tests {
                 walk_speed: 2.5, run_speed: 8.0)]"#,
             spawns: "[]",
             abilities: "[]",
-            items: r#"[
-                (key: "tome", name: "Tome", kind: Valuable, icon: "a", weight: 1.0),
-                (key: "cloth", name: "Cloth", kind: Material, icon: "a", weight: 0.1, stack: 20),
-                (key: "pouch", name: "Pouch", kind: Bag, icon: "a", weight: 0.5, bag_slots: 4),
-                (key: "bread", name: "Bread", kind: Food, icon: "a", weight: 0.2, stack: 20),
-                (key: "conjured_water", name: "Water", kind: Drink, icon: "a", weight: 0.1, stack: 20),
-            ]"#,
+            items: &items,
             loot: "()",
         })
         .unwrap()
@@ -1055,6 +1082,48 @@ mod tests {
                 other => panic!("{field}: expected a refusal, got {other:?}"),
             }
         }
+    }
+
+    /// The trader must not turn gold into more gold, nor sell what a recipe consumes.
+    #[test]
+    fn a_trader_that_could_mint_gold_is_refused() {
+        // Bread worth 10, paid back at half: 5. A price of 2 makes 3 gold on every loaf.
+        match InnContent::from_ron(
+            InnSources {
+                hub: HUB,
+                contracts: CONTRACTS,
+                stations: STATIONS,
+            },
+            &raid_worth(10),
+        ) {
+            Err(ContentError::Invalid(why)) => assert!(why.contains("pays back more"), "{why}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        // Priced above what it pays back (6 > 5), the same bread is fine; so is an exact tie not.
+        let dearer = HUB.replace("price: 2", "price: 6");
+        assert!(load_with(&dearer, &raid_worth(10)).is_ok());
+        let tie = HUB.replace("price: 2", "price: 5");
+        assert!(
+            load_with(&tie, &raid_worth(10)).is_err(),
+            "a tie profits nothing but is not a gain"
+        );
+        // Cloth is what the pouch recipe needs.
+        let cloth = HUB.replace("item: \"bread\", price: 2", "item: \"cloth\", price: 2");
+        match load(&cloth, CONTRACTS, STATIONS) {
+            Err(ContentError::Invalid(why)) => assert!(why.contains("recipe"), "{why}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    fn load_with(hub: &str, content: &Content) -> Result<InnContent, ContentError> {
+        InnContent::from_ron(
+            InnSources {
+                hub,
+                contracts: CONTRACTS,
+                stations: STATIONS,
+            },
+            content,
+        )
     }
 
     /// A contract that needs itself, or two that need each other, could never be offered.
