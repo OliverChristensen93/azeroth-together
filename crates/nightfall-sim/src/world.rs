@@ -461,6 +461,13 @@ impl World {
         }
     }
 
+    /// This world is a client's mirror from now on, before its host's first snapshot: the loot it
+    /// shows is the host's, and the host has sent none yet. Without it a mirror shows the raid its
+    /// own content rolls (every placed container), until the first snapshot corrects it.
+    pub fn begin_mirror(&mut self) {
+        self.raid.mirror.get_or_insert_with(Default::default);
+    }
+
     /// A client's mirror takes the host's world. A mirror must not have a map attached: the
     /// snapshot's enemies would have no brains beside them.
     pub fn apply_snapshot(&mut self, snapshot: Snapshot) {

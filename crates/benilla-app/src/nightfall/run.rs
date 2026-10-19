@@ -122,8 +122,11 @@ impl Sim {
 
     /// A joined run: an empty world, filled by the host's snapshots.
     fn mirror(me: PlayerId) -> Self {
+        let mut world = World::new(content());
+        // Until the host's first snapshot there is no loot to show: not the raid this world rolls.
+        world.begin_mirror();
         Self {
-            world: World::new(content()),
+            world,
             me,
             acc: 0.0,
             span: DT * session::SEND_EVERY as f32,
@@ -737,6 +740,25 @@ pub(super) fn back_to_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fresh_mirror_shows_no_containers_before_its_first_snapshot() {
+        // The world a mirror is made of rolls the content's own raid, which it must not show.
+        assert!(
+            !World::new(content()).loot_view(Some(1)).marks.is_empty(),
+            "the shipped content places containers"
+        );
+        let mirror = Sim::mirror(1);
+        let view = mirror.world.loot_view(Some(1));
+        assert!(view.marks.is_empty() && view.open.is_none());
+        // The first snapshot of the host replaces it, as before.
+        let mut host = World::new(content());
+        host.begin_raid(nightfall_sim::RaidRoll::standard(&content(), 3))
+            .unwrap();
+        let mut mirror = mirror;
+        mirror.world.apply_snapshot(host.snapshot_for(0));
+        assert_eq!(mirror.world.loot_view(Some(1)), host.loot_view(Some(0)));
+    }
 
     #[test]
     fn autowalk_heads_for_the_circle_without_overshooting() {

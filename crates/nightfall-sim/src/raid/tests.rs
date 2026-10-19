@@ -2789,3 +2789,22 @@ fn the_final_beat_of_an_extraction_is_heard_and_then_forgotten() {
     steps(&mut w, (6.0 / DT) as usize);
     assert_eq!(w.senses.suspicion_of(0, 0), 0.0);
 }
+
+#[test]
+fn a_world_begun_as_a_mirror_shows_no_loot_until_its_first_snapshot() {
+    let host = world();
+    assert!(
+        !host.loot_view(Some(1)).marks.is_empty(),
+        "the test map places containers"
+    );
+    let mut mirror = World::new(host.content().clone());
+    mirror.begin_mirror();
+    assert_eq!(mirror.loot_view(Some(1)), crate::LootView::default());
+    assert_eq!(mirror.loot_view(None), crate::LootView::default());
+    // A view the host sent is not undone by asking again.
+    mirror.apply_snapshot(host.snapshot_for(1));
+    let sent = mirror.loot_view(Some(1));
+    assert!(!sent.marks.is_empty());
+    mirror.begin_mirror();
+    assert_eq!(mirror.loot_view(Some(1)), sent);
+}
