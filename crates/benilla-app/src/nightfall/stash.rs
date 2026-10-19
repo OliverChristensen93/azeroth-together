@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use nightfall_sim::{Content, Loadout, Profile, ProfileError, SavedStack};
+use nightfall_sim::{Content, InnContent, Loadout, Profile, ProfileError, SavedStack};
 
 use super::content;
 use super::run::Sim;
@@ -529,15 +529,23 @@ impl Stash {
 /// nothing. Only our own outcome ([`Sim::mine`]) is ever settled; the end screen's list of
 /// everyone's is for reading.
 pub(super) fn settle_run(mut sim: ResMut<Sim>, mut stash: ResMut<Stash>) {
-    settle_mine(&mut sim, &mut stash, &content());
+    settle_mine(&mut sim, &mut stash, &content(), &super::inn());
 }
 
 /// [`settle_run`] with its content in hand. A repeat does nothing: the profile settles a raid
 /// only while one is under way.
-fn settle_mine(sim: &mut Sim, stash: &mut Stash, content: &Content) {
+///
+/// The contracts move on with the raid first (kills, the exit taken), and only while the raid is
+/// still under way: an outcome that comes after the raid was settled as missing is not applied,
+/// or it would move the contracts for a raid that ended without it. Then the outcome is settled,
+/// and both are saved together.
+fn settle_mine(sim: &mut Sim, stash: &mut Stash, content: &Content, inn: &InnContent) {
     let Some(o) = sim.mine.take() else {
         return;
     };
+    if stash.profile.in_raid.is_some() {
+        stash.profile.apply_contracts(&o, inn, content);
+    }
     if stash.profile.settle(&o, content) {
         stash.save();
     }
@@ -1156,6 +1164,7 @@ mod tests {
     #[test]
     fn a_raid_that_ended_is_settled_once_from_our_outcome_and_saved_at_once() {
         let content = shipped();
+        let inn = super::super::shipped_inn();
         let path = dir("settle").join("stash.ron");
         let mut stash = Stash::open_at(Some(path.clone()), &content);
         let brought = told(&stash, 0, &content);
@@ -1171,7 +1180,7 @@ mod tests {
         // Everyone's outcomes are for the end screen: settling never reads them.
         sim.over = Some(vec![extracted_with(brought.inventory.clone())]);
 
-        settle_mine(&mut sim, &mut stash, &content);
+        settle_mine(&mut sim, &mut stash, &content, &inn);
         assert!(sim.mine.is_none(), "taken");
         assert!(sim.over.is_some(), "the end screen's list is left alone");
         let on_disk = Profile::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -1181,12 +1190,74 @@ mod tests {
 
         // The same outcome again settles nothing: no second haul.
         sim.mine = Some(extracted_with(brought.inventory.clone()));
-        settle_mine(&mut sim, &mut stash, &content);
+        settle_mine(&mut sim, &mut stash, &content, &inn);
         assert_eq!(stash.profile.loadout, had);
         assert_eq!(stash.profile.extracted, 1);
         // And with no outcome (the end screen's list only) nothing happens.
-        settle_mine(&mut sim, &mut stash, &content);
+        settle_mine(&mut sim, &mut stash, &content, &inn);
         assert_eq!(stash.profile, on_disk);
+    }
+
+    /// A died-in-raid outcome with these kills (enemy kind, place).
+    fn died_with(slain: Vec<(u16, nightfall_sim::V2)>) -> HeroOutcome {
+        HeroOutcome {
+            fate: nightfall_sim::Fate::Died,
+            kills: slain.len() as u32,
+            slain,
+            ..extracted_with(Default::default())
+        }
+    }
+
+    #[test]
+    fn a_raid_moves_the_contracts_on_once_and_only_while_it_is_under_way() {
+        let content = shipped();
+        let inn = super::super::shipped_inn();
+        let path = dir("contracts").join("stash.ron");
+        let mut stash = Stash::open_at(Some(path.clone()), &content);
+        let c = inn.contract("brightwood_pack").unwrap();
+        stash.profile.take_contract(c, &inn).unwrap();
+        let worgen = content
+            .enemies
+            .iter()
+            .position(|e| e.key == "nightbane_worgen")
+            .unwrap() as u16;
+        let there = nightfall_sim::V2::new(-10280.0, -1250.0);
+        let brought = told(&stash, 0, &content);
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+        let mut sim = Sim::for_test(nightfall_sim::World::new(content.clone()));
+
+        // The raid's kills count, in the same step that settles it, and both are on disk.
+        sim.mine = Some(died_with(vec![(worgen, there); 3]));
+        settle_mine(&mut sim, &mut stash, &content, &inn);
+        assert!(stash.profile.in_raid.is_none());
+        assert_eq!(stash.profile.contract(c, &inn).unwrap().progress, vec![3]);
+        let on_disk = Profile::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(on_disk, stash.profile, "saved at once, with the progress");
+
+        // An outcome arriving again, with the raid already settled, moves nothing.
+        sim.mine = Some(died_with(vec![(worgen, there); 3]));
+        settle_mine(&mut sim, &mut stash, &content, &inn);
+        assert_eq!(stash.profile.contract(c, &inn).unwrap().progress, vec![3]);
+
+        // A raid counted missing has no outcome to apply; one that turns up afterwards is not.
+        let brought = told(&stash, 0, &content);
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+        count_missing(&mut stash, &content);
+        sim.mine = Some(died_with(vec![(worgen, there); 3]));
+        settle_mine(&mut sim, &mut stash, &content, &inn);
+        assert_eq!(stash.profile.contract(c, &inn).unwrap().progress, vec![3]);
+        // Nor do kills away from the place count in a raid that is under way.
+        let brought = told(&stash, 0, &content);
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+        sim.mine = Some(died_with(vec![(worgen, nightfall_sim::V2::new(0.0, 0.0))]));
+        settle_mine(&mut sim, &mut stash, &content, &inn);
+        assert_eq!(stash.profile.contract(c, &inn).unwrap().progress, vec![3]);
+        // The contract is done when a raid brings the fourth.
+        let brought = told(&stash, 0, &content);
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+        sim.mine = Some(died_with(vec![(worgen, there)]));
+        settle_mine(&mut sim, &mut stash, &content, &inn);
+        assert!(stash.profile.contract_ready(c, &inn, &content));
     }
 
     #[test]

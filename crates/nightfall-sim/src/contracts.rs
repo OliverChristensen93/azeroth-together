@@ -106,11 +106,17 @@ impl Profile {
         Ok(())
     }
 
-    pub fn take_contract(&mut self, c: usize, inn: &InnContent) -> Result<(), ContractError> {
+    /// Whether contract `c` can be taken now, for real: not while a raid is under way, and
+    /// [`Profile::offer`]'s answer. What a panel gates its Take button on.
+    pub fn can_take(&self, c: usize, inn: &InnContent) -> Result<(), ContractError> {
         if self.in_raid.is_some() {
             return Err(ContractError::InRaid);
         }
-        self.offer(c, inn)?;
+        self.offer(c, inn)
+    }
+
+    pub fn take_contract(&mut self, c: usize, inn: &InnContent) -> Result<(), ContractError> {
+        self.can_take(c, inn)?;
         let n = inn.contracts[c].objectives.len();
         let s = self.contract_mut(c, inn);
         s.taken = true;
@@ -299,6 +305,18 @@ impl Profile {
                 .iter()
                 .enumerate()
                 .all(|(i, o)| self.met(def, o, s.progress.get(i).copied().unwrap_or(0), content))
+    }
+
+    /// Whether turning in contract `c` would take something from the loadout (its backpack or
+    /// safe slots) rather than from the stash alone: the stash is taken from first, so only a
+    /// need the stash cannot cover reaches the loadout. A panel that must leave the loadout
+    /// alone (a joined player who is ready) refuses such a turn-in.
+    pub fn turn_in_touches_loadout(&self, c: usize, inn: &InnContent, content: &Content) -> bool {
+        inn.contracts.get(c).is_some_and(|def| {
+            Self::bring_needs(def, content)
+                .iter()
+                .any(|(key, n)| self.stashed(key) < *n)
+        })
     }
 
     /// Contract `c` turned in: what it asks to be brought taken, its gold paid (saturating at
@@ -740,6 +758,42 @@ pub(crate) mod tests {
         assert_eq!(p.loadout.pack, vec![cloth(2)], "then the backpack");
         assert_eq!(p.loadout.safe, vec![(0, cloth(3))]);
         assert_eq!(p.held("cloth"), 5);
+    }
+
+    #[test]
+    fn a_turn_in_touches_the_loadout_only_when_the_stash_cannot_cover_it() {
+        let c = raid();
+        let inn = inn(&c);
+        let mut p = Profile {
+            stash: vec![cloth(5)],
+            ..Profile::default()
+        };
+        p.loadout.pack.push(cloth(3));
+        assert!(!p.turn_in_touches_loadout(CLOTH, &inn, &c), "the stash covers 5");
+        assert!(p.turn_in_touches_loadout(TWICE, &inn, &c), "8 needs the backpack too");
+        assert!(!p.turn_in_touches_loadout(99, &inn, &c), "no such contract");
+        // And that is exactly what a turn-in does: the stash first, then the backpack.
+        p.take_contract(TWICE, &inn).unwrap();
+        assert_eq!(p.turn_in(TWICE, &inn, &c), Ok(3));
+        assert!(p.loadout.pack.is_empty());
+    }
+
+    #[test]
+    fn a_contract_can_be_taken_only_outside_a_raid() {
+        let c = raid();
+        let inn = inn(&c);
+        let mut p = Profile::default();
+        assert_eq!(p.can_take(PACK, &inn), Ok(()));
+        assert_eq!(p.can_take(1, &inn), Err(ContractError::Locked));
+        p.in_raid = Some(crate::SavedRaid {
+            map: "m".into(),
+            brought: Default::default(),
+            kept: None,
+        });
+        // `offer` alone would say yes; taking is what refuses.
+        assert_eq!(p.offer(PACK, &inn), Ok(()));
+        assert_eq!(p.can_take(PACK, &inn), Err(ContractError::InRaid));
+        assert_eq!(p.take_contract(PACK, &inn), Err(ContractError::InRaid));
     }
 
     #[test]

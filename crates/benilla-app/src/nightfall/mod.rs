@@ -25,6 +25,7 @@ mod fx;
 mod gear;
 mod grade;
 mod inn;
+mod inn_panels;
 mod loot_view;
 mod marks;
 mod menu;
@@ -336,6 +337,7 @@ impl Plugin for NightfallPlugin {
                     terrain::spawn_line,
                     stash_panel::spawn_root,
                     trader::spawn_root,
+                    inn_panels::spawn_root,
                     backpack::spawn_root,
                     gear::spawn_line,
                 ),
@@ -380,6 +382,8 @@ impl Plugin for NightfallPlugin {
             .add_systems(Update, stash_panel::show)
             // Ungated: hides the trader's panel whenever another game is up.
             .add_systems(Update, trader::show)
+            // Ungated: hides the givers' and keepers' panel whenever another game is up.
+            .add_systems(Update, inn_panels::show)
             .add_systems(Update, widgets::fill_icons.in_set(NightfallSet))
             .add_systems(
                 Update,
@@ -400,14 +404,17 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
-                // The NPCs, their panels and the trader. After the lock is read, so a trade this
-                // frame sees this frame's; before the run can start, as the stash panel.
+                // The NPCs, their panels, the trader and the givers and keepers. After the lock is
+                // read, so a trade this frame sees this frame's; before the run can start, as the
+                // stash panel.
                 (
                     npcs::spawn,
                     npcs::right_click,
                     npcs::walk_away,
                     trader::clicks,
                     trader::rebuild,
+                    inn_panels::clicks,
+                    inn_panels::rebuild,
                 )
                     .chain()
                     .after(stash_panel::refresh_lock)

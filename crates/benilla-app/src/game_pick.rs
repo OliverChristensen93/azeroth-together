@@ -330,6 +330,10 @@ mod set_guard_tests {
             "hides the trader's panel whenever another game is up",
         ),
         (
+            "benilla_app::nightfall::inn_panels::show",
+            "hides the givers' and keepers' panel whenever another game is up",
+        ),
+        (
             "benilla_app::nightfall::gear::load_line",
             "hides the load line whenever no run is up",
         ),
