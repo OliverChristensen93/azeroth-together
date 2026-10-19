@@ -165,12 +165,12 @@ fn press(
 
 /// How wide the panel of an NPC with this role is. The banker's is a strip at the left edge
 /// beside the stash panel (centred and about 740 px wide, so 240 px clears it at 1280 px); the
-/// others have the room.
+/// others are 360 px, which ends before the inn bar (top centre, from 388 px at 1280) begins.
 fn panel_width(role: NpcRole) -> f32 {
     if role == NpcRole::Banker {
         240.0
     } else {
-        440.0
+        360.0
     }
 }
 
@@ -183,7 +183,7 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
             left: Val::Px(16.0),
             // Below the inn bar (top centre, about 190 px tall) and WoW's player frame.
             top: Val::Px(200.0),
-            width: Val::Px(440.0),
+            width: Val::Px(360.0),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(4.0),
             padding: UiRect::all(Val::Px(12.0)),

@@ -4,6 +4,8 @@
 //! ready, and Ready. Alone, Ready starts the raid; hosting, the raid starts once everyone present
 //! is ready; joined, the host starts it. Stepping out of the ring takes Ready back.
 //!
+//! Test switch: `NIGHTFALL_BOARD=1` holds the board open wherever the hero stands, for a shot.
+//!
 //! Ready itself is Task 6's lock ([`InnState::ready`], [`Net::party_ready`]): this board is only
 //! where it is pressed. Autoplay (`NIGHTFALL_AUTOPLAY`) sets Ready and starts the raid in
 //! [`super::session::lobby`] and [`super::run::start_run`] without standing at the door.
@@ -165,11 +167,17 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
     commands.insert_resource(BoardFont(font));
 }
 
+/// `NIGHTFALL_BOARD`, read once: the board stays open wherever the hero stands.
+fn test_open() -> bool {
+    static OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OPEN.get_or_init(|| std::env::var_os("NIGHTFALL_BOARD").is_some())
+}
+
 /// The board opens as our hero steps into the door's ring and closes as they step out, which
 /// takes Ready back.
 pub(super) fn door(mut state: ResMut<InnState>, mut open: ResMut<BoardOpen>) {
     let place = &inn().place;
-    let here = at_door(state.pose, place.door, place.door_radius);
+    let here = test_open() || at_door(state.pose, place.door, place.door_radius);
     let (now_open, now_ready) = door_step(open.0, here, state.ready);
     if open.0 != now_open {
         open.0 = now_open;
