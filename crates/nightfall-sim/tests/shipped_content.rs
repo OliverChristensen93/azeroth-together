@@ -231,3 +231,52 @@ fn every_shipped_kill_contract_has_its_enemies_inside_its_circle() {
         }
     }
 }
+
+/// Nothing in the shipped inn is out of reach: every contract can be offered once those it needs
+/// are done, every station that is not open is unlocked by a contract, every recipe is taught by
+/// a level, and every companion is granted by a gift.
+#[test]
+fn everything_in_the_shipped_inn_can_be_reached() {
+    use nightfall_sim::Gift;
+    let c = shipped();
+    let inn = shipped_inn(&c);
+
+    let mut done = vec![false; inn.contracts.len()];
+    while let Some(i) =
+        (0..done.len()).find(|&i| !done[i] && inn.contracts[i].needs.iter().all(|&n| done[n]))
+    {
+        done[i] = true;
+    }
+    for (i, d) in done.iter().enumerate() {
+        assert!(d, "contract \"{}\" is never offered", inn.contracts[i].key);
+    }
+
+    for (i, s) in inn.stations.iter().enumerate() {
+        assert!(
+            s.open || inn.contracts.iter().any(|c| c.reward.unlocks.contains(&i)),
+            "station \"{}\" is not open and no contract unlocks it",
+            s.key
+        );
+    }
+
+    let gifts: Vec<&Gift> = inn
+        .stations
+        .iter()
+        .flat_map(|s| &s.levels)
+        .flat_map(|l| &l.gives)
+        .collect();
+    for (i, r) in inn.recipes.iter().enumerate() {
+        assert!(
+            gifts.contains(&&Gift::Recipe(i)),
+            "recipe \"{}\" is taught by no level",
+            r.key
+        );
+    }
+    for (i, k) in inn.companions.iter().enumerate() {
+        assert!(
+            gifts.contains(&&Gift::Companion(i)),
+            "companion \"{}\" is granted by no gift",
+            k.key
+        );
+    }
+}

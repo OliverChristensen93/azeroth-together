@@ -1,11 +1,11 @@
 // The inn's stations (spec §8.5): each upgraded level by level with gold and materials from the
-// stash, kept forever. A level gives StashSlots(n), Recipe("key") (made at that station), Intel
+// stash, kept forever. A level gives StashSlots(n) (n more slots on top of `rules.run.stash_slots`), Recipe("key") (made at that station), Intel
 // (the map table's look at the next raid) or Companion("key") (hub.ron's companions). `open`
 // stations can be upgraded from the start; the others once a contract unlocks them. A station's
 // keeper is the NPC whose role is Station(its key); the stash's is the banker.
 (
     stations: [
-        (key: "stash", name: "The Stash", keeper: "farley", open: true, levels: [
+        (key: "stash", name: "The Stash", keeper: "pike", open: true, levels: [
             (gold: 50, items: [("linen_cloth", 10)], gives: [StashSlots(20)]),
             (gold: 150, items: [("iron_scrap", 10), ("linen_cloth", 10)], gives: [StashSlots(30)]),
         ]),
@@ -30,7 +30,7 @@
             (gold: 80, items: [("linen_cloth", 6)], gives: [Intel]),
         ]),
         (key: "kennel", name: "The kennel", keeper: "kennelmaster", levels: [
-            (gold: 100, items: [("worgen_pelt", 2)], gives: [Companion("watch_hound")]),
+            (gold: 100, items: [("worgen_pelt", 2)], gives: [Companion("watch_wolf")]),
         ]),
     ],
     recipes: [

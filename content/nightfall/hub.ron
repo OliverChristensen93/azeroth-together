@@ -23,15 +23,15 @@
         view_distance: 250.0,
     ),
     npcs: [
-        (key: "farley", name: "Innkeeper Orlan Pike", title: "Keeps your things",
+        (key: "pike", name: "Innkeeper Orlan Pike", title: "Keeps your things",
          role: Banker, body: (race: 1, sex: 0, class_id: 1), at: (-9462.7, 16.2, 57.0), facing: 90.0),
-        (key: "brog", name: "Haldor Coppermug", title: "Trades in anything",
+        (key: "coppermug", name: "Haldor Coppermug", title: "Trades in anything",
          role: Trader, body: (race: 3, sex: 0, class_id: 1), at: (-9467.0, 30.0, 57.0), facing: 0.0),
-        (key: "ebonlock", name: "Captain Isolde Greyvane", title: "The Night Watch",
+        (key: "ebonlock", name: "Commander Althea Ebonlock", title: "The Night Watch",
          role: Contracts, body: (race: 1, sex: 1, class_id: 2), at: (-9452.0, 30.0, 57.0), facing: 180.0),
-        (key: "eva", name: "Seer Wynne Hollow", title: "Sees what waits in the dark",
+        (key: "eva", name: "Madame Eva", title: "Sees what waits in the dark",
          role: Contracts, body: (race: 1, sex: 1, class_id: 8), at: (-9470.0, 20.0, 57.0), facing: 270.0),
-        (key: "abercrombie", name: "Dorrin Gravelle", title: "Wants what the dead leave",
+        (key: "abercrombie", name: "Abercrombie", title: "Wants what the dead leave",
          role: Contracts, body: (race: 1, sex: 0, class_id: 9), at: (-9470.0, 12.0, 57.0), facing: 270.0),
         (key: "smith", name: "Torvald Anvilmoor", title: "Workbench",
          role: Station("workbench"), body: (race: 3, sex: 0, class_id: 1), at: (-9449.0, 9.0, 57.0)),
@@ -63,7 +63,7 @@
     // The kennel's companions (spec §8.2). measure: a wolf's CreatureDisplayInfo id (903 is WolfSkinTimber,
     // the Wolf model); the scale makes it a pup.
     companions: [
-        (key: "watch_hound", name: "Watch Wolf", display: 903, scale: 0.6),
+        (key: "watch_wolf", name: "Watch Wolf", display: 903, scale: 0.6),
     ],
 )
 

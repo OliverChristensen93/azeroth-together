@@ -83,8 +83,8 @@
         (kind: "grave", table: "grave", at: (-10760.0, 300.0), place: "Raven Hill cemetery"),
         (kind: "grave", table: "grave", at: (-10770.0, 310.0), place: "Raven Hill cemetery"),
         (kind: "grave", table: "grave", at: (-10750.0, 320.0), place: "Raven Hill cemetery"),
-        // measure: the gravewarden's grave in Raven Hill cemetery (the Seer's contract).
-        (kind: "grave", table: "ladims_grave", at: (-10740.0, 330.0), place: "The gravewarden's grave"),
+        // measure: Mor'Ladim's grave in Raven Hill cemetery (Madame Eva's contract).
+        (kind: "grave", table: "ladims_grave", at: (-10740.0, 330.0), place: "Mor'Ladim's grave"),
         // measure: Raven Hill's crypt, locked.
         (kind: "chest", table: "chest", at: (-10745.0, 295.0), lock: Some("crypt_key"),
          place: "Raven Hill crypt"),

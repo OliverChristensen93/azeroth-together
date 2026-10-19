@@ -28,6 +28,7 @@ pub struct HubPlace {
     /// Minute of the day the light stands at.
     pub minute: u32,
     /// How far the world is drawn, yards.
+    /// Task 7's inn scene sets the engine's far clip from this when it lights the inn.
     pub view_distance: f32,
 }
 
@@ -691,6 +692,41 @@ impl InnContent {
             }
         }
 
+        // Contracts finished before this one is offered must be finishable themselves: peel off
+        // those whose needs are all peeled; what is left waits on a cycle and can never be offered.
+        let mut offered = vec![false; contract_defs.len()];
+        while let Some(i) = (0..contract_defs.len())
+            .find(|&i| !offered[i] && contract_defs[i].needs.iter().all(|&n| offered[n]))
+        {
+            offered[i] = true;
+        }
+        if let Some(start) = offered.iter().position(|&o| !o) {
+            // Every contract left over needs another left over: follow the needs until one repeats.
+            let mut walk = vec![start];
+            loop {
+                let last = *walk.last().expect("a walk has a start");
+                let next = *contract_defs[last]
+                    .needs
+                    .iter()
+                    .find(|&&n| !offered[n])
+                    .expect("a contract left over needs another");
+                if let Some(at) = walk.iter().position(|&w| w == next) {
+                    walk.drain(..at);
+                    walk.push(next);
+                    break;
+                }
+                walk.push(next);
+            }
+            let cycle: Vec<&str> = walk
+                .iter()
+                .map(|&i| contract_defs[i].key.as_str())
+                .collect();
+            return Err(bad(format!(
+                "contracts.ron: contracts need each other in a cycle and are never offered: {}",
+                cycle.join(" -> ")
+            )));
+        }
+
         Ok(Self {
             place,
             npcs,
@@ -993,6 +1029,121 @@ mod tests {
                     assert!(why.contains(field), "{field}: {why}");
                 }
                 other => panic!("{field}: expected a refusal, got {other:?}"),
+            }
+        }
+    }
+
+    /// A contract that needs itself, or two that need each other, could never be offered.
+    #[test]
+    fn contracts_that_wait_on_a_cycle_are_refused() {
+        for (contracts, named) in [
+            (
+                CONTRACTS.replace(
+                    "name: \"Thin the pack\",",
+                    "name: \"Thin the pack\", needs: [\"pack\"],",
+                ),
+                vec!["pack"],
+            ),
+            (
+                CONTRACTS.replace(
+                    "name: \"Thin the pack\",",
+                    "name: \"Thin the pack\", needs: [\"tome\"],",
+                ),
+                vec!["pack", "tome"],
+            ),
+        ] {
+            match load(HUB, &contracts, STATIONS) {
+                Err(ContentError::Invalid(why)) => {
+                    assert!(why.contains("cycle"), "{why}");
+                    for key in named {
+                        assert!(why.contains(key), "{key}: {why}");
+                    }
+                }
+                other => panic!("expected a refusal, got {other:?}"),
+            }
+        }
+        // A chain that is not a cycle loads.
+        assert!(load(HUB, CONTRACTS, STATIONS).is_ok());
+    }
+
+    /// Each kind of key that names nothing is refused, with the key in the message.
+    #[test]
+    fn each_unknown_key_is_refused_naming_it() {
+        let hub = |from: &str, to: &str| {
+            (
+                HUB.replace(from, to),
+                CONTRACTS.to_string(),
+                STATIONS.to_string(),
+            )
+        };
+        let contracts = |from: &str, to: &str| {
+            (
+                HUB.to_string(),
+                CONTRACTS.replace(from, to),
+                STATIONS.to_string(),
+            )
+        };
+        let stations = |from: &str, to: &str| {
+            (
+                HUB.to_string(),
+                CONTRACTS.to_string(),
+                STATIONS.replace(from, to),
+            )
+        };
+        for (what, (hub, contracts, stations)) in [
+            (
+                "a contract's giver",
+                contracts(
+                    "giver: \"watch\", name: \"Thin",
+                    "giver: \"ghost\", name: \"Thin",
+                ),
+            ),
+            (
+                "a station's keeper",
+                stations("keeper: \"smith\"", "keeper: \"ghost\""),
+            ),
+            (
+                "a recipe's station",
+                stations("station: \"bench\"", "station: \"ghost\""),
+            ),
+            (
+                "the trader's stock",
+                hub("item: \"bread\"", "item: \"ghost\""),
+            ),
+            (
+                "a station level's item",
+                stations("(\"cloth\", 10)", "(\"ghost\", 10)"),
+            ),
+            (
+                "a recipe's product",
+                stations("makes: (\"pouch\", 1)", "makes: (\"ghost\", 1)"),
+            ),
+            (
+                "a recipe's material",
+                stations("needs: [(\"cloth\", 6)]", "needs: [(\"ghost\", 6)]"),
+            ),
+            (
+                "a Bring objective",
+                contracts("Bring(item: \"tome\"", "Bring(item: \"ghost\""),
+            ),
+            (
+                "an unlocked station",
+                contracts("unlocks: [\"bench\"]", "unlocks: [\"ghost\"]"),
+            ),
+            (
+                "a Companion gift",
+                stations("Companion(\"hound\")", "Companion(\"ghost\")"),
+            ),
+            (
+                "an NPC's Station role",
+                hub("Station(\"bench\")", "Station(\"ghost\")"),
+            ),
+        ] {
+            match load(&hub, &contracts, &stations) {
+                Err(ContentError::Invalid(why)) => {
+                    assert!(why.contains("\"ghost\""), "{what}: {why}");
+                }
+                other => panic!("{what}: expected a refusal, got {other:?}"),
             }
         }
     }
