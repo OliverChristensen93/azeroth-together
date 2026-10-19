@@ -2256,6 +2256,18 @@ mod tests {
                 refused_naming(load_loot(EXIT_MAP, RULES, &lantern(&light), LOOT), "light");
             }
         }
+        // A lantern's own visibility factor is 1 or more, and a number.
+        assert!(load_loot(
+            EXIT_MAP,
+            RULES,
+            &lantern("(range: 10.0, intensity: 1.0, seen: Some(1.0))"),
+            LOOT
+        )
+        .is_ok());
+        for bad in ["0.5", "NaN", "inf"] {
+            let light = format!("(range: 10.0, intensity: 1.0, seen: Some({bad}))");
+            refused_naming(load_loot(EXIT_MAP, RULES, &lantern(&light), LOOT), "seen");
+        }
         for bad in ["inf", "NaN", "-1.0"] {
             let loot = LOOT.replace("search: 2.0", &format!("search: {bad}"));
             refused_naming(load_loot(EXIT_MAP, RULES, ITEMS, &loot), "search");

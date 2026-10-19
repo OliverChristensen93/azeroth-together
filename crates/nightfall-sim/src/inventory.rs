@@ -204,13 +204,27 @@ impl Inventory {
         self.stacks().is_empty()
     }
 
+    /// The stacks a hero can use in the raid: everything but the companion's slot, which only
+    /// carries (its keys open nothing, its lantern lights nothing, its things are weighed and
+    /// counted for nothing). Anything in the raid that asks what a hero has goes through this, so
+    /// the companion's slot is left out in one place.
+    pub fn usable(&self) -> impl Iterator<Item = (Place, Stack)> {
+        self.stacks().into_iter().filter(|(p, _)| *p != Place::Pet)
+    }
+
+    /// How many of `item` the hero can use ([`Inventory::usable`]).
+    pub fn usable_count_of(&self, item: usize) -> u32 {
+        self.usable()
+            .filter(|(_, s)| usize::from(s.item) == item)
+            .map(|(_, s)| u32::from(s.count))
+            .sum()
+    }
+
     /// Everything carried, weighed (spec §8.2). Items the content does not know weigh nothing,
-    /// and the sum is always finite.
+    /// and the sum is always finite. The companion carries its own stack, so it weighs nothing.
     pub fn weight(&self, content: &Content) -> f32 {
         finite(
-            self.stacks()
-                .iter()
-                .filter(|(p, _)| *p != Place::Pet)
+            self.usable()
                 .filter_map(|(_, s)| {
                     let def = content.items.get(usize::from(s.item))?;
                     def.weight
@@ -1205,6 +1219,26 @@ mod tests {
         assert_eq!(death.lost, vec![Stack::found(GEM, 1)]);
         assert!(death.spill.is_empty());
         assert_eq!(inv.count_of(KNIFE) + inv.count_of(BREAD), 3);
+    }
+
+    #[test]
+    fn the_companions_slot_only_carries() {
+        let c = content("");
+        let mut inv = Inventory::new(&c);
+        let slots = inv.pack_size(&c);
+        // A bag there widens nothing, and gear there is worth nothing.
+        inv.pet = Some(Some(Stack::new(POUCH, 1)));
+        assert_eq!(inv.pack_size(&c), slots);
+        inv.pet = Some(Some(Stack::new(TITAN_HELM, 1)));
+        let bonus = inv.bonus(&c);
+        assert_eq!((bonus.health, bonus.damage), (0.0, 0.0));
+        // Nothing in it is usable in the raid or weighed, though it is counted as carried.
+        assert_eq!(inv.usable().count(), 0);
+        assert_eq!(inv.usable_count_of(TITAN_HELM), 0);
+        assert_eq!(inv.count_of(TITAN_HELM), 1);
+        assert_eq!(inv.weight(&c), 0.0);
+        inv.add(Stack::new(BREAD, 1), &c);
+        assert_eq!(inv.usable().count(), 1);
     }
 
     #[test]

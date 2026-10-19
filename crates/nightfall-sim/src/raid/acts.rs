@@ -120,7 +120,7 @@ impl World {
             let has = self
                 .raid
                 .pack(player)
-                .is_some_and(|i| i.count_of(usize::from(key)) > 0);
+                .is_some_and(|i| i.usable_count_of(usize::from(key)) > 0);
             if !has {
                 return;
             }
@@ -259,12 +259,11 @@ impl World {
             .collect();
         let drinks = super::drinks_in(inv, &content);
         let bonus = inv.bonus(&content);
-        let lantern_kept = self.heroes[hi].carry.lantern.is_some_and(|l| {
-            // The companion carries things, not light: a lantern in its slot goes out.
-            inv.stacks()
-                .iter()
-                .any(|(at, s)| *at != Place::Pet && s.item == l && s.count > 0)
-        });
+        // The companion carries things, not light: a lantern in its slot goes out.
+        let lantern_kept = self.heroes[hi]
+            .carry
+            .lantern
+            .is_some_and(|l| inv.usable_count_of(usize::from(l)) > 0);
         let h = &mut self.heroes[hi];
         h.carry.load = load;
         h.carry.worn = worn;

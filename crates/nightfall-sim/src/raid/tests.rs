@@ -2972,3 +2972,33 @@ fn a_kill_far_from_its_hero_counts_for_them_and_a_mirror_counts_nothing() {
     assert_eq!(out[0].kills, 1);
     assert_eq!(out[0].slain, vec![(0, V2::new(5.0, 55.0))]);
 }
+
+#[test]
+fn a_key_in_the_companions_slot_opens_nothing_until_it_is_in_the_backpack() {
+    let mut w = world();
+    join(&mut w, 0, "rogue", 30.0, 28.0);
+    let locked = w.raid.containers[2].id;
+    let mut lo = loadout(&w, &[], &[], &[]);
+    lo.pet = Some(0);
+    lo.inventory.pet = Some(Some(Stack::new(item(&w, "key"), 1)));
+    w.give_loadout(0, &lo);
+    act(&mut w, 0, 1, Act::Open(locked));
+    w.step();
+    assert!(w.loot_view(Some(0)).open.is_none(), "the companion's key");
+    act(
+        &mut w,
+        0,
+        2,
+        Act::Move {
+            from: Place::Pet,
+            to: Place::Pack(0),
+        },
+    );
+    w.step();
+    act(&mut w, 0, 3, Act::Open(locked));
+    w.step();
+    assert!(
+        w.loot_view(Some(0)).open.is_some(),
+        "the same key in the backpack"
+    );
+}

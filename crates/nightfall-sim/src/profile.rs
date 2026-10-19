@@ -36,7 +36,9 @@ pub struct SavedInventory {
     pub bags: Vec<(u8, SavedStack)>,
     pub pack: Vec<SavedStack>,
     pub safe: Vec<(u8, SavedStack)>,
-    /// The companion's one stack (spec §8.2), when it holds one.
+    /// The companion's one stack (spec §8.2), when it holds one. Left out of the file when it
+    /// does not, so a profile without a companion is the same bytes as before there was one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pet: Option<SavedStack>,
 }
 
@@ -347,7 +349,7 @@ impl Profile {
     /// the stack goes along in the kit's companion slot.
     fn next_kit(&self, class: usize, content: &Content) -> (Inventory, Vec<SavedStack>) {
         let (inv, aside) = inventory_of(&self.loadout, content);
-        if inv.stacks().iter().all(|(at, _)| *at == Place::Pet) {
+        if inv.usable().next().is_none() {
             let mut kit = free_kit(class, content);
             kit.pet = inv.pet;
             (kit, aside)
@@ -803,6 +805,30 @@ mod tests {
             text,
             "the text is stable"
         );
+    }
+
+    #[test]
+    fn the_companions_stack_is_in_the_file_only_when_there_is_one() {
+        let plain = Profile::default().to_ron();
+        assert!(!plain.contains("pet"), "{plain}");
+        let p = Profile {
+            loadout: SavedInventory {
+                pet: Some(stack("gem", 3)),
+                ..SavedInventory::default()
+            },
+            in_raid: Some(SavedRaid {
+                map: "test".into(),
+                brought: SavedInventory {
+                    pet: Some(stack("bread", 1)),
+                    ..SavedInventory::default()
+                },
+                kept: None,
+            }),
+            ..Profile::default()
+        };
+        let text = p.to_ron();
+        assert!(text.contains("pet"), "{text}");
+        assert_eq!(Profile::from_ron(&text).unwrap(), p);
     }
 
     #[test]

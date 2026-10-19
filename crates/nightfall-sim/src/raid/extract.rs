@@ -26,10 +26,10 @@ pub(crate) fn exit_at(content: &Content, roll: &RaidRoll, now: f32, pos: V2) -> 
 
 impl World {
     /// Every enemy killed since the last tally counts for the hero who killed it, with its kind
-    /// and where it fell. Last in a step,
-    /// so every kill of the step counts; [`World::drain_events`] tallies what is left and starts
-    /// the count over, so no kill is counted twice or missed, whoever drains the events. The count
-    /// is the world's own, never a player's event stream (which is cut to their reach).
+    /// and where it fell. Last in a step, so every kill of the step counts;
+    /// [`World::drain_events`] tallies what is left and starts the count over, so no kill is
+    /// counted twice or missed, whoever drains the events. The count is the world's own, never a
+    /// player's event stream (which is cut to their reach).
     pub(crate) fn tally_kills(&mut self) {
         if self.raid.mirror.is_some() {
             return;

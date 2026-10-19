@@ -547,15 +547,14 @@ impl World {
     pub fn give_loadout(&mut self, player: PlayerId, loadout: &Loadout) -> Vec<Stack> {
         let content = self.content().clone();
         let mut inv = loadout.inventory.clone();
-        // The companion's slot comes with the companion; without one, a stack there is left out.
-        let mut extra = Vec::new();
+        let mut left = inv.sanitize(&content);
+        // The companion's slot comes with the companion; without one, a stack there is left out
+        // (made right first, so what is handed back is a sound stack).
         match loadout.pet {
             Some(_) if inv.pet.is_none() => inv.pet = Some(None),
-            None => extra.extend(inv.pet.take().flatten()),
+            None => left.extend(inv.pet.take().flatten()),
             Some(_) => {}
         }
-        let mut left = inv.sanitize(&content);
-        left.extend(extra);
         *self.raid.pack_mut(player, &content) = inv;
         let remains = loadout
             .recovery

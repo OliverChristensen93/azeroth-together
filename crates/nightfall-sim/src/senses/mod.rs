@@ -208,6 +208,8 @@ fn derive(hs: &HeroSense, hero: &mut Hero, content: &Content) {
         .iter()
         .any(|l| l.at.distance(hero.pos) <= l.radius);
     let light = Light {
+        // Always false here: a lit lantern's factor (its own, else the rules') is applied below,
+        // so `visibility` is not asked to apply the rules' factor on top of it.
         lantern: false,
         lit_area,
         flash: hs.flash > 0.0,
