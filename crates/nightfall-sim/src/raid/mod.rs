@@ -575,7 +575,7 @@ impl World {
         }
         self.raid = Raid::new(&content, roll);
         // A new raid's clock starts over.
-        self.night = crate::night::Night::default();
+        self.night = crate::night::Night::new(&content, &self.raid.roll);
         // The raid's own enemies, on the map if there is one (the rolled monsters are out now).
         self.place_enemies();
         Ok(())

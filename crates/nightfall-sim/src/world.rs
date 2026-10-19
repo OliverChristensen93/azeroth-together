@@ -167,6 +167,7 @@ impl World {
     /// An empty run on the content's map.
     pub fn new(content: Arc<Content>) -> Self {
         let raid = Raid::new(&content, RaidRoll::standard(&content, 0));
+        let night = Night::new(&content, &raid.roll);
         Self {
             content,
             heroes: Vec::new(),
@@ -182,7 +183,7 @@ impl World {
             events: Vec::new(),
             combat: Combat::default(),
             raid,
-            night: Night::default(),
+            night,
         }
     }
 

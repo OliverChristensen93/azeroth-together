@@ -1318,3 +1318,61 @@ fn stitches_comes_with_the_last_stage_walks_his_road_and_telegraphs() {
     }
     assert!(shown, "his smash showed on the ground before it landed");
 }
+
+const RAVENS: &str = "ravens: (odds: 1.0, back_after: 5.0, clear: 20.0)";
+
+#[test]
+fn ravens_take_off_when_a_hero_runs_near_and_are_heard() {
+    // A brute 20 yards from the flock at (30, 30), facing away: it cannot see the hero.
+    let mut w = world(RAVENS, &sentry("brute", 50.0, 30.0, 0.0));
+    assert_eq!(w.night_view().flocks, vec![crate::FLOCK_SETTLED; 2]);
+    join(&mut w, 0, 24.0, 30.0);
+    for _ in 0..secs(1.0) {
+        put(&mut w, 0, 24.0, 30.0, TOWARD, Gait::Walk);
+        w.step();
+    }
+    assert_eq!(w.night_view().flocks[0], crate::FLOCK_SETTLED, "a walker passes them");
+    w.drain_events();
+    put(&mut w, 0, 24.0, 30.0, TOWARD, Gait::Run);
+    w.step();
+    assert_eq!(w.night_view().flocks[0], crate::FLOCK_FLOWN);
+    let flew = events_of(&mut w, |e| match e {
+        Event::RavensFlew { flock } => Some(*flock),
+        _ => None,
+    });
+    assert_eq!(flew, vec![0]);
+    assert!(w.senses.minds[0].level(0) > 0.0, "the brute heard them go");
+    assert_eq!(w.night_view().flocks[1], crate::FLOCK_SETTLED, "the far flock stays");
+}
+
+#[test]
+fn ravens_take_off_near_a_fight_and_come_back_later() {
+    let mut w = world(RAVENS, &sentry("brute", 40.0, 40.0, 180.0));
+    join(&mut w, 0, 38.0, 40.0);
+    w.alert(w.enemies[0].id, 0);
+    steps(&mut w, 3);
+    assert_eq!(w.night_view().flocks[0], crate::FLOCK_FLOWN, "a fight 14 yards off");
+    put(&mut w, 0, 100.0, 100.0, TOWARD, Gait::Still);
+    steps(&mut w, secs(4.0));
+    assert_eq!(w.night_view().flocks[0], crate::FLOCK_FLOWN, "not back yet");
+    steps(&mut w, secs(2.0));
+    assert_eq!(w.night_view().flocks[0], crate::FLOCK_SETTLED, "back once nobody is near");
+}
+
+#[test]
+fn each_raid_rolls_which_flocks_are_out() {
+    let c = content("ravens: (odds: 0.5)", "", "");
+    let flocks = |seed: u64| {
+        crate::night::Night::new(&c, &RaidRoll::standard(&c, seed))
+            .flocks
+            .iter()
+            .map(|f| f.state)
+            .collect::<Vec<u8>>()
+    };
+    assert_eq!(flocks(5), flocks(5));
+    let all: Vec<Vec<u8>> = (0..40).map(flocks).collect();
+    assert!(all.iter().any(|f| f.contains(&crate::FLOCK_GONE)));
+    assert!(all.iter().any(|f| f.contains(&crate::FLOCK_SETTLED)));
+    // The seed is hashed: seeds one bit apart do not roll alike.
+    assert!((0..40u64).any(|s| flocks(s) != flocks(s ^ 1)));
+}

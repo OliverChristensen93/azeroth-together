@@ -7,6 +7,7 @@ mod arrivals;
 mod clock;
 mod hunt;
 mod places;
+mod ravens;
 mod roll;
 mod scent;
 mod signature;
@@ -92,6 +93,8 @@ pub(crate) struct Night {
     pub(crate) hunt_in: f32,
     /// Each hero's scent trail.
     pub(crate) trails: Vec<scent::Trail>,
+    /// Each of the map's flocks in this raid.
+    pub(crate) flocks: Vec<ravens::Flock>,
 }
 
 impl World {
@@ -104,7 +107,7 @@ impl World {
         NightView {
             stage: self.night.stage as u8,
             weather: self.raid.roll.weather,
-            flocks: Vec::new(),
+            flocks: self.night.flocks.iter().map(|f| f.state).collect(),
         }
     }
 
@@ -142,6 +145,7 @@ impl World {
         self.step_clock();
         self.step_arrivals();
         self.lay_scent();
+        self.step_ravens();
     }
 
     /// The night's hold on the enemies, after the fight's own ([`World::hold_enemies`]) and before
