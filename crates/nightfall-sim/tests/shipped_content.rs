@@ -213,11 +213,14 @@ fn every_shipped_kill_contract_has_its_enemies_inside_its_circle() {
                 .iter()
                 .filter(|s| &s.kind == kind)
                 .filter(|s| {
-                    let (x, y) = match &s.behaviour {
+                    let place = match &s.behaviour {
                         nightfall_sim::Behaviour::Sentry { at, .. }
-                        | nightfall_sim::Behaviour::Sleeper { at, .. } => *at,
-                        nightfall_sim::Behaviour::Wander { center, .. } => *center,
-                        nightfall_sim::Behaviour::Patrol { route, .. } => route[0],
+                        | nightfall_sim::Behaviour::Sleeper { at, .. } => Some(*at),
+                        nightfall_sim::Behaviour::Wander { center, .. } => Some(*center),
+                        nightfall_sim::Behaviour::Patrol { route, .. } => route.first().copied(),
+                    };
+                    let Some((x, y)) = place else {
+                        return false;
                     };
                     V2::new(x, y).distance(*at) <= *radius
                 })

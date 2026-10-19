@@ -57,6 +57,7 @@ static CONTENT: OnceLock<Arc<Content>> = OnceLock::new();
 /// The content files' text (classes, map, rules, enemies, spawns, abilities, items, loot, then the
 /// inn's hub, contracts and stations), for the hash a client and host compare.
 static CONTENT_TEXTS: OnceLock<[String; 11]> = OnceLock::new();
+/// The inn's content, set once by [`prepare`] and read through [`inn`].
 static INN: OnceLock<Arc<InnContent>> = OnceLock::new();
 
 pub(super) fn content_texts() -> &'static [String; 11] {

@@ -54,6 +54,7 @@ pub struct Body {
     pub class_id: u8,
 }
 
+/// An NPC standing in the inn.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NpcDef {
     pub key: String,
@@ -106,6 +107,7 @@ pub enum Objective {
     Extract { exit: Option<usize> },
 }
 
+/// What finishing a contract pays.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Reward {
     pub gold: u32,
@@ -131,7 +133,7 @@ pub struct ContractDef {
 /// What a station's level gives.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Gift {
-    /// More stash room.
+    /// More stash room: this many slots added to `rules.run.stash_slots`.
     StashSlots(u16),
     /// A recipe, by index.
     Recipe(usize),
@@ -141,6 +143,7 @@ pub enum Gift {
     Companion(usize),
 }
 
+/// One level of a station: what it costs and what it gives.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StationLevel {
     pub gold: u32,
@@ -347,6 +350,16 @@ fn parse<T: for<'de> Deserialize<'de>>(file: &'static str, text: &str) -> Result
     })
 }
 
+/// A count is 1 or more.
+fn count_ok(file: &str, key: &str, n: u32) -> Result<(), ContentError> {
+    if n == 0 {
+        return Err(ContentError::Invalid(format!(
+            "{file}: \"{key}\": a count is 1 or more"
+        )));
+    }
+    Ok(())
+}
+
 /// The first key listed twice, if any.
 fn twice<'a>(keys: impl Iterator<Item = &'a str>) -> Option<&'a str> {
     let mut seen: Vec<&str> = Vec::new();
@@ -360,6 +373,9 @@ fn twice<'a>(keys: impl Iterator<Item = &'a str>) -> Option<&'a str> {
 }
 
 impl InnContent {
+    /// Reads the inn's three files and checks them against the raid's content: every key they
+    /// name exists, the hub's people stand inside its bounds, numbers are finite and in range,
+    /// stations are kept by who the keeper's role says, and no contract waits on a cycle.
     pub fn from_ron(src: InnSources, content: &Content) -> Result<Self, ContentError> {
         let hub: HubFile = parse("hub.ron", src.hub)?;
         let contracts: Vec<ContractFile> = parse("contracts.ron", src.contracts)?;
@@ -478,7 +494,7 @@ impl InnContent {
             if s.price == 0 {
                 return Err(bad(format!("hub.ron: \"{}\" sells for at least 1", s.item)));
             }
-            stock.push((item("hub.ron", &s.item)?, s.price));
+            stock.push((item("hub.ron: the trader", &s.item)?, s.price));
         }
         if !(0.0..=1.0).contains(&hub.trader.sells_for) {
             return Err(bad(
@@ -509,7 +525,7 @@ impl InnContent {
 
         let mut station_defs = Vec::new();
         for (si, s) in stations.stations.iter().enumerate() {
-            let keeper = npc_of("stations.ron", &s.keeper)?;
+            let keeper = npc_of(&format!("stations.ron: \"{}\"", s.key), &s.keeper)?;
             let keeps = npcs[keeper].role == NpcRole::Station(si)
                 || (npcs[keeper].role == NpcRole::Banker && s.open);
             if !keeps {
@@ -525,13 +541,8 @@ impl InnContent {
             for l in &s.levels {
                 let mut items = Vec::new();
                 for (k, n) in &l.items {
-                    if *n == 0 {
-                        return Err(bad(format!(
-                            "stations.ron: \"{}\": a count is 1 or more",
-                            s.key
-                        )));
-                    }
-                    items.push((item("stations.ron", k)?, *n));
+                    count_ok("stations.ron", &s.key, *n)?;
+                    items.push((item(&format!("stations.ron: \"{}\"", s.key), k)?, *n));
                 }
                 let mut gives = Vec::new();
                 for g in &l.gives {
@@ -569,18 +580,16 @@ impl InnContent {
             }
             let mut needs = Vec::new();
             for (k, n) in &r.needs {
-                if *n == 0 {
-                    return Err(bad(format!(
-                        "stations.ron: recipe \"{}\": a count is 1 or more",
-                        r.key
-                    )));
-                }
-                needs.push((item("stations.ron", k)?, *n));
+                count_ok("stations.ron: recipe", &r.key, *n)?;
+                needs.push((item(&format!("stations.ron: recipe \"{}\"", r.key), k)?, *n));
             }
             recipes.push(RecipeDef {
                 key: r.key.clone(),
                 station,
-                makes: (item("stations.ron", &r.makes.0)?, r.makes.1),
+                makes: (
+                    item(&format!("stations.ron: recipe \"{}\"", r.key), &r.makes.0)?,
+                    r.makes.1,
+                ),
                 needs,
                 gold: r.gold,
             });
@@ -601,7 +610,7 @@ impl InnContent {
 
         let mut contract_defs = Vec::new();
         for c in &contracts {
-            let giver = npc_of("contracts.ron", &c.giver)?;
+            let giver = npc_of(&format!("contracts.ron: \"{}\"", c.key), &c.giver)?;
             if npcs[giver].role != NpcRole::Contracts {
                 return Err(bad(format!(
                     "contracts.ron: \"{}\"'s giver \"{}\" gives no contracts",
@@ -626,23 +635,22 @@ impl InnContent {
                                 )));
                             }
                         }
-                        if *count == 0 {
-                            return Err(bad(format!("contracts.ron: \"{}\": a count is 1 or more", c.key)));
-                        }
+                        count_ok("contracts.ron", &c.key, *count)?;
                         Objective::Kill {
                             enemy: content.enemy(enemy).ok_or_else(|| {
-                                bad(format!("contracts.ron: no enemy \"{enemy}\" in enemies.ron"))
+                                bad(format!(
+                                    "contracts.ron: \"{}\": no enemy \"{enemy}\" in enemies.ron",
+                                    c.key
+                                ))
                             })?,
                             count: *count,
                             near: near.map(|(x, y, r)| (V2::new(x, y), r)),
                         }
                     }
                     ObjectiveFile::Bring { item: k, count } => {
-                        if *count == 0 {
-                            return Err(bad(format!("contracts.ron: \"{}\": a count is 1 or more", c.key)));
-                        }
+                        count_ok("contracts.ron", &c.key, *count)?;
                         Objective::Bring {
-                            item: item("contracts.ron", k)?,
+                            item: item(&format!("contracts.ron: \"{}\"", c.key), k)?,
                             count: *count,
                         }
                     }
@@ -651,7 +659,12 @@ impl InnContent {
                             None => None,
                             Some(k) => Some(
                                 content.map.exits.iter().position(|e| e.key == *k).ok_or_else(
-                                    || bad(format!("contracts.ron: no exit \"{k}\" in map.ron")),
+                                    || {
+                                        bad(format!(
+                                            "contracts.ron: \"{}\": no exit \"{k}\" in map.ron",
+                                            c.key
+                                        ))
+                                    },
                                 )?,
                             ),
                         },
@@ -660,10 +673,12 @@ impl InnContent {
             }
             let mut unlocks = Vec::new();
             for k in &c.reward.unlocks {
-                unlocks.push(
-                    station_of(k)
-                        .ok_or_else(|| bad(format!("contracts.ron: no station \"{k}\"")))?,
-                );
+                unlocks.push(station_of(k).ok_or_else(|| {
+                    bad(format!(
+                        "contracts.ron: \"{}\": no station \"{k}\" to unlock",
+                        c.key
+                    ))
+                })?);
             }
             contract_defs.push(ContractDef {
                 key: c.key.clone(),
@@ -727,10 +742,14 @@ impl InnContent {
             )));
         }
 
+        if hub.contracts_at_once == 0 {
+            return Err(bad("hub.ron: contracts_at_once is 1 or more".into()));
+        }
+
         Ok(Self {
             place,
             npcs,
-            contracts_at_once: hub.contracts_at_once.max(1),
+            contracts_at_once: hub.contracts_at_once,
             trader: TraderDef {
                 stock,
                 sells_for: hub.trader.sells_for,
@@ -742,22 +761,27 @@ impl InnContent {
         })
     }
 
+    /// An NPC's index by key.
     pub fn npc(&self, key: &str) -> Option<usize> {
         self.npcs.iter().position(|n| n.key == key)
     }
 
+    /// A contract's index by key.
     pub fn contract(&self, key: &str) -> Option<usize> {
         self.contracts.iter().position(|c| c.key == key)
     }
 
+    /// A station's index by key.
     pub fn station(&self, key: &str) -> Option<usize> {
         self.stations.iter().position(|s| s.key == key)
     }
 
+    /// A recipe's index by key.
     pub fn recipe(&self, key: &str) -> Option<usize> {
         self.recipes.iter().position(|r| r.key == key)
     }
 
+    /// A companion's index by key.
     pub fn companion(&self, key: &str) -> Option<usize> {
         self.companions.iter().position(|c| c.key == key)
     }
@@ -1144,6 +1168,52 @@ mod tests {
                     assert!(why.contains("\"ghost\""), "{what}: {why}");
                 }
                 other => panic!("{what}: expected a refusal, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn at_least_one_contract_at_once_and_errors_name_their_contract() {
+        match load(
+            &HUB.replace("contracts_at_once: 2", "contracts_at_once: 0"),
+            CONTRACTS,
+            STATIONS,
+        ) {
+            Err(ContentError::Invalid(why)) => assert!(why.contains("contracts_at_once"), "{why}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        // A contract's own key is in what is wrong with it: its giver, enemy, exit, item and station.
+        for (contracts, owner) in [
+            (
+                CONTRACTS.replace(
+                    "giver: \"watch\", name: \"Thin",
+                    "giver: \"ghost\", name: \"Thin",
+                ),
+                "pack",
+            ),
+            (
+                CONTRACTS.replace("enemy: \"worgen\"", "enemy: \"ghost\""),
+                "pack",
+            ),
+            (
+                CONTRACTS.replace("exit: Some(\"road\")", "exit: Some(\"ghost\")"),
+                "tome",
+            ),
+            (
+                CONTRACTS.replace("Bring(item: \"tome\"", "Bring(item: \"ghost\""),
+                "tome",
+            ),
+            (
+                CONTRACTS.replace("unlocks: [\"bench\"]", "unlocks: [\"ghost\"]"),
+                "pack",
+            ),
+        ] {
+            match load(HUB, &contracts, STATIONS) {
+                Err(ContentError::Invalid(why)) => {
+                    assert!(why.contains("\"ghost\""), "{why}");
+                    assert!(why.contains(&format!("\"{owner}\"")), "{owner}: {why}");
+                }
+                other => panic!("expected a refusal, got {other:?}"),
             }
         }
     }
