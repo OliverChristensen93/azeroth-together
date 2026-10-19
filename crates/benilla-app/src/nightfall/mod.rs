@@ -501,6 +501,17 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
+                // What the hero holds, noted in the profile: a raid that ends without an outcome
+                // is settled by it, not by what was brought (`Profile::note_carry`). Before the
+                // outcome settles, so a hero who just got out is not noted again.
+                stash::note_carry
+                    .after(run::step_sim)
+                    .before(stash::settle_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
                 (
                     conceal::enemies,
                     auras::heroes,

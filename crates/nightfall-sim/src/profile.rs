@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Bumped whenever the file changes shape; [`Profile::from_ron`] brings older files up to it.
-pub const PROFILE_VERSION: u32 = 1;
+pub const PROFILE_VERSION: u32 = 2;
 
 /// Some of one item, by key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +75,13 @@ pub struct SavedRaid {
     /// The map's key, so settling it touches only that map's body.
     pub map: String,
     pub brought: SavedInventory,
+    /// What a death would leave of the hero's carry, as last seen (see [`Profile::note_carry`]).
+    /// The host treats a hero who leaves by what they hold now, not by what they brought: a
+    /// stack dropped in the raid and taken by a friend is the friend's, so a raid that ends with
+    /// no outcome settles from this, never from `brought`. `None` until the first snapshot (and
+    /// in a version 1 file), when `brought` is still all there is.
+    #[serde(default)]
+    pub kept: Option<SavedInventory>,
 }
 
 /// A player's things between raids.
@@ -307,7 +314,8 @@ impl Profile {
             });
         }
         let mut p: Profile = ron::from_str(text).map_err(|e| ProfileError::Parse(e.to_string()))?;
-        // Version 0 (no version written) has this shape: nothing to move.
+        // Versions 0 and 1 have this shape but for `SavedRaid::kept`, which reads as `None`: the
+        // raid under way then settles from what it brought, as it always did.
         p.version = PROFILE_VERSION;
         Ok(p)
     }
@@ -377,9 +385,38 @@ impl Profile {
         self.in_raid = Some(SavedRaid {
             map: content.map.key.clone(),
             brought: saved_inventory(&inv, content),
+            kept: None,
         });
         self.loadout = SavedInventory::default();
         self.raids += 1;
+    }
+
+    /// Notes what a death would leave of the hero's `carry` as it is now, for a raid that ends
+    /// with no outcome. The host settles a hero who leaves by what they hold when they go, not by
+    /// what they brought: drop a safe-slot stack, a friend takes it and gets out, and the stack
+    /// is the friend's. Settling the leaver from `brought` would give it back, and one item would
+    /// be two. Whether the note changed, so a caller saves only then. With no raid under way
+    /// there is nothing to note.
+    ///
+    /// A client's `carry` is its mirror of the host's, a couple of snapshots and a round trip
+    /// late: the window between a change on the host and this note is that long, and no longer.
+    pub fn note_carry(&mut self, carry: &Inventory, content: &Content) -> bool {
+        let Some(raid) = self.in_raid.as_mut() else {
+            return false;
+        };
+        let mut inv = carry.clone();
+        let death = inv.split_for_death(content.rules.run.death_loss, content);
+        inv.clear_found();
+        let mut kept = saved_inventory(&inv, content);
+        // What the death would leave but the backpack cannot hold any more: `inventory_of` sends
+        // it aside to the stash, as the host's `spill` is filed at home.
+        kept.pack
+            .extend(death.spill.iter().filter_map(|s| saved(s, content)));
+        if raid.kept.as_ref() == Some(&kept) {
+            return false;
+        }
+        raid.kept = Some(kept);
+        true
     }
 
     /// The raid ended for this player: what came out is the loadout again, what they recovered
@@ -418,24 +455,36 @@ impl Profile {
     /// death with no body, so `death_loss` takes what it would and the raid's map has no body
     /// left. Whether there was a raid to settle.
     ///
-    /// What the death rules would let them keep but the content leaves no room for, or no longer
-    /// knows, goes to the stash instead of through the rules: that can only happen after a
-    /// content change.
+    /// It settles from what the hero last held ([`Profile::note_carry`]), already put through the
+    /// death rules; before the first note, from what they brought, put through them here. What
+    /// the content leaves no room for, or no longer knows, goes to the stash.
     pub fn settle_missing(&mut self, content: &Content) -> bool {
         let Some(raid) = self.in_raid.take() else {
             return false;
         };
-        let (mut inv, aside) = inventory_of(&raid.brought, content);
-        for s in aside {
-            self.stash_add(s, content);
-        }
-        let death = inv.split_for_death(content.rules.run.death_loss, content);
-        for s in &death.spill {
-            if let Some(st) = saved(s, content) {
-                self.stash_add(st, content);
+        let inv = match &raid.kept {
+            Some(kept) => {
+                let (inv, aside) = inventory_of(kept, content);
+                for s in aside {
+                    self.stash_add(s, content);
+                }
+                inv
             }
-        }
-        inv.clear_found();
+            None => {
+                let (mut inv, aside) = inventory_of(&raid.brought, content);
+                for s in aside {
+                    self.stash_add(s, content);
+                }
+                let death = inv.split_for_death(content.rules.run.death_loss, content);
+                for s in &death.spill {
+                    if let Some(st) = saved(s, content) {
+                        self.stash_add(st, content);
+                    }
+                }
+                inv.clear_found();
+                inv
+            }
+        };
         self.loadout = saved_inventory(&inv, content);
         self.use_up_body(&raid.map, content);
         true
@@ -675,6 +724,7 @@ mod tests {
                 pack,
                 ..SavedInventory::default()
             },
+            kept: None,
         })
     }
 
@@ -1003,6 +1053,7 @@ mod tests {
             in_raid: Some(SavedRaid {
                 map: "elsewhere".into(),
                 brought: SavedInventory::default(),
+                kept: None,
             }),
             ..Profile::default()
         };
@@ -1355,6 +1406,7 @@ mod tests {
                     safe: vec![(0, stack("bread", 1))],
                     ..SavedInventory::default()
                 },
+                kept: None,
             }),
             ..Profile::default()
         };
@@ -1445,5 +1497,126 @@ mod tests {
             // The four brought stacks do not fit three slots: one went to the stash at once.
             assert_eq!(aside_to_stash.len(), 1);
         }
+    }
+    #[test]
+    fn a_raid_settles_from_what_the_hero_last_held_not_what_they_brought() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.loadout.safe.push((0, stack("gem", 3)));
+        p.loadout.pack.push(stack("bread", 2));
+        p.begin_raid(0, &c);
+        // The safe slot is empty now: the stack was dropped and a friend took it.
+        let mut carry = inventory_of(&p.in_raid.as_ref().unwrap().brought, &c).0;
+        carry.take(Place::Safe(0)).unwrap();
+        assert!(p.note_carry(&carry, &c), "the first note is a change");
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.loadout.safe, Vec::new(), "the gems are not given back");
+        assert_eq!(p.loadout.pack, vec![]);
+        assert_eq!(p.stash, Vec::new());
+        assert_eq!(tally(&p).get("gem"), None, "one item is not two");
+    }
+
+    #[test]
+    fn a_found_thing_in_a_safe_slot_is_kept() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.begin_raid(0, &c);
+        let mut carry = Inventory::new(&c);
+        carry.safe[0] = Some(Stack::found(GEM, 2));
+        carry.add(Stack::found(BREAD, 3), &c);
+        assert!(p.note_carry(&carry, &c));
+        assert!(p.settle_missing(&c));
+        assert_eq!(
+            p.loadout.safe,
+            vec![(0, stack("gem", 2))],
+            "a safe slot keeps what it holds, found or brought, and it is not found any more"
+        );
+        assert!(p.loadout.pack.is_empty(), "the found bread is lost");
+    }
+
+    #[test]
+    fn what_a_death_would_spill_is_stashed_from_the_note() {
+        // found_only: a found pouch widens the backpack, the brought helm is in its fifth slot.
+        let c = content("death_loss: found_only");
+        let mut p = Profile::default();
+        p.begin_raid(0, &c);
+        let mut carry = Inventory::new(&c);
+        carry.bags[0] = Some(Stack::found(POUCH, 1));
+        carry.pack = vec![
+            Some(Stack::new(BREAD, 1)),
+            Some(Stack::new(BREAD, 1)),
+            Some(Stack::new(BREAD, 1)),
+            Some(Stack::found(GEM, 1)),
+            Some(Stack::new(HELM, 1)),
+        ];
+        assert!(p.note_carry(&carry, &c));
+        assert!(p.settle_missing(&c));
+        assert_eq!(
+            tally(&p).get("helm"),
+            Some(&1),
+            "the brought helm stays theirs"
+        );
+        assert_eq!(tally(&p).get("gem"), None, "the found gem is lost");
+        assert_eq!(tally(&p).get("pouch"), None, "and so is the found pouch");
+    }
+
+    #[test]
+    fn a_note_is_a_change_only_when_the_kept_part_differs() {
+        let c = content("");
+        let mut p = Profile::default();
+        let carry = Inventory::new(&c);
+        assert!(
+            !p.note_carry(&carry, &c),
+            "no raid under way: nothing to note"
+        );
+        assert_eq!(p.in_raid, None);
+        p.begin_raid(0, &c);
+        assert!(p.note_carry(&carry, &c));
+        assert!(!p.note_carry(&carry, &c), "the same again changes nothing");
+        let mut more = carry.clone();
+        more.safe[0] = Some(Stack::new(GEM, 1));
+        assert!(p.note_carry(&more, &c));
+        assert!(!p.note_carry(&more, &c));
+        // Under found_only a find is lost by a death, so it is no part of what is kept.
+        let c = content("death_loss: found_only");
+        let mut p = Profile::default();
+        p.begin_raid(0, &c);
+        assert!(p.note_carry(&carry, &c));
+        let mut found = carry.clone();
+        found.add(Stack::found(GEM, 1), &c);
+        assert!(
+            !p.note_carry(&found, &c),
+            "a find a death would take is not part of what is kept"
+        );
+    }
+
+    #[test]
+    fn a_version_1_file_reads_with_nothing_kept_and_is_saved_as_version_2() {
+        let old = Profile::from_ron(
+            r#"(version: 1, in_raid: Some((map: "test", brought: (pack: [(item: "gem", count: 2)]))))"#,
+        )
+        .unwrap();
+        assert_eq!(old.version, 2);
+        assert_eq!(PROFILE_VERSION, 2);
+        let raid = old.in_raid.as_ref().unwrap();
+        assert_eq!(raid.kept, None);
+        assert!(old.to_ron().contains("version: 2"));
+        // With nothing noted it settles from what it brought, as a version 1 raid always did.
+        let c = content("");
+        let mut p = old;
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.loadout.pack, Vec::new());
+        // The kept part survives the file.
+        let mut p = Profile::default();
+        p.begin_raid(0, &c);
+        let mut carry = Inventory::new(&c);
+        carry.safe[0] = Some(Stack::new(BREAD, 1));
+        assert!(p.note_carry(&carry, &c));
+        assert_eq!(Profile::from_ron(&p.to_ron()).unwrap(), p);
+        // A version 3 file is still refused.
+        assert_eq!(
+            Profile::from_ron("(version: 3)"),
+            Err(ProfileError::Newer { found: 3, known: 2 })
+        );
     }
 }

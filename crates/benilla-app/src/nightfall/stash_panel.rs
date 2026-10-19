@@ -686,6 +686,7 @@ mod tests {
         stash.profile.in_raid = Some(nightfall_sim::SavedRaid {
             map: "m".into(),
             brought: Default::default(),
+            kept: None,
         });
         act(&mut stash, StashSlot::Stash(0), true, None, &content);
         assert_eq!(stash.note.as_deref(), Some(StashError::InRaid.message()));

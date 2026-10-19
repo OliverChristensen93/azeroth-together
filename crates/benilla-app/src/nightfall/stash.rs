@@ -479,6 +479,32 @@ fn settle_mine(sim: &mut Sim, stash: &mut Stash, content: &Content) {
     }
 }
 
+/// What we hold now, noted in the profile every frame of a run (see [`Profile::note_carry`]): the
+/// host treats a hero who leaves by their pack at that moment, and a raid that ends without an
+/// outcome is settled by the same. The host's pack is its world's; a client's is its mirror of
+/// the host's, so a change on the host reaches the note about two snapshots and a round trip
+/// late. A hero who drops a stack and is cut off inside that window settles with the stack
+/// still in hand, which is the one gap left; closing it would take the host's word.
+pub(super) fn note_carry(sim: Res<Sim>, mut stash: ResMut<Stash>) {
+    note_pack(&mut stash, sim.world.pack(sim.me), &content());
+}
+
+/// [`note_carry`] with its pack and content in hand. The stash is written only when the kept part
+/// changed, which is rare: a drop, a take, a find in a safe slot, a bag. Whether it was written.
+fn note_pack(
+    stash: &mut Stash,
+    pack: Option<&nightfall_sim::Inventory>,
+    content: &Content,
+) -> bool {
+    let Some(pack) = pack else {
+        return false;
+    };
+    if !stash.profile.note_carry(pack, content) {
+        return false;
+    }
+    stash.save()
+}
+
 /// Back from a raid without its outcome (we left it, the host went): counted missing.
 pub(super) fn after_raid(mut stash: ResMut<Stash>) {
     count_missing(&mut stash, &content());
@@ -1147,5 +1173,38 @@ mod tests {
         assert!(warnings.iter().any(|w| w.contains("no_such_item")));
         let (none, quiet) = parse_give("", &content);
         assert!(none.is_empty() && quiet.is_empty());
+    }
+    #[test]
+    fn what_the_hero_holds_is_saved_only_when_the_kept_part_changes() {
+        let content = shipped();
+        let path = dir("note-carry").join("stash.ron");
+        let mut stash = Stash::open_at(Some(path.clone()), &content);
+        stash.profile.loadout = SavedInventory {
+            safe: vec![(0, stack("ruby_shard", 2))],
+            ..SavedInventory::default()
+        };
+        let brought = told(&stash, 0, &content);
+        assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+        let hold = brought.inventory.clone();
+        // Not in a raid yet (no pack): nothing to note, nothing written.
+        assert!(!note_pack(&mut stash, None, &content));
+        // The first note differs from "nothing noted": written, and the file says so.
+        let before = std::fs::read_to_string(&path).unwrap();
+        assert!(note_pack(&mut stash, Some(&hold), &content));
+        assert!(std::fs::read_to_string(&path).unwrap() != before);
+        // The same pack again, frame after frame: not written.
+        std::fs::remove_file(&path).unwrap();
+        for _ in 0..3 {
+            assert!(!note_pack(&mut stash, Some(&hold), &content));
+        }
+        assert!(!path.exists(), "no change, no write");
+        // The safe slot emptied: that is a change, written, and a leaver is settled by it.
+        let mut emptied = hold.clone();
+        emptied.take(nightfall_sim::Place::Safe(0));
+        assert!(note_pack(&mut stash, Some(&emptied), &content));
+        let on_disk = Profile::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let mut gone = on_disk.clone();
+        assert!(gone.settle_missing(&content));
+        assert!(gone.loadout.safe.is_empty() && gone.stash.is_empty());
     }
 }

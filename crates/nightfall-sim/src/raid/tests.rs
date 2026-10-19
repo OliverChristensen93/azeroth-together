@@ -2680,3 +2680,86 @@ fn a_death_not_yet_noticed_is_settled_with_the_loss_taken() {
     assert_eq!(body_of(&w, 0).stacks.iter().flatten().count(), 1);
     assert_eq!(out[0].recovery.as_ref().unwrap().items.len(), 1);
 }
+
+/// How many of `key` the stacks hold.
+fn count_saved(stacks: &[crate::SavedStack], key: &str) -> u32 {
+    stacks
+        .iter()
+        .filter(|s| s.item == key)
+        .map(|s| u32::from(s.count))
+        .sum()
+}
+
+#[test]
+fn a_leaver_who_dropped_a_stack_a_friend_took_is_not_given_it_back() {
+    // The host treats a hero who leaves by what they hold when they go; the leaver's stash must
+    // settle by the same, or the stack the friend took out would be in two places.
+    for mode in ["everything", "found_only"] {
+        let mut w = world_with(&format!("death_loss: {mode}"), "");
+        join(&mut w, 0, "rogue", 5.0, 5.0);
+        join(&mut w, 1, "rogue", 6.0, 5.0);
+        let c = w.content().clone();
+        let mut p0 = crate::Profile::default();
+        p0.loadout.safe.push((
+            0,
+            crate::SavedStack {
+                item: "gem".into(),
+                count: 3,
+            },
+        ));
+        p0.loadout.pack.push(crate::SavedStack {
+            item: "bread".into(),
+            count: 2,
+        });
+        p0.begin_raid(0, &c);
+        w.give_loadout(0, &p0.raid_loadout(0, &c));
+        w.give_loadout(1, &loadout(&w, &[], &[], &[]));
+        // Hero 0 drops the safe-slot gems; hero 1 takes them and gets out.
+        stand(&mut w, 1, 6.0, 5.0);
+        act(&mut w, 0, 1, Act::Drop(Place::Safe(0)));
+        w.step();
+        let pile = w
+            .loot_view(Some(1))
+            .marks
+            .iter()
+            .find(|m| m.holder == Holder::Pile)
+            .unwrap()
+            .id;
+        stand(&mut w, 0, 5.0, 5.0);
+        loot_pile(&mut w, 1, pile, 1);
+        assert_eq!(w.pack(1).unwrap().count_of(item(&w, "gem")), 3, "{mode}");
+        w.extract(1, 0);
+        let out = w.take_outcomes();
+        assert_eq!(out.len(), 1);
+        // Hero 0 is then lost to the session: the client noted their last pack, then the raid
+        // ends for them with no outcome.
+        let last = w.pack(0).unwrap().clone();
+        w.remove_hero(0);
+        assert!(p0.note_carry(&last, &c));
+        assert!(p0.settle_missing(&c));
+        for key in ["gem", "bread"] {
+            let ground: u32 = w
+                .raid
+                .containers
+                .iter()
+                .filter(|k| k.holder == Holder::Pile)
+                .flat_map(|k| k.stacks.iter().flatten())
+                .filter(|s| c.items[usize::from(s.item)].key == key)
+                .map(|s| u32::from(s.count))
+                .sum();
+            let friend = out[0].carried.count_of(item(&w, key)) as u32;
+            let home = count_saved(&p0.stash, key)
+                + count_saved(&p0.loadout.pack, key)
+                + p0.loadout
+                    .safe
+                    .iter()
+                    .filter(|(_, s)| s.item == key)
+                    .map(|(_, s)| u32::from(s.count))
+                    .sum::<u32>();
+            let brought = if key == "gem" { 3 } else { 2 };
+            assert_eq!(home + friend + ground, brought, "{key} under {mode}");
+        }
+        assert_eq!(count_saved(&p0.stash, "gem"), 0, "{mode}");
+        assert!(p0.loadout.safe.is_empty(), "{mode}: the gems are not back");
+    }
+}
