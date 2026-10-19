@@ -1014,7 +1014,7 @@ Expected: PASS (4 tests).
     // The kennel's companions (spec §8.2). measure: a hound's CreatureDisplayInfo id (a Stormwind
     // guard dog); the scale makes it small.
     companions: [
-        (key: "watch_hound", name: "Watch Hound", display: 1052, scale: 0.6),
+        (key: "watch_wolf", name: "Watch Wolf", display: 903, scale: 0.6),  // as built (Task 1 rulings)
     ],
 )
 
@@ -1103,7 +1103,7 @@ Expected: PASS (4 tests).
             (gold: 80, items: [("linen_cloth", 6)], gives: [Intel]),
         ]),
         (key: "kennel", name: "The kennel", keeper: "kennelmaster", levels: [
-            (gold: 100, items: [("worgen_pelt", 2)], gives: [Companion("watch_hound")]),
+            (gold: 100, items: [("worgen_pelt", 2)], gives: [Companion("watch_wolf")]),
         ]),
     ],
     recipes: [
@@ -3727,7 +3727,7 @@ Expected: builds.
 WOW_DATA=D:/Games/azeroth-together/WoW/Data BENILLA_HOME=target/nf-home WOW_BG=1 WOW_WIN=1280x720 NIGHTFALL=1 WOW_LIVE_SHOT=target/inn-npcs.png WOW_LIVE_SHOT_AT=25 ./target/release/azeroth-together.exe > target/inn-npcs.log 2>&1 &
 ```
 
-Expected, once `target/inn-npcs.png` exists (then `kill` the PID): around our hero the inn's people stand, dressed (a dwarf trader, Madame Eva in a mage's robe, Ebonlock in a paladin's mail…), their names over them. A right-click needs a hand: list "right-click Farley (the stash opens), Brog (his goods; buy bread)" in the hand-off for the user to try.
+Expected, once `target/inn-npcs.png` exists (then `kill` the PID): around our hero the inn's people stand, dressed (a dwarf trader, Madame Eva in a mage's robe, Ebonlock in a paladin's mail…), their names over them. A right-click needs a hand: list "right-click Pike (the stash opens), Coppermug (his goods; buy bread)" in the hand-off for the user to try.
 
 - [ ] **Step 6: Commit**
 
@@ -4720,12 +4720,12 @@ mkdir -p target/nf-home-pet/nightfall
 cat > target/nf-home-pet/nightfall/stash.ron <<'EOF'
 (version: 2, class: "rogue", gold: 0, stash: [],
  loadout: (pet: Some((item: "ruby_shard", count: 3))),
- inn: (companion: Some("watch_hound"), stations: [("kennel", 1)]))
+ inn: (companion: Some("watch_wolf"), stations: [("kennel", 1)]))
 EOF
 WOW_DATA=D:/Games/azeroth-together/WoW/Data BENILLA_HOME=target/nf-home-pet WOW_BG=1 WOW_WIN=1280x720 NIGHTFALL=1 NIGHTFALL_AUTOPLAY=1 NIGHTFALL_BACKPACK=1 WOW_LIVE_SHOT=target/pet.png WOW_LIVE_SHOT_AT=30 WOW_LIVE_SHOT_COUNT=3 WOW_LIVE_SHOT_EVERY=4 ./target/release/azeroth-together.exe > target/pet.log 2>&1 &
 ```
 
-Expected, once `target/pet-002.png` exists (then `kill` the PID): in the raid a small hound walks behind and beside the hero as the autoplay circles; the backpack panel has "Your companion carries: never lost" with the ruby shards in its slot. (The loadout is not empty, so the free kit does not come: the hero is unarmed but for the hound; that is right for this stash.)
+Expected, once `target/pet-002.png` exists (then `kill` the PID): in the raid a small wolf walks behind and beside the hero as the autoplay circles; the backpack panel has "Your companion carries: never lost" with the ruby shards in its slot. (The loadout is not empty, so the free kit does not come: the hero is unarmed but for the wolf; that is right for this stash.)
 
 - [ ] **Step 5: Commit**
 
