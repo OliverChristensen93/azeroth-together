@@ -12,6 +12,7 @@ mod anim_events;
 mod cinematic;
 mod combat;
 mod creature;
+mod cue;
 mod death_thud;
 mod emitter_pool;
 mod emote;
@@ -50,6 +51,7 @@ mod web_backend;
 #[cfg(target_arch = "wasm32")]
 mod web_load;
 mod zone;
+pub(crate) use cue::{Cue, SoundCue};
 pub(crate) use emote::EmoteSounds;
 /// First-play kit decodes so far, for the probe's tail line.
 pub(crate) fn kit_decodes() -> u32 {
@@ -426,6 +428,7 @@ impl Plugin for SoundPlugin {
         spell::plugin(app);
         missile::plugin(app);
         creature::plugin(app);
+        cue::plugin(app);
         combat::plugin(app);
         footsteps::plugin(app);
         death_thud::plugin(app);

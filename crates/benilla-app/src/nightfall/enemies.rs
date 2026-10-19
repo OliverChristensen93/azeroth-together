@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
+use benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
 use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::{KEEP_EXTRA, V2, V3};
@@ -97,6 +98,16 @@ pub(super) fn gait_flags(speed: f32, walk: f32) -> u32 {
     }
 }
 
+/// The extra fields of an enemy that rides `mount` (a `CreatureDisplayInfo` id; 0 for none): the
+/// mount display field, the only signal that a unit is mounted.
+pub(super) fn mount_fields(mount: u32) -> Vec<(u16, u32)> {
+    if mount == 0 {
+        Vec::new()
+    } else {
+        vec![(FIELD_UNIT_MOUNTDISPLAYID, mount)]
+    }
+}
+
 /// The creature entry of an enemy kind: its index plus one, so the name cache files each apart.
 fn entry_of(kind: usize) -> u32 {
     kind as u32 + 1
@@ -179,6 +190,7 @@ pub(super) fn sync(
             );
         }
         let kind = UnitKind::Creature { entry };
+        let extra = mount_fields(def.mount);
         let serial = enemy_guid_serial(entry, enemy.id);
         let e = units::spawn_unit(
             &mut commands,
@@ -192,7 +204,7 @@ pub(super) fn sync(
                 bytes0: 1 << 8,
                 weapons: &[],
                 sheath: 0,
-                extra: &[],
+                extra: &extra,
             },
             units::wow_to_bevy([at.x, at.y, at.z]),
             units::yaw_of(enemy.facing),
@@ -290,6 +302,12 @@ pub(super) fn trace_seen(sim: Res<Sim>, real: Res<Time<Real>>, mut last: Local<f
 mod tests {
     use super::super::view::HERO_SERIAL_BASE;
     use super::*;
+
+    #[test]
+    fn a_rider_sits_on_its_mount_and_a_walker_on_nothing() {
+        assert_eq!(mount_fields(2404), vec![(133, 2404)]);
+        assert!(mount_fields(0).is_empty());
+    }
 
     #[test]
     fn an_enemys_guid_names_it_to_the_units_that_look_it_up() {

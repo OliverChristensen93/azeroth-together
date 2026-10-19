@@ -16,6 +16,10 @@ use crate::target::{Concealed, Selection};
 const VIS_GHOST: u8 = 0x1;
 const VIS_CREEP: u8 = 0x2;
 const VIS_UNTRACKABLE: u8 = 0x4;
+/// `UNIT_FIELD_BYTES_1` of a creature that stands, is no ghost and cannot be tracked: for a unit
+/// that is untrackable from the moment it is spawned (the ravens), as [`enemies`] makes a hidden
+/// enemy.
+pub(super) const UNTRACKABLE_BYTES_1: u32 = (VIS_UNTRACKABLE as u32) << 24;
 /// `UNIT_FIELD_BYTES_1` byte 0's stand states: standing, sleeping.
 const STAND: u8 = 0;
 const STAND_SLEEP: u8 = 3;

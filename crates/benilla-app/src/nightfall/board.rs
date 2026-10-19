@@ -1,8 +1,9 @@
 //! The inn's door and the raid board (spec §8.4): stepping into the door's ring opens it. It shows
 //! which map (Duskwood), the contracts taken and what is done of them, the map table's intel when
-//! it is built (which exits open when, from the raid the host plans), the party with who is
-//! ready, and Ready. Alone, Ready starts the raid; hosting, the raid starts once everyone present
-//! is ready; joined, the host starts it. Stepping out of the ring takes Ready back.
+//! it is built (which exits open when, the weather and the signature monsters out, from the raid
+//! the host plans), the party with who is ready, and Ready. Alone, Ready starts the raid; hosting,
+//! the raid starts once everyone present is ready; joined, the host starts it. Stepping out of the
+//! ring takes Ready back.
 //!
 //! Test switch: `NIGHTFALL_BOARD=1` holds the board open wherever the hero stands, for a shot.
 //!
@@ -98,6 +99,10 @@ fn board_lines(
     if let (true, Some(roll)) = (profile.inn.intel, planned) {
         lines.push(("The map table:".into(), Tone::Plain));
         for l in exit_list(&intel_marks(roll), content).lines() {
+            lines.push((format!("  {l}"), Tone::Dim));
+        }
+        // The night's roll (spec §8.5's map table): the weather and who is abroad.
+        for l in super::night::intel_lines(roll, content) {
             lines.push((format!("  {l}"), Tone::Dim));
         }
     }
@@ -444,6 +449,9 @@ mod tests {
         let seen = board_lines(&content, &inn, &p, Some(&roll), &party, Some("Wait".into()));
         assert!(seen.iter().any(|(l, _)| l.starts_with("The map table")));
         assert!(seen.iter().any(|(l, _)| l.ends_with(": open")));
+        assert!(seen.iter().any(|(l, _)| l.starts_with("  Weather: ")));
+        assert!(seen.iter().any(|(l, _)| l.starts_with("  Abroad: ")));
+        assert!(!plain.iter().any(|(l, _)| l.contains("Weather:") || l.contains("Abroad:")));
         assert_eq!(seen.last().unwrap().0, "Wait");
         // No contract taken says so.
         let none = board_lines(&content, &inn, &Profile::default(), None, &party, None);

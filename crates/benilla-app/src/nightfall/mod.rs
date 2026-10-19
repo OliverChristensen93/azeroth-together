@@ -31,7 +31,9 @@ mod inn_panels;
 mod loot_view;
 mod marks;
 mod menu;
+mod night;
 mod npcs;
+mod ravens;
 mod run;
 mod senses_hud;
 mod session;
@@ -341,6 +343,8 @@ impl Plugin for NightfallPlugin {
             .init_resource::<loot_view::AutoLoot>()
             .init_resource::<backpack::BackpackOpen>()
             .init_resource::<board::BoardOpen>()
+            .init_resource::<night::SentWeather>()
+            .init_resource::<ravens::Flocks>()
             .add_plugins(grade::plugin)
             .add_systems(
                 Startup,
@@ -541,6 +545,27 @@ impl Plugin for NightfallPlugin {
             // Every hero's companion, drawn after the heroes are put where they are.
             .init_resource::<companion::PetViews>()
             .add_systems(OnExit(Phase::Playing), companion::forget)
+            // The night on screen and in the ears: its fog, weather, cues and lines, Stitches'
+            // tread, the ravens. After this frame's events are taken and every enemy is drawn.
+            .add_systems(
+                Update,
+                (
+                    night::fog,
+                    night::weather,
+                    night::cues,
+                    night::step_sounds,
+                    ravens::sync,
+                    ravens::cries,
+                )
+                    .after(run::take_events)
+                    .after(enemies::place)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                OnExit(Phase::Playing),
+                (night::clear_weather, ravens::forget),
+            )
             .add_systems(
                 Update,
                 companion::sync

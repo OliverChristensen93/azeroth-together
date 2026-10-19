@@ -91,11 +91,16 @@ impl Sim {
         let mut world = World::new(content.clone());
         let entry = entry_of(Some(&roll));
         // The raid first, so the heroes start at its entry.
-        // The standard roll fits the map the content shipped (the content test checks it); a
+        // A rolled raid fits the map the content shipped (the content tests check it); a
         // content folder that breaks that is told, not crashed on.
         if let Err(e) = world.begin_raid(roll) {
             debug_assert!(false, "nightfall: the raid could not begin: {e}");
             warn!("nightfall: the raid could not begin: {e}");
+        }
+        // A test hook: the clock starts late, to see the night's last stages (the host's alone;
+        // a joined client's night is what the host sends).
+        if let Some(t) = super::night::clock_at() {
+            world.elapsed = t;
         }
         for p in roster {
             // A class the content lacks (a mismatched client) is left out rather than crash.
@@ -482,7 +487,7 @@ pub(super) fn start_run(
     // The raid the host (or we, alone) planned in the inn; one planned now if none was.
     let roll = net
         .planned_raid()
-        .unwrap_or_else(|| RaidRoll::standard(&content(), raid_seed(&time)));
+        .unwrap_or_else(|| super::night::plan_from_env(&content(), raid_seed(&time)));
     net.solo_raid = None;
     info!("nightfall: a raid begins ({} heroes)", roster.len());
     commands.insert_resource(Sim::hosted(&roster, roll));

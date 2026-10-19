@@ -161,8 +161,8 @@ fn moved(last: Option<HeroPose>, now: HeroPose) -> bool {
     })
 }
 
-/// The next raid: the map's standard roll from a fresh seed (`NIGHTFALL_SEED` for a test run).
-/// Sub-project 6 rolls its exits, weather and monsters here.
+/// The next raid as the night rolls it from a fresh seed (`NIGHTFALL_SEED` for a test run;
+/// `NIGHTFALL_WEATHER` and `NIGHTFALL_MONSTERS` for its weather and monsters).
 pub(super) fn plan_raid() -> RaidRoll {
     let seed = std::env::var("NIGHTFALL_SEED")
         .ok()
@@ -172,7 +172,7 @@ pub(super) fn plan_raid() -> RaidRoll {
                 .duration_since(web_time::UNIX_EPOCH)
                 .map_or(1, |d| d.as_nanos() as u64)
         });
-    RaidRoll::standard(&content(), seed)
+    super::night::plan_from_env(&content(), seed)
 }
 
 #[derive(Resource, Default)]
