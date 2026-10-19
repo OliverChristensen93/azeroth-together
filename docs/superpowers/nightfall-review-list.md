@@ -117,3 +117,7 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 34. **One game per stash folder.** A second Nightfall started on the same save folder opens the stash
     read-only (no raids), so two windows can't overwrite each other. If the folder can't hold the lock file,
     the stash runs unlocked (rare). For co-op tests on one PC each window needs its own `BENILLA_HOME`.
+35. **The companion is a wolf** (display 903, a timber wolf). The plan had an ogre's display by mistake.
+    Any creature display works; it's one number in `content/nightfall/hub.ron`.
+36. **A "Ready" button in the lobby** (item 33) is being built with the inn: friends can change their
+    loadout until they press Ready, and the host starts only when everyone is Ready.
