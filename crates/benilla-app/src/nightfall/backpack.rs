@@ -38,7 +38,11 @@ pub(super) fn smart_act(
         // every other (worn, a bag, the backpack) to a safe slot.
         return match at {
             Place::Safe(_) => inv.first_empty(false).and_then(to),
-            _ => inv.first_empty(true).and_then(to),
+            // A free safe slot, else the companion's empty slot.
+            _ => inv
+                .first_empty(true)
+                .or_else(|| (inv.pet == Some(None)).then_some(Place::Pet))
+                .and_then(to),
         };
     }
     if container_open && !matches!(at, Place::Bag(_)) {
@@ -463,6 +467,12 @@ pub(super) fn rebuild(
                         );
                     }
                 });
+                if inv.pet.is_some() {
+                    b.spawn(text(font, "Your companion carries: never lost", 11.0, GREY));
+                    b.spawn(row(1)).with_children(|g| {
+                        widgets::slot(g, font, PackSlot::Mine(Place::Pet), item_at(Place::Pet));
+                    });
+                }
                 b.spawn(text(
                     font,
                     "B: close  ·  Shift-click: safe slot  ·  Ctrl-click: drop",
@@ -625,6 +635,40 @@ mod tests {
             smart_act(&inv, Place::Pack(0), false, false, false, &c),
             None
         );
+        // With the safe slot full, Shift sends a stack to the companion's empty slot.
+        let mut pet = Inventory::new(&c);
+        pet.pet = Some(None);
+        pet.add(Stack::new(1, 1), &c);
+        pet.add(Stack::new(0, 1), &c);
+        pet.move_to(Place::Pack(0), Place::Safe(0), &c).unwrap();
+        assert_eq!(
+            smart_act(&pet, Place::Pack(1), false, true, false, &c),
+            Some(Act::Move {
+                from: Place::Pack(1),
+                to: Place::Pet
+            })
+        );
+        // Not to a companion's full slot, and not to a slot there is none of.
+        let mut full = pet.clone();
+        full.pet = Some(Some(Stack::new(1, 1)));
+        assert_eq!(
+            smart_act(&full, Place::Pack(1), false, true, false, &c),
+            None
+        );
+        let mut none = pet.clone();
+        none.pet = None;
+        assert_eq!(
+            smart_act(&none, Place::Pack(1), false, true, false, &c),
+            None
+        );
+        // A click on the companion's stack takes it to the backpack.
+        assert!(matches!(
+            smart_act(&full, Place::Pet, false, false, false, &c),
+            Some(Act::Move {
+                from: Place::Pet,
+                ..
+            })
+        ));
     }
 
     #[test]

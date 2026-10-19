@@ -210,7 +210,7 @@ pub(super) fn rebuild(
     let font = &font.0;
     let content = content();
     let p = &stash.profile;
-    let (inv, _) = inventory_of(&p.loadout, &content);
+    let inv = loadout_view(p, &content);
     let item_of = |s: Option<Stack>| s.map(|s| (&content.items[usize::from(s.item)], s.count));
     let grid = |cols: usize| Node {
         flex_wrap: FlexWrap::Wrap,
@@ -312,6 +312,18 @@ pub(super) fn rebuild(
                     );
                 }
             });
+            if inv.pet.is_some() {
+                col.spawn(text(font, "Your companion carries: never lost", 11.0, GREY));
+                col.spawn(grid(1)).with_children(|g| {
+                    let at = Place::Pet;
+                    widgets::slot(
+                        g,
+                        font,
+                        StashSlot::Loadout(at),
+                        item_of(inv.get(at).copied()),
+                    );
+                });
+            }
             let r = &content.rules.run;
             // An empty sum is negative zero, which would print as "-0.0".
             let weight = match inv.weight(&content) {
@@ -354,13 +366,33 @@ pub(super) fn rebuild(
     });
 }
 
+/// The loadout as the panel shows and moves it: with the companion's slot when the kennel gave us
+/// a companion this game knows (an empty slot is not saved, so it is offered here). A companion
+/// the content no longer knows gets no slot to move into, though a stack already in it still shows
+/// and can be taken out: it is never hidden, and the raid stashes it if it is left in.
+fn loadout_view(p: &Profile, content: &Content) -> Inventory {
+    let (mut inv, _) = inventory_of(&p.loadout, content);
+    let known = p
+        .inn
+        .companion
+        .as_ref()
+        .is_some_and(|k| super::inn().companion(k).is_some());
+    if known && inv.pet.is_none() {
+        inv.pet = Some(None);
+    }
+    inv
+}
+
 /// Where a Shift-click sends the loadout stack at `at`, as it does in a raid: a safe slot's stack
 /// to the backpack, any other (worn, bag or backpack) to a safe slot. `None` when that side is
 /// full.
 fn shift_target(inv: &Inventory, at: Place) -> Option<Place> {
     match at {
         Place::Safe(_) => inv.first_empty(false),
-        _ => inv.first_empty(true),
+        // Else the companion's empty slot, when there is one.
+        _ => inv
+            .first_empty(true)
+            .or_else(|| (inv.pet == Some(None)).then_some(Place::Pet)),
     }
 }
 
@@ -369,6 +401,7 @@ fn shift_hint(inv: &Inventory, at: Place) -> &'static str {
     match shift_target(inv, at) {
         Some(Place::Safe(_)) => " · shift-click: safe slot",
         Some(Place::Pack(_)) => " · shift-click: backpack",
+        Some(Place::Pet) => " · shift-click: companion",
         _ => "",
     }
 }
@@ -435,7 +468,7 @@ fn act(stash: &mut Stash, slot: StashSlot, shift: bool, lock: Option<Lock>, cont
         let done = match slot {
             StashSlot::Stash(n) => p.take_from_stash(n, content),
             StashSlot::Loadout(at) if shift => {
-                let (inv, _) = inventory_of(&p.loadout, content);
+                let inv = loadout_view(p, content);
                 match shift_target(&inv, at) {
                     Some(to) => p.loadout_move(at, to, content),
                     None => Err(StashError::LoadoutFull),
@@ -509,7 +542,7 @@ pub(super) fn hover(
                 })
         }
         Some(StashSlot::Loadout(at)) => {
-            let (inv, _) = inventory_of(&stash.profile.loadout, &content);
+            let inv = loadout_view(&stash.profile, &content);
             inv.get(at).map(|s| {
                 format!(
                     "{}{}",
@@ -618,6 +651,53 @@ mod tests {
             Some(Place::Pack(_))
         ));
         assert_eq!(shift_hint(&inv, Place::Safe(0)), " · shift-click: backpack");
+    }
+
+    #[test]
+    fn the_companions_slot_shows_for_a_known_companion_and_takes_a_shift_click() {
+        let content = super::super::shipped_content();
+        let _ = super::super::CONTENT.set(content.clone());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let (mut stash, _) = stash_with_things("pet-slot");
+        // No companion: no slot, and a full safe row sends a Shift-click nowhere.
+        assert_eq!(loadout_view(&stash.profile, &content).pet, None);
+        stash.profile.inn.companion = Some("watch_wolf".into());
+        assert_eq!(
+            loadout_view(&stash.profile, &content).pet,
+            Some(None),
+            "an empty slot"
+        );
+        // Fill the safe slots, then a Shift-click on a backpack stack goes to the companion.
+        act(&mut stash, StashSlot::Stash(1), false, None, &content);
+        let inv = loadout_view(&stash.profile, &content);
+        let from = Place::Pack(0);
+        assert!(inv.get(from).is_some());
+        let mut full_safe = inv.clone();
+        while let Some(Place::Safe(i)) = full_safe.first_empty(true) {
+            full_safe.safe[usize::from(i)] = Some(Stack::new(0, 1));
+        }
+        assert_eq!(shift_target(&full_safe, from), Some(Place::Pet));
+        assert_eq!(shift_hint(&full_safe, from), " · shift-click: companion");
+        // A full companion slot is not a target.
+        full_safe.pet = Some(Some(Stack::new(0, 1)));
+        assert_eq!(shift_target(&full_safe, from), None);
+        // The real click moves the stack into the slot and back: kept once.
+        let before = stash.profile.loadout.clone();
+        stash
+            .profile
+            .loadout_move(from, Place::Pet, &content)
+            .unwrap();
+        assert!(loadout_view(&stash.profile, &content)
+            .get(Place::Pet)
+            .is_some());
+        stash
+            .profile
+            .loadout_move(Place::Pet, from, &content)
+            .unwrap();
+        assert_eq!(stash.profile.loadout, before);
+        // A companion this game does not know gets no empty slot to move into.
+        stash.profile.inn.companion = Some("from_a_newer_build".into());
+        assert_eq!(loadout_view(&stash.profile, &content).pet, None);
     }
 
     /// A stash whose folder cannot be written: its parent is a file.

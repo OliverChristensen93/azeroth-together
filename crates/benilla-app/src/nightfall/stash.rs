@@ -327,6 +327,27 @@ pub(super) struct Stash {
     pub note: Option<String>,
 }
 
+/// What we bring into a raid now: the profile's loadout (or the free kit), with our companion
+/// along when the kennel gave us one and the content knows it. A companion the content does not
+/// know brings no pet kind, so its stack is left out of the raid and stashed when it ends (the
+/// profile's settle), never lost.
+pub(super) fn raid_loadout(stash: &Stash, class: usize) -> Loadout {
+    raid_loadout_in(stash, class, &content())
+}
+
+/// [`raid_loadout`] for `content`. The inn's content is read only when a companion is set.
+fn raid_loadout_in(stash: &Stash, class: usize, content: &Content) -> Loadout {
+    let mut lo = stash.profile.raid_loadout(class, content);
+    lo.pet = stash
+        .profile
+        .inn
+        .companion
+        .as_ref()
+        .and_then(|k| super::inn().companion(k))
+        .and_then(|i| u8::try_from(i).ok());
+    lo
+}
+
 impl Stash {
     /// The stash from `benilla-config/nightfall/stash.ron`; a raid that never ended settled as
     /// missing; and `NIGHTFALL_GIVE`'s things added (a test hook). With no state folder (a
@@ -521,7 +542,7 @@ impl Stash {
         if self.writable {
             self.note = None;
         }
-        Ok(self.profile.raid_loadout(class, content) == *told)
+        Ok(raid_loadout_in(self, class, content) == *told)
     }
 }
 
@@ -1080,7 +1101,7 @@ mod tests {
     /// What `class`'s hero would be told to bring now ([`super::session::own_loadout`], which reads
     /// the global content a unit test has not loaded).
     fn told(stash: &Stash, class: usize, content: &Content) -> Loadout {
-        stash.profile.raid_loadout(class, content)
+        raid_loadout_in(stash, class, content)
     }
 
     #[test]
@@ -1142,6 +1163,122 @@ mod tests {
         stash.note = None;
         count_missing(&mut stash, &content);
         assert!(stash.note.is_none(), "the second leave counts nothing");
+    }
+
+    /// Every ruby shard the profile holds: the stash, and the loadout with its companion's slot.
+    fn rubies(p: &Profile, content: &Content) -> u32 {
+        let ruby = content.item("ruby_shard").unwrap();
+        let (inv, aside) = nightfall_sim::inventory_of(&p.loadout, content);
+        let in_stash = p
+            .stash
+            .iter()
+            .chain(&aside)
+            .filter(|s| s.item == "ruby_shard");
+        inv.count_of(ruby) + in_stash.map(|s| u32::from(s.count)).sum::<u32>()
+    }
+
+    /// A raid of one hero who brings `stash`'s loadout, abandoned (missing), and its outcome
+    /// settled into `stash`. Returns the stacks the world left out of the loadout.
+    fn raid_and_abandon(
+        stash: &mut Stash,
+        content: &std::sync::Arc<Content>,
+        inn: &InnContent,
+    ) -> Vec<nightfall_sim::Stack> {
+        let told = raid_loadout_in(stash, 0, content);
+        assert_eq!(
+            stash.begin_raid(0, &told, content),
+            Ok(true),
+            "what leaves the profile is what the raid is told it brings"
+        );
+        let mut world = nightfall_sim::World::new(content.clone());
+        world
+            .begin_raid(nightfall_sim::RaidRoll::standard(content, 1))
+            .unwrap();
+        world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+        let left = world.give_loadout(0, &told);
+        world.abandon();
+        let mut sim = Sim::for_test(world);
+        sim.mine = sim.world.take_outcomes().into_iter().next();
+        assert!(sim.mine.is_some());
+        settle_mine(&mut sim, stash, content, inn);
+        assert!(stash.profile.in_raid.is_none());
+        left
+    }
+
+    #[test]
+    fn a_raid_with_a_companion_begins_with_no_mismatch_and_its_stack_comes_home_once() {
+        let content = shipped();
+        let _ = super::super::CONTENT.set(content.clone());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let inn = super::super::shipped_inn();
+        let mut stash = Stash::open_at(Some(dir("pet-home").join("stash.ron")), &content);
+        stash.profile.inn.companion = Some("watch_wolf".into());
+        stash.profile.loadout = SavedInventory {
+            pack: vec![stack("tough_bread", 2)],
+            pet: Some(stack("ruby_shard", 3)),
+            ..SavedInventory::default()
+        };
+        let told = raid_loadout_in(&stash, 0, &content);
+        assert_eq!(told.pet, Some(0), "the wolf is along");
+        assert_eq!(
+            told.inventory.pet.and_then(|p| p).map(|s| s.count),
+            Some(3),
+            "with its stack"
+        );
+        assert_eq!(rubies(&stash.profile, &content), 3);
+        let left = raid_and_abandon(&mut stash, &content, &inn);
+        assert!(left.is_empty(), "the slot is there: nothing is left out");
+        // A missing raid loses the backpack, but never the companion's stack, and never copies it.
+        assert_eq!(
+            rubies(&stash.profile, &content),
+            3,
+            "never copied, never lost"
+        );
+        assert_eq!(
+            stash.profile.loadout.pet.as_ref().map(|s| s.count),
+            Some(3),
+            "it is back in the companion's slot"
+        );
+        assert!(stash.profile.stash.iter().all(|s| s.item != "ruby_shard"));
+    }
+
+    #[test]
+    fn a_companion_stack_the_raid_has_no_slot_for_is_stashed_once_never_doubled() {
+        let content = shipped();
+        let _ = super::super::CONTENT.set(content.clone());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let inn = super::super::shipped_inn();
+        let mut stash = Stash::open_at(Some(dir("pet-unknown").join("stash.ron")), &content);
+        // A companion this game's content does not know (a newer build's), with a stack in its slot.
+        stash.profile.inn.companion = Some("a_pet_from_a_newer_build".into());
+        stash.profile.loadout = SavedInventory {
+            pet: Some(stack("ruby_shard", 3)),
+            ..SavedInventory::default()
+        };
+        let told = raid_loadout_in(&stash, 0, &content);
+        assert_eq!(
+            told.pet, None,
+            "no kind to draw, so the raid has no slot for it"
+        );
+        assert_eq!(rubies(&stash.profile, &content), 3);
+        let left = raid_and_abandon(&mut stash, &content, &inn);
+        // The host leaves the stack out (and only says so in its log); it files it nowhere.
+        assert_eq!(left.iter().map(|s| u32::from(s.count)).sum::<u32>(), 3);
+        assert_eq!(
+            rubies(&stash.profile, &content),
+            3,
+            "kept once: not lost, not doubled"
+        );
+        assert_eq!(
+            stash
+                .profile
+                .stash
+                .iter()
+                .filter(|s| s.item == "ruby_shard")
+                .count(),
+            1,
+            "and it is in the stash"
+        );
     }
 
     fn extracted_with(carried: nightfall_sim::Inventory) -> HeroOutcome {

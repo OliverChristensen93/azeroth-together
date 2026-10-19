@@ -14,6 +14,7 @@ mod auras;
 mod backpack;
 mod bar;
 mod board;
+mod companion;
 mod conceal;
 mod dodge;
 mod dress;
@@ -525,6 +526,16 @@ impl Plugin for NightfallPlugin {
                     .in_set(benilla_world::schedule::WorldStage::Input)
                     // The controller has moved the hero this frame before its pose is read.
                     .after(crate::player::PlayerControlSet)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            // Every hero's companion, drawn after the heroes are put where they are.
+            .init_resource::<companion::PetViews>()
+            .add_systems(OnExit(Phase::Playing), companion::forget)
+            .add_systems(
+                Update,
+                companion::sync
+                    .after(view::place)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )

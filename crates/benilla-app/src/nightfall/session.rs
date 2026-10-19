@@ -715,7 +715,7 @@ pub(super) fn own_pick(selection: &Selection, loadout: Loadout) -> HeroPick {
 /// the host) and the host's own run, so what a hero is told to bring and what
 /// [`super::stash::Stash::begin_raid`] commits are the same.
 pub(super) fn own_loadout(selection: &Selection, stash: &Stash) -> Loadout {
-    stash.profile.raid_loadout(selection.class, &content())
+    super::stash::raid_loadout(stash, selection.class)
 }
 
 /// The content files' hash, which a client and its host must share.
