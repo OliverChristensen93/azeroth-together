@@ -189,6 +189,7 @@ pub(super) struct Friend<'a> {
     pub player: PlayerId,
     pub hero: &'a HeroPick,
     pub pose: Option<HeroPose>,
+    pub ready: bool,
 }
 
 #[derive(Default)]
@@ -524,6 +525,7 @@ impl Net {
                     player: p.player,
                     hero: &p.hero,
                     pose: p.pose,
+                    ready: p.ready,
                 })
                 .collect(),
             Role::Client(c) => c
@@ -534,6 +536,7 @@ impl Net {
                     player: p.player,
                     hero: &p.hero,
                     pose: c.poses.get(&p.player).copied(),
+                    ready: p.ready,
                 })
                 .collect(),
         }

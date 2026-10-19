@@ -334,6 +334,10 @@ mod set_guard_tests {
             "hides the givers' and keepers' panel whenever another game is up",
         ),
         (
+            "benilla_app::nightfall::board::show",
+            "hides the raid board whenever another game is up",
+        ),
+        (
             "benilla_app::nightfall::gear::load_line",
             "hides the load line whenever no run is up",
         ),
