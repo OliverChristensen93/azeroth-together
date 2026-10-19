@@ -18,7 +18,9 @@ use crate::{
 };
 
 /// Bumped whenever the file changes shape; [`Profile::from_ron`] brings older files up to it.
-pub const PROFILE_VERSION: u32 = 2;
+/// Versions 1 and 2 (sub-project 5a) had no inn: they read with an empty one. A build that knows
+/// only version 2 reads a version 3 file as newer and refuses it, never as damaged.
+pub const PROFILE_VERSION: u32 = 3;
 
 /// Some of one item, by key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +92,38 @@ pub struct SavedRaid {
     pub kept: Option<SavedInventory>,
 }
 
+/// A contract as the player has it (sub-project 5b).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContractState {
+    pub key: String,
+    pub taken: bool,
+    /// One number per objective: kills so far, or 1 once an extract has been made.
+    pub progress: Vec<u32>,
+    /// Times turned in.
+    pub finished: u32,
+}
+
+/// What the player has built up at the inn (spec §8.5): kept forever.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct InnProgress {
+    pub contracts: Vec<ContractState>,
+    /// Stations unlocked, by key, and the levels built (0: unlocked, nothing built yet).
+    pub stations: Vec<(String, u8)>,
+    /// Recipes known, by key.
+    pub recipes: Vec<String>,
+    /// Stash room the stash station added.
+    pub stash_bonus: u16,
+    /// The map table's look at the next raid.
+    pub intel: bool,
+    /// The companion, by key.
+    pub companion: Option<String>,
+    /// The raid (by `Profile::raids`) whose outcome last moved the contracts on: an outcome
+    /// applied twice moves them once.
+    pub applied: u32,
+}
+
 /// A player's things between raids.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -110,6 +144,8 @@ pub struct Profile {
     pub recovery: Vec<SavedRecovery>,
     pub raids: u32,
     pub extracted: u32,
+    /// The inn's progress (sub-project 5b); a version 1 or 2 file has none.
+    pub inn: InnProgress,
 }
 
 impl Default for Profile {
@@ -124,6 +160,7 @@ impl Default for Profile {
             recovery: Vec::new(),
             raids: 0,
             extracted: 0,
+            inn: InnProgress::default(),
         }
     }
 }
@@ -325,8 +362,9 @@ impl Profile {
             });
         }
         let mut p: Profile = ron::from_str(text).map_err(|e| ProfileError::Parse(e.to_string()))?;
-        // Versions 0 and 1 have this shape but for `SavedRaid::kept`, which reads as `None`: the
-        // raid under way then settles from what it brought, as it always did.
+        // Versions 0 to 2 have this shape but for `SavedRaid::kept` (absent before version 2),
+        // which reads as `None`: the raid under way then settles from what it brought, as it
+        // always did; and `inn` (absent before version 3), which reads as an empty inn.
         p.version = PROFILE_VERSION;
         Ok(p)
     }
@@ -349,13 +387,27 @@ impl Profile {
     /// the stack goes along in the kit's companion slot.
     fn next_kit(&self, class: usize, content: &Content) -> (Inventory, Vec<SavedStack>) {
         let (inv, aside) = inventory_of(&self.loadout, content);
-        if inv.usable().next().is_none() {
+        let inv = if inv.usable().next().is_none() {
             let mut kit = free_kit(class, content);
             kit.pet = inv.pet;
-            (kit, aside)
+            kit
         } else {
-            (inv, aside)
+            inv
+        };
+        // A hero with a companion has its slot even when it holds nothing: the free kit and a
+        // loadout alike. `raid_loadout` and `begin_raid` both go through here, so they agree.
+        (self.with_pet(inv), aside)
+    }
+
+    /// `inv` with the companion's slot when the player has a companion. A slot holding nothing
+    /// is no part of the saved form ([`saved_inventory`] writes stacks only), so what a raid
+    /// brings is the same whether or not this was applied; the slot matters to what is moved
+    /// into it and to the raid's inventory.
+    fn with_pet(&self, mut inv: Inventory) -> Inventory {
+        if self.inn.companion.is_some() && inv.pet.is_none() {
+            inv.pet = Some(None);
         }
+        inv
     }
 
     /// What a hero of `class` brings into a raid now: the raid under way's, else the loadout,
@@ -364,7 +416,7 @@ impl Profile {
     /// offered, so no client sends it round and round.
     pub fn raid_loadout(&self, class: usize, content: &Content) -> Loadout {
         let inventory = match &self.in_raid {
-            Some(raid) => inventory_of(&raid.brought, content).0,
+            Some(raid) => self.with_pet(inventory_of(&raid.brought, content).0),
             None => self.next_kit(class, content).0,
         };
         let recovery = self
@@ -424,6 +476,12 @@ impl Profile {
         let death = inv.split_for_death(content.rules.run.death_loss, content);
         inv.clear_found();
         let mut kept = saved_inventory(&inv, content);
+        // A companion's stack the raid has no slot for never rode along (see [`Profile::settle`]):
+        // it is as safe as when it was brought, and so is kept as it was. A slot that is there
+        // and empty means the hero moved the stack out, and what became of it is in `carry`.
+        if carry.pet.is_none() {
+            kept.pet = raid.brought.pet.clone();
+        }
         // What the death would leave but the backpack cannot hold any more: `inventory_of` sends
         // it aside to the stash, as the host's `spill` is filed at home.
         kept.pack
@@ -447,6 +505,15 @@ impl Profile {
             return false;
         };
         self.loadout = saved_inventory(&o.carried, content);
+        // A companion's stack the raid had no slot for (the companion is unknown to the content,
+        // or the loadout was made without one) never rode along: the host handed it back and
+        // `carried` has no slot to hold it, so it goes home to the stash. A slot that is there
+        // and empty is the hero's own doing (they moved the stack out), and is settled as such.
+        if o.carried.pet.is_none() {
+            if let Some(s) = raid.brought.pet.clone() {
+                self.stash_add(s, content);
+            }
+        }
         for s in o.recovered.iter().chain(&o.overflow) {
             if let Some(st) = saved(s, content) {
                 self.stash_add(st, content);
@@ -479,6 +546,8 @@ impl Profile {
             return false;
         };
         let inv = match &raid.kept {
+            // The note already carries a companion's stack the raid had no slot for, as it was
+            // brought ([`Profile::note_carry`]), so it is home with the rest.
             Some(kept) => {
                 let (inv, aside) = inventory_of(kept, content);
                 for s in aside {
@@ -522,9 +591,10 @@ impl Profile {
         }
     }
 
-    /// How many slots the stash has before the panel refuses more moves in.
+    /// How many slots the stash has before the panel refuses more moves in: the rules' own and
+    /// the room the stash station added.
     pub fn stash_capacity(&self, content: &Content) -> usize {
-        usize::from(content.rules.run.stash_slots)
+        usize::from(content.rules.run.stash_slots).saturating_add(usize::from(self.inn.stash_bonus))
     }
 
     /// The stash stack at `index` into the loadout: worn when its slot is free, a bag in a free
@@ -612,7 +682,9 @@ impl Profile {
         if self.in_raid.is_some() {
             return Err(StashError::InRaid);
         }
-        let (mut inv, aside) = inventory_of(&self.loadout, content);
+        let (inv, aside) = inventory_of(&self.loadout, content);
+        // With a companion, its slot is there to be moved into, empty or not.
+        let mut inv = self.with_pet(inv);
         inv.move_to(from, to, content).map_err(|e| match e {
             InvError::BagInUse => StashError::BagInUse,
             InvError::Empty | InvError::NoSuchPlace => StashError::NoSuchSlot,
@@ -1663,16 +1735,16 @@ mod tests {
     }
 
     #[test]
-    fn a_version_1_file_reads_with_nothing_kept_and_is_saved_as_version_2() {
+    fn a_version_1_file_reads_with_nothing_kept_and_is_saved_as_the_current_version() {
         let old = Profile::from_ron(
             r#"(version: 1, in_raid: Some((map: "test", brought: (pack: [(item: "gem", count: 2)]))))"#,
         )
         .unwrap();
-        assert_eq!(old.version, 2);
-        assert_eq!(PROFILE_VERSION, 2);
+        assert_eq!(old.version, PROFILE_VERSION);
+        assert_eq!(PROFILE_VERSION, 3);
         let raid = old.in_raid.as_ref().unwrap();
         assert_eq!(raid.kept, None);
-        assert!(old.to_ron().contains("version: 2"));
+        assert!(old.to_ron().contains("version: 3"));
         // With nothing noted it settles from what it brought, as a version 1 raid always did.
         let c = content("");
         let mut p = old;
@@ -1685,10 +1757,301 @@ mod tests {
         carry.safe[0] = Some(Stack::new(BREAD, 1));
         assert!(p.note_carry(&carry, &c));
         assert_eq!(Profile::from_ron(&p.to_ron()).unwrap(), p);
-        // A version 3 file is still refused.
+        // A version 4 file is refused.
         assert_eq!(
-            Profile::from_ron("(version: 3)"),
-            Err(ProfileError::Newer { found: 3, known: 2 })
+            Profile::from_ron("(version: 4)"),
+            Err(ProfileError::Newer { found: 4, known: 3 })
         );
+    }
+
+    #[test]
+    fn a_version_1_stash_loads_with_an_empty_inn() {
+        let v1 = r#"(version: 1, class: "rogue", gold: 9, stash: [(item: "gem", count: 2)],
+            loadout: (pack: [(item: "bread", count: 1)]), raids: 3, extracted: 2)"#;
+        let p = Profile::from_ron(v1).unwrap();
+        assert_eq!(p.version, PROFILE_VERSION);
+        assert_eq!((p.gold, p.raids, p.extracted), (9, 3, 2));
+        assert_eq!(p.stash, vec![stack("gem", 2)]);
+        assert_eq!(p.loadout.pack, vec![stack("bread", 1)]);
+        assert_eq!(p.inn, InnProgress::default());
+        assert_eq!(Profile::from_ron(&p.to_ron()).unwrap(), p);
+    }
+
+    #[test]
+    fn a_version_2_file_with_a_kept_note_reads_correctly_with_an_empty_inn() {
+        let v2 = r#"(version: 2, gold: 4, in_raid: Some((map: "test",
+            brought: (pack: [(item: "gem", count: 2)], pet: Some((item: "bread", count: 1))),
+            kept: Some((safe: [(0, (item: "gem", count: 1))])))))"#;
+        let p = Profile::from_ron(v2).unwrap();
+        assert_eq!(p.version, PROFILE_VERSION);
+        assert_eq!(p.gold, 4);
+        assert_eq!(p.inn, InnProgress::default());
+        let raid = p.in_raid.as_ref().unwrap();
+        assert_eq!(raid.brought.pack, vec![stack("gem", 2)]);
+        assert_eq!(
+            raid.kept,
+            Some(SavedInventory {
+                safe: vec![(0, stack("gem", 1))],
+                ..SavedInventory::default()
+            })
+        );
+        // The note is what a raid that never ended settles from.
+        let c = content("");
+        let mut p = p;
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.loadout.safe, vec![(0, stack("gem", 1))]);
+        assert!(p.loadout.pack.is_empty());
+        assert_eq!(Profile::from_ron(&p.to_ron()).unwrap(), p);
+    }
+
+    #[test]
+    fn a_version_2_build_reads_a_version_3_file_as_newer() {
+        // What a 5a build does with the file: its `Head` knows only the version, so the inn's
+        // fields it has never heard of do not matter.
+        #[derive(Deserialize)]
+        struct Head {
+            #[serde(default)]
+            version: u32,
+        }
+        let mut p = Profile::default();
+        p.inn.stash_bonus = 5;
+        let text = p.to_ron();
+        let head: Head = ron::from_str(&text).unwrap();
+        assert_eq!(head.version, 3, "{text}");
+        assert!(head.version > 2);
+    }
+
+    #[test]
+    fn inn_progress_and_the_companion_survive_the_file_and_the_text_is_stable() {
+        let p = Profile {
+            gold: 3,
+            loadout: SavedInventory {
+                pet: Some(stack("gem", 3)),
+                ..SavedInventory::default()
+            },
+            in_raid: Some(SavedRaid {
+                map: "test".into(),
+                brought: SavedInventory {
+                    pet: Some(stack("bread", 1)),
+                    ..SavedInventory::default()
+                },
+                kept: Some(SavedInventory {
+                    pet: Some(stack("bread", 1)),
+                    ..SavedInventory::default()
+                }),
+            }),
+            raids: 5,
+            inn: InnProgress {
+                contracts: vec![
+                    ContractState {
+                        key: "bones".into(),
+                        taken: true,
+                        progress: vec![3, 0],
+                        finished: 2,
+                    },
+                    ContractState {
+                        key: "wolves".into(),
+                        taken: false,
+                        progress: Vec::new(),
+                        finished: 0,
+                    },
+                ],
+                stations: vec![("stash".into(), 2), ("forge".into(), 0)],
+                recipes: vec!["bandage".into(), "torch".into()],
+                stash_bonus: 20,
+                intel: true,
+                companion: Some("hound".into()),
+                applied: 4,
+            },
+            ..Profile::default()
+        };
+        let text = p.to_ron();
+        assert_eq!(Profile::from_ron(&text).unwrap(), p);
+        assert_eq!(Profile::from_ron(&text).unwrap().to_ron(), text);
+        // The inn's types refuse a misspelt field, as the rest of the file does.
+        for bad in [
+            "(inn: (stash_bonuss: 1))",
+            r#"(inn: (contracts: [(key: "a", taken: true, progress: [], finished: 0, why: 1)]))"#,
+        ] {
+            assert!(
+                matches!(Profile::from_ron(bad), Err(ProfileError::Parse(_))),
+                "{bad}"
+            );
+        }
+        // Part of an inn is read, the rest as empty.
+        let part = Profile::from_ron("(inn: (stash_bonus: 6))").unwrap();
+        assert_eq!(part.inn.stash_bonus, 6);
+        assert_eq!(part.inn.companion, None);
+    }
+
+    #[test]
+    fn the_companion_comes_with_its_stack() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.loadout.pack.push(stack("bread", 1));
+        let lo = p.raid_loadout(0, &c);
+        assert_eq!(lo.inventory.get(Place::Pet), Some(&Stack::new(GEM, 3)));
+        p.begin_raid(0, &c);
+        assert_eq!(
+            p.in_raid.as_ref().unwrap().brought.pet,
+            Some(stack("gem", 3))
+        );
+        assert!(p.settle_missing(&c));
+        assert_eq!(
+            p.loadout.pet,
+            Some(stack("gem", 3)),
+            "missing, and the companion's stack kept"
+        );
+        // With no companion, an empty loadout is still the free kit, with no slot for one.
+        let mut q = Profile::default();
+        assert_eq!(q.raid_loadout(0, &c).inventory.pet, None);
+        q.inn.companion = Some("hound".into());
+        assert_eq!(q.raid_loadout(0, &c).inventory.pet, Some(None));
+    }
+
+    #[test]
+    fn a_companion_owner_with_an_empty_loadout_gets_the_free_kit_and_the_slot() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        let told = p.raid_loadout(0, &c);
+        assert_eq!(told.inventory.pet, Some(None), "the slot, empty");
+        assert_eq!(told.inventory.count_of(BREAD), 2, "the free kit");
+        // With the stack only in the loadout, the kit comes with it in the slot.
+        p.loadout.pet = Some(stack("gem", 3));
+        let told = p.raid_loadout(0, &c);
+        assert_eq!(told.inventory.get(Place::Pet), Some(&Stack::new(GEM, 3)));
+        assert_eq!(told.inventory.count_of(BREAD), 2);
+        // What begin_raid files is what raid_loadout then tells.
+        p.begin_raid(0, &c);
+        assert_eq!(p.raid_loadout(0, &c).inventory, told.inventory);
+        // The raid under way tells the companion's slot too when its stack is not there.
+        let mut q = Profile::default();
+        q.inn.companion = Some("hound".into());
+        let before = q.raid_loadout(0, &c).inventory;
+        q.begin_raid(0, &c);
+        assert_eq!(q.in_raid.as_ref().unwrap().brought.pet, None);
+        assert_eq!(q.raid_loadout(0, &c).inventory, before);
+    }
+
+    #[test]
+    fn a_stack_can_be_moved_into_the_companions_slot_between_raids() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.loadout.pack.push(stack("gem", 3));
+        assert!(
+            p.loadout_move(Place::Pack(0), Place::Pet, &c).is_err(),
+            "no companion, no slot"
+        );
+        assert_eq!(p.loadout.pack, vec![stack("gem", 3)], "and nothing moved");
+        p.inn.companion = Some("hound".into());
+        assert_eq!(p.loadout_move(Place::Pack(0), Place::Pet, &c), Ok(()));
+        assert_eq!(p.loadout.pet, Some(stack("gem", 3)));
+        assert!(p.loadout.pack.is_empty());
+        assert_eq!(p.loadout_move(Place::Pet, Place::Pack(0), &c), Ok(()));
+        assert_eq!(p.loadout.pack, vec![stack("gem", 3)]);
+        assert_eq!(p.loadout.pet, None);
+    }
+
+    #[test]
+    fn a_companions_stack_the_raid_had_no_slot_for_is_stashed_when_it_ends() {
+        let c = content("");
+        // An outcome with no slot in `carried`: the companion was unknown to the client, or the
+        // loadout was made without the helper. Nothing is lost, and nothing is copied.
+        let mut p = Profile::default();
+        p.inn.companion = Some("ghost".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let carried = Inventory::new(&c);
+        assert_eq!(carried.pet, None);
+        let o = outcome(&c, carried, Vec::new(), Fate::Died);
+        assert!(p.settle(&o, &c));
+        assert_eq!(p.loadout.pet, None);
+        assert_eq!(p.stash, vec![stack("gem", 3)]);
+        // With a slot that came back empty, the hero moved the stack out themselves: what they
+        // did with it is in the rest of `carried`, so it is not also stashed.
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let mut carried = Inventory::new(&c);
+        carried.pet = Some(None);
+        carried.add(Stack::new(GEM, 3), &c);
+        let o = outcome(&c, carried, Vec::new(), Fate::Died);
+        assert!(p.settle(&o, &c));
+        assert!(p.stash.is_empty());
+        assert_eq!(tally(&p).get("gem"), Some(&3));
+        // A slot that came back full goes home in the loadout, as before.
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let mut carried = Inventory::new(&c);
+        carried.pet = Some(Some(Stack::new(GEM, 3)));
+        let o = outcome(&c, carried, Vec::new(), Fate::Died);
+        assert!(p.settle(&o, &c));
+        assert!(p.stash.is_empty());
+        assert_eq!(p.loadout.pet, Some(stack("gem", 3)));
+    }
+
+    #[test]
+    fn a_raid_that_goes_missing_never_loses_or_copies_a_companions_stack() {
+        let c = content("");
+        // The raid never had a slot for it: the note has none either, and the stack is home.
+        let mut p = Profile::default();
+        p.inn.companion = Some("ghost".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let carry = Inventory::new(&c);
+        assert!(p.note_carry(&carry, &c));
+        assert!(!p.note_carry(&carry, &c));
+        assert!(p.settle_missing(&c));
+        assert_eq!(tally(&p).get("gem"), Some(&3), "kept once");
+        // The hero moved it out of a slot they had: the note says where it went, and it is not
+        // also given back from what was brought.
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let mut carry = Inventory::new(&c);
+        carry.pet = Some(None);
+        carry.safe[0] = Some(Stack::new(GEM, 3));
+        assert!(p.note_carry(&carry, &c));
+        assert!(p.settle_missing(&c));
+        assert_eq!(tally(&p).get("gem"), Some(&3), "kept once");
+        assert_eq!(p.loadout.pet, None);
+        // An item the content does not know is never dropped either.
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("lost_relic", 1));
+        p.begin_raid(0, &c);
+        assert!(p.settle_missing(&c));
+        assert_eq!(tally(&p).get("lost_relic"), Some(&1));
+    }
+
+    #[test]
+    fn stash_room_grows_with_the_stash_station() {
+        let c = content("");
+        let mut p = Profile::default();
+        assert_eq!(p.stash_capacity(&c), 2);
+        p.inn.stash_bonus = 20;
+        assert_eq!(p.stash_capacity(&c), 22);
+        p.inn.stash_bonus = u16::MAX;
+        assert_eq!(p.stash_capacity(&c), 2 + usize::from(u16::MAX));
+        // The room is real: it lets in stacks the rules' own two slots would refuse.
+        let mut p = Profile {
+            stash: vec![stack("gem", 10), stack("helm", 1)],
+            ..Profile::default()
+        };
+        p.loadout.pack.push(stack("bread", 1));
+        assert_eq!(
+            p.put_in_stash(Place::Pack(0), &c),
+            Err(StashError::StashFull)
+        );
+        p.inn.stash_bonus = 1;
+        assert_eq!(p.put_in_stash(Place::Pack(0), &c), Ok(()));
+        assert_eq!(p.stash.len(), 3);
     }
 }
