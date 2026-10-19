@@ -65,7 +65,8 @@ impl Who {
 pub struct LobbyPlayer {
     pub player: PlayerId,
     pub hero: HeroPick,
-    /// Where their hero stands in the inn.
+    /// Where their hero stands in the inn. The host's lobby leaves it empty: poses travel in
+    /// [`ServerMsg::InnPoses`], so a loadout is not resent every time someone walks.
     pub pose: Option<HeroPose>,
     /// Ready at the raid board.
     pub ready: bool,
@@ -126,6 +127,10 @@ pub enum ServerMsg {
     RunOver { outcomes: Vec<HeroOutcome> },
     /// The host ended the run and went back to its menu.
     Ended,
+    /// Where each player's hero stands in the inn (the host's included, as player 0), sent on its
+    /// own, often, while they move; the [`ServerMsg::Lobby`] that carries their loadouts goes only
+    /// when something they bring, their ready or the party changes.
+    InnPoses(Vec<(PlayerId, HeroPose)>),
 }
 
 #[cfg(test)]
@@ -270,6 +275,16 @@ mod tests {
         };
         let bytes = postcard::to_stdvec(&msg).unwrap();
         assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), msg);
+        let poses = ServerMsg::InnPoses(vec![(
+            0,
+            HeroPose {
+                pos: V2::new(-9460.0, 20.0),
+                facing: V2::new(1.0, 0.0),
+                z: 57.6,
+            },
+        )]);
+        let bytes = postcard::to_stdvec(&poses).unwrap();
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), poses);
         for up in [
             ClientMsg::Ready(true),
             ClientMsg::InnPose(HeroPose {

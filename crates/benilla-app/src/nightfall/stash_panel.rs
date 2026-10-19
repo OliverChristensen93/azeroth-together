@@ -160,7 +160,7 @@ pub(super) fn show(
     open: Res<StashOpen>,
     mut roots: Query<&mut Visibility, With<StashRoot>>,
 ) {
-    let on = *mode.get() == GameMode::Nightfall && *phase.get() == Phase::Menu && open.0;
+    let on = *mode.get() == GameMode::Nightfall && *phase.get() == Phase::Inn && open.0;
     let want = if on {
         Visibility::Inherited
     } else {

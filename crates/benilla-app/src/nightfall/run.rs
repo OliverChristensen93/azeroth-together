@@ -331,7 +331,7 @@ pub(super) fn autoplay() -> bool {
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_AUTOPLAY").is_some())
 }
 
-fn trace_pos() -> bool {
+pub(super) fn trace_pos() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_POS").is_some())
 }
@@ -779,7 +779,7 @@ pub(super) fn back_to_menu(
     });
     // Alone, the inn plans the next raid; with friends, the host does.
     net.replan_alone();
-    next.set(Phase::Menu);
+    next.set(Phase::Inn);
 }
 
 #[cfg(test)]

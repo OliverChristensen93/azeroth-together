@@ -31,8 +31,8 @@ pub(super) struct UiShown(Option<(u64, super::Phase)>);
 
 /// The Lua that brings `UIParent` in line with `phase` in UI session `session`, or `None` when
 /// `last` says it already is. In a run WoW's interface is up: the player frame, the action bars,
-/// chat and the minimap. At the menu it is hidden: the menu fills the screen, and there is no
-/// hero yet for the player frame or the bars to show.
+/// chat and the minimap; the inn is a place the hero walks, so it shows the same (the player
+/// frame, the chat and the minimap are the hero's there too).
 pub(crate) fn ui_chunk(
     session: u64,
     phase: super::Phase,
@@ -42,7 +42,7 @@ pub(crate) fn ui_chunk(
         return None;
     }
     Some(match phase {
-        super::Phase::Menu => "UIParent:Hide()",
+        super::Phase::Inn => "UIParent:Show()",
         super::Phase::Playing => "UIParent:Show()",
     })
 }
@@ -50,8 +50,7 @@ pub(crate) fn ui_chunk(
 /// The Lua that leaves `UIParent` as a launch starts, shown, when Nightfall goes, after `last`.
 pub(crate) fn exit_chunk(last: Option<(u64, super::Phase)>) -> Option<&'static str> {
     match last {
-        Some((_, super::Phase::Menu)) => Some("UIParent:Show()"),
-        Some((_, super::Phase::Playing)) | None => None,
+        Some((_, super::Phase::Inn | super::Phase::Playing)) | None => None,
     }
 }
 
@@ -100,11 +99,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_run_shows_the_ui_and_the_menu_hides_it_once_each() {
+    fn the_inn_and_a_run_both_show_the_ui_once_each() {
         assert_eq!(ui_chunk(1, Phase::Playing, None), Some("UIParent:Show()"));
         assert_eq!(ui_chunk(1, Phase::Playing, Some((1, Phase::Playing))), None);
-        assert_eq!(ui_chunk(1, Phase::Menu, None), Some("UIParent:Hide()"));
-        assert_eq!(ui_chunk(1, Phase::Menu, Some((1, Phase::Menu))), None);
+        assert_eq!(ui_chunk(1, Phase::Inn, None), Some("UIParent:Show()"));
+        assert_eq!(ui_chunk(1, Phase::Inn, Some((1, Phase::Inn))), None);
         assert_eq!(
             ui_chunk(2, Phase::Playing, Some((1, Phase::Playing))),
             Some("UIParent:Show()")
@@ -112,8 +111,8 @@ mod tests {
     }
 
     #[test]
-    fn leaving_shows_the_ui_only_if_nightfall_hid_it() {
-        assert_eq!(exit_chunk(Some((1, Phase::Menu))), Some("UIParent:Show()"));
+    fn leaving_has_nothing_to_show_since_nightfall_never_hides_the_ui() {
+        assert_eq!(exit_chunk(Some((1, Phase::Inn))), None);
         assert_eq!(exit_chunk(Some((1, Phase::Playing))), None);
         assert_eq!(exit_chunk(None), None);
     }

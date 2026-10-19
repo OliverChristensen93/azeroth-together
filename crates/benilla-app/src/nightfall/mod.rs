@@ -24,6 +24,7 @@ mod fight;
 mod fx;
 mod gear;
 mod grade;
+mod inn;
 mod loot_view;
 mod marks;
 mod menu;
@@ -261,9 +262,9 @@ pub(super) fn shipped_content() -> Arc<Content> {
 /// The screen Nightfall is on.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(super) enum Phase {
-    /// The main menu: pick a class, play alone, host or join.
+    /// Between raids: the inn (spec §8.4), which is also the lobby.
     #[default]
-    Menu,
+    Inn,
     /// A run.
     Playing,
 }
@@ -290,6 +291,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<menu::StartRequest>()
             .init_resource::<session::Net>()
             .init_resource::<session::InnState>()
+            .init_resource::<inn::InnViews>()
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()
@@ -371,7 +373,7 @@ impl Plugin for NightfallPlugin {
                     .after(session::lobby)
                     .before(run::start_run)
                     .in_set(NightfallSet)
-                    .run_if(in_state(Phase::Menu)),
+                    .run_if(in_state(Phase::Inn)),
             )
             // Ungated: hides the bake's line whenever another game is up.
             .add_systems(Update, terrain::show_line)
@@ -390,11 +392,13 @@ impl Plugin for NightfallPlugin {
                 )
                     .chain()
                     .in_set(NightfallSet)
-                    .run_if(in_state(Phase::Menu)),
+                    .run_if(in_state(Phase::Inn)),
             )
             // Back at the menu with a raid still on the books (we left, the host went): it was
             // never settled by an outcome, so it is counted missing, once.
-            .add_systems(OnEnter(Phase::Menu), stash::after_raid)
+            .add_systems(OnEnter(Phase::Inn), stash::after_raid)
+            .add_systems(OnExit(Phase::Inn), inn::leave)
+            .add_systems(OnExit(GameMode::Nightfall), inn::leave)
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
             .add_systems(Update, ui::tune_ui.in_set(NightfallSet))
             .add_systems(
@@ -407,21 +411,28 @@ impl Plugin for NightfallPlugin {
             )
             .add_systems(
                 Update,
-                (
-                    atmosphere::enter,
-                    atmosphere::night,
-                    atmosphere::follow_map,
-                    atmosphere::hero_lights,
-                )
-                    .in_set(NightfallSet),
+                (atmosphere::enter, atmosphere::night)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing)),
             )
             .add_systems(
                 Update,
-                atmosphere::menu_camera
+                atmosphere::inn_light
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Inn)),
+            )
+            .add_systems(
+                Update,
+                (atmosphere::follow_map, atmosphere::hero_lights).in_set(NightfallSet),
+            )
+            .add_systems(
+                Update,
+                (inn::sync, inn::dress_new, inn::feed, inn::place_friends)
+                    .chain()
                     .in_set(benilla_world::schedule::WorldStage::Input)
                     .after(crate::player::PlayerControlSet)
                     .in_set(NightfallSet)
-                    .run_if(in_state(Phase::Menu)),
+                    .run_if(in_state(Phase::Inn)),
             )
             .add_systems(
                 Update,

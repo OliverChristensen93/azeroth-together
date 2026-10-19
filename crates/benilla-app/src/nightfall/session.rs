@@ -7,6 +7,7 @@
 //! On the wire Nightfall is the game `"nightfall"` ([`GAME`]): it shares Survivors' port and invite
 //! code, and a friend who opened the other game is told so.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use bevy::prelude::*;
@@ -81,15 +82,10 @@ fn ready_to_send(ready: bool, pick_sent: bool, sent_ready: Option<bool>) -> Opti
     (sent_ready != Some(ready) && (!ready || pick_sent)).then_some(ready)
 }
 
-/// Whether `l` is how the lobby lists a player with these parts.
-fn listed(
-    l: &LobbyPlayer,
-    player: PlayerId,
-    hero: &HeroPick,
-    pose: Option<HeroPose>,
-    ready: bool,
-) -> bool {
-    l.player == player && l.hero == *hero && l.pose == pose && l.ready == ready
+/// Whether `l` is how the lobby lists a player with these parts. Where they stand is not part of
+/// it: poses go in their own message ([`ServerMsg::InnPoses`]), so walking never resends a loadout.
+fn listed(l: &LobbyPlayer, player: PlayerId, hero: &HeroPick, ready: bool) -> bool {
+    l.player == player && l.hero == *hero && l.ready == ready
 }
 
 /// A pose from a client made safe: finite, a unit facing, a height in WoW's range, the place
@@ -111,6 +107,31 @@ fn sane_pose(
 /// Whether the lobby goes out now: it changed, and the last went at least [`LOBBY_EVERY`] ago.
 fn lobby_due(changed: bool, since_last: Option<f32>) -> bool {
     changed && since_last.is_none_or(|s| s >= LOBBY_EVERY)
+}
+
+/// Which of the host's two inn messages go now, as (lobby, poses). The lobby, with every
+/// loadout, goes only when something it holds changed. The poses go when they changed (at most
+/// ten times a second, like the lobby) and with every lobby, so a player just welcomed sees
+/// where everyone stands without waiting for them to move.
+fn inn_sends(
+    lobby_changed: bool,
+    poses_changed: bool,
+    since_lobby: Option<f32>,
+    since_poses: Option<f32>,
+) -> (bool, bool) {
+    let lobby = lobby_due(lobby_changed, since_lobby);
+    (lobby, lobby || lobby_due(poses_changed, since_poses))
+}
+
+/// The poses of the party that has one, the host's (player 0) first.
+fn pose_list(
+    own: Option<HeroPose>,
+    peers: impl IntoIterator<Item = (PlayerId, Option<HeroPose>)>,
+) -> Vec<(PlayerId, HeroPose)> {
+    own.map(|p| (0, p))
+        .into_iter()
+        .chain(peers.into_iter().filter_map(|(id, p)| p.map(|p| (id, p))))
+        .collect()
 }
 
 /// Whether a raid may start: we are ready, and so is every friend present.
@@ -176,6 +197,10 @@ pub(super) struct HostSide {
     pub planned: RaidRoll,
     /// When the lobby last went out ([`LOBBY_EVERY`] paces it).
     sent_at: Option<Instant>,
+    /// The poses last sent, so they go again only when one changes.
+    sent_poses: Option<Vec<(PlayerId, HeroPose)>>,
+    /// When the poses last went out ([`LOBBY_EVERY`] paces them).
+    sent_poses_at: Option<Instant>,
     /// The invite code has been written to the log (for test runs to read).
     logged_code: bool,
 }
@@ -204,6 +229,8 @@ pub(super) struct ClientSide {
     /// Our player, once the host welcomed us.
     pub me: Option<PlayerId>,
     pub lobby: Vec<LobbyPlayer>,
+    /// Where each player's hero stands, from the host's last [`ServerMsg::InnPoses`].
+    poses: HashMap<PlayerId, HeroPose>,
     /// The host started a run; [`super::run::start_run`] begins ours.
     pub start: bool,
     /// The number of the run the host started last, which our inputs are tagged with.
@@ -333,6 +360,8 @@ impl Net {
                     raid: 0,
                     planned: plan_raid(),
                     sent_at: None,
+                    sent_poses: None,
+                    sent_poses_at: None,
                     logged_code: false,
                 });
                 self.status = "Waiting for friends to join".into();
@@ -351,6 +380,7 @@ impl Net {
             addr: addr.to_owned(),
             me: None,
             lobby: Vec::new(),
+            poses: HashMap::new(),
             start: false,
             raid: 0,
             planned: None,
@@ -463,8 +493,6 @@ impl Net {
     }
 
     /// The friends in the lobby (never us), where they stand and whether they are ready.
-    // Nothing reads it yet: the inn scene (sub-project 5b, Task 7) draws them.
-    #[expect(dead_code, reason = "sub-project 5b, Task 7 draws the friends")]
     pub fn friends(&self) -> Vec<LobbyPlayer> {
         match &self.role {
             Role::Solo => Vec::new(),
@@ -482,7 +510,10 @@ impl Net {
                 .lobby
                 .iter()
                 .filter(|p| Some(p.player) != c.me)
-                .cloned()
+                .map(|p| LobbyPlayer {
+                    pose: c.poses.get(&p.player).copied(),
+                    ..p.clone()
+                })
                 .collect(),
         }
     }
@@ -564,6 +595,7 @@ impl Net {
         if let Role::Host(h) = &mut self.role {
             h.host.lock().unwrap().broadcast(&ServerMsg::Ended);
             h.sent = None;
+            h.sent_poses = None;
             // The next raid is planned for the lobby this ends in, and nobody is ready for it yet.
             h.planned = plan_raid();
             for p in &mut h.peers {
@@ -766,33 +798,46 @@ pub(super) fn lobby(
             // Compared with what went last before any loadout is cloned: most frames nothing changed.
             let same = h.sent.as_ref().is_some_and(|s| {
                 s.len() == 1 + h.peers.len()
-                    && listed(&s[0], 0, &own, inn_state.pose, inn_state.ready)
+                    && listed(&s[0], 0, &own, inn_state.ready)
                     && h.peers
                         .iter()
                         .zip(&s[1..])
-                        .all(|(p, l)| listed(l, p.player, &p.hero, p.pose, p.ready))
+                        .all(|(p, l)| listed(l, p.player, &p.hero, p.ready))
             });
-            if lobby_due(!same, h.sent_at.map(|t| t.elapsed().as_secs_f32())) {
+            let poses = pose_list(inn_state.pose, h.peers.iter().map(|p| (p.player, p.pose)));
+            let poses_same = h.sent_poses.as_ref() == Some(&poses);
+            let (send_lobby, send_poses) = inn_sends(
+                !same,
+                !poses_same,
+                h.sent_at.map(|t| t.elapsed().as_secs_f32()),
+                h.sent_poses_at.map(|t| t.elapsed().as_secs_f32()),
+            );
+            if send_lobby {
                 let mut players = vec![LobbyPlayer {
                     player: 0,
                     hero: own,
-                    pose: inn_state.pose,
+                    pose: None,
                     ready: inn_state.ready,
                 }];
                 players.extend(h.peers.iter().map(|p| LobbyPlayer {
                     player: p.player,
                     hero: p.hero.clone(),
-                    pose: p.pose,
+                    pose: None,
                     ready: p.ready,
                 }));
                 host.broadcast(&ServerMsg::Lobby {
                     players: players.clone(),
                     raid: h.planned.clone(),
                 });
-                drop(host);
                 h.sent = Some(players);
                 h.sent_at = Some(Instant::now());
             }
+            if send_poses {
+                host.broadcast(&ServerMsg::InnPoses(poses.clone()));
+                h.sent_poses = Some(poses);
+                h.sent_poses_at = Some(Instant::now());
+            }
+            drop(host);
         }
         Role::Client(c) => {
             let events = c.client.lock().unwrap().poll();
@@ -813,8 +858,12 @@ pub(super) fn lobby(
                     }
                     ClientEvent::Message(ServerMsg::Refused(why)) => gone = Some(why),
                     ClientEvent::Message(ServerMsg::Lobby { players, raid }) => {
+                        c.poses.retain(|id, _| players.iter().any(|p| p.player == *id));
                         c.lobby = players;
                         c.planned = Some(raid);
+                    }
+                    ClientEvent::Message(ServerMsg::InnPoses(poses)) => {
+                        c.poses = poses.into_iter().collect();
                     }
                     ClientEvent::Message(ServerMsg::Start { raid }) => {
                         c.raid = raid;
@@ -1453,6 +1502,37 @@ mod tests {
         assert!(!net.welcomed());
         net.replan_alone();
         assert!(net.solo_raid.is_some());
+    }
+
+    #[test]
+    fn a_pose_only_change_sends_no_loadouts() {
+        use nightfall_sim::V2;
+        let at = |x: f32| HeroPose {
+            pos: V2::new(x, 0.0),
+            facing: V2::new(1.0, 0.0),
+            z: 0.0,
+        };
+        // The lobby as sent lists nobody's pose, and it still holds a player who has since walked.
+        let sent = LobbyPlayer {
+            player: 1,
+            hero: pick("A"),
+            pose: None,
+            ready: false,
+        };
+        assert!(listed(&sent, 1, &pick("A"), false));
+        assert!(!listed(&sent, 1, &pick("B"), false), "a new loadout changes it");
+        assert!(!listed(&sent, 1, &pick("A"), true), "so does ready");
+        // So a walk changes the poses (not the lobby): only the poses go.
+        let before = pose_list(Some(at(0.0)), [(1, Some(at(1.0))), (2, None)]);
+        let after = pose_list(Some(at(0.0)), [(1, Some(at(2.0))), (2, None)]);
+        assert_eq!(before.len(), 2, "a player with no pose is left out");
+        assert_ne!(before, after);
+        assert_eq!(inn_sends(false, true, Some(5.0), Some(5.0)), (false, true));
+        assert_eq!(inn_sends(false, false, Some(5.0), Some(5.0)), (false, false));
+        // Poses keep the ten-a-second cap.
+        assert_eq!(inn_sends(false, true, Some(5.0), Some(0.05)), (false, false));
+        // A lobby carries the poses with it, so someone just welcomed sees everyone at once.
+        assert_eq!(inn_sends(true, false, None, Some(0.0)), (true, true));
     }
 
     #[test]

@@ -253,7 +253,7 @@ mod tests {
         }
     }
 
-    /// Pick → Survivors' menu → Back → Nightfall's menu → a run → Back → Survivors' menu → a
+    /// Pick → Survivors' menu → Back → Nightfall's inn → a run → Back → Survivors' menu → a
     /// run: each game owns WoW's interface while it is up and leaves it shown when it goes.
     #[test]
     fn each_game_owns_the_ui_across_switches() {
@@ -269,8 +269,9 @@ mod tests {
         sv_last = None;
         assert!(shown, "leaving Survivors shows it again");
 
-        apply(nf::ui_chunk(session, nf::Phase::Menu, nf_last), &mut shown);
-        nf_last = Some((session, nf::Phase::Menu));
+        apply(nf::ui_chunk(session, nf::Phase::Inn, nf_last), &mut shown);
+        nf_last = Some((session, nf::Phase::Inn));
+        assert!(shown, "the inn shows WoW's frames: the hero walks it");
         apply(
             nf::ui_chunk(session, nf::Phase::Playing, nf_last),
             &mut shown,

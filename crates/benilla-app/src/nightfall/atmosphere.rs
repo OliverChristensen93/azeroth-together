@@ -4,13 +4,12 @@
 //! back to the pick screen, so Survivors is never left in the dark.
 
 use benilla_world::lighting::{FogOverride, WorldPointLight};
-use benilla_world::view::{ViewDistance, WorldCamera};
-use benilla_world::world_point::WorldPoint;
+use benilla_world::view::ViewDistance;
 use bevy::prelude::*;
 use nightfall_sim::Atmosphere;
 
 use super::view::Views;
-use super::{content, units};
+use super::content;
 
 /// The view distance before Nightfall changed it, to give back on leaving.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -47,14 +46,19 @@ pub(super) fn restore(saved: &SavedView, view: &mut ViewDistance) {
 pub(super) fn enter(
     mut commands: Commands,
     saved: Option<Res<SavedView>>,
+    fog: Option<Res<FogOverride>>,
     view: Option<ResMut<ViewDistance>>,
 ) {
-    if saved.is_some() {
+    if fog.is_some() {
         return;
     }
     let Some(mut view) = view else { return };
-    let (saved, fog) = apply(&content().rules.atmosphere, &mut view);
-    commands.insert_resource(saved);
+    let (own, fog) = apply(&content().rules.atmosphere, &mut view);
+    // The inn keeps the engine's own view distance saved while it draws the hub's: that is the
+    // one to give back, not the hub's.
+    if saved.is_none() {
+        commands.insert_resource(own);
+    }
     commands.insert_resource(fog);
 }
 
@@ -81,10 +85,19 @@ pub(super) fn night(debug: Option<ResMut<benilla_world::dev_state::DebugState>>)
     }
 }
 
-/// The world stands on Nightfall's map.
-pub(super) fn follow_map(current: Option<ResMut<benilla_world::world_map::CurrentMap>>) {
+/// The world stands on the map of the phase.
+pub(super) fn follow_map(
+    current: Option<ResMut<benilla_world::world_map::CurrentMap>>,
+    phase: Res<State<super::Phase>>,
+) {
     let Some(mut current) = current else { return };
-    let want = content().map.map;
+    // The inn's map between raids, the raid's during one (both are map 0 for Goldshire and
+    // Duskwood, but the hub may move to another map).
+    let want = if *phase.get() == super::Phase::Inn {
+        super::inn().place.map
+    } else {
+        content().map.map
+    };
     if current.0 != want {
         current.0 = want;
     }
@@ -116,28 +129,47 @@ pub(super) fn hero_lights(
     }
 }
 
-/// At the menu: a slow, wide orbit over the first entry, so the dark woods stand behind it and
-/// the terrain streams there.
-pub(super) fn menu_camera(
-    time: Res<Time<Real>>,
-    world: WorldPoint,
-    mut player: ResMut<crate::player::Player>,
-    mut cams: Query<&mut Transform, With<WorldCamera>>,
-    mut orbit: Local<f32>,
+/// The view distance the inn draws, and the view distance to give back on leaving Nightfall: the
+/// one saved by an earlier phase if there is one (a raid set its own over the engine's), else the
+/// view's own now. Leaves the view at the hub's draw distance.
+pub(super) fn inn_view(
+    saved: Option<SavedView>,
+    view: &mut ViewDistance,
+    hub_distance: f32,
+) -> SavedView {
+    let engines = saved.unwrap_or(SavedView {
+        farclip: view.farclip,
+    });
+    view.farclip = hub_distance;
+    engines
+}
+
+/// In the inn: the hub's evening light and draw distance and no fog (the night's is taken away if
+/// a raid set it), a contrast to the night outside (spec §8.4). The engine's own view distance is
+/// kept as [`SavedView`] all the while, for [`leave`] to give back.
+pub(super) fn inn_light(
+    mut commands: Commands,
+    saved: Option<Res<SavedView>>,
+    view: Option<ResMut<ViewDistance>>,
+    fog: Option<Res<FogOverride>>,
+    debug: Option<ResMut<benilla_world::dev_state::DebugState>>,
 ) {
-    let mut focus = units::wow_to_bevy(content().map.entries[0]);
-    if let Some(h) = world.terrain_height_under(focus) {
-        focus.y = h;
+    let place = &super::inn().place;
+    if let Some(mut view) = view {
+        if saved.is_none() || view.farclip != place.view_distance {
+            let keep = inn_view(saved.as_deref().copied(), &mut view, place.view_distance);
+            if saved.is_none() {
+                commands.insert_resource(keep);
+            }
+        }
     }
-    if !player.active {
-        player.pos = focus;
+    if fog.is_some() {
+        commands.remove_resource::<FogOverride>();
     }
-    *orbit += time.delta_secs() * 0.05;
-    let d = 14.0;
-    let eye = focus + Vec3::new(orbit.sin() * d, 4.0, orbit.cos() * d);
-    let placed = Transform::from_translation(eye).looking_at(focus + Vec3::Y * 1.5, Vec3::Y);
-    for mut cam in &mut cams {
-        *cam = placed;
+    let Some(mut debug) = debug else { return };
+    if debug.lighting.follow_server_time || debug.lighting.manual_minute != place.minute {
+        debug.lighting.follow_server_time = false;
+        debug.lighting.manual_minute = place.minute;
     }
 }
 
@@ -158,6 +190,25 @@ mod tests {
                 range: 9.0,
             },
         }
+    }
+
+    #[test]
+    fn the_inn_draws_the_hubs_distance_and_keeps_the_engines_to_give_back() {
+        let mut view = ViewDistance {
+            farclip: 350.0,
+            nearclip: 0.2,
+        };
+        let kept = inn_view(None, &mut view, 200.0);
+        assert_eq!((view.farclip, kept.farclip), (200.0, 350.0));
+        // After a raid (which saved the engine's and set its own), the same is kept.
+        let mut view = ViewDistance {
+            farclip: 120.0,
+            nearclip: 0.2,
+        };
+        let kept = inn_view(Some(kept), &mut view, 200.0);
+        assert_eq!((view.farclip, kept.farclip), (200.0, 350.0));
+        restore(&kept, &mut view);
+        assert_eq!(view.farclip, 350.0);
     }
 
     #[test]

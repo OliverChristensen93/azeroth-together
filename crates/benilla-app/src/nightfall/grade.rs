@@ -1,6 +1,6 @@
 //! Nightfall's grade on the world camera (`shaders/nightfall_grade.wgsl`): Bevy's
 //! [`FullscreenMaterial`], placed where the survivors grade sits, between FFXGlow and the end of
-//! the world's post-processing. It is on the camera only while Nightfall is up.
+//! the world's post-processing. It is on the camera only during a raid.
 //! Its vignette tightens as the local hero's visibility drops (spec §10).
 
 use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
@@ -87,8 +87,13 @@ pub(super) fn plugin(app: &mut App) {
     app.add_plugins(FullscreenMaterialPlugin::<NightGrade>::default())
         .add_systems(
             Update,
-            (attach, follow_visibility).in_set(super::NightfallSet),
+            attach
+                .in_set(super::NightfallSet)
+                .run_if(in_state(super::Phase::Playing)),
         )
+        .add_systems(Update, follow_visibility.in_set(super::NightfallSet))
+        // The inn is lit and warm (spec §8.4): the night's colour pass is only the raid's.
+        .add_systems(OnEnter(super::Phase::Inn), detach)
         .add_systems(OnExit(GameMode::Nightfall), detach);
 }
 

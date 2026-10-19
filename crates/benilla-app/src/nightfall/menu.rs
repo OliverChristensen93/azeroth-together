@@ -1,7 +1,8 @@
-//! Nightfall's main menu, built from the glue screens' own widgets and art ([`crate::glue`]): the
-//! title, the class buttons and the class's line, Play Solo, Host Co-op, Join (an invite code or an
-//! address from the clipboard), the lobby's status, and Back to the pick screen. During a run, a
-//! Leave Run button at the top right.
+//! The inn bar (Nightfall's menu, top left over the inn scene), built from the glue screens' own
+//! widgets and art ([`crate::glue`]): the inn's name, the class buttons and the class's line,
+//! Host Co-op, Join (an invite code or an address from the clipboard), Ready, the lobby's status,
+//! and Back to the pick screen. A raid starts at the raid board and the stash opens at the banker
+//! (the inn's NPCs). During a run, a Leave Run button at the top right.
 
 use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, RawHandleWrapper};
@@ -51,12 +52,9 @@ pub(super) struct MenuBuilt;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MenuAction {
     Class(usize),
-    PlaySolo,
-    Stash,
     Host,
     Join,
     CopyCode,
-    StartRun,
     /// Joined: ready for the raid, which freezes our loadout.
     Ready,
     /// Joined: not ready after all, which unfreezes it.
@@ -79,7 +77,7 @@ pub(super) struct StatusText;
 pub(super) fn roots_visible(mode: GameMode, phase: Phase) -> (bool, bool) {
     let ours = mode == GameMode::Nightfall;
     (
-        ours && phase == Phase::Menu,
+        ours && phase == Phase::Inn,
         ours && phase == Phase::Playing,
     )
 }
@@ -177,11 +175,10 @@ pub(super) fn build_menu(
         ui.spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                right: Val::Px(0.0),
-                bottom: Val::Px(40.0),
+                left: Val::Px(16.0),
+                top: Val::Px(16.0),
                 flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
+                align_items: AlignItems::FlexStart,
                 row_gap: Val::Px(10.0),
                 padding: UiRect::all(Val::Px(16.0)),
                 ..default()
@@ -189,7 +186,7 @@ pub(super) fn build_menu(
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
         ))
         .with_children(|panel| {
-            panel.spawn(text("Nightfall", 32.0, Color::srgb(0.85, 0.8, 0.6)));
+            panel.spawn(text(&super::inn().place.name, 22.0, Color::srgb(0.85, 0.8, 0.6)));
             panel
                 .spawn(Node {
                     column_gap: Val::Px(10.0),
@@ -218,12 +215,9 @@ pub(super) fn build_menu(
                 })
                 .with_children(|row| {
                     for (action, caption) in [
-                        (MenuAction::PlaySolo, "Play Solo"),
-                        (MenuAction::Stash, "Stash"),
                         (MenuAction::Host, "Host Co-op"),
                         (MenuAction::Join, "Join (paste code)"),
                         (MenuAction::CopyCode, "Copy Invite Code"),
-                        (MenuAction::StartRun, "Start Run"),
                         (MenuAction::Ready, "Ready"),
                         (MenuAction::Unready, "Not Ready"),
                         (MenuAction::Leave, "Leave"),
@@ -284,11 +278,9 @@ pub(super) fn menu_clicks(
     clicks: Res<GlueClicks>,
     actions: Query<(Entity, &MenuAction)>,
     mut selection: ResMut<Selection>,
-    mut start: ResMut<StartRequest>,
     mut net: ResMut<Net>,
     mut inn_state: ResMut<InnState>,
     mut stash: ResMut<super::stash::Stash>,
-    mut stash_open: ResMut<super::stash_panel::StashOpen>,
     mut next_mode: ResMut<NextState<GameMode>>,
     mut clipboard: NonSendMut<HostClipboard>,
     window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
@@ -312,12 +304,6 @@ pub(super) fn menu_clicks(
                 stash.save();
             }
         }
-        MenuAction::PlaySolo => {
-            if net.is_solo() {
-                start.0 = true;
-            }
-        }
-        MenuAction::Stash => stash_open.0 = !stash_open.0,
         MenuAction::Host => {
             if net.is_solo() {
                 net.host();
@@ -338,11 +324,6 @@ pub(super) fn menu_clicks(
             if let Some(code) = net.invite_code() {
                 clipboard.write(display(), &code);
                 net.status = "Invite code copied: paste it to your friends".into();
-            }
-        }
-        MenuAction::StartRun => {
-            if matches!(net.role, Role::Host(_)) {
-                start.0 = true;
             }
         }
         MenuAction::Ready => {
@@ -366,12 +347,8 @@ pub(super) fn menu_clicks(
 /// Which actions show for the session's role: alone, hosting or joined.
 fn shown(role: &Role) -> &'static [MenuAction] {
     match role {
-        Role::Solo => &[MenuAction::PlaySolo, MenuAction::Host, MenuAction::Join],
-        Role::Host(_) => &[
-            MenuAction::CopyCode,
-            MenuAction::StartRun,
-            MenuAction::Leave,
-        ],
+        Role::Solo => &[MenuAction::Host, MenuAction::Join],
+        Role::Host(_) => &[MenuAction::CopyCode, MenuAction::Leave],
         Role::Client(_) => &[MenuAction::Ready, MenuAction::Unready, MenuAction::Leave],
     }
 }
@@ -417,10 +394,8 @@ pub(super) fn refresh_menu(
     }
     let visible = shown(&net.role);
     for (action, mut node) in &mut buttons {
-        let on = matches!(
-            action,
-            MenuAction::Class(_) | MenuAction::Back | MenuAction::Stash
-        ) || (visible.contains(action) && ready_button_shows(*action, inn_state.ready));
+        let on = matches!(action, MenuAction::Class(_) | MenuAction::Back)
+            || (visible.contains(action) && ready_button_shows(*action, inn_state.ready));
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
@@ -435,14 +410,14 @@ mod tests {
     #[test]
     fn nightfall_screens_show_only_in_nightfall() {
         assert_eq!(
-            roots_visible(GameMode::Nightfall, Phase::Menu),
+            roots_visible(GameMode::Nightfall, Phase::Inn),
             (true, false)
         );
         assert_eq!(
             roots_visible(GameMode::Nightfall, Phase::Playing),
             (false, true)
         );
-        assert_eq!(roots_visible(GameMode::Pick, Phase::Menu), (false, false));
+        assert_eq!(roots_visible(GameMode::Pick, Phase::Inn), (false, false));
         assert_eq!(
             roots_visible(GameMode::Survivors, Phase::Playing),
             (false, false)
@@ -455,7 +430,7 @@ mod tests {
             MenuAction::Ready,
             MenuAction::Unready,
             MenuAction::Leave,
-            MenuAction::StartRun,
+            MenuAction::Host,
         ];
         for ready in [false, true] {
             let now: Vec<MenuAction> = buttons
@@ -474,7 +449,7 @@ mod tests {
                 MenuAction::Unready
             }));
             // The others are not the ready flag's to hide.
-            assert!(now.contains(&MenuAction::Leave) && now.contains(&MenuAction::StartRun));
+            assert!(now.contains(&MenuAction::Leave) && now.contains(&MenuAction::Host));
         }
     }
 
