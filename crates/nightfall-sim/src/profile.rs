@@ -342,11 +342,15 @@ impl Profile {
 
     /// What the next raid brings, as the content resolves it: the loadout, or the class's free
     /// kit when nothing of it is left (empty, or all of it unknown to the content), spec §8.3.
-    /// What the content has no room for or does not know comes back to be stashed.
+    /// What the content has no room for or does not know comes back to be stashed. The companion's
+    /// stack does not make a loadout: a hero whose loadout is only that is given the free kit, and
+    /// the stack goes along in the kit's companion slot.
     fn next_kit(&self, class: usize, content: &Content) -> (Inventory, Vec<SavedStack>) {
         let (inv, aside) = inventory_of(&self.loadout, content);
-        if inv.is_empty() {
-            (free_kit(class, content), aside)
+        if inv.stacks().iter().all(|(at, _)| *at == Place::Pet) {
+            let mut kit = free_kit(class, content);
+            kit.pet = inv.pet;
+            (kit, aside)
         } else {
             (inv, aside)
         }
@@ -799,6 +803,37 @@ mod tests {
             text,
             "the text is stable"
         );
+    }
+
+    #[test]
+    fn a_loadout_of_only_the_companions_stack_still_gets_the_free_kit() {
+        let c = content("");
+        let mut p = Profile::default();
+        p.loadout.pet = Some(stack("gem", 3));
+        let told = p.raid_loadout(0, &c);
+        assert!(told
+            .inventory
+            .get(Place::Equip(EquipSlot::MainHand))
+            .is_some());
+        assert_eq!(told.inventory.count_of(BREAD), 2);
+        assert_eq!(told.inventory.get(Place::Pet), Some(&Stack::new(GEM, 3)));
+        p.begin_raid(0, &c);
+        let brought = &p.in_raid.as_ref().unwrap().brought;
+        assert_eq!(brought.pet, Some(stack("gem", 3)));
+        assert!(
+            !brought.equip.is_empty() && !brought.pack.is_empty(),
+            "the free kit"
+        );
+        assert!(p.loadout.is_empty(), "the loadout left for the raid");
+        // The raid goes missing before any note, then after one: the companion's stack is home.
+        let mut noted = p.clone();
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.loadout.pet, Some(stack("gem", 3)));
+        assert!(p.stash.iter().all(|s| s.item != "gem"));
+        let (inv, _) = inventory_of(&noted.in_raid.as_ref().unwrap().brought, &c);
+        assert!(noted.note_carry(&inv, &c));
+        assert!(noted.settle_missing(&c));
+        assert_eq!(noted.loadout.pet, Some(stack("gem", 3)));
     }
 
     #[test]
