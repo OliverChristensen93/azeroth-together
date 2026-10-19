@@ -1032,6 +1032,13 @@ pub(super) fn event_for(event: &Event, me: PlayerId, near: impl Fn(UnitRef) -> b
         | Event::Died { player } => hero(*player),
         Event::Revived { player, by } => hero(*player) || hero(*by),
         Event::EnemyDied { id, by } => involves(UnitRef::Enemy(*id)) || by.is_some_and(hero),
+        // The night is everyone's (spec §7.2): its cues, its stages, the hunt's closing and the
+        // ravens, and the banshee's wail (a line heard everywhere), however far from their hero.
+        Event::NightCue { .. }
+        | Event::NightFell { .. }
+        | Event::ExitClosed { .. }
+        | Event::RavensFlew { .. }
+        | Event::Alarm { .. } => true,
     }
 }
 
@@ -1807,6 +1814,25 @@ mod tests {
             assert!(event_for(e, 0, |_| false), "{e:?}");
             // And the same of a hero who is not us and far away is not.
             assert!(!event_for(e, 2, |_| false), "{e:?} for a stranger");
+        }
+    }
+
+    #[test]
+    fn the_nights_events_go_to_every_player_wherever_they_are() {
+        let night = [
+            Event::NightCue { stage: 1 },
+            Event::NightFell { stage: 1 },
+            Event::ExitClosed { exit: 0 },
+            Event::RavensFlew { flock: 0 },
+            Event::Alarm {
+                enemy: 7,
+                player: 0,
+            },
+        ];
+        for e in &night {
+            for player in [0, 1, 2] {
+                assert!(event_for(e, player, |_| false), "{e:?} for player {player}");
+            }
         }
     }
 }

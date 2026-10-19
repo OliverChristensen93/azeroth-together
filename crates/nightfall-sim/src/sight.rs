@@ -24,7 +24,7 @@ impl World {
         };
         let rules = &self.content().rules;
         let share = rules.world.share_sight_within;
-        let fog = rules.atmosphere.fog_end;
+        let fog = self.fog().end;
         let watchers: Vec<&Hero> = self
             .heroes
             .iter()
@@ -97,6 +97,7 @@ impl World {
             // containers within the same reach, and the one they have open.
             pack: self.raid.pack(player).map(|i| (player, i.clone())),
             loot: self.loot_view(Some(player)),
+            night: self.night_view(),
         }
     }
 

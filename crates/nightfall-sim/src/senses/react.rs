@@ -76,6 +76,8 @@ enum Progress {
 }
 
 /// One step of every enemy's senses: look, listen, think, shout, act.
+/// `fog` is how far anyone sees now and `notice` what the notice range is times, both the night's
+/// (spec §7.2).
 pub(crate) fn step_enemies(
     s: &mut Senses,
     enemies: &mut [Enemy],
@@ -84,12 +86,13 @@ pub(crate) fn step_enemies(
     nav: &mut Navigator,
     content: &Content,
     engage: &[Engage],
+    fog: f32,
+    notice: f32,
 ) {
     if s.minds.len() != enemies.len() || brains.len() != enemies.len() {
         return;
     }
     let r = &content.rules.senses;
-    let fog = content.rules.atmosphere.fog_end;
     let map = nav.map().clone();
     let noises = std::mem::take(&mut s.noises);
     // Whoever made a noise and has since left (got out, dropped off) is still heard once: a noise
@@ -113,7 +116,7 @@ pub(crate) fn step_enemies(
         sensed.extend(
             heroes
                 .iter()
-                .map(|h| sense(e, mind, eye, h, &noises, &map, fog, r)),
+                .map(|h| sense(e, mind, eye, h, &noises, &map, fog, notice, r)),
         );
         for &player in &gone {
             if let Some(heard) = overheard(e, eye, player, &noises, &map, r) {
@@ -232,6 +235,7 @@ fn sense(
     noises: &[Noise],
     map: &HeightMap,
     fog: f32,
+    notice: f32,
     r: &SenseRules,
 ) -> Sensed {
     // The downed and the dead are left be (spec §8.1): no sight of them, no sound.
@@ -258,7 +262,7 @@ fn sense(
     } else {
         r.side
     };
-    let range = notice_range(h.visibility, facing, fog, r);
+    let range = notice_range(h.visibility * notice, facing, fog, r);
     // How far a ray is worth casting: an enemy after this hero keeps track of them through the
     // fog; any other can notice them no further than its notice range, and a sleeper not at all.
     let looks = if mind.alerted_to(h.player) {

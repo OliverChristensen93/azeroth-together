@@ -574,6 +574,8 @@ impl World {
             return Err(format!("no weather {} in rules.ron", roll.weather));
         }
         self.raid = Raid::new(&content, roll);
+        // A new raid's clock starts over.
+        self.night = crate::night::Night::default();
         Ok(())
     }
 

@@ -407,3 +407,168 @@ fn a_pinned_exit_is_never_shut_late_or_closed() {
     }
     assert!(closed_other > 0, "the hunt still closes the unpinned gate");
 }
+
+/// Three stages, a second apart, each cued half a second before.
+const QUICK_NIGHT: &str = r#"stages: [(key: "dusk", name: "Dusk", at: 0.0),
+    (key: "one", name: "One", at: 2.0, warn: 0.5),
+    (key: "two", name: "Two", at: 4.0, warn: 0.5, fog: 0.75, notice: 1.2)]"#;
+
+/// The night's events since the last drain, with the step each came on.
+fn night_events(w: &mut World, log: &mut Vec<(usize, Event)>, step: usize) {
+    for e in w.drain_events() {
+        if matches!(
+            e,
+            Event::NightCue { .. } | Event::NightFell { .. } | Event::ExitClosed { .. }
+        ) {
+            log.push((step, e));
+        }
+    }
+}
+
+#[test]
+fn each_stage_is_cued_before_it_lands_and_only_once() {
+    let mut w = world(QUICK_NIGHT, "");
+    let mut log = Vec::new();
+    for step in 0..secs(6.0) {
+        w.step();
+        night_events(&mut w, &mut log, step);
+    }
+    let kinds: Vec<&Event> = log.iter().map(|(_, e)| e).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            &Event::NightCue { stage: 1 },
+            &Event::NightFell { stage: 1 },
+            &Event::NightCue { stage: 2 },
+            &Event::NightFell { stage: 2 },
+        ]
+    );
+    // Cued half a second (15 steps, give or take one for the clock's rounding) before landing.
+    assert!((14..=16).contains(&(log[1].0 - log[0].0)), "{log:?}");
+    assert!((14..=16).contains(&(log[3].0 - log[2].0)), "{log:?}");
+    assert_eq!(w.night_view().stage, 2);
+}
+
+#[test]
+fn a_clock_started_late_gives_every_passed_stage_once_in_order() {
+    let mut w = world(QUICK_NIGHT, "");
+    w.elapsed = 5.0;
+    let mut log = Vec::new();
+    for step in 0..secs(2.0) {
+        w.step();
+        night_events(&mut w, &mut log, step);
+    }
+    let kinds: Vec<&Event> = log.iter().map(|(_, e)| e).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            &Event::NightCue { stage: 1 },
+            &Event::NightCue { stage: 2 },
+            &Event::NightFell { stage: 1 },
+            &Event::NightFell { stage: 2 },
+        ]
+    );
+    assert!(log.iter().all(|(s, _)| *s == 0), "all in the first step");
+}
+
+#[test]
+fn moonrise_and_the_weather_close_the_fog_and_sharpen_the_eyes() {
+    let night = format!(
+        r#"{QUICK_NIGHT}, weather: [(key: "clear", name: "Clear", weight: 1.0, fog_start: 10.0, fog_end: 40.0),
+            (key: "mist", name: "Mist", weight: 1.0, fog_start: 4.0, fog_end: 28.0, fog_color: Some((0.2, 0.2, 0.2)))]"#
+    );
+    // A walking hero (visibility 55) 22 yards in front of a sentry: past its 19.25-yard notice
+    // range under a clear sky, inside its 23.1 yards once the eyes sharpen.
+    let mut w = world_on(
+        open(),
+        &night,
+        &sentry("brute", 30.0, 30.0, 0.0),
+        "",
+        standard,
+    );
+    assert_eq!(w.fog().end, 40.0);
+    join(&mut w, 0, 52.0, 30.0);
+    for _ in 0..secs(3.5) {
+        put(&mut w, 0, 52.0, 30.0, V2::new(-1.0, 0.0), Gait::Walk);
+        w.step();
+    }
+    assert!(
+        w.marks_for(0).is_empty(),
+        "not noticed before the second stage"
+    );
+    for _ in 0..secs(6.0) {
+        put(&mut w, 0, 52.0, 30.0, V2::new(-1.0, 0.0), Gait::Walk);
+        w.step();
+    }
+    assert_eq!(w.fog().end, 30.0);
+    assert!((w.notice_scale() - 1.2).abs() < 1e-6);
+    assert!(!w.marks_for(0).is_empty(), "noticed once the eyes sharpen");
+    let mist = world_on(open(), &night, "", "", |c| RaidRoll {
+        weather: 1,
+        ..standard(c)
+    });
+    assert_eq!(
+        mist.fog(),
+        crate::Fog {
+            start: 4.0,
+            end: 28.0,
+            color: (0.2, 0.2, 0.2)
+        }
+    );
+}
+
+#[test]
+fn a_hero_sees_no_further_than_the_fog_now() {
+    let night = r#"weather: [(key: "clear", name: "Clear", weight: 1.0, fog_start: 10.0, fog_end: 40.0),
+        (key: "mist", name: "Mist", weight: 1.0, fog_start: 4.0, fog_end: 28.0)]"#;
+    let post = sentry("brute", 65.0, 30.0, 0.0);
+    let mut clear = world_on(open(), night, &post, "", standard);
+    join(&mut clear, 0, 30.0, 30.0);
+    assert_eq!(clear.seen_by(0), vec![1]);
+    let mut mist = world_on(open(), night, &post, "", |c| RaidRoll {
+        weather: 1,
+        ..standard(c)
+    });
+    join(&mut mist, 0, 30.0, 30.0);
+    assert!(mist.seen_by(0).is_empty());
+}
+
+#[test]
+fn the_mirror_draws_the_hosts_fog() {
+    let night = format!(
+        r#"{QUICK_NIGHT}, weather: [(key: "clear", name: "Clear", weight: 1.0, fog_start: 10.0, fog_end: 40.0),
+            (key: "mist", name: "Mist", weight: 1.0, fog_start: 4.0, fog_end: 28.0)]"#
+    );
+    let mut host = world_on(open(), &night, "", "", |c| RaidRoll {
+        weather: 1,
+        ..standard(c)
+    });
+    steps(&mut host, secs(4.5));
+    let mut mirror = World::new(host.content().clone());
+    mirror.apply_snapshot(host.snapshot());
+    assert_eq!(mirror.night_view(), host.night_view());
+    assert_eq!(mirror.fog(), host.fog());
+    assert_eq!(mirror.fog().end, 21.0);
+    // A mirror's clock never runs: its night is what the host said.
+    steps(&mut mirror, secs(1.0));
+    assert!(mirror.drain_events().is_empty());
+}
+
+#[test]
+fn the_hunt_closes_its_exit_and_says_so_once() {
+    let mut w = world_on(open(), QUICK_NIGHT, "", "", |c| RaidRoll {
+        closes: Some((1, 2.0)),
+        ..standard(c)
+    });
+    let mut log = Vec::new();
+    for step in 0..secs(4.0) {
+        w.step();
+        night_events(&mut w, &mut log, step);
+    }
+    let closed: Vec<&Event> = log
+        .iter()
+        .map(|(_, e)| e)
+        .filter(|e| matches!(e, Event::ExitClosed { .. }))
+        .collect();
+    assert_eq!(closed, vec![&Event::ExitClosed { exit: 1 }]);
+}

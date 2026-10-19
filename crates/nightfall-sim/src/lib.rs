@@ -60,8 +60,9 @@ pub use items::{
 };
 pub use math::{V2, V3};
 pub use night::{
-    CueSound, ExitRoll, HuntRules, MonsterDef, NightRules, RavenRules, RoadDef, ScentRules,
-    StageDef, StepSound, WeatherDef, ZoneDef,
+    fog_of, CueSound, ExitRoll, Fog, HuntRules, MonsterDef, NightRules, NightView, RavenRules,
+    RoadDef, ScentRules, StageDef, StepSound, WeatherDef, ZoneDef, FLOCK_FLOWN, FLOCK_GONE,
+    FLOCK_SETTLED,
 };
 pub use profile::{
     free_kit, inventory_of, saved_inventory, ContractState, InnProgress, Profile, ProfileError,

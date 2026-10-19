@@ -253,6 +253,17 @@ pub enum Event {
         id: u32,
         by: Option<PlayerId>,
     },
+    /// A stage of the night is coming (spec §7.2): its cue sounds and its line shows, `warn`
+    /// seconds before it lands.
+    NightCue { stage: u8 },
+    /// A stage of the night has landed.
+    NightFell { stage: u8 },
+    /// An exit has closed for the rest of the raid (the hunt's, spec §7.2).
+    ExitClosed { exit: u8 },
+    /// A banshee's wail landed (spec §7.3): everything near is after `player`.
+    Alarm { enemy: u32, player: PlayerId },
+    /// A flock of ravens took off (spec §7.1), an index into the map's flocks.
+    RavensFlew { flock: u8 },
 }
 
 /// The fight's host-only state: never sent.

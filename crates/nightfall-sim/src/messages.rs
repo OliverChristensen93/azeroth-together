@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// The hero a player brings: their name and pick.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -633,6 +633,7 @@ mod tests {
                 telegraphs: Vec::new(),
                 pack: None,
                 loot: Default::default(),
+                night: Default::default(),
             },
             seen: vec![3],
             marks: Vec::new(),
@@ -668,6 +669,7 @@ mod tests {
                 telegraphs: Vec::new(),
                 pack: None,
                 loot: Default::default(),
+                night: Default::default(),
             },
             seen: vec![3, 4],
             marks: vec![Mark {

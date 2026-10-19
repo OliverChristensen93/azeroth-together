@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::combat::{CastPress, Combat, Engage, Event, HeroFight, Telegraph};
 use crate::enemies::{self, Brain, Enemy, Order, Planner};
 use crate::heightmap::{HeightMap, Navigator};
+use crate::night::{Night, NightView};
 use crate::raid::{Carry, Raid};
 use crate::senses::{self, Gait, Senses, Stance};
 use crate::{ActPress, Content, Inventory, LootView, RaidRoll, V2, V3};
@@ -121,6 +122,8 @@ pub struct Snapshot {
     pub pack: Option<(PlayerId, Inventory)>,
     /// The raid's loot as the receiving player sees it.
     pub loot: LootView,
+    /// The night: its stage, the weather, the ravens (spec §7.2, §8.1).
+    pub night: NightView,
 }
 
 #[derive(Debug, PartialEq)]
@@ -156,6 +159,8 @@ pub struct World {
     pub(crate) combat: Combat,
     /// The raid: what heroes carry, the containers, the exits and the outcomes.
     pub(crate) raid: Raid,
+    /// The night: its clock on the host, what the host sent on a client's mirror.
+    pub(crate) night: Night,
 }
 
 impl World {
@@ -177,6 +182,7 @@ impl World {
             events: Vec::new(),
             combat: Combat::default(),
             raid,
+            night: Night::default(),
         }
     }
 
@@ -407,6 +413,8 @@ impl World {
         // leaves its body this step: a search goes on or stops, the dead leave bodies. Before the
         // enemies step, so the noises made here are heard this step.
         self.step_raid();
+        // The night after the raid: the clock's cues and stages, before the enemies act.
+        self.step_night();
         // Their pace last: a blow just struck broke stealth, which works the senses' speed out
         // afresh, so the Sprint, the slowed cast and the crawl are laid on after it.
         for hi in 0..self.heroes.len() {
@@ -414,6 +422,8 @@ impl World {
         }
         // Enemies and brains are kept side by side; were they not (a snapshot taken by a world
         // with a map, caught in debug builds), the enemies stand still rather than index wrongly.
+        // The fog and the eyes as the night has them now (Moonrise, the weather).
+        let (fog, notice) = (self.fog().end, self.notice_scale());
         if let Some(nav) = self
             .nav
             .as_mut()
@@ -431,6 +441,8 @@ impl World {
                 nav,
                 &self.content,
                 &engage,
+                fog,
+                notice,
             );
             enemies::step_planned(
                 &mut self.enemies,
@@ -458,6 +470,7 @@ impl World {
             telegraphs: self.telegraphs.clone(),
             pack: None,
             loot: self.loot_view(None),
+            night: self.night_view(),
         }
     }
 
@@ -481,6 +494,7 @@ impl World {
         self.telegraphs = snapshot.telegraphs;
         self.raid.mirror = Some(snapshot.loot);
         self.raid.packs = snapshot.pack.into_iter().collect();
+        self.night.mirror = Some(snapshot.night);
     }
 }
 
