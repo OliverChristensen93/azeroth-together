@@ -70,8 +70,6 @@ pub(super) fn content() -> Arc<Content> {
 }
 
 /// The inn's content, as [`prepare`] loaded it.
-// Nothing reads it yet: the inn scene (sub-project 5b, Task 7) is its first reader and drops this.
-#[expect(dead_code, reason = "sub-project 5b, Task 7 reads the inn")]
 pub(super) fn inn() -> Arc<InnContent> {
     INN.get().expect("nightfall::prepare ran").clone()
 }
@@ -291,6 +289,7 @@ impl Plugin for NightfallPlugin {
             .insert_resource(stash)
             .init_resource::<menu::StartRequest>()
             .init_resource::<session::Net>()
+            .init_resource::<session::InnState>()
             .init_resource::<run::LocalInput>()
             .init_resource::<run::EndRun>()
             .init_resource::<view::Views>()

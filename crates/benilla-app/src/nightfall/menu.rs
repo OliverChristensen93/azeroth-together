@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, RawHandleWrapper};
 use nightfall_sim::Content;
 
-use super::session::{Net, Role};
+use super::session::{InnState, Net, Role};
 use super::{content, Phase};
 use crate::game_pick::GameMode;
 use crate::glue::art::GlueArt;
@@ -57,6 +57,10 @@ pub(super) enum MenuAction {
     Join,
     CopyCode,
     StartRun,
+    /// Joined: ready for the raid, which freezes our loadout.
+    Ready,
+    /// Joined: not ready after all, which unfreezes it.
+    Unready,
     Leave,
     Back,
 }
@@ -220,6 +224,8 @@ pub(super) fn build_menu(
                         (MenuAction::Join, "Join (paste code)"),
                         (MenuAction::CopyCode, "Copy Invite Code"),
                         (MenuAction::StartRun, "Start Run"),
+                        (MenuAction::Ready, "Ready"),
+                        (MenuAction::Unready, "Not Ready"),
                         (MenuAction::Leave, "Leave"),
                     ] {
                         glue_button(
@@ -280,6 +286,7 @@ pub(super) fn menu_clicks(
     mut selection: ResMut<Selection>,
     mut start: ResMut<StartRequest>,
     mut net: ResMut<Net>,
+    mut inn_state: ResMut<InnState>,
     mut stash: ResMut<super::stash::Stash>,
     mut stash_open: ResMut<super::stash_panel::StashOpen>,
     mut next_mode: ResMut<NextState<GameMode>>,
@@ -338,9 +345,19 @@ pub(super) fn menu_clicks(
                 start.0 = true;
             }
         }
-        MenuAction::Leave => net.leave(""),
+        MenuAction::Ready => {
+            if net.welcomed() {
+                inn_state.ready = true;
+            }
+        }
+        MenuAction::Unready => inn_state.ready = false,
+        MenuAction::Leave => {
+            net.leave("");
+            inn_state.ready = false;
+        }
         MenuAction::Back => {
             net.leave("");
+            inn_state.ready = false;
             next_mode.set(GameMode::Pick);
         }
     }
@@ -355,7 +372,17 @@ fn shown(role: &Role) -> &'static [MenuAction] {
             MenuAction::StartRun,
             MenuAction::Leave,
         ],
-        Role::Client(_) => &[MenuAction::Leave],
+        Role::Client(_) => &[MenuAction::Ready, MenuAction::Unready, MenuAction::Leave],
+    }
+}
+
+/// Whether a button shows given whether we are ready: Ready until we are, Not Ready from then on,
+/// the others always (they are filtered by role in [`shown`]).
+fn ready_button_shows(action: MenuAction, ready: bool) -> bool {
+    match action {
+        MenuAction::Ready => !ready,
+        MenuAction::Unready => ready,
+        _ => true,
     }
 }
 
@@ -363,6 +390,7 @@ fn shown(role: &Role) -> &'static [MenuAction] {
 pub(super) fn refresh_menu(
     selection: Res<Selection>,
     net: Res<Net>,
+    inn_state: Res<InnState>,
     stash: Res<super::stash::Stash>,
     mut lines: Query<&mut Text, (With<ClassLine>, Without<StatusText>)>,
     mut status: Query<&mut Text, (With<StatusText>, Without<ClassLine>)>,
@@ -392,7 +420,7 @@ pub(super) fn refresh_menu(
         let on = matches!(
             action,
             MenuAction::Class(_) | MenuAction::Back | MenuAction::Stash
-        ) || visible.contains(action);
+        ) || (visible.contains(action) && ready_button_shows(*action, inn_state.ready));
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;
@@ -419,6 +447,35 @@ mod tests {
             roots_visible(GameMode::Survivors, Phase::Playing),
             (false, false)
         );
+    }
+
+    #[test]
+    fn a_joined_player_sees_ready_or_not_ready_never_both() {
+        let buttons = [
+            MenuAction::Ready,
+            MenuAction::Unready,
+            MenuAction::Leave,
+            MenuAction::StartRun,
+        ];
+        for ready in [false, true] {
+            let now: Vec<MenuAction> = buttons
+                .into_iter()
+                .filter(|a| ready_button_shows(*a, ready))
+                .collect();
+            let want = if ready {
+                MenuAction::Unready
+            } else {
+                MenuAction::Ready
+            };
+            assert!(now.contains(&want), "{now:?}");
+            assert!(!now.contains(&if ready {
+                MenuAction::Ready
+            } else {
+                MenuAction::Unready
+            }));
+            // The others are not the ready flag's to hide.
+            assert!(now.contains(&MenuAction::Leave) && now.contains(&MenuAction::StartRun));
+        }
     }
 
     #[test]

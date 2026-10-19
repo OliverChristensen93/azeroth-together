@@ -1,7 +1,8 @@
 //! A run: the world stepped here (alone or hosting) or mirrored from the host (joined), the local
 //! hero's pose fed to it, and the way back to the menu. Test hooks: `NIGHTFALL_HOST=1` hosts and
 //! `NIGHTFALL_JOIN=<code or address>` joins once the menu is up; `NIGHTFALL_AUTOPLAY=1` starts a
-//! run (hosting: once someone joined) and walks a slow circle; `NIGHTFALL_TRACE_POS=1` logs the
+//! run (hosting: once someone joined and every joiner is ready; a joiner's autoplay readies as
+//! soon as its pick is in) and walks a slow circle; `NIGHTFALL_TRACE_POS=1` logs the
 //! hero's WoW position every 2 seconds, for measuring entry points; `NIGHTFALL_FRAIL=<player>`
 //! drops that hero 15 s into the run (the host's); `NIGHTFALL_AUTOPLAY_ABANDON=<seconds>` presses
 //! Abandon Raid that many seconds in.
@@ -66,15 +67,29 @@ pub(super) struct Sim {
     pub mine: Option<HeroOutcome>,
     /// Every hero's outcome, once the raid is over: the end screen shows while it is here.
     pub over: Option<Vec<HeroOutcome>>,
+    /// Where this raid enters the map (WoW coordinates): the entry the host's roll names, which a
+    /// joined client learns from the lobby's planned raid, so it starts where the host's heroes do.
+    pub entry: [f32; 3],
+}
+
+/// Where the raid `roll` enters the map: its entry, or the first when there is no roll (a client that
+/// never heard the host's plan) or it names an entry the map has not.
+fn entry_of(roll: Option<&RaidRoll>) -> [f32; 3] {
+    let content = content();
+    let entries = &content.map.entries;
+    roll.and_then(|r| entries.get(r.entry))
+        .unwrap_or(&entries[0])
+        .to_owned()
 }
 
 impl Sim {
-    /// A run for everyone in `roster` (just us, alone), stepped here.
-    fn hosted(roster: &[LobbyPlayer], seed: u64) -> Self {
+    /// A run for everyone in `roster` (just us, alone), stepped here: the raid as the host (or we,
+    /// alone) planned it in the inn.
+    fn hosted(roster: &[LobbyPlayer], roll: RaidRoll) -> Self {
         let content = content();
         let mut world = World::new(content.clone());
+        let entry = entry_of(Some(&roll));
         // The raid first, so the heroes start at its entry.
-        let roll = RaidRoll::standard(&content, seed);
         // The standard roll fits the map the content shipped (the content test checks it); a
         // content folder that breaks that is told, not crashed on.
         if let Err(e) = world.begin_raid(roll) {
@@ -117,11 +132,13 @@ impl Sim {
             warned: 0,
             mine: None,
             over: None,
+            entry,
         }
     }
 
-    /// A joined run: an empty world, filled by the host's snapshots.
-    fn mirror(me: PlayerId) -> Self {
+    /// A joined run: an empty world, filled by the host's snapshots. `planned` is the raid the
+    /// host told us in the lobby, which says where it enters the map.
+    fn mirror(me: PlayerId, planned: Option<&RaidRoll>) -> Self {
         let mut world = World::new(content());
         // Until the host's first snapshot there is no loot to show: not the raid this world rolls.
         world.begin_mirror();
@@ -139,6 +156,7 @@ impl Sim {
             warned: 0,
             mine: None,
             over: None,
+            entry: entry_of(planned),
         }
     }
 
@@ -159,6 +177,7 @@ impl Sim {
             warned: 0,
             mine: None,
             over: None,
+            entry: entry_of(None),
         }
     }
 
@@ -367,6 +386,7 @@ pub(super) fn start_run(
     mut net: ResMut<Net>,
     mut input: ResMut<LocalInput>,
     mut stash: ResMut<Stash>,
+    mut inn_state: ResMut<session::InnState>,
     mut held: Local<bool>,
 ) {
     if net.is_solo() && net.status.is_empty() && time.elapsed_secs() > 8.0 {
@@ -404,9 +424,11 @@ pub(super) fn start_run(
             net.leave(why);
             return;
         }
-        commands.insert_resource(Sim::mirror(me));
+        // The raid as the host planned it in the lobby: where it enters the map.
+        commands.insert_resource(Sim::mirror(me, net.planned_raid().as_ref()));
         player.active = false;
         input.new_run();
+        inn_state.ready = false;
         next.set(Phase::Playing);
         return;
     }
@@ -424,7 +446,18 @@ pub(super) fn start_run(
     // A joined player's loadout arrives with their first pick, just after the welcome: a start
     // in that moment waits, never beginning with their hands empty. The host's click is
     // remembered (`held`), and the run starts the frame the pick comes.
-    if let Some(name) = net.awaiting_pick() {
+    // Everyone joined must be ready (the host's own Start is its Ready): a friend still setting up
+    // their loadout is waited for, and the click is not kept.
+    if !net.party_ready(true) {
+        let name = net.first_unready().unwrap_or_default();
+        net.status = format!("Waiting for {name} to be ready…");
+        *held = false;
+        start.0 = false;
+        return;
+    }
+    // A ready friend's pick, though, is a moment from the lobby that tells their client: that start
+    // is remembered (`held`) like one waiting for a first pick.
+    if let Some(name) = net.awaiting_pick().or_else(|| net.lobby_behind()) {
         net.status = format!("Waiting for {name}'s loadout…");
         *held = start.0;
         return;
@@ -439,9 +472,15 @@ pub(super) fn start_run(
         return;
     }
     net.broadcast_start();
-    commands.insert_resource(Sim::hosted(&roster, raid_seed(&time)));
+    // The raid the host (or we, alone) planned in the inn; one planned now if none was.
+    let roll = net
+        .planned_raid()
+        .unwrap_or_else(|| RaidRoll::standard(&content(), raid_seed(&time)));
+    net.solo_raid = None;
+    commands.insert_resource(Sim::hosted(&roster, roll));
     player.active = false;
     input.new_run();
+    inn_state.ready = false;
     next.set(Phase::Playing);
 }
 
@@ -500,7 +539,7 @@ pub(super) fn feed_pose(
 ) {
     let content = content();
     let map = &content.map;
-    let entry = map.entries[0];
+    let entry = sim.entry;
     let Some(mut tf) = views
         .heroes
         .get(&sim.me)
@@ -588,7 +627,7 @@ pub(super) fn step_sim(
                 }
                 Heard::Outcome(o) => sim.mine = Some(o),
                 Heard::RunOver(all) => sim.over = Some(all),
-                Heard::Ended | Heard::Lost(_) | Heard::Lobby(_) | Heard::Start(_) => {}
+                Heard::Ended | Heard::Lost(_) | Heard::Lobby(..) | Heard::Start(_) => {}
             }
         }
         sim.play_back(time.delta_secs());
@@ -710,6 +749,7 @@ pub(super) fn back_to_menu(
     mut cooldowns: ResMut<crate::spell::Cooldowns>,
     mut modes: MessageWriter<crate::net::MoveModeMessage>,
     mut next: ResMut<NextState<Phase>>,
+    mut net: ResMut<Net>,
     spawned: Query<Entity, With<NightfallEntity>>,
 ) {
     if !std::mem::take(&mut end.0) {
@@ -734,6 +774,8 @@ pub(super) fn back_to_menu(
         mode: benilla_protocol::MoveMode::Root,
         apply: false,
     });
+    // Alone, the inn plans the next raid; with friends, the host does.
+    net.replan_alone();
     next.set(Phase::Menu);
 }
 
@@ -748,7 +790,7 @@ mod tests {
             !World::new(content()).loot_view(Some(1)).marks.is_empty(),
             "the shipped content places containers"
         );
-        let mirror = Sim::mirror(1);
+        let mirror = Sim::mirror(1, None);
         let view = mirror.world.loot_view(Some(1));
         assert!(view.marks.is_empty() && view.open.is_none());
         // The first snapshot of the host replaces it, as before.
@@ -1070,6 +1112,7 @@ mod tests {
         app.init_resource::<crate::net::GuidIndex>();
         app.init_resource::<crate::player::Player>();
         app.init_resource::<NextState<Phase>>();
+        app.init_resource::<Net>();
         app.init_resource::<Messages<MoveModeMessage>>();
         let mut cooldowns = Cooldowns::default();
         cooldowns.apply_wire_cooldown(1777, 8_000, None, bevy::platform::time::Instant::now());

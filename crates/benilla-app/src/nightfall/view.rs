@@ -71,7 +71,7 @@ pub(super) fn sync(
 ) {
     let world = &sim.world;
     let content = content();
-    let fallback_y = content.map.entries[0][2];
+    let fallback_y = sim.entry[2];
     for hero in &world.heroes {
         if let Some(&e) = views.heroes.get(&hero.player) {
             if sim.stepped {

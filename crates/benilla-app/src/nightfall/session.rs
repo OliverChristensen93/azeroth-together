@@ -12,14 +12,15 @@ use std::sync::Mutex;
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
 use nightfall_sim::{
-    Event, HeroOutcome, Loadout, Mark, PlayerId, PlayerInput, Snapshot, UnitRef, World, DT,
+    Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, RaidRoll, Snapshot,
+    UnitRef, World, DT,
 };
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
 
-use super::content;
 use super::menu::Selection;
 use super::stash::Stash;
+use super::{content, inn};
 
 /// This game on the wire.
 pub(super) const GAME: GameTag = "nightfall";
@@ -37,12 +38,58 @@ const MAX_BACKLOG: usize = 2;
 /// Events a client that keeps falling behind may have waiting; past it the oldest go, so a stalled
 /// connection never grows the host's memory without end.
 const MAX_PENDING: usize = 4096;
+/// The lobby's least gap between two sends, seconds: friends' poses at most ten times a second.
+const LOBBY_EVERY: f32 = 0.1;
+
+/// Our own part of the inn's lobby: where our hero stands, and whether we are ready. Ready is
+/// the lobby's lock for a joined player: ready, their stash and loadout are frozen
+/// ([`super::stash_panel::lobby_frozen`]), and not ready they are free.
+#[derive(Resource, Default)]
+pub(super) struct InnState {
+    pub pose: Option<HeroPose>,
+    pub ready: bool,
+}
+
+/// Whether the lobby goes out now: it changed, and the last went at least [`LOBBY_EVERY`] ago.
+fn lobby_due(changed: bool, since_last: Option<f32>) -> bool {
+    changed && since_last.is_none_or(|s| s >= LOBBY_EVERY)
+}
+
+/// Whether a raid may start: we are ready, and so is every friend present.
+pub(super) fn all_ready(own: bool, friends: impl IntoIterator<Item = bool>) -> bool {
+    own && friends.into_iter().all(|r| r)
+}
+
+/// A pose worth sending: moved or turned since the last one sent.
+fn moved(last: Option<HeroPose>, now: HeroPose) -> bool {
+    last.is_none_or(|l| {
+        l.pos.distance(now.pos) > 0.05
+            || l.facing.distance(now.facing) > 0.05
+            || (l.z - now.z).abs() > 0.05
+    })
+}
+
+/// The next raid: the map's standard roll from a fresh seed (`NIGHTFALL_SEED` for a test run).
+/// Sub-project 6 rolls its exits, weather and monsters here.
+pub(super) fn plan_raid() -> RaidRoll {
+    let seed = std::env::var("NIGHTFALL_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| {
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64)
+        });
+    RaidRoll::standard(&content(), seed)
+}
 
 #[derive(Resource, Default)]
 pub(super) struct Net {
     pub role: Role,
     /// A line for the menu: what is happening, or what went wrong.
     pub status: String,
+    /// Alone: the next raid, planned as the inn is entered.
+    pub solo_raid: Option<RaidRoll>,
 }
 
 #[derive(Default)]
@@ -66,6 +113,11 @@ pub(super) struct HostSide {
     /// The number of the run begun last ([`Net::broadcast_start`]): 0 before the first. Inputs
     /// tagged with another are from another raid and are not taken.
     raid: u32,
+    /// The next raid as planned for the lobby; sent in every [`ServerMsg::Lobby`] and the run that
+    /// starts is this one. Planned anew each time a raid ends.
+    pub planned: RaidRoll,
+    /// When the lobby last went out ([`LOBBY_EVERY`] paces it).
+    sent_at: Option<Instant>,
     /// The invite code has been written to the log (for test runs to read).
     logged_code: bool,
 }
@@ -79,6 +131,11 @@ pub(super) struct Peer {
     /// no loadout (see [`nightfall_sim::messages::Who`]), so until it a run must not start.
     /// Cleared again when each raid starts: the next one needs a pick made after this one ended.
     pub picked: bool,
+    /// Where their hero stands in the inn, as they last said.
+    pub pose: Option<HeroPose>,
+    /// Ready at the raid board. A ready player's stash and loadout are frozen on their side, so
+    /// the pick the host holds is the one they bring; cleared when a raid ends.
+    pub ready: bool,
     /// The events since this player's last state, sent with the next one it keeps up for.
     pending: Vec<Event>,
 }
@@ -93,8 +150,14 @@ pub(super) struct ClientSide {
     pub start: bool,
     /// The number of the run the host started last, which our inputs are tagged with.
     raid: u32,
+    /// The next raid as the host planned it, from its last lobby.
+    pub planned: Option<RaidRoll>,
     /// The pick we last told the host.
     sent_pick: Option<HeroPick>,
+    /// The inn pose we last told the host, and when.
+    sent_pose: Option<(HeroPose, Instant)>,
+    /// Whether we last told the host we are ready.
+    sent_ready: Option<bool>,
     /// When our hero's pose last went to the host.
     last_pose: Option<Instant>,
 }
@@ -117,7 +180,13 @@ fn lobby_holds(lobby: &[LobbyPlayer], me: Option<PlayerId>, own: &HeroPick) -> b
     lobby
         .iter()
         .find(|p| Some(p.player) == me)
-        .is_some_and(|p| p.hero.class == own.class && p.hero.loadout == own.loadout)
+        .is_some_and(|p| same_bringing(&p.hero, own))
+}
+
+/// Whether two picks are the same hero bringing the same: class and loadout, not the name (the
+/// host cleans that).
+fn same_bringing(a: &HeroPick, b: &HeroPick) -> bool {
+    a.class == b.class && a.loadout == b.loadout
 }
 
 /// The name of the first of `peers` (picked yet, name) whose first pick has not come.
@@ -126,6 +195,26 @@ fn first_unpicked<'a>(peers: impl IntoIterator<Item = (bool, &'a str)>) -> Optio
         .into_iter()
         .find(|(picked, _)| !picked)
         .map(|(_, name)| name)
+}
+
+/// The name of the first of `peers` (ready, name) who is not ready.
+fn first_unready<'a>(peers: impl IntoIterator<Item = (bool, &'a str)>) -> Option<&'a str> {
+    peers
+        .into_iter()
+        .find(|(ready, _)| !ready)
+        .map(|(_, name)| name)
+}
+
+/// The name of the first of `peers` (player, pick) whose pick `lobby` (the last the host sent)
+/// does not hold: the host's word to its clients is behind what the host holds.
+fn first_behind<'a>(
+    lobby: &[LobbyPlayer],
+    peers: impl IntoIterator<Item = (PlayerId, &'a HeroPick)>,
+) -> Option<&'a str> {
+    peers
+        .into_iter()
+        .find(|(player, hero)| !lobby_holds(lobby, Some(*player), hero))
+        .map(|(_, hero)| hero.name.as_str())
 }
 
 /// A new raid needs a fresh pick from every joiner: what a joiner brought last time is settled
@@ -147,7 +236,8 @@ fn roster_lines(players: &[LobbyPlayer], me: Option<PlayerId>) -> String {
         .iter()
         .map(|p| {
             let you = if Some(p.player) == me { "  (you)" } else { "" };
-            format!("{}  ·  {}{you}", p.hero.name, p.hero.class)
+            let ready = if p.ready { "  (ready)" } else { "" };
+            format!("{}  ·  {}{you}{ready}", p.hero.name, p.hero.class)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -183,6 +273,8 @@ impl Net {
                     sent: None,
                     steps: 0,
                     raid: 0,
+                    planned: plan_raid(),
+                    sent_at: None,
                     logged_code: false,
                 });
                 self.status = "Waiting for friends to join".into();
@@ -203,7 +295,10 @@ impl Net {
             lobby: Vec::new(),
             start: false,
             raid: 0,
+            planned: None,
             sent_pick: None,
+            sent_pose: None,
+            sent_ready: None,
             last_pose: None,
         });
         self.status = if together_net::parse_code(addr).is_some() {
@@ -240,7 +335,17 @@ impl Net {
                     Invite::Opening | Invite::Off => "Opening the invite code…".into(),
                     Invite::Failed(why) => format!("No invite code ({why})"),
                 };
-                let names: Vec<String> = h.peers.iter().map(|p| p.hero.name.clone()).collect();
+                let names: Vec<String> = h
+                    .peers
+                    .iter()
+                    .map(|p| {
+                        if p.ready {
+                            format!("{} (ready)", p.hero.name)
+                        } else {
+                            p.hero.name.clone()
+                        }
+                    })
+                    .collect();
                 format!(
                     "Hosting  ·  {code}  ·  same network: {}:{}\nJoined: {}\n{}",
                     h.lan,
@@ -271,20 +376,89 @@ impl Net {
         let mut out = vec![LobbyPlayer {
             player: 0,
             hero: own.clone(),
+            pose: None,
+            ready: false,
         }];
         if let Role::Host(h) = &self.role {
             out.extend(h.peers.iter().map(|p| LobbyPlayer {
                 player: p.player,
                 hero: p.hero.clone(),
+                pose: None,
+                ready: false,
             }));
         }
         out
     }
 
-    /// Joined and welcomed: our pick has gone to the host (it is sent as soon as the host welcomes
-    /// us, and again whenever it changes). The stash panel freezes its moves from then on.
-    pub fn pick_sent(&self) -> bool {
-        matches!(&self.role, Role::Client(c) if c.sent_pick.is_some())
+    /// Joined, and the host has welcomed us: we may ready.
+    pub fn welcomed(&self) -> bool {
+        matches!(&self.role, Role::Client(c) if c.me.is_some())
+    }
+
+    /// The next raid as planned: the host's, the one the host told us, or ours alone.
+    pub fn planned_raid(&self) -> Option<RaidRoll> {
+        match &self.role {
+            Role::Solo => self.solo_raid.clone(),
+            Role::Host(h) => Some(h.planned.clone()),
+            Role::Client(c) => c.planned.clone(),
+        }
+    }
+
+    /// The friends in the lobby (never us), where they stand and whether they are ready.
+    // Nothing reads it yet: the inn scene (sub-project 5b, Task 7) draws them.
+    #[expect(dead_code, reason = "sub-project 5b, Task 7 draws the friends")]
+    pub fn friends(&self) -> Vec<LobbyPlayer> {
+        match &self.role {
+            Role::Solo => Vec::new(),
+            Role::Host(h) => h
+                .peers
+                .iter()
+                .map(|p| LobbyPlayer {
+                    player: p.player,
+                    hero: p.hero.clone(),
+                    pose: p.pose,
+                    ready: p.ready,
+                })
+                .collect(),
+            Role::Client(c) => c
+                .lobby
+                .iter()
+                .filter(|p| Some(p.player) != c.me)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Whether the party may start: alone, when we are ready; hosting, when everyone present is.
+    pub fn party_ready(&self, own: bool) -> bool {
+        match &self.role {
+            Role::Solo => own,
+            Role::Host(h) => all_ready(own, h.peers.iter().map(|p| p.ready)),
+            Role::Client(_) => false,
+        }
+    }
+
+    /// The host: the first joined player who is not ready, whom a start waits for.
+    pub fn first_unready(&self) -> Option<String> {
+        match &self.role {
+            Role::Host(h) => first_unready(h.peers.iter().map(|p| (p.ready, p.hero.name.as_str())))
+                .map(str::to_owned),
+            _ => None,
+        }
+    }
+
+    /// The host: the first joined player whose pick the lobby last sent does not hold yet. A start
+    /// waits for that lobby to go out (a moment, [`LOBBY_EVERY`]): their client would otherwise
+    /// find the host started without its loadout, and leave.
+    pub fn lobby_behind(&self) -> Option<String> {
+        match &self.role {
+            Role::Host(h) => first_behind(
+                h.sent.as_deref().unwrap_or(&[]),
+                h.peers.iter().map(|p| (p.player, &p.hero)),
+            )
+            .map(str::to_owned),
+            _ => None,
+        }
     }
 
     /// Joined: whether the host's lobby holds our pick, class and loadout, as `own` has it now.
@@ -292,9 +466,10 @@ impl Net {
     /// differs is one still on its way, or one the host started the run without. Alone or
     /// hosting there is no host to disagree, and this is true.
     ///
-    /// The stash panel does not read this: it freezes on being welcomed, whether or not the lobby
-    /// lists the pick yet. [`super::run::start_run`] refuses to enter a raid while this is false, so
-    /// the loadout the stash commits is the one the host's hero is given.
+    /// [`super::run::start_run`] refuses to enter a raid while this is false, so the loadout the
+    /// stash commits is the one the host's hero is given. The host, for its part, starts only when
+    /// its last lobby holds every joiner's pick ([`Net::lobby_behind`]), and a joiner's moves are
+    /// frozen while they are ready, so the two agree.
     pub fn host_holds(&self, own: &HeroPick) -> bool {
         match &self.role {
             Role::Client(c) => lobby_holds(&c.lobby, c.me, own),
@@ -331,6 +506,18 @@ impl Net {
         if let Role::Host(h) = &mut self.role {
             h.host.lock().unwrap().broadcast(&ServerMsg::Ended);
             h.sent = None;
+            // The next raid is planned for the lobby this ends in, and nobody is ready for it yet.
+            h.planned = plan_raid();
+            for p in &mut h.peers {
+                p.ready = false;
+            }
+        }
+    }
+
+    /// Back in the inn alone: the next raid planned anew.
+    pub fn replan_alone(&mut self) {
+        if matches!(self.role, Role::Solo) {
+            self.solo_raid = Some(plan_raid());
         }
     }
 }
@@ -376,7 +563,7 @@ fn lan_address() -> Option<String> {
 }
 
 /// The name the player's hero goes by: `NIGHTFALL_NAME`, `TOGETHER_NAME`, else the Windows user.
-fn hero_name() -> String {
+pub(super) fn hero_name() -> String {
     std::env::var("NIGHTFALL_NAME")
         .or_else(|_| std::env::var("TOGETHER_NAME"))
         .or_else(|_| std::env::var("USERNAME"))
@@ -423,13 +610,23 @@ fn our_content_hash() -> u64 {
     content_hash(&texts)
 }
 
-/// At the menu: the host takes players in and keeps their lobby current; a client follows its
-/// host's lobby and tells it its pick.
-pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<Stash>) {
+/// At the menu: the host takes players in and keeps their lobby current (where they stand, who is
+/// ready, the planned raid); a client follows its host's lobby and tells it its pick, where its
+/// hero stands and whether it is ready.
+pub(super) fn lobby(
+    mut net: ResMut<Net>,
+    selection: Res<Selection>,
+    stash: Res<Stash>,
+    mut inn_state: ResMut<InnState>,
+) {
     let own = own_pick(&selection, own_loadout(&selection, &stash));
     let net = &mut *net;
     match &mut net.role {
-        Role::Solo => {}
+        Role::Solo => {
+            if net.solo_raid.is_none() {
+                net.solo_raid = Some(plan_raid());
+            }
+        }
         Role::Host(h) => {
             let host = h.host.lock().unwrap();
             if !h.logged_code {
@@ -470,14 +667,38 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
                             player,
                             hero,
                             picked: false,
+                            pose: None,
+                            ready: false,
                             pending: Vec::new(),
                         });
                     }
                     HostEvent::Message(conn, ClientMsg::Pick(mut hero)) => {
                         if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
                             hero.name = clean_name(&hero.name);
+                            // What they bring changed: whatever they were ready with is not
+                            // this. (A client freezes its loadout while ready, so only one that
+                            // does not keep to that gets here; it must ready again.)
+                            if !same_bringing(&p.hero, &hero) {
+                                p.ready = false;
+                            }
                             p.hero = hero;
                             p.picked = true;
+                        }
+                    }
+                    HostEvent::Message(conn, ClientMsg::InnPose(pose)) => {
+                        if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
+                            if pose.pos.is_finite() && pose.facing.is_finite() && pose.z.is_finite()
+                            {
+                                // Kept inside the inn, as our own hero is.
+                                let pos = inn().place.bounds.clamp(pose.pos);
+                                p.pose = Some(HeroPose { pos, ..pose });
+                            }
+                        }
+                    }
+                    HostEvent::Message(conn, ClientMsg::Ready(ready)) => {
+                        if let Some(p) = h.peers.iter_mut().find(|p| p.conn == conn) {
+                            // Only with a pick in: a hello carries no loadout.
+                            p.ready = ready && p.picked;
                         }
                     }
                     HostEvent::Left(conn) => {
@@ -492,17 +713,24 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
             let mut players = vec![LobbyPlayer {
                 player: 0,
                 hero: own,
+                pose: inn_state.pose,
+                ready: inn_state.ready,
             }];
             players.extend(h.peers.iter().map(|p| LobbyPlayer {
                 player: p.player,
                 hero: p.hero.clone(),
+                pose: p.pose,
+                ready: p.ready,
             }));
-            if h.sent.as_ref() != Some(&players) {
+            let changed = h.sent.as_ref() != Some(&players);
+            if lobby_due(changed, h.sent_at.map(|t| t.elapsed().as_secs_f32())) {
                 host.broadcast(&ServerMsg::Lobby {
                     players: players.clone(),
+                    raid: h.planned.clone(),
                 });
                 drop(host);
                 h.sent = Some(players);
+                h.sent_at = Some(Instant::now());
             }
         }
         Role::Client(c) => {
@@ -520,10 +748,13 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
                     }
                     ClientEvent::Message(ServerMsg::Welcome { you }) => {
                         c.me = Some(you);
-                        net.status = "Joined: waiting for the host to start".into();
+                        net.status = "Joined: press Ready when your loadout is set".into();
                     }
                     ClientEvent::Message(ServerMsg::Refused(why)) => gone = Some(why),
-                    ClientEvent::Message(ServerMsg::Lobby { players }) => c.lobby = players,
+                    ClientEvent::Message(ServerMsg::Lobby { players, raid }) => {
+                        c.lobby = players;
+                        c.planned = Some(raid);
+                    }
                     ClientEvent::Message(ServerMsg::Start { raid }) => {
                         c.raid = raid;
                         c.start = true;
@@ -539,11 +770,47 @@ pub(super) fn lobby(mut net: ResMut<Net>, selection: Res<Selection>, stash: Res<
             }
             if let Some(why) = gone {
                 net.leave(why);
+                inn_state.ready = false;
                 return;
             }
+            if c.me.is_none() {
+                // Not welcomed (yet): nothing of an earlier session's Ready carries over.
+                inn_state.ready = false;
+            }
             if c.me.is_some() && c.sent_pick.as_ref() != Some(&own) {
+                // A pick that changes after it was sent (the class, say) is no longer the one we
+                // were ready with.
+                if c.sent_pick.is_some() {
+                    inn_state.ready = false;
+                }
                 c.client.lock().unwrap().send(&ClientMsg::Pick(own.clone()));
                 c.sent_pick = Some(own);
+            }
+            if c.me.is_some() {
+                // A test run is ready as soon as its pick is in.
+                if super::run::autoplay() && c.sent_pick.is_some() {
+                    inn_state.ready = true;
+                }
+                if let Some(pose) = inn_state.pose {
+                    let last = c.sent_pose.map(|(p, _)| p);
+                    let due = c
+                        .sent_pose
+                        .is_none_or(|(_, t)| t.elapsed().as_secs_f32() >= LOBBY_EVERY);
+                    if due && moved(last, pose) {
+                        c.client.lock().unwrap().send(&ClientMsg::InnPose(pose));
+                        c.sent_pose = Some((pose, Instant::now()));
+                    }
+                }
+                // Ready goes after the pick on the wire (above), so the host holds what we bring.
+                if c.sent_ready != Some(inn_state.ready)
+                    && (!inn_state.ready || c.sent_pick.is_some())
+                {
+                    c.client
+                        .lock()
+                        .unwrap()
+                        .send(&ClientMsg::Ready(inn_state.ready));
+                    c.sent_ready = Some(inn_state.ready);
+                }
             }
         }
     }
@@ -594,7 +861,11 @@ pub(super) fn host_receive(net: &mut Net, world: &mut World) {
                     h.peers.remove(i);
                 }
             }
-            HostEvent::Message(_, ClientMsg::Pick(_)) | HostEvent::Joined(..) => {}
+            HostEvent::Message(
+                _,
+                ClientMsg::Pick(_) | ClientMsg::InnPose(_) | ClientMsg::Ready(_),
+            )
+            | HostEvent::Joined(..) => {}
         }
     }
 }
@@ -704,7 +975,7 @@ pub(super) enum Heard {
     Ended,
     /// The host's lobby, which may come with (or after) `Ended` in one poll, before the lobby
     /// system has run.
-    Lobby(Vec<LobbyPlayer>),
+    Lobby(Vec<LobbyPlayer>, RaidRoll),
     /// The host started the next run (number `raid`), possibly in the same poll as `Ended`.
     Start(u32),
     Lost(String),
@@ -737,7 +1008,9 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
                 heard.push(Heard::State(snapshot, seen, marks, events));
             }
             ClientEvent::Message(ServerMsg::Ended) => heard.push(Heard::Ended),
-            ClientEvent::Message(ServerMsg::Lobby { players }) => heard.push(Heard::Lobby(players)),
+            ClientEvent::Message(ServerMsg::Lobby { players, raid }) => {
+                heard.push(Heard::Lobby(players, raid));
+            }
             ClientEvent::Message(ServerMsg::Start { raid }) => heard.push(Heard::Start(raid)),
             ClientEvent::Message(ServerMsg::Outcome(o)) => heard.push(Heard::Outcome(o)),
             ClientEvent::Message(ServerMsg::RunOver { outcomes }) => {
@@ -767,7 +1040,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
             Heard::Ended => {
                 net.status = "The host ended the run".into();
                 let lobby = after_ended(heard, |h| match h {
-                    Heard::Lobby(players) => Some(players.clone()),
+                    Heard::Lobby(players, raid) => Some((players.clone(), raid.clone())),
                     _ => None,
                 });
                 let start = after_ended(heard, |h| match h {
@@ -779,8 +1052,9 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                     // The host wants a pick from us after this raid, even if it is the same one: it
                     // cleared ours when the raid started.
                     c.sent_pick = None;
-                    if let Some(players) = lobby {
+                    if let Some((players, raid)) = lobby {
                         c.lobby = players;
+                        c.planned = Some(raid);
                     }
                     if let Some(raid) = start {
                         c.raid = raid;
@@ -796,7 +1070,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
             Heard::State(..)
             | Heard::Outcome(_)
             | Heard::RunOver(_)
-            | Heard::Lobby(_)
+            | Heard::Lobby(..)
             | Heard::Start(_) => {}
         }
     }
@@ -859,15 +1133,26 @@ mod tests {
             LobbyPlayer {
                 player: 0,
                 hero: pick("Host"),
+                pose: None,
+                ready: false,
             },
             LobbyPlayer {
                 player: 1,
                 hero: pick("Me"),
+                pose: None,
+                ready: false,
             },
         ];
         let text = roster_lines(&players, Some(1));
         assert!(text.contains("Me  ·  rogue  (you)"));
         assert!(!text.contains("Host  ·  rogue  (you)"));
+        assert!(!text.contains("ready"));
+        // Whoever is ready says so.
+        let mut ready = players;
+        ready[0].ready = true;
+        let text = roster_lines(&ready, Some(1));
+        assert!(text.contains("Host  ·  rogue  (ready)"), "{text}");
+        assert!(text.contains("Me  ·  rogue  (you)\n") || text.ends_with("Me  ·  rogue  (you)"));
     }
 
     #[test]
@@ -878,8 +1163,15 @@ mod tests {
                 LobbyPlayer {
                     player: 0,
                     hero: pick("Host"),
+                    pose: None,
+                    ready: false,
                 },
-                LobbyPlayer { player: 1, hero },
+                LobbyPlayer {
+                    player: 1,
+                    hero,
+                    pose: None,
+                    ready: false,
+                },
             ]
         };
         assert!(lobby_holds(&lobby(ours.clone()), Some(1), &ours));
@@ -955,11 +1247,21 @@ mod tests {
 
     #[test]
     fn a_start_that_comes_with_the_end_is_kept_for_the_menu() {
+        let plan = RaidRoll {
+            seed: 9,
+            entry: 0,
+            exits: Vec::new(),
+        };
         let lobby = |n: &str| {
-            Heard::Lobby(vec![LobbyPlayer {
-                player: 1,
-                hero: pick(n),
-            }])
+            Heard::Lobby(
+                vec![LobbyPlayer {
+                    player: 1,
+                    hero: pick(n),
+                    pose: None,
+                    ready: false,
+                }],
+                plan.clone(),
+            )
         };
         let start_of = |heard: &[Heard]| {
             after_ended(heard, |h| match h {
@@ -970,11 +1272,12 @@ mod tests {
         // The host ended the run and started the next in one poll.
         let heard = [Heard::Ended, lobby("A"), Heard::Start(2)];
         assert_eq!(start_of(&heard), Some(2));
+        // The lobby that came with the end brings the planned raid with it.
         let players = after_ended(&heard, |h| match h {
-            Heard::Lobby(p) => Some(p.len()),
+            Heard::Lobby(p, raid) => Some((p.len(), raid.seed)),
             _ => None,
         });
-        assert_eq!(players, Some(1));
+        assert_eq!(players, Some((1, 9)));
         // A start before the end belongs to the run that ended; none is no start.
         assert_eq!(start_of(&[Heard::Start(1), Heard::Ended]), None);
         assert_eq!(start_of(&[Heard::Ended]), None);
@@ -984,6 +1287,133 @@ mod tests {
         assert_eq!(start_of(&heard), Some(3));
         let heard = [Heard::Ended, Heard::Start(2), Heard::Ended];
         assert_eq!(start_of(&heard), None);
+    }
+
+    #[test]
+    fn the_planned_raid_that_comes_with_the_end_is_kept_for_the_inn() {
+        // `join` only starts a connection attempt in the background; nothing is polled here.
+        let mut net = Net::default();
+        net.join("127.0.0.1:9");
+        assert_eq!(
+            net.planned_raid(),
+            None,
+            "nothing planned before the host's lobby"
+        );
+        let plan = RaidRoll {
+            seed: 5,
+            entry: 0,
+            exits: Vec::new(),
+        };
+        let heard = [Heard::Ended, Heard::Lobby(Vec::new(), plan.clone())];
+        assert!(client_left_run(&mut net, &heard));
+        assert_eq!(net.planned_raid(), Some(plan));
+    }
+
+    #[test]
+    fn alone_the_inn_plans_the_next_raid_and_replans_it_after_each() {
+        let mut net = Net::default();
+        assert_eq!(net.planned_raid(), None);
+        net.solo_raid = Some(RaidRoll {
+            seed: 1,
+            entry: 0,
+            exits: Vec::new(),
+        });
+        assert_eq!(net.planned_raid().map(|r| r.seed), Some(1));
+        // Alone, the Start is the Ready; hosting needs the party, a client never starts.
+        assert!(net.party_ready(true));
+        assert!(!net.party_ready(false));
+        assert_eq!(net.first_unready(), None);
+        assert_eq!(net.lobby_behind(), None);
+        assert!(!net.welcomed());
+        net.replan_alone();
+        assert!(net.solo_raid.is_some());
+    }
+
+    #[test]
+    fn the_lobby_goes_when_it_changes_and_no_faster() {
+        assert!(lobby_due(true, None));
+        assert!(!lobby_due(false, None));
+        assert!(!lobby_due(true, Some(0.05)));
+        assert!(lobby_due(true, Some(0.1)));
+        assert!(!lobby_due(false, Some(5.0)));
+    }
+
+    #[test]
+    fn all_ready_counts_everyone_present() {
+        assert!(all_ready(true, []));
+        assert!(!all_ready(false, []));
+        assert!(!all_ready(true, [true, false]));
+        assert!(all_ready(true, [true, true]));
+    }
+
+    #[test]
+    fn a_pose_goes_only_when_it_moved() {
+        use nightfall_sim::V2;
+        let at = |x: f32| HeroPose {
+            pos: V2::new(x, 0.0),
+            facing: V2::new(1.0, 0.0),
+            z: 0.0,
+        };
+        assert!(moved(None, at(0.0)));
+        assert!(!moved(Some(at(0.0)), at(0.01)));
+        assert!(moved(Some(at(0.0)), at(0.2)));
+        // A turn on the spot, or a step up, is also worth sending.
+        let turned = HeroPose {
+            facing: V2::new(0.0, 1.0),
+            ..at(0.0)
+        };
+        assert!(moved(Some(at(0.0)), turned));
+        let up = HeroPose { z: 0.5, ..at(0.0) };
+        assert!(moved(Some(at(0.0)), up));
+    }
+
+    #[test]
+    fn a_start_waits_for_the_first_who_is_not_ready() {
+        assert_eq!(first_unready([]), None);
+        assert_eq!(first_unready([(true, "A"), (true, "B")]), None);
+        assert_eq!(
+            first_unready([(true, "A"), (false, "B"), (false, "C")]),
+            Some("B")
+        );
+    }
+
+    #[test]
+    fn a_start_waits_for_the_lobby_to_hold_every_picks() {
+        let mut brought = pick("Me");
+        let mut listed = vec![LobbyPlayer {
+            player: 1,
+            hero: pick("Me"),
+            pose: None,
+            ready: true,
+        }];
+        fn peers(hero: &HeroPick) -> Vec<(PlayerId, &HeroPick)> {
+            vec![(1, hero)]
+        }
+        assert_eq!(first_behind(&listed, peers(&brought)), None);
+        // The host holds a new loadout (or class) the last lobby did not tell: wait for it.
+        brought.loadout.inventory.pack = vec![Some(nightfall_sim::Stack::new(0, 1))];
+        assert_eq!(first_behind(&listed, peers(&brought)), Some("Me"));
+        listed[0].hero = brought.clone();
+        assert_eq!(first_behind(&listed, peers(&brought)), None);
+        // And a player no lobby has listed yet.
+        assert_eq!(first_behind(&[], peers(&brought)), Some("Me"));
+    }
+
+    #[test]
+    fn a_changed_pick_is_not_what_they_were_ready_with() {
+        let a = pick("Me");
+        let mut renamed = a.clone();
+        renamed.name = "Other".into();
+        assert!(
+            same_bringing(&a, &renamed),
+            "the name is the host's to clean"
+        );
+        let mut other = a.clone();
+        other.class = "mage".into();
+        assert!(!same_bringing(&a, &other));
+        let mut fuller = a.clone();
+        fuller.loadout.inventory.pack = vec![Some(nightfall_sim::Stack::new(0, 1))];
+        assert!(!same_bringing(&a, &fuller));
     }
 
     fn damage(to: UnitRef, by: Option<UnitRef>) -> Event {

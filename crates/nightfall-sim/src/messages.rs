@@ -3,10 +3,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Event, HeroOutcome, Loadout, Mark, PlayerId, PlayerInput, Snapshot};
+use crate::{
+    Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, RaidRoll, Snapshot,
+};
 
 /// Bumped whenever a message changes shape: a client and host must agree.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 /// The hero a player brings: their name and pick.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -63,6 +65,10 @@ impl Who {
 pub struct LobbyPlayer {
     pub player: PlayerId,
     pub hero: HeroPick,
+    /// Where their hero stands in the inn.
+    pub pose: Option<HeroPose>,
+    /// Ready at the raid board.
+    pub ready: bool,
 }
 
 /// What a client tells the host.
@@ -79,6 +85,10 @@ pub enum ClientMsg {
     /// A pick made in the lobby: the first one, sent as soon as the host welcomes the client, says
     /// what the hero brings; a new one follows whenever that changes.
     Pick(HeroPick),
+    /// Where our hero stands in the inn.
+    InnPose(HeroPose),
+    /// Ready, or not, at the raid board.
+    Ready(bool),
     /// This step's input, during a run: tagged with the number of the raid it was made in (the
     /// `raid` of the host's [`ServerMsg::Start`]), so an input still on its way from the last raid
     /// is never taken for this one's.
@@ -92,8 +102,12 @@ pub enum ServerMsg {
     Welcome { you: PlayerId },
     /// Not joined, and why; the host closes the connection after it.
     Refused(String),
-    /// The lobby as it stands.
-    Lobby { players: Vec<LobbyPlayer> },
+    /// The lobby as it stands, and the next raid as the host plans it (the map table's intel
+    /// reads it).
+    Lobby {
+        players: Vec<LobbyPlayer>,
+        raid: RaidRoll,
+    },
     /// The run begins. `raid` numbers it (each start is the next number), and a client tags its
     /// inputs with it.
     Start { raid: u32 },
@@ -159,28 +173,32 @@ mod tests {
                 hero: OldHero,
             },
         }
-        let old = OldClientMsg::Hello {
-            protocol: 4,
-            content: 99,
-            hero: OldHero {
-                name: "Valeera".into(),
-                class: "rogue".into(),
-                race: 1,
-                sex: 0,
-            },
-        };
-        let bytes = postcard::to_stdvec(&old).unwrap();
-        match postcard::from_bytes::<ClientMsg>(&bytes) {
-            Ok(ClientMsg::Hello {
-                protocol,
-                content,
-                hero,
-            }) => {
-                assert_eq!((protocol, content), (4, 99));
-                assert_eq!(hero.name, "Valeera");
-                assert_ne!(protocol, PROTOCOL, "the host refuses it for its version");
+        // Protocol 5 kept the same hello (its loadout moved to the first pick), so a v5 client
+        // reads the same way; both are refused by version, not dropped.
+        for version in [4, 5] {
+            let old = OldClientMsg::Hello {
+                protocol: version,
+                content: 99,
+                hero: OldHero {
+                    name: "Valeera".into(),
+                    class: "rogue".into(),
+                    race: 1,
+                    sex: 0,
+                },
+            };
+            let bytes = postcard::to_stdvec(&old).unwrap();
+            match postcard::from_bytes::<ClientMsg>(&bytes) {
+                Ok(ClientMsg::Hello {
+                    protocol,
+                    content,
+                    hero,
+                }) => {
+                    assert_eq!((protocol, content), (version, 99));
+                    assert_eq!(hero.name, "Valeera");
+                    assert_ne!(protocol, PROTOCOL, "the host refuses it for its version");
+                }
+                other => panic!("a protocol {version} hello must read as a hello: {other:?}"),
             }
-            other => panic!("a protocol 4 hello must read as a hello: {other:?}"),
         }
     }
 
@@ -219,6 +237,50 @@ mod tests {
             postcard::from_bytes::<OldServerMsg>(&welcome).unwrap(),
             OldServerMsg::Welcome { you: 2 }
         );
+    }
+
+    #[test]
+    fn the_inns_lobby_survives_the_wire() {
+        use crate::{ExitPlan, HeroPose, Loadout, RaidRoll, V2};
+        let msg = ServerMsg::Lobby {
+            players: vec![LobbyPlayer {
+                player: 1,
+                hero: HeroPick {
+                    name: "Friend".into(),
+                    class: "mage".into(),
+                    race: 1,
+                    sex: 1,
+                    loadout: Loadout::default(),
+                },
+                pose: Some(HeroPose {
+                    pos: V2::new(-9460.0, 20.0),
+                    facing: V2::new(1.0, 0.0),
+                    z: 57.6,
+                }),
+                ready: true,
+            }],
+            raid: RaidRoll {
+                seed: 7,
+                entry: 0,
+                exits: vec![ExitPlan {
+                    open: true,
+                    opens_at: 1080.0,
+                }],
+            },
+        };
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), msg);
+        for up in [
+            ClientMsg::Ready(true),
+            ClientMsg::InnPose(HeroPose {
+                pos: V2::new(-9460.0, 20.0),
+                facing: V2::new(0.0, 1.0),
+                z: 57.6,
+            }),
+        ] {
+            let bytes = postcard::to_stdvec(&up).unwrap();
+            assert_eq!(postcard::from_bytes::<ClientMsg>(&bytes).unwrap(), up);
+        }
     }
 
     #[test]

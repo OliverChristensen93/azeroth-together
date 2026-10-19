@@ -3,17 +3,17 @@
 //! when it is empty. A click moves a stack between them; Shift and a click sells a stash stack.
 //! Our own panel; in sub-project 5b the inn's banker opens it.
 //!
-//! Two things turn the moves off, and the panel says which ([`Lock`]): a joined player's pick is
-//! with the host (a change now could be copied or lost, depending on whether the host starts
-//! before or after hearing of it), and a stash this session may not save (every move would be
-//! undone at the next launch).
+//! Two things turn the moves off, and the panel says which ([`Lock`]): a joined player is ready,
+//! so their pick is with the host (a change now could be copied or lost, depending on whether the
+//! host starts before or after hearing of it), and a stash this session may not save (every move
+//! would be undone at the next launch).
 
 use bevy::prelude::*;
 use bevy::ui::FocusPolicy;
 use nightfall_sim::{inventory_of, Content, EquipSlot, Inventory, Place, Stack, StashError};
 
 use super::menu::Selection;
-use super::session::Net;
+use super::session::{InnState, Net};
 use super::stash::Stash;
 use super::widgets::{self, text, EDGE, GOLD, GREY, PANEL, RED, SLOT};
 use super::{content, Phase};
@@ -61,7 +61,7 @@ pub(super) struct StashFont(Handle<Font>);
 /// Why the panel's moves and sales are off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Lock {
-    /// Joined, and our pick is with the host.
+    /// Joined and ready: our pick is with the host.
     Lobby,
     /// This session may not save the stash.
     ReadOnly,
@@ -71,11 +71,13 @@ pub(super) enum Lock {
 #[derive(Resource, Default)]
 pub(super) struct StashLock(pub Option<Lock>);
 
-/// Whether a joined player's loadout is out of their hands: they are joined and the host has
-/// welcomed them, which is when their pick goes to it. Alone, or hosting (before Start, or
-/// after: [`super::run::start_run`] reads the stash in one step), nothing is out.
-pub(super) fn lobby_frozen(joined: bool, welcomed: bool) -> bool {
-    joined && welcomed
+/// Whether a joined player's loadout is out of their hands: they are joined and ready. Until they
+/// press Ready they edit freely (their pick follows every change to the host); ready, the pick
+/// the host holds is the one they bring, and it can only change by un-readying first. Alone, or
+/// hosting (the host's own Start is its Ready: [`super::run::start_run`] reads the stash in one
+/// step), nothing is out.
+pub(super) fn lobby_frozen(joined: bool, ready: bool) -> bool {
+    joined && ready
 }
 
 /// The lock the session's state puts on the panel; read-only is the more basic of the two.
@@ -94,8 +96,8 @@ pub(super) fn lock_of(read_only: bool, frozen: bool) -> Option<Lock> {
 pub(super) fn lock_line(lock: Lock) -> &'static str {
     match lock {
         Lock::Lobby => {
-            "Your loadout is with the host: leave the lobby to change it. \
-             The class can still be changed."
+            "You are ready, so your loadout is with the host: un-ready to change it. \
+             Changing the class un-readies you."
         }
         Lock::ReadOnly => "Nothing can be moved: your stash is read-only this session.",
     }
@@ -171,13 +173,15 @@ pub(super) fn show(
     }
 }
 
-/// What turns the moves off now, if anything. Run after the lobby has told the host our pick, so
-/// a pick sent this frame locks this frame.
-pub(super) fn refresh_lock(net: Res<Net>, stash: Res<Stash>, mut lock: ResMut<StashLock>) {
-    let now = lock_of(
-        stash.read_only(),
-        lobby_frozen(net.is_client(), net.pick_sent()),
-    );
+/// What turns the moves off now, if anything. Run after the lobby has told the host our pick and
+/// that we are ready, so a Ready sent this frame locks this frame.
+pub(super) fn refresh_lock(
+    net: Res<Net>,
+    inn: Res<InnState>,
+    stash: Res<Stash>,
+    mut lock: ResMut<StashLock>,
+) {
+    let now = lock_of(stash.read_only(), lobby_frozen(net.is_client(), inn.ready));
     if lock.0 != now {
         lock.0 = now;
     }
@@ -544,14 +548,15 @@ mod tests {
     }
 
     #[test]
-    fn only_a_joined_player_the_host_has_welcomed_is_frozen() {
+    fn only_a_joined_player_who_is_ready_is_frozen() {
         // Alone or hosting (before Start, or after: `start_run` reads the stash in one step):
-        // never joined, so nothing is out.
+        // never joined, so nothing is out, ready or not.
         assert!(!lobby_frozen(false, false));
         assert!(!lobby_frozen(false, true));
-        // Joined but not welcomed yet: free to edit, the first pick will carry it.
+        // Joined and not ready (not welcomed yet, or welcomed and still setting up, or ready
+        // once and un-readied): free to edit, and the pick follows each change to the host.
         assert!(!lobby_frozen(true, false));
-        // Joined and welcomed: the pick is with the host.
+        // Joined and ready: the pick is with the host.
         assert!(lobby_frozen(true, true));
     }
 
@@ -563,7 +568,7 @@ mod tests {
         assert_eq!(lock_of(true, true), Some(Lock::ReadOnly));
         let lobby = lock_line(Lock::Lobby);
         assert!(lobby.contains("with the host"), "{lobby}");
-        assert!(lobby.contains("class can still be changed"), "{lobby}");
+        assert!(lobby.contains("un-ready"), "{lobby}");
         assert!(lock_line(Lock::ReadOnly).contains("read-only"));
     }
 
