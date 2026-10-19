@@ -540,14 +540,15 @@ impl Profile {
     ///
     /// It settles from what the hero last held ([`Profile::note_carry`]), already put through the
     /// death rules; before the first note, from what they brought, put through them here. What
-    /// the content leaves no room for, or no longer knows, goes to the stash.
+    /// the content leaves no room for, or no longer knows, goes to the stash. A companion's stack
+    /// that was brought with no slot to ride in comes home in `loadout.pet`, once.
     pub fn settle_missing(&mut self, content: &Content) -> bool {
         let Some(raid) = self.in_raid.take() else {
             return false;
         };
         let inv = match &raid.kept {
             // The note already carries a companion's stack the raid had no slot for, as it was
-            // brought ([`Profile::note_carry`]), so it is home with the rest.
+            // brought ([`Profile::note_carry`]), so it comes home in `loadout.pet` with the rest.
             Some(kept) => {
                 let (inv, aside) = inventory_of(kept, content);
                 for s in aside {
@@ -1805,8 +1806,8 @@ mod tests {
     }
 
     #[test]
-    fn a_version_2_build_reads_a_version_3_file_as_newer() {
-        // What a 5a build does with the file: its `Head` knows only the version, so the inn's
+    fn a_version_3_file_says_version_3_and_a_head_that_knows_only_the_version_ignores_the_inn() {
+        // What a 5a build reads of the file: its `Head` knows only the version, so the inn's
         // fields it has never heard of do not matter.
         #[derive(Deserialize)]
         struct Head {
@@ -1818,7 +1819,6 @@ mod tests {
         let text = p.to_ron();
         let head: Head = ron::from_str(&text).unwrap();
         assert_eq!(head.version, 3, "{text}");
-        assert!(head.version > 2);
     }
 
     #[test]
@@ -2021,6 +2021,58 @@ mod tests {
         assert!(p.note_carry(&carry, &c));
         assert!(p.settle_missing(&c));
         assert_eq!(tally(&p).get("gem"), Some(&3), "kept once");
+        assert_eq!(p.loadout.pet, None);
+        // The early mirror: a note taken with no slot folds the brought stack in, and a later
+        // note replaces that fold, so the stack is kept once wherever the hero then put it.
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let mut carry = Inventory::new(&c);
+        assert!(
+            p.note_carry(&carry, &c),
+            "no slot yet: the brought stack is folded in"
+        );
+        assert_eq!(
+            p.in_raid.as_ref().unwrap().kept.as_ref().unwrap().pet,
+            Some(stack("gem", 3))
+        );
+        carry.pet = Some(Some(Stack::new(GEM, 3)));
+        assert!(
+            !p.note_carry(&carry, &c),
+            "the slot holds it: the same note"
+        );
+        carry.pet = Some(None);
+        carry.safe[0] = Some(Stack::new(GEM, 3));
+        assert!(
+            p.note_carry(&carry, &c),
+            "moved out: the later note replaces the fold"
+        );
+        let kept = p.in_raid.as_ref().unwrap().kept.clone().unwrap();
+        assert_eq!(kept.pet, None);
+        assert_eq!(kept.safe, vec![(0, stack("gem", 3))]);
+        assert!(p.settle_missing(&c));
+        assert_eq!(p.loadout.pet, None);
+        assert_eq!(p.loadout.safe, vec![(0, stack("gem", 3))]);
+        assert_eq!(tally(&p).get("gem"), Some(&3), "kept once");
+        // The same, with the stack moved to the backpack: it follows the death rules (a missing
+        // raid leaves no body, so the backpack's gem is gone), and the fold does not bring it back.
+        let mut p = Profile::default();
+        p.inn.companion = Some("hound".into());
+        p.loadout.pet = Some(stack("gem", 3));
+        p.begin_raid(0, &c);
+        let mut carry = Inventory::new(&c);
+        assert!(p.note_carry(&carry, &c));
+        carry.pet = Some(None);
+        carry.add(Stack::new(GEM, 3), &c);
+        assert!(p.note_carry(&carry, &c));
+        assert_eq!(p.in_raid.as_ref().unwrap().kept.as_ref().unwrap().pet, None);
+        assert!(p.settle_missing(&c));
+        assert_eq!(
+            tally(&p).get("gem"),
+            None,
+            "lost with the body, never copied"
+        );
         assert_eq!(p.loadout.pet, None);
         // An item the content does not know is never dropped either.
         let mut p = Profile::default();
