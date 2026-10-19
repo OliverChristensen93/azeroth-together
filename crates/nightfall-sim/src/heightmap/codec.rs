@@ -1,5 +1,5 @@
-//! The height map as bytes, for the bake's cache: a header, the terrain heights, the blocked
-//! bits and the span lists of the columns that have them, all little-endian. Reading checks
+//! The height map as bytes, for the bake's cache: a header, the terrain heights, the blocked and
+//! water bits and the span lists of the columns that have them, all little-endian. Reading checks
 //! everything it can before it allocates, so a cut-short or foreign file is refused, never
 //! trusted.
 
@@ -8,7 +8,7 @@ use crate::V2;
 
 const MAGIC: &[u8; 4] = b"NFHM";
 /// Bumped whenever the layout changes.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 /// No map comes near this many columns (Duskwood's bounds are 17 million); a header past it is
 /// not ours.
 const MAX_COLUMNS: u64 = 200_000_000;
@@ -18,6 +18,7 @@ impl HeightMap {
         let mut out = Vec::with_capacity(
             32 + self.ground.len() * 2
                 + self.blocked.len() * 8
+                + self.water.len() * 8
                 + self.cols.len() * 8
                 + self.spans.len() * 8,
         );
@@ -32,6 +33,9 @@ impl HeightMap {
             out.extend_from_slice(&g.to_le_bytes());
         }
         for w in &self.blocked {
+            out.extend_from_slice(&w.to_le_bytes());
+        }
+        for w in &self.water {
             out.extend_from_slice(&w.to_le_bytes());
         }
         out.extend_from_slice(&(self.cols.len() as u32).to_le_bytes());
@@ -71,6 +75,9 @@ impl HeightMap {
         let n = n as usize;
         let ground = r.vec(n, 2, |b| i16::from_le_bytes([b[0], b[1]]))?;
         let blocked = r.vec(n.div_ceil(64), 8, |b| {
+            u64::from_le_bytes(b.try_into().expect("eight bytes"))
+        })?;
+        let water = r.vec(n.div_ceil(64), 8, |b| {
             u64::from_le_bytes(b.try_into().expect("eight bytes"))
         })?;
         let count = r.u32()? as usize;
@@ -114,6 +121,7 @@ impl HeightMap {
             starts,
             spans,
             blocked,
+            water,
         })
     }
 }
@@ -221,5 +229,21 @@ mod tests {
         let n = bytes.len();
         bytes[n - 4..].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(HeightMap::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn water_comes_back_from_bytes_and_a_version_1_file_is_refused() {
+        let mut b = flat(50.0);
+        super::super::testmap::pond(&mut b, V2::new(10.0, 10.0), V2::new(14.0, 12.0));
+        let m = b.finish();
+        let back = HeightMap::from_bytes(&m.to_bytes()).unwrap();
+        assert!(back.is_water(V2::new(12.0, 11.0)));
+        assert_eq!(back.water_columns(), m.water_columns());
+        let mut old = m.to_bytes();
+        old[4..8].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(
+            HeightMap::from_bytes(&old).unwrap_err(),
+            "height map version 1, not 2"
+        );
     }
 }

@@ -12,6 +12,7 @@ pub struct HeightMapBuilder {
     ground: Vec<f32>,
     raw: Vec<(u32, Span)>,
     blocked: Vec<u64>,
+    water: Vec<u64>,
 }
 
 impl HeightMapBuilder {
@@ -23,6 +24,7 @@ impl HeightMapBuilder {
             ground: vec![f32::NAN; n],
             raw: Vec::new(),
             blocked: vec![0; n.div_ceil(64)],
+            water: vec![0; n.div_ceil(64)],
         }
     }
 
@@ -63,6 +65,18 @@ impl HeightMapBuilder {
         if let Some(w) = self.blocked.get_mut(col / 64) {
             *w |= 1 << (col % 64);
         }
+    }
+
+    /// Column `col` is water (an ADT liquid deep enough, spec §7.3).
+    pub fn wet(&mut self, col: usize) {
+        if let Some(w) = self.water.get_mut(col / 64) {
+            *w |= 1 << (col % 64);
+        }
+    }
+
+    /// Column `col`'s terrain height, when it has one.
+    pub fn ground_of(&self, col: usize) -> Option<f32> {
+        self.ground.get(col).copied().filter(|z| z.is_finite())
     }
 
     /// The columns whose centres lie in `[min, max)`. A bound that is not finite (infinite, or not
@@ -147,6 +161,7 @@ impl HeightMapBuilder {
             starts,
             spans,
             blocked: self.blocked,
+            water: self.water,
         }
     }
 }

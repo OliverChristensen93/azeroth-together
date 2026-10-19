@@ -57,4 +57,5 @@ fn main() {
         map.complex_columns(),
         map.to_bytes().len() / 1_000_000
     );
+    println!("water columns: {}", map.water_columns());
 }

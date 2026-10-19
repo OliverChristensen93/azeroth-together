@@ -1,7 +1,8 @@
 //! The bake itself: WoW's files in, a [`HeightMap`] out. Every tile under the bounds gives its
 //! terrain (impassable chunks blocked); every building and doodad placed on those tiles gives its
 //! collision, each model read once however often it is placed. Columns outside the bounds are
-//! blocked, so no enemy walks out of the run.
+//! blocked, so no enemy walks out of the run. Every chunk's liquid deeper than a wade marks its
+//! columns as water, where a scent trail breaks (spec §7.3).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -9,7 +10,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use benilla_formats::{
     load_m2_collision_hull, load_map_catalog, load_tile_mesh, load_wmo_collision_tris, Chain,
-    CollisionMesh, Doodad, TileMesh, WmoInstance, CHUNK_SIZE, TILE_SIZE,
+    CollisionMesh, Doodad, LiquidMesh, TileMesh, WmoInstance, CHUNK_SIZE, TILE_SIZE,
 };
 use nightfall_sim::{Bounds, Grid, HeightMap, HeightMapBuilder, CELL, V2};
 
@@ -162,6 +163,62 @@ fn add_terrain(b: &mut HeightMapBuilder, tile: &TileMesh) {
     }
 }
 
+/// Liquid at least this deep over the terrain is water a trail breaks in, yards; shallower is a
+/// puddle anyone wades through.
+const WADE: f32 = 0.3;
+
+/// The columns a liquid covers [`WADE`] deep or more are water (spec §7.3): each wet cell of its
+/// grid marks the columns within its corners, its surface their mean height. Pools inside
+/// buildings (WMO liquids) are not read: no trail crosses an indoor pool.
+fn add_water(b: &mut HeightMapBuilder, liquid: &LiquidMesh) {
+    let [cols, rows] = liquid.grid;
+    let (cols, rows) = (cols as usize, rows as usize);
+    if cols < 2 || rows < 2 || liquid.positions.len() < cols * rows {
+        return;
+    }
+    for cy in 0..rows - 1 {
+        for cx in 0..cols - 1 {
+            if !liquid
+                .wet
+                .get(cy * (cols - 1) + cx)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let corners = [
+                cy * cols + cx,
+                cy * cols + cx + 1,
+                (cy + 1) * cols + cx,
+                (cy + 1) * cols + cx + 1,
+            ]
+            .map(|i| liquid.positions[i]);
+            let mut lo = V2::new(f32::MAX, f32::MAX);
+            let mut hi = V2::new(f32::MIN, f32::MIN);
+            let mut surface = 0.0;
+            for p in corners {
+                lo = V2::new(lo.x.min(p[0]), lo.y.min(p[1]));
+                hi = V2::new(hi.x.max(p[0]), hi.y.max(p[1]));
+                surface += p[2] / 4.0;
+            }
+            for col in b.columns_in(lo, hi) {
+                if b.ground_of(col).is_none_or(|g| surface - g >= WADE) {
+                    b.wet(col);
+                }
+            }
+        }
+    }
+}
+
+/// Every chunk's liquids on a tile; after its terrain, since the depth needs the ground.
+fn add_tile_water(b: &mut HeightMapBuilder, tile: &TileMesh) {
+    for chunk in &tile.chunks {
+        for liquid in &chunk.liquids {
+            add_water(b, liquid);
+        }
+    }
+}
+
 /// The buildings and doodads that can reach the grid, each once (a model on a tile seam is
 /// listed by both tiles), in a fixed order.
 fn placements(tiles: &[TileMesh], g: &Grid) -> (Vec<WmoInstance>, Vec<Doodad>) {
@@ -281,6 +338,7 @@ pub fn bake(req: &BakeRequest, progress: &dyn Fn(f32)) -> Result<BakeOutput> {
     progress(0.1);
     for t in &tiles {
         add_terrain(&mut b, t);
+        add_tile_water(&mut b, t);
     }
     progress(0.25);
     let (wmos, doodads) = placements(&tiles, &grid);
@@ -388,6 +446,48 @@ pub fn buildings_near(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use benilla_formats::LiquidKind;
+
+    /// A liquid of two cells side by side, 2 yards each, from (1, 1) to (5, 3), its surface at
+    /// `z`, each cell wet as `wet` says.
+    fn pool(z: f32, wet: [bool; 2]) -> LiquidMesh {
+        let mut positions = Vec::new();
+        for y in [1.0f32, 3.0] {
+            for x in [1.0f32, 3.0, 5.0] {
+                positions.push([x, y, z]);
+            }
+        }
+        LiquidMesh {
+            grid: [3, 2],
+            wet: wet.to_vec(),
+            shared: vec![false; 2],
+            positions,
+            uvs: vec![[0.0, 0.0]; 6],
+            depths: vec![0.0; 6],
+            indices: Vec::new(),
+            sound_nibble: 0,
+            material_id: None,
+            kind: LiquidKind::Still,
+        }
+    }
+
+    #[test]
+    fn deep_liquid_is_water_and_a_puddle_is_not() {
+        let grid = Grid {
+            origin: V2::new(0.0, 0.0),
+            cell: 0.5,
+            nx: 12,
+            ny: 12,
+        };
+        let mut b = HeightMapBuilder::flat(grid, 0.0);
+        add_water(&mut b, &pool(1.0, [true, false]));
+        let m = b.finish();
+        assert!(m.is_water(V2::new(2.0, 2.0)));
+        assert!(!m.is_water(V2::new(4.2, 2.0)));
+        let mut b = HeightMapBuilder::flat(grid, 0.0);
+        add_water(&mut b, &pool(0.1, [true, true]));
+        assert_eq!(b.finish().water_columns(), 0);
+    }
 
     fn duskwood() -> Bounds {
         Bounds::new(vec![

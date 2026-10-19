@@ -33,7 +33,7 @@ use crate::bake::{bake, BakeOutput, BakeRequest};
 /// [`HEADROOM`](nightfall_sim::HEADROOM) and [`MAX_STEP`](nightfall_sim::MAX_STEP) do not:
 /// they are read from the spans at run time. A codec change does not either: a file the codec
 /// rejects is baked again.
-pub const BAKE_VERSION: u32 = 1;
+pub const BAKE_VERSION: u32 = 2;
 
 /// A height map, and whether it came from the cache.
 pub struct Baked {

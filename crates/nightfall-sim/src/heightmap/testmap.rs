@@ -47,3 +47,10 @@ pub(crate) fn house(b: &mut HeightMapBuilder, min: V2, max: V2, door_y: Option<f
         b.add_box(min, max, TALL, TALL + 0.3);
     }
 }
+
+/// Water over the columns from `min` to `max`: a pond a scent trail cannot cross.
+pub(crate) fn pond(b: &mut HeightMapBuilder, min: V2, max: V2) {
+    for c in b.columns_in(min, max) {
+        b.wet(c);
+    }
+}

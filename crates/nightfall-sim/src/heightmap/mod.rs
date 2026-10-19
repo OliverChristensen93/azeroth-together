@@ -185,6 +185,8 @@ pub struct HeightMap {
     spans: Vec<Span>,
     /// One bit a column: no unit may walk into it.
     blocked: Vec<u64>,
+    /// One bit a column: water deeper than a wade (spec §7.3: a scent trail breaks there).
+    water: Vec<u64>,
 }
 
 // Written out: a derived `Debug` would print 17 million heights into a failing test's output.
@@ -255,6 +257,19 @@ impl HeightMap {
     /// Whether no unit may walk into column `col`; every column off the grid is.
     pub fn is_blocked(&self, col: usize) -> bool {
         col >= self.grid.columns() || self.blocked[col / 64] >> (col % 64) & 1 == 1
+    }
+
+    /// Whether the column holding `p` is water (spec §7.3); off the map, it is not.
+    pub fn is_water(&self, p: V2) -> bool {
+        self.grid.column_of(p).is_some_and(|(x, y)| {
+            let c = self.grid.index(x, y);
+            self.water.get(c / 64).is_some_and(|w| (w >> (c % 64)) & 1 == 1)
+        })
+    }
+
+    /// How many columns are water, for the bake's report.
+    pub fn water_columns(&self) -> usize {
+        self.water.iter().map(|w| w.count_ones() as usize).sum()
     }
 
     /// The terrain's height under `p` (not what stands on it); `None` off the map or in a hole.
@@ -416,6 +431,17 @@ mod tests {
         assert!(m.is_blocked(m.grid().columns()));
         assert_eq!(m.floor_near(V2::new(f32::NAN, 5.0), 0.0), None);
         assert_eq!(m.floor_near(V2::new(5.0, 5.0), f32::NAN), None);
+    }
+
+    #[test]
+    fn a_pond_is_water_and_the_bank_is_not() {
+        let mut b = super::testmap::flat(20.0);
+        super::testmap::pond(&mut b, V2::new(5.0, 5.0), V2::new(8.0, 8.0));
+        let m = b.finish();
+        assert!(m.is_water(V2::new(6.5, 6.5)));
+        assert!(!m.is_water(V2::new(9.5, 6.5)));
+        assert!(!m.is_water(V2::new(-5.0, 6.5)));
+        assert!(m.water_columns() >= 36);
     }
 
     #[test]
