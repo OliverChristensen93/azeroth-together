@@ -303,6 +303,12 @@ pub(super) fn clicks(
     }
 }
 
+/// Whether the board asks for the raid to start: it is open, we are ready, we are not joined (the
+/// host starts for a joined player), and the party is ready.
+fn board_starts(open: bool, ready: bool, is_client: bool, party_ready: bool) -> bool {
+    open && ready && !is_client && party_ready
+}
+
 /// Alone and ready, or hosting with everyone present ready: the raid is asked for. A joined
 /// player waits for their host's start.
 pub(super) fn start(
@@ -311,8 +317,13 @@ pub(super) fn start(
     state: Res<InnState>,
     mut start: ResMut<StartRequest>,
 ) {
-    if open.0 && state.ready && !net.is_client() && net.party_ready(true) && !start.0 {
-        start.0 = true;
+    if board_starts(open.0, state.ready, net.is_client(), net.party_ready(true)) {
+        if !start.0 {
+            start.0 = true;
+        }
+    } else if !state.ready && start.0 {
+        // Ready taken back: a start held for a friend's loadout goes with it.
+        start.0 = false;
     }
 }
 
@@ -386,6 +397,18 @@ mod tests {
         assert_eq!(door_step(true, false, true), (false, false));
         // Never at the door: a Ready set another way (autoplay) stands.
         assert_eq!(door_step(false, false, true), (false, true));
+    }
+
+    #[test]
+    fn the_board_starts_the_raid_only_for_a_ready_party_not_joined() {
+        // Alone: ready at the door starts; not ready, or away from it, does not.
+        assert!(board_starts(true, true, false, true));
+        assert!(!board_starts(true, false, false, true));
+        assert!(!board_starts(false, true, false, true));
+        // Hosting: one friend not ready stops it (a pick not yet echoed is `start_run`'s hold).
+        assert!(!board_starts(true, true, false, false));
+        // Joined: never, whatever the party.
+        assert!(!board_starts(true, true, true, true));
     }
 
     #[test]

@@ -470,7 +470,11 @@ pub(super) fn start_run(
     let roster = net.roster(&own);
     // On disk before the raid starts: whatever happens in it, the stash does not hold it too. A
     // begin that cannot be saved starts nothing; the stash's note says why.
-    if begin_raid(&mut stash, &selection, &own).is_err() {
+    let began = begin_raid(&mut stash, &selection, &own).is_ok();
+    // A start that could not be saved takes Ready back, so the board does not ask again every
+    // frame: the player presses Ready once more.
+    inn_state.ready = ready_after_begin(inn_state.ready, began);
+    if !began {
         return;
     }
     net.broadcast_start();
@@ -485,6 +489,12 @@ pub(super) fn start_run(
     input.new_run();
     inn_state.reset();
     next.set(Phase::Playing);
+}
+
+/// Ready after a raid's begin: kept if it began (the raid's start clears it itself), gone if the
+/// stash could not be saved.
+fn ready_after_begin(ready: bool, began: bool) -> bool {
+    ready && began
 }
 
 /// The raid begins for our hero: the pick `own` leaves the stash for it, on disk at once. What the
@@ -788,6 +798,13 @@ pub(super) fn back_to_menu(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_begin_that_could_not_be_saved_takes_ready_back() {
+        assert!(!super::ready_after_begin(true, false));
+        assert!(super::ready_after_begin(true, true));
+        assert!(!super::ready_after_begin(false, true));
+    }
+
     use super::*;
 
     #[test]
