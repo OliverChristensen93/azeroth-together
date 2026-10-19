@@ -717,7 +717,7 @@ impl Profile {
     }
 
     /// Whether `s` fits the stash: onto stacks of it with room, then into free slots.
-    fn stash_has_room(&self, s: &SavedStack, content: &Content) -> bool {
+    pub(crate) fn stash_has_room(&self, s: &SavedStack, content: &Content) -> bool {
         let max = content
             .item(&s.item)
             .map_or(u16::MAX, |i| content.items[i].stack.max(1));

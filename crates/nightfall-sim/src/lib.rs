@@ -24,6 +24,7 @@ mod profile;
 mod raid;
 mod senses;
 mod sight;
+mod stations;
 mod world;
 
 pub use abilities::{
@@ -67,4 +68,5 @@ pub use raid::{
 };
 pub use senses::{Alert, Gait, Loudness, Mark, Stance};
 pub use sight::{CHEST_HEIGHT, EYE_HEIGHT, KEEP_EXTRA};
+pub use stations::StationError;
 pub use world::{Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ};

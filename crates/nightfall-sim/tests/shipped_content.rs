@@ -283,3 +283,37 @@ fn everything_in_the_shipped_inn_can_be_reached() {
         );
     }
 }
+
+/// Buying from the trader and selling it straight back must never make gold: the trader pays
+/// less for an item than it asks, one at a time and by the full stack.
+#[test]
+fn buying_from_the_shipped_trader_and_selling_back_never_profits() {
+    use nightfall_sim::Profile;
+    let c = shipped();
+    let inn = shipped_inn(&c);
+    for &(item, price) in &inn.trader.stock {
+        let def = &c.items[item];
+        assert!(
+            price as f32 > def.value as f32 * inn.trader.sells_for,
+            "\"{}\" costs {price} and sells back for more",
+            def.key
+        );
+        let count = def.stack.max(1);
+        let mut p = Profile {
+            gold: price * u32::from(count),
+            ..Profile::default()
+        };
+        let start = p.gold;
+        let line = inn.trader.stock.iter().position(|s| s.0 == item).unwrap();
+        for _ in 0..count {
+            p.buy(line, &inn, &c).unwrap();
+        }
+        assert_eq!(p.gold, 0);
+        assert_eq!(p.stash.len(), 1, "\"{}\" fills one stack", def.key);
+        match p.sell_to_trader(0, &inn, &c) {
+            Ok(gold) => assert!(gold < start, "\"{}\": {start} in, {gold} back", def.key),
+            // Worth nothing in gold: it fetches nothing at all.
+            Err(e) => assert_eq!(e, nightfall_sim::StationError::Worthless),
+        }
+    }
+}
