@@ -2,6 +2,10 @@
 //! class's starting outfit, named, standing where the hub says. A right-click on one within reach
 //! opens their panel ([`InnPanel`]): the banker's stash and stash station, the trader's goods, a
 //! giver's contracts, a keeper's station. Walking away closes it.
+//!
+//! Test switch: `NIGHTFALL_PANEL=<npc key>` (`pike`, `coppermug`, `ebonlock`, ...) opens that NPC's
+//! panel at the start as if right-clicked, and keeps it open wherever the hero stands, so a
+//! background window can show it.
 
 use benilla_world::interact::WorldRightClick;
 use bevy::prelude::*;
@@ -30,6 +34,27 @@ pub(super) struct NpcViews {
 /// The NPC whose panel is open.
 #[derive(Resource, Default)]
 pub(super) struct InnPanel(pub Option<usize>);
+
+/// `NIGHTFALL_PANEL`'s NPC (by key), read once: the test switch that opens a panel as if
+/// right-clicked and ignores reach.
+fn test_panel() -> Option<usize> {
+    static PINNED: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *PINNED.get_or_init(|| {
+        let key = std::env::var("NIGHTFALL_PANEL").ok()?;
+        inn().npcs.iter().position(|n| n.key == key)
+    })
+}
+
+/// Opens `NIGHTFALL_PANEL`'s panel (the banker's with the stash), once, at the start.
+pub(super) fn open_test_panel(
+    mut panel: ResMut<InnPanel>,
+    mut stash_open: ResMut<StashOpen>,
+) {
+    if let Some(i) = test_panel() {
+        panel.0 = Some(i);
+        stash_open.0 = inn().npcs[i].role == NpcRole::Banker;
+    }
+}
 
 /// The NPC an entity draws.
 pub(super) fn npc_at(drawn: &[(usize, Entity)], e: Entity) -> Option<usize> {
@@ -132,7 +157,11 @@ pub(super) fn right_click(
     let opened = opened_by_click(&inn().npcs, i, pos);
     match click_note(opened, panel.0, pos.is_some(), stash_res.read_only()) {
         NoteChange::Keep => {}
-        NoteChange::Clear => stash_res.note = None,
+        NoteChange::Clear => {
+            if stash_res.note.is_some() {
+                stash_res.note = None;
+            }
+        }
         NoteChange::Say(line) => stash_res.note = Some(line.into()),
     }
     if let Some((i, stash)) = opened {
@@ -179,6 +208,10 @@ pub(super) fn walk_away(
     let Some(i) = panel.0 else {
         return;
     };
+    // The test switch's panel stays wherever the hero is.
+    if test_panel() == Some(i) {
+        return;
+    }
     if !stays_open(&inn().npcs, i, state.pose.map(|p| p.pos)) {
         panel.0 = None;
         stash_open.0 = false;

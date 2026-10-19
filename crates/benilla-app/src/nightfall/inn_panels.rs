@@ -11,7 +11,9 @@
 //! stash and the purse alone and goes on. Materials for a station or a recipe come from the stash
 //! only, so every price shows the stash's count beside it.
 
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use bevy::ui::RelativeCursorPosition;
 use nightfall_sim::{Content, Gift, InnContent, NpcRole, Profile};
 
 use super::npcs::InnPanel;
@@ -161,9 +163,9 @@ fn press(
     })
 }
 
-/// How wide the panel of an NPC with this role is: the banker's is a strip beside the stash panel (the stash panel is
-/// centred and about 740 px wide, so 240 px at the left edge clears it at 1280 px); the others
-/// have the room.
+/// How wide the panel of an NPC with this role is. The banker's is a strip at the left edge
+/// beside the stash panel (centred and about 740 px wide, so 240 px clears it at 1280 px); the
+/// others have the room.
 fn panel_width(role: NpcRole) -> f32 {
     if role == NpcRole::Banker {
         240.0
@@ -186,8 +188,14 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
             row_gap: Val::Px(4.0),
             padding: UiRect::all(Val::Px(12.0)),
             border: UiRect::all(Val::Px(1.0)),
+            // A tall keeper's panel scrolls (the wheel, over it) instead of running off the
+            // window: from 200 px down, 72% of the height leaves a margin at 720 px.
+            max_height: Val::Vh(72.0),
+            overflow: Overflow::scroll_y(),
             ..default()
         },
+        ScrollPosition::default(),
+        RelativeCursorPosition::default(),
         BackgroundColor(PANEL),
         BorderColor::all(EDGE),
         // Above the stash panel, which the banker's opens with.
@@ -215,6 +223,26 @@ pub(super) fn show(
     for mut v in &mut roots {
         if *v != want {
             *v = want;
+        }
+    }
+}
+
+/// The wheel over a panel taller than its window scrolls it.
+pub(super) fn scroll(
+    mut wheel: MessageReader<MouseWheel>,
+    mut roots: Query<(&RelativeCursorPosition, &ComputedNode, &mut ScrollPosition), With<InnPanelRoot>>,
+) {
+    for ev in wheel.read() {
+        let dy = match ev.unit {
+            MouseScrollUnit::Line => ev.y * 24.0,
+            MouseScrollUnit::Pixel => ev.y,
+        };
+        for (cursor, node, mut pos) in &mut roots {
+            if cursor.cursor_over() {
+                // `ComputedNode` sizes are physical pixels.
+                let most = ((node.content_size.y - node.size.y) * node.inverse_scale_factor).max(0.0);
+                pos.0.y = (pos.0.y - dy).clamp(0.0, most);
+            }
         }
     }
 }
@@ -261,8 +289,6 @@ pub(super) fn rebuild(
     let p = &stash.profile;
     let lock = lock.0;
     let npc = &inn.npcs[who];
-    // The banker's opens beside the stash panel, which is centred and about 740 px wide: a
-    // narrow strip at the left edge keeps clear of it at 1280 px.
     let width = panel_width(npc.role);
     if node.width != Val::Px(width) {
         node.width = Val::Px(width);
@@ -361,8 +387,17 @@ pub(super) fn rebuild(
                 });
             }
         }
-        if let Some(note) = &stash.note {
-            b.spawn(text(font, note.clone(), 12.0, GOLD));
+        // The banker's note is the stash panel's, beside this one; the other panels show it
+        // here, and the inn bar then leaves it out (`menu::refresh_menu`).
+        if let (Some(note), false) = (&stash.note, npc.role == NpcRole::Banker) {
+            b.spawn((
+                text(font, note.clone(), 12.0, GOLD),
+                // Wraps, so a long note never stretches the panel.
+                Node {
+                    width: Val::Px(width - 26.0),
+                    ..default()
+                },
+            ));
         }
         widgets::text_button(b, font, PanelButton::Close, "Close");
     });
@@ -739,7 +774,8 @@ mod tests {
     #[test]
     fn contracts_stations_and_recipes_the_content_dropped_are_left_alone() {
         let (content, inn) = setup();
-        let mut stash = Stash::open_at(None, &content);
+        let path = dir("dropped").join("stash.ron");
+        let mut stash = Stash::open_at(Some(path.clone()), &content);
         let p = &mut stash.profile;
         p.gold = 5;
         p.inn.contracts.push(nightfall_sim::ContractState {
@@ -751,6 +787,8 @@ mod tests {
         p.inn.stations.push(("gone_station".into(), 3));
         p.inn.recipes.push("gone_recipe".into());
         let before = p.clone();
+        assert!(stash.save());
+        let p = &stash.profile;
         // Everything the panel reads, for every contract, station and recipe there is.
         for c in 0..inn.contracts.len() {
             let _ = p.objective_lines(c, &inn, &content);
@@ -775,6 +813,12 @@ mod tests {
         assert!(p.inn.contracts.iter().any(|s| s.key == "gone_contract" && s.taken && s.finished == 1));
         assert!(p.inn.stations.contains(&("gone_station".into(), 3)));
         assert!(p.inn.recipes.contains(&"gone_recipe".to_string()));
+        // Saved and read again from disk, nothing is lost.
+        let again = Stash::open_at(Some(path.clone()), &content).profile;
+        assert_eq!(again.inn.contracts.iter().filter(|s| s.key == "gone_contract").count(), 1);
+        assert!(again.inn.contracts.iter().any(|s| s.key == "gone_contract" && s.taken && s.finished == 1));
+        assert!(again.inn.stations.contains(&("gone_station".into(), 3)));
+        assert!(again.inn.recipes.contains(&"gone_recipe".to_string()));
         // And a raid's outcome moves the known ones on without touching the unknown.
         let mut p = stash.profile.clone();
         p.take_contract(c, &inn).unwrap();

@@ -371,6 +371,7 @@ pub(super) fn refresh_menu(
     net: Res<Net>,
     inn_state: Res<InnState>,
     stash: Res<super::stash::Stash>,
+    panel: Res<super::npcs::InnPanel>,
     mut lines: Query<&mut Text, (With<ClassLine>, Without<StatusText>)>,
     mut status: Query<&mut Text, (With<StatusText>, Without<ClassLine>)>,
     mut buttons: Query<(&MenuAction, &mut Node)>,
@@ -384,10 +385,10 @@ pub(super) fn refresh_menu(
         }
     }
     // What the stash has to say (a file that did not read, a raid counted missing) under the
-    // lobby's lines.
-    let body = match &stash.note {
-        Some(n) => format!("{}\n{n}", net.lobby_text()),
-        None => net.lobby_text(),
+    // lobby's lines, unless an NPC's panel is open: that shows it in its own foot.
+    let body = match (&stash.note, panel.0) {
+        (Some(n), None) => format!("{}\n{n}", net.lobby_text()),
+        _ => net.lobby_text(),
     };
     for mut t in &mut status {
         if t.0 != body {

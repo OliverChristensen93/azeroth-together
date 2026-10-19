@@ -384,6 +384,8 @@ impl Plugin for NightfallPlugin {
             .add_systems(Update, trader::show)
             // Ungated: hides the givers' and keepers' panel whenever another game is up.
             .add_systems(Update, inn_panels::show)
+            .add_systems(Update, inn_panels::scroll.in_set(NightfallSet))
+            .add_systems(OnEnter(GameMode::Nightfall), npcs::open_test_panel)
             .add_systems(Update, widgets::fill_icons.in_set(NightfallSet))
             .add_systems(
                 Update,
