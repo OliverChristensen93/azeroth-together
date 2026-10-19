@@ -630,7 +630,11 @@ pub(super) fn step_sim(
                 }
                 Heard::Outcome(o) => sim.mine = Some(o),
                 Heard::RunOver(all) => sim.over = Some(all),
-                Heard::Ended | Heard::Lost(_) | Heard::Lobby(..) | Heard::Start(_) => {}
+                Heard::Ended
+                | Heard::Lost(_)
+                | Heard::Lobby(..)
+                | Heard::InnPoses(_)
+                | Heard::Start(_) => {}
             }
         }
         sim.play_back(time.delta_secs());

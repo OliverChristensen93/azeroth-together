@@ -4,7 +4,12 @@
 // hub is a content edit: the Scarlet Raven Tavern block at the end of this file is Darkshire's.
 //
 // measure: every position and the bounds, in the game (NIGHTFALL_TRACE_POS=1 logs where the hero
-// stands); the numbers below are the inn's ground floor as far as known.
+// stands); the numbers below are the inn's ground floor as far as known. Measured by a shot of
+// the hero: the dining-room floor at (-9466, 22) is open, its floor at z 56.3, and the spawn is 1.3
+// above it (a hero put down exactly on a floor falls through it; the old spawn stood in the hearth);
+// the floor runs inside at x = -9459 (y 14 and 30) and outside is grass at (-9452, 22), so the east
+// bound (-9445) and the NPC spots with x past -9455 are probably too far out. The bounds, the door
+// ring and the NPC spots are NOT measured: walk to them and read the trace.
 //
 // NPCs are characters of a race and sex in a class's starting outfit (`body`), so they always
 // look like someone; `role` is what a right-click opens: Banker (the stash), Trader, Contracts
@@ -14,7 +19,7 @@
     place: (
         name: "The Lion's Pride Inn",
         map: 0,
-        spawn: (-9459.0, 22.0, 57.6),
+        spawn: (-9466.0, 22.0, 57.6),
         facing: 90.0,
         bounds: [(-9474.0, 6.0), (-9445.0, 6.0), (-9445.0, 38.0), (-9474.0, 38.0)],
         door: (at: (-9447.5, 19.0), radius: 2.0),

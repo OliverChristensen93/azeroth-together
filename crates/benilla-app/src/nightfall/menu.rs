@@ -1,4 +1,4 @@
-//! The inn bar (Nightfall's menu, top left over the inn scene), built from the glue screens' own
+//! The inn bar (Nightfall's menu, top centre over the inn scene), built from the glue screens' own
 //! widgets and art ([`crate::glue`]): the inn's name, the class buttons and the class's line,
 //! Host Co-op, Join (an invite code or an address from the clipboard), Ready, the lobby's status,
 //! and Back to the pick screen. A raid starts at the raid board and the stash opens at the banker
@@ -175,7 +175,9 @@ pub(super) fn build_menu(
         ui.spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(16.0),
+                // Top centre: WoW's player frame (top left) and minimap (top right) stay clear.
+                left: Val::Percent(50.0),
+                margin: UiRect::left(Val::Px(-270.0)),
                 top: Val::Px(16.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexStart,

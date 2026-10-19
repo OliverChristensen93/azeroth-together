@@ -36,13 +36,38 @@ pub(super) struct InnViews {
     me: Option<Entity>,
     /// The class and the worn gear ours was dressed in.
     dressed: Option<(usize, Vec<(EquipSlot, u16)>)>,
-    friends: HashMap<PlayerId, Entity>,
+    /// Each friend's body and the class, race and sex it was made for.
+    friends: HashMap<PlayerId, (Entity, Look)>,
+}
+
+/// What a friend's body was made for: a class key, a race and a sex.
+type Look = (String, u8, u8);
+
+/// Whether a body made for `have` still shows a hero of this class, race and sex.
+fn same_look(have: &Look, class: &str, race: u8, sex: u8) -> bool {
+    have.0 == class && have.1 == race && have.2 == sex
 }
 
 /// A friend's body a step toward where they stand: quick enough to keep up at ten poses a
 /// second, smooth between them.
 pub(super) fn glide(from: Vec3, to: Vec3, dt: f32) -> Vec3 {
     from.lerp(to, (dt * 8.0).min(1.0))
+}
+
+/// The engine's settle hold on our hero, as after a teleport: gravity off until the streamer says
+/// the world is there, or the stall budget runs out (the deadline must be set, or the hold ends at
+/// once).
+fn hold(player: &mut crate::player::Player, time: &Time) {
+    player.settling = true;
+    player.settle_since = time.elapsed_secs();
+    player.settle_deadline = time.elapsed_secs() + crate::player::SETTLE_TIMEOUT;
+}
+
+/// Whether a hero at height `y` has fallen through the inn's floor (`spawn_z` is the floor's): the
+/// ground floor is flat and there is no cellar, so well below it is the terrain under the building,
+/// which a hero reaches when the building's collision arrives late.
+fn fell_through(y: f32, spawn_z: f32) -> bool {
+    y < spawn_z - 8.0
 }
 
 /// The worn gear the loadout shows.
@@ -121,8 +146,7 @@ pub(super) fn sync(
         // A hero first put down holds, gravity off, until the ground around it has streamed in
         // (the engine's own settle, as after a teleport), or it would fall through the world.
         if had.is_none() {
-            player.settling = true;
-            player.settle_since = time.elapsed_secs();
+            hold(&mut player, &time);
         }
         player.active = true;
         player.pos = at;
@@ -131,12 +155,19 @@ pub(super) fn sync(
     }
     let friends = net.friends();
     for f in &friends {
-        if views.friends.contains_key(&f.player) {
-            continue;
-        }
         let (Some(pose), Some(ci)) = (f.pose, content.class(&f.hero.class)) else {
             continue;
         };
+        match views.friends.get(&f.player) {
+            Some((_, have)) if same_look(have, &f.hero.class, f.hero.race, f.hero.sex) => continue,
+            // They picked another class (or took the seat of one who left): draw them anew.
+            Some(&(old, _)) => {
+                index.0.retain(|_, v| *v != old);
+                commands.entity(old).despawn();
+                views.friends.remove(&f.player);
+            }
+            None => {}
+        }
         let class = &content.classes[ci];
         let serial = INN_SERIAL_BASE + 1 + u64::from(f.player);
         let at = units::ground_to_bevy(pose.pos, pose.z);
@@ -157,9 +188,12 @@ pub(super) fn sync(
         let guid = units::unit_guid(UnitKind::Player, serial);
         index.0.insert(guid, e);
         names.insert_player(guid, f.hero.name.clone(), None);
-        views.friends.insert(f.player, e);
+        views.friends.insert(
+            f.player,
+            (e, (f.hero.class.clone(), f.hero.race, f.hero.sex)),
+        );
     }
-    views.friends.retain(|p, e| {
+    views.friends.retain(|p, (e, _)| {
         let keep = friends.iter().any(|f| f.player == *p);
         if !keep {
             index.0.retain(|_, v| v != e);
@@ -187,6 +221,7 @@ pub(super) fn feed(
     mut bodies: Query<&mut Transform>,
     mut player: ResMut<crate::player::Player>,
     mut state: ResMut<InnState>,
+    time: Res<Time>,
     mut last_trace: Local<f32>,
 ) {
     let inn = inn();
@@ -198,6 +233,15 @@ pub(super) fn feed(
         state.pose = None;
         return;
     };
+    // Fallen through the world (the settle hold timed out on a slow load): back to the spawn, held
+    // again until the ground is there.
+    if fell_through(tf.translation.y, inn.place.spawn.z) {
+        let s = inn.place.spawn;
+        let back = units::wow_to_bevy([s.x, s.y, s.z]);
+        tf.translation = back;
+        player.pos = back;
+        hold(&mut player, &time);
+    }
     let at = V2::new(-tf.translation.z, -tf.translation.x);
     let pos = inn.place.bounds.clamp(at);
     if pos != at {
@@ -228,7 +272,7 @@ pub(super) fn place_friends(
 ) {
     let dt = time.delta_secs().max(1e-3);
     for f in net.friends() {
-        let (Some(pose), Some(&e)) = (f.pose, views.friends.get(&f.player)) else {
+        let (Some(pose), Some(&(e, _))) = (f.pose, views.friends.get(&f.player)) else {
             continue;
         };
         let Ok((mut tf, mut mv)) = bodies.get_mut(e) else {
@@ -240,7 +284,7 @@ pub(super) fn place_friends(
         let turn = Quat::from_rotation_y(units::yaw_of(pose.facing));
         tf.rotation = tf.rotation.slerp(turn, (dt * 8.0).min(1.0));
         let flags = if speed > 0.3 { move_flags::FORWARD } else { 0 };
-        if mv.speed != speed || mv.flags != flags {
+        if (mv.speed - speed).abs() > 0.05 || mv.flags != flags {
             mv.speed = speed;
             mv.flags = flags;
         }
@@ -277,5 +321,22 @@ mod tests {
         let one = glide(Vec3::ZERO, to, 1.0 / 60.0);
         assert!(one.x > 0.0 && one.x < 8.0);
         assert_eq!(glide(Vec3::ZERO, to, 1.0), to);
+    }
+
+    #[test]
+    fn a_hero_far_below_the_floor_has_fallen_through() {
+        assert!(!fell_through(56.0, 56.3));
+        assert!(!fell_through(50.0, 56.3), "a step down is not a fall");
+        assert!(fell_through(44.3, 56.3), "the terrain under the inn is");
+        assert!(fell_through(-100.0, 56.3));
+    }
+
+    #[test]
+    fn a_friend_is_drawn_anew_when_their_class_race_or_sex_changes() {
+        let have: Look = ("mage".into(), 1, 0);
+        assert!(same_look(&have, "mage", 1, 0));
+        assert!(!same_look(&have, "rogue", 1, 0));
+        assert!(!same_look(&have, "mage", 2, 0));
+        assert!(!same_look(&have, "mage", 1, 1));
     }
 }

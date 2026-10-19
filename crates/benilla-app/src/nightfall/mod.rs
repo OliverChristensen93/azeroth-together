@@ -259,6 +259,22 @@ pub(super) fn shipped_content() -> Arc<Content> {
     )
 }
 
+/// The shipped inn (`hub.ron` and its neighbours), for tests of what the client makes of it.
+#[cfg(test)]
+pub(super) fn shipped_inn() -> Arc<InnContent> {
+    Arc::new(
+        InnContent::from_ron(
+            InnSources {
+                hub: include_str!("../../../../content/nightfall/hub.ron"),
+                contracts: include_str!("../../../../content/nightfall/contracts.ron"),
+                stations: include_str!("../../../../content/nightfall/stations.ron"),
+            },
+            &shipped_content(),
+        )
+        .expect("the shipped inn parses"),
+    )
+}
+
 /// The screen Nightfall is on.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(super) enum Phase {
