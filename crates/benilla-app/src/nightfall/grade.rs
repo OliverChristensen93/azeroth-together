@@ -178,6 +178,7 @@ mod tests {
             items: include_str!("../../../../content/nightfall/items.ron"),
             loot: include_str!("../../../../content/nightfall/loot.ron"),
             monsters: include_str!("../../../../content/nightfall/monsters.ron"),
+            rivals: "",
         })
         .expect("the shipped content parses");
         let (strength, from) = content.rules.senses.vignette_seen;

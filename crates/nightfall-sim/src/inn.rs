@@ -852,6 +852,7 @@ mod tests {
             items: &items,
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
         .unwrap()
     }

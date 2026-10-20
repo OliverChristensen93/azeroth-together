@@ -20,6 +20,7 @@ fn main() {
         items: include_str!("../../../content/nightfall/items.ron"),
         loot: include_str!("../../../content/nightfall/loot.ron"),
         monsters: include_str!("../../../content/nightfall/monsters.ron"),
+        rivals: include_str!("../../../content/nightfall/rivals.ron"),
     })
     .expect("the shipped content");
     let Some(data) = benilla_formats::wow_data() else {

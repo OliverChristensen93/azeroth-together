@@ -462,6 +462,7 @@ pub(crate) mod tests {
             ]"#,
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
         .unwrap()
     }

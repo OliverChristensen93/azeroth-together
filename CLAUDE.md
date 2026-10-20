@@ -139,7 +139,11 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   `monsters_out`, scent, the hunt and the ravens. `map.ron` has the risk `zones` (health, blows,
   extra loot rolls), the `roads` and the flocks of `ravens`; `monsters.ron` the signature
   monsters (odds, `always`, their spawn lines; `stage:` on a line makes it come when that stage
-  lands, out of sight). A custom `NIGHTFALL_CONTENT` folder needs `monsters.ron` too. Enemy traits
+  lands, out of sight). A custom `NIGHTFALL_CONTENT` folder needs `monsters.ron` too.
+  Rivals (sub-project 7): `rivals.ron` (kinds, parties, points of interest, entries, `routes`)
+  and `rules.ron`'s `rivals:`; each kind becomes a class `rival:<key>` after the heroes' (the
+  menus offer `Content::playable`). A custom `NIGHTFALL_CONTENT` folder needs `rivals.ron` too
+  (an empty file is no rivals); `routes` is all or nothing, see the file's comments. Enemy traits
   in `enemies.ron`: `watched` (Mor'Ladim), `tracker`, `hunter`, `road_sight` (the Dark Riders),
   `mount`, `step_sound`; the banshee's wail is an ability with `Alarm(radius)`.
   `nightfall-sim/src/night/` is the rules (`RaidRoll::roll`, the clock, arrivals, the hunt, scent,

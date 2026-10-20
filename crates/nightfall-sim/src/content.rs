@@ -7,6 +7,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::items::{check_items, LootFile};
+use crate::rivals::{RivalContent, RivalRules};
 use crate::night::{
     there_and_back, MonsterDef, MonsterFile, NightRules, RoadDef, RoadFile, StepSound, ZoneDef,
     ZoneFile,
@@ -96,6 +97,10 @@ pub struct ClassDef {
     /// The kit resolved: indices into [`Content::items`].
     #[serde(skip)]
     pub free_items: Vec<(usize, u16)>,
+    /// A rival kind's class (spec §7.4), appended after the heroes' as `rivals.ron` loads: never
+    /// offered to a player.
+    #[serde(skip)]
+    pub rival: bool,
 }
 
 fn white() -> u32 {
@@ -211,6 +216,9 @@ pub struct Rules {
     /// The night (spec §7.2, §7.3, §8.1); the spec's stages when `rules.ron` leaves it out.
     #[serde(default)]
     pub night: NightRules,
+    /// The rivals' numbers (spec §7.4).
+    #[serde(default)]
+    pub rivals: RivalRules,
 }
 
 /// How the host uses what it knows of the world.
@@ -1005,6 +1013,8 @@ pub struct ContentSources<'a> {
     pub items: &'a str,
     pub loot: &'a str,
     pub monsters: &'a str,
+    /// `rivals.ron`; an empty text is no rivals.
+    pub rivals: &'a str,
 }
 
 #[derive(Clone, Debug)]
@@ -1021,6 +1031,8 @@ pub struct Content {
     pub conjured: Option<usize>,
     /// The signature monsters (spec §7.3); their spawn lines are in `spawns`, after spawns.ron's.
     pub monsters: Vec<MonsterDef>,
+    /// The rivals (spec §7.4): their kinds (also classes, after the heroes'), parties, places.
+    pub rivals: RivalContent,
 }
 
 /// Content that does not load, and why.
@@ -1115,7 +1127,7 @@ fn places_of(map: &MapFile, bounds: &Bounds) -> Result<Places, String> {
     Ok((zones, roads, flocks))
 }
 
-fn parse<T: for<'de> Deserialize<'de>>(file: &'static str, text: &str) -> Result<T, ContentError> {
+pub(crate) fn parse<T: for<'de> Deserialize<'de>>(file: &'static str, text: &str) -> Result<T, ContentError> {
     ron::from_str(text).map_err(|e| ContentError::Parse {
         file,
         error: e.to_string(),
@@ -1489,7 +1501,7 @@ impl Content {
                 }
             }
         }
-        Ok(Self {
+        let mut content = Self {
             classes,
             map: MapDef {
                 key: map.key,
@@ -1518,7 +1530,13 @@ impl Content {
             loot,
             conjured,
             monsters,
-        })
+            rivals: RivalContent::default(),
+        };
+        // Last: the rivals' kinds become classes, built from the heroes' classes, abilities,
+        // items, loot tables and the night's stages above.
+        let rivals = RivalContent::load(src.rivals, &mut content)?;
+        content.rivals = rivals;
+        Ok(content)
     }
 
     /// The ability with this key, by index.
@@ -1611,6 +1629,7 @@ mod tests {
             items: "[]",
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
     }
 
@@ -1635,6 +1654,7 @@ mod tests {
             items: "[]",
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
     }
 
@@ -2223,6 +2243,7 @@ mod tests {
             items,
             loot,
             monsters: "[]",
+            rivals: "",
         })
     }
 
@@ -2412,6 +2433,7 @@ mod tests {
             items: ITEMS,
             loot: LOOT,
             monsters: "[]",
+            rivals: "",
         })
         .unwrap();
         assert_eq!(c.classes[0].free_items, vec![(0, 1), (1, 4)]);
@@ -2426,6 +2448,7 @@ mod tests {
             items: ITEMS,
             loot: LOOT,
             monsters: "[]",
+            rivals: "",
         });
         refused_naming(r, "cake");
     }
@@ -2584,6 +2607,7 @@ mod tests {
             items: "[]",
             loot: "()",
             monsters,
+            rivals: "",
         })
     }
 
@@ -2715,6 +2739,7 @@ mod tests {
             items: "[]",
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
         .unwrap();
         let s = &c.enemies[1];
@@ -2734,6 +2759,7 @@ mod tests {
             items: "[]",
             loot: "()",
             monsters: "[]",
+            rivals: "",
         });
         assert!(matches!(r, Err(ContentError::Invalid(_))));
     }

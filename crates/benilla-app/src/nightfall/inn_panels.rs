@@ -461,6 +461,7 @@ mod tests {
             ]"#,
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
         .unwrap();
         let inn = InnContent::from_ron(

@@ -778,6 +778,7 @@ mod tests {
                 items: "[]",
                 loot: "()",
                 monsters: "[]",
+                rivals: "",
             })
             .unwrap();
             let mut sim = nightfall_sim::World::new(std::sync::Arc::new(content));

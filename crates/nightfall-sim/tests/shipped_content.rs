@@ -13,6 +13,7 @@ pub fn shipped() -> Content {
         items: include_str!("../../../content/nightfall/items.ron"),
         loot: include_str!("../../../content/nightfall/loot.ron"),
         monsters: include_str!("../../../content/nightfall/monsters.ron"),
+        rivals: include_str!("../../../content/nightfall/rivals.ron"),
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }
@@ -386,4 +387,66 @@ fn the_westfall_road_is_open_from_the_start_in_every_raid() {
         hunt_closed_another |= r.closes.is_some();
     }
     assert!(hunt_closed_another, "the hunt still closes other exits");
+}
+
+#[test]
+fn the_rivals_load_with_simplified_kits_and_a_full_one() {
+    use nightfall_sim::KitDef;
+
+    let c = shipped();
+    assert!(c.rivals.kinds.len() >= 3 && c.rivals.parties.len() >= 3);
+    assert!(!c.rivals.entries.is_empty() && !c.rivals.pois.is_empty());
+    assert_eq!(c.playable().count(), 2, "only the rogue and the mage are offered");
+    assert_eq!(c.rivals.leave_by, c.stage("hunt"), "rivals head out when the hunt begins");
+    for k in &c.rivals.kinds {
+        let class = &c.classes[k.class];
+        assert!(class.rival);
+        if let KitDef::Abilities(keys) = &k.kit {
+            assert!((3..=4).contains(&keys.len()), "{}: 3 or 4 abilities", k.key);
+            let big = k.big_ability.expect("a simplified kit has its big move");
+            assert!(c.abilities[big].telegraph.is_some());
+        }
+    }
+    assert!(c.rivals.kinds.iter().any(|k| matches!(k.kit, KitDef::Class(_))));
+    for p in &c.rivals.parties {
+        assert!((2..=3).contains(&p.kinds.len()));
+    }
+}
+
+#[test]
+fn every_entry_has_a_route_to_every_point_and_every_point_to_every_exit() {
+    use nightfall_sim::RoutePlace;
+
+    let c = shipped();
+    let (entries, pois, exits) = (c.rivals.entries.len(), c.rivals.pois.len(), c.map.exits.len());
+    assert_eq!(c.rivals.routes.len(), entries * pois + pois * exits);
+    for e in 0..entries {
+        for p in 0..pois {
+            let way = c.rivals.route(RoutePlace::Entry(e), RoutePlace::Poi(p)).unwrap();
+            assert_eq!(way[0], c.rivals.entries[e]);
+            let poi = &c.rivals.pois[p];
+            assert_eq!(*way.last().unwrap(), nightfall_sim::V2::new(poi.at.0, poi.at.1));
+        }
+    }
+    for p in 0..pois {
+        for x in 0..exits {
+            let way = c.rivals.route(RoutePlace::Exit(x), RoutePlace::Poi(p)).unwrap();
+            assert_eq!(way[0], c.map.exits[x].at, "walked from the exit, it starts there");
+        }
+    }
+}
+
+#[test]
+fn every_shipped_point_of_interest_lies_on_a_container() {
+    // A party that comes to a point must find something to search (the corrections' ruling 1).
+    let c = shipped();
+    for poi in &c.rivals.pois {
+        let at = nightfall_sim::V2::new(poi.at.0, poi.at.1);
+        let held = c
+            .loot
+            .containers
+            .iter()
+            .any(|k| k.at.distance(at) <= poi.radius);
+        assert!(held, "{}: no container within {} yards", poi.key, poi.radius);
+    }
 }

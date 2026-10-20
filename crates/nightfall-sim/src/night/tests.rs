@@ -95,6 +95,7 @@ pub(super) fn content_on(map: &str, night: &str, spawns: &str, monsters: &str) -
         items: ITEMS,
         loot: LOOT,
         monsters: &format!("[{monsters}]"),
+        rivals: "",
     })
     .unwrap_or_else(|e| panic!("{e}"))
 }

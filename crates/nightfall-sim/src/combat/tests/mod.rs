@@ -138,6 +138,7 @@ pub(super) fn world_with(combat: &str, spawns: &str) -> World {
         items: "[]",
         loot: "()",
         monsters: "[]",
+        rivals: "",
     })
     .unwrap();
     let mut w = World::new(Arc::new(content));

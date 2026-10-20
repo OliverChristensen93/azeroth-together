@@ -33,6 +33,7 @@ fn shipped() -> Content {
         read("abilities.ron"),
     );
     let (items, loot, monsters) = (read("items.ron"), read("loot.ron"), read("monsters.ron"));
+    let rivals = read("rivals.ron");
     Content::from_ron(ContentSources {
         classes: &classes,
         map: &map,
@@ -43,6 +44,7 @@ fn shipped() -> Content {
         items: &items,
         loot: &loot,
         monsters: &monsters,
+        rivals: &rivals,
     })
     .expect("the shipped content parses")
 }

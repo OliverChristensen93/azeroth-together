@@ -23,6 +23,7 @@ pub mod messages;
 mod night;
 mod profile;
 mod raid;
+mod rivals;
 mod senses;
 mod sight;
 mod stations;
@@ -71,6 +72,10 @@ pub use profile::{
 pub use raid::{
     burden, Act, ActPress, Carry, ContainerMark, ExitMark, ExitPlan, Fate, HeroOutcome, Holder,
     Loadout, LootView, OpenView, RaidRoll, Recovery,
+};
+pub use rivals::{
+    KitDef, PartyDef, PoiDef, RivalContent, RivalKindDef, RivalRules, RouteDef, RouteEnd,
+    RoutePlace,
 };
 pub use senses::{Alert, Gait, Loudness, Mark, Stance};
 pub use sight::{CHEST_HEIGHT, EYE_HEIGHT, KEEP_EXTRA};

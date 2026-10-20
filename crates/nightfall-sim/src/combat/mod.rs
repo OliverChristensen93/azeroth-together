@@ -538,6 +538,7 @@ mod state_tests {
             items: "[]",
             loot: "()",
             monsters: "[]",
+            rivals: "",
         })
         .unwrap();
         World::new(Arc::new(content))

@@ -177,4 +177,21 @@
                  birds: 3, display: 14562, scale: 0.3,
                  cry: Some(File("Sound\\Creature\\Mobat\\MobatAttackA.wav"))),
     ),
+    // The rivals' bots (spec §7.4). Starting values to playtest; see RivalRules for each.
+    // Two points of interest are in reach (rivals.ron), so a party visits one or both.
+    rivals: (
+        parties_out: (1, 2),
+        arrive: (0.0, 300.0),
+        engage_at: 0.5,
+        hunt_at: 0.7,
+        hunt_for: 180.0,
+        flee_health: 0.3,
+        pois: (1, 2),
+        leave_by: Some("hunt"),
+        dodge: 0.5,
+        dodge_at: 0.25,
+        stuck_for: 60.0,
+        route_leg: 80.0,
+        downed: false,
+    ),
 )

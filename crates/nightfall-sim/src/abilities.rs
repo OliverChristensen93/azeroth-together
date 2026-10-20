@@ -141,6 +141,9 @@ pub enum Effect {
     Eat { secs: f32 },
     /// `count` conjured drinks.
     ConjureWater { count: u8 },
+    /// Health back to the caster, `min` to `max` (on each tick of a channel): a rival's
+    /// bandage, the heal its bot picks by tag (spec §7.4).
+    Heal { min: f32, max: f32 },
     /// Every other enemy within `radius` yards that is in the fight is alerted to the target
     /// (the banshee's wail, spec §7.3). An enemy's alone: a hero's ability with it does nothing.
     Alarm { radius: f32 },
@@ -391,6 +394,7 @@ impl AbilityDef {
                 Effect::Blink { distance } => positive(distance),
                 Effect::Distract { secs } | Effect::Eat { secs } => positive(secs),
                 Effect::ConjureWater { count } => count > 0,
+                Effect::Heal { min, max } => non_negative(min) && max >= min && positive(max),
                 Effect::Alarm { radius } => positive(radius),
                 Effect::Stealth | Effect::Vanish => true,
             };

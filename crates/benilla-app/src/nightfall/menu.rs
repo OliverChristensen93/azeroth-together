@@ -191,7 +191,7 @@ pub(super) fn build_menu(
                     ..default()
                 })
                 .with_children(|row| {
-                    for (i, class) in content.classes.iter().enumerate() {
+                    for (i, class) in content.playable() {
                         glue_button(
                             row,
                             &art,
