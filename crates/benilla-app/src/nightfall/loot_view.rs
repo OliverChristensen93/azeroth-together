@@ -18,6 +18,7 @@ use nightfall_sim::{
     Act, ContainerMark, Content, Holder, Inventory, ItemKind, Life, Place, PlayerId, V2,
 };
 
+use super::auto_brain::{stack_weight, takes};
 use super::enemies::EnemyViews;
 use super::run::{autoplay, Autoplay, LocalInput, Sim};
 use super::view::Views;
@@ -235,6 +236,7 @@ pub(super) fn autoloot(
     mut input: ResMut<LocalInput>,
     mut auto: ResMut<Autoplay>,
     mut state: ResMut<AutoLoot>,
+    plan: Res<super::auto_brain::AutoPlan>,
     real: Res<Time<Real>>,
 ) {
     if !autoplay() {
@@ -259,13 +261,18 @@ pub(super) fn autoloot(
             || state.done.contains(&m.id)
             || matches!(m.holder, Holder::Remains(_) | Holder::Hero(_))
     };
-    let target = target_of(
-        &loot.marks,
-        hero.pos,
-        content.rules.run.reach,
-        AUTO_DETOUR,
-        skip,
-    );
+    // Once it has had enough it searches no more, only finishes what is open.
+    let target = if plan.0.leave.is_some() {
+        Target::Nothing
+    } else {
+        target_of(
+            &loot.marks,
+            hero.pos,
+            content.rules.run.reach,
+            AUTO_DETOUR,
+            skip,
+        )
+    };
     let hold = loot.open.is_some() || matches!(target, Target::Here(_));
     let mut goal = None;
     if let Target::Toward(id, at) = target {
@@ -294,9 +301,29 @@ pub(super) fn autoloot(
     match (&loot.open, target) {
         (Some(open), _) if open.search.is_some() => {}
         (Some(open), _) => {
-            if open.stacks.iter().any(Option::is_some) {
-                info!("nightfall: autoplay takes what is in container {}", open.id);
-                input.queue(Act::TakeAll);
+            // Only what it can carry: stack by stack, as a player drags them, never past its
+            // weight or the free slots of its backpack.
+            let free = sim
+                .world
+                .pack(sim.me)
+                .map_or(0, |inv| inv.pack.iter().filter(|s| s.is_none()).count());
+            let slots = takes(
+                &open.stacks,
+                hero.carry.load,
+                content.rules.run.weight_full,
+                free,
+                |s| stack_weight(s, &content),
+            );
+            if !slots.is_empty() {
+                info!(
+                    "nightfall: autoplay takes {} of {} stacks from container {}",
+                    slots.len(),
+                    open.stacks.iter().flatten().count(),
+                    open.id
+                );
+            }
+            for slot in slots {
+                input.queue(Act::Take(slot));
             }
             state.done.insert(open.id);
             input.queue(Act::Close);

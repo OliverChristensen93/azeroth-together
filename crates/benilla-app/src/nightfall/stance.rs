@@ -71,15 +71,17 @@ fn trace_on() -> bool {
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_SENSES").is_some())
 }
 
-/// The autoplay `sneak` presses Stealth every [`AUTO_PRESS_EVERY`] seconds until the hero is in
+/// The autoplay `sneak` gait, or a rogue near an enemy that has not noticed it
+/// ([`super::auto_brain`]), presses Stealth every [`AUTO_PRESS_EVERY`] seconds until the hero is in
 /// stealth; a player presses Stealth's button on the action bar.
 pub(super) fn auto_stealth(
     sim: Res<Sim>,
+    plan: Res<super::auto_brain::AutoPlan>,
     real: Res<Time<Real>>,
     mut input: ResMut<LocalInput>,
     mut last_auto: Local<Option<f32>>,
 ) {
-    if !(autoplay() && auto_gait() == AutoGait::Sneak) {
+    if !(autoplay() && (auto_gait() == AutoGait::Sneak || plan.0.sneak)) {
         return;
     }
     let now = real.elapsed_secs();

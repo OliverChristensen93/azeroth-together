@@ -236,11 +236,25 @@ fn nearest_open_exit(exits: &[ExitMark], content: &Content, from: V2) -> Option<
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
-/// `NIGHTFALL_AUTOPLAY_EXTRACT`: the autoplay walks to the nearest open exit. It runs just before
+/// `NIGHTFALL_AUTOPLAY_EXTRACT`: the autoplay walks to the nearest open exit (without it, once the
+/// plan says it has had enough, [`super::auto_brain`]). It runs just before
 /// [`super::loot_view::autoloot`], which takes the goal over for a detour to a container and
 /// clears only a goal it set itself, so the two never fight over it.
-pub(super) fn autoexit(sim: Res<Sim>, mut auto: ResMut<Autoplay>) {
+pub(super) fn autoexit(
+    sim: Res<Sim>,
+    plan: Res<super::auto_brain::AutoPlan>,
+    mut auto: ResMut<Autoplay>,
+) {
+    // The setting always walks out; without it the hero does once it has had enough.
     if !autoextract() {
+        if !super::run::autoplay() {
+            return;
+        }
+        if let Some(exit) = plan.0.leave {
+            if auto.goal != Some(exit) {
+                auto.goal = Some(exit);
+            }
+        }
         return;
     }
     let content = content();

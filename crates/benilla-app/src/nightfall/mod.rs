@@ -10,6 +10,7 @@
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
 mod atmosphere;
+mod auto_brain;
 mod auras;
 mod backpack;
 mod bar;
@@ -357,6 +358,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<exits::ExitViews>()
             .init_resource::<loot_view::ContainerViews>()
             .init_resource::<loot_view::AutoLoot>()
+            .init_resource::<auto_brain::AutoPlan>()
             .init_resource::<backpack::BackpackOpen>()
             .init_resource::<board::BoardOpen>()
             .init_resource::<night::SentWeather>()
@@ -393,6 +395,18 @@ impl Plugin for NightfallPlugin {
                 )
                     // The Continue click ends the run in the frame it comes.
                     .before(run::back_to_menu)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
+            )
+            .add_systems(
+                Update,
+                auto_brain::plan
+                    // Once the world is stepped, before the walk, the looting and the Stealth
+                    // presses that read it.
+                    .after(view::sync)
+                    .before(exits::autoexit)
+                    .before(stance::auto_stealth)
+                    .before(loot_view::autoloot)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )
