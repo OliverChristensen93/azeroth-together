@@ -1,7 +1,14 @@
 //! Rivals in whole worlds on small hand-made maps: their content, the fight between heroes and
 //! rivals, their minds, their bots, their arrivals and whole raids with them.
 
-use crate::{Content, ContentSources, KitDef, RoutePlace, V2};
+use std::sync::Arc;
+
+use crate::heightmap::testmap::flat;
+use crate::heightmap::HeightMap;
+use crate::{
+    Content, ContentSources, Event, Gait, HeroPose, Holder, KitDef, Life, PlayerId, PlayerInput,
+    RaidRoll, RoutePlace, Side, UnitRef, World, RIVAL_BASE, TICK_HZ, V2,
+};
 
 pub(super) const CLASSES: &str = r#"[
     (key: "rogue", name: "Rogue", class_id: 4, power: 3, race: 1, sex: 0, base_hp: 1000.0,
@@ -456,4 +463,511 @@ fn the_kit_leaves_stealth_out_and_marks_the_big_move() {
         "Stealth is pressed by count"
     );
     assert!(kit[2].opener);
+}
+
+/// Flat ground 120 yards across.
+pub(super) fn open() -> HeightMap {
+    flat(120.0).finish()
+}
+
+/// A world on `map` with the tests' content, its raid begun from `roll`, then its map attached.
+pub(super) fn world_on(
+    map: HeightMap,
+    rivals_rules: &str,
+    spawns: &str,
+    roll: impl FnOnce(&Content) -> RaidRoll,
+) -> World {
+    let c = content(rivals_rules, spawns);
+    let r = roll(&c);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(r).unwrap();
+    w.attach_map(Arc::new(map));
+    w
+}
+
+/// [`world_on`] open ground, the standard roll (no rivals come by themselves).
+pub(super) fn world(rivals_rules: &str, spawns: &str) -> World {
+    world_on(open(), rivals_rules, spawns, |c| RaidRoll::standard(c, 1))
+}
+
+/// `player`'s next input: their hero at `(x, y)` facing `facing`, moving at `gait`.
+pub(super) fn put(w: &mut World, player: PlayerId, x: f32, y: f32, facing: V2, gait: Gait) {
+    w.set_input(
+        player,
+        PlayerInput {
+            pose: Some(HeroPose {
+                pos: V2::new(x, y),
+                facing,
+                z: 0.0,
+            }),
+            gait,
+            ..Default::default()
+        },
+    );
+}
+
+/// `player`'s rogue standing at `(x, y)`, facing +x, its first input taken.
+pub(super) fn join(w: &mut World, player: PlayerId, x: f32, y: f32) {
+    w.add_hero(player, "rogue", "Hero", 1, 0).unwrap();
+    put(w, player, x, y, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+}
+
+/// A rival of `kind` in party `party` at `(x, y)`, numbered `RIVAL_BASE + n`, its first input
+/// (a baseline) taken. No bot drives it: it is in no party's list, so a test moves it.
+pub(super) fn rival(w: &mut World, n: u8, kind: &str, party: u8, x: f32, y: f32) -> PlayerId {
+    let player = RIVAL_BASE + n;
+    let k = w.content().rival_kind(kind).unwrap();
+    w.add_rival_hero(player, k, Side::Rival(party), V2::new(x, y), kind)
+        .unwrap();
+    w.step();
+    player
+}
+
+pub(super) fn steps(w: &mut World, n: usize) {
+    for _ in 0..n {
+        w.step();
+    }
+}
+
+/// Steps in `s` seconds.
+pub(super) fn secs(s: f32) -> usize {
+    (s * TICK_HZ as f32).round() as usize
+}
+
+/// The events since the last drain that `pick` keeps.
+pub(super) fn events_of<T>(w: &mut World, pick: impl Fn(&Event) -> Option<T>) -> Vec<T> {
+    w.drain_events().iter().filter_map(pick).collect()
+}
+
+/// A sentry of the tests' brute at `(x, y)` facing south (-y), as a spawn line.
+pub(super) fn sentry_line(x: f32, y: f32) -> String {
+    format!(
+        r#"(place: "Post", kind: "brute", behaviour: Sentry(at: ({x:.1}, {y:.1}), facing: 270.0)),"#
+    )
+}
+
+/// Every stack in the world's containers and in the packs of `players`, by item and count: what
+/// the raid holds, to show nothing is copied or lost.
+fn everything_held(w: &World, players: &[PlayerId]) -> Vec<(usize, u16)> {
+    let mut all: Vec<(usize, u16)> = Vec::new();
+    for c in &w.raid.containers {
+        all.extend(
+            c.stacks
+                .iter()
+                .flatten()
+                .map(|s| (usize::from(s.item), s.count)),
+        );
+    }
+    for &p in players {
+        if let Some(inv) = w.pack(p) {
+            all.extend(
+                inv.equip
+                    .iter()
+                    .chain(inv.bags.iter())
+                    .chain(inv.pack.iter())
+                    .chain(inv.safe.iter())
+                    .flatten()
+                    .map(|s| (usize::from(s.item), s.count)),
+            );
+        }
+    }
+    all.sort_unstable();
+    all
+}
+
+#[test]
+fn a_rival_is_a_hero_of_its_own_side_in_its_own_gear() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    join(&mut w, 1, 22.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    let b = rival(&mut w, 1, "shooter", 1, 50.0, 60.0);
+    let h = w.hero(a).unwrap();
+    assert_eq!(h.side, Side::Rival(0));
+    assert_eq!(w.content().classes[h.class].key, "rival:digger");
+    assert_eq!(h.pos, V2::new(40.0, 60.0));
+    assert_eq!(h.hp, 900.0);
+    assert!(w.hostile(0, a) && w.hostile(a, 0));
+    assert!(!w.hostile(0, 1), "the party are friends");
+    assert!(!w.hostile(a, b), "rival parties leave one another be");
+    assert!(!w.hostile(0, 200), "no hero, no fight");
+    assert_eq!(w.side_of(0), Side::Party);
+    assert_eq!(
+        w.side_of(200),
+        Side::Party,
+        "a player with no hero is the party's"
+    );
+    // It wears its gear, its sack sits in a bag slot.
+    let pack = w.pack(a).unwrap();
+    let c = w.content().clone();
+    assert!(pack
+        .equip
+        .iter()
+        .flatten()
+        .any(|s| usize::from(s.item) == c.item("shovel").unwrap()));
+    assert_eq!(
+        pack.bags[0].map(|s| usize::from(s.item)),
+        Some(c.item("sack").unwrap())
+    );
+    assert!(w.rivals.body(a).is_some());
+}
+
+#[test]
+fn the_raid_ends_with_the_party_whatever_the_rivals_do() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    // The hero dies; the rival is up and well: the raid is over, with one outcome.
+    w.hurt_hero(0, 5000.0);
+    let down = w.content().rules.combat.downed_for;
+    steps(&mut w, secs(down + 1.0));
+    assert!(w.is_over());
+    let outcomes = w.take_outcomes();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0].player, 0);
+    assert!(w.hero(a).is_some_and(|h| h.fight.up()));
+}
+
+#[test]
+fn a_raid_of_rivals_alone_is_not_begun_and_a_slain_rival_does_not_end_it() {
+    let mut w = world("", "");
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    steps(&mut w, secs(2.0));
+    assert!(!w.is_over(), "no hero of the party has been in it");
+    join(&mut w, 0, 20.0, 60.0);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    steps(&mut w, secs(2.0));
+    assert!(
+        !w.is_over(),
+        "the party is up: the raid goes on without its rival"
+    );
+    assert!(w.take_outcomes().is_empty());
+}
+
+#[test]
+fn abandoning_a_raid_settles_the_party_and_no_rival() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    let b = rival(&mut w, 1, "digger", 0, 41.0, 60.0);
+    w.wound(b, 5000.0, Some(UnitRef::Hero(0)));
+    w.abandon();
+    let outcomes = w.take_outcomes();
+    assert_eq!(
+        outcomes.iter().map(|o| o.player).collect::<Vec<_>>(),
+        vec![0]
+    );
+    assert!(w.hero(a).is_some() && w.hero(b).is_some());
+}
+
+#[test]
+fn a_rival_out_by_an_exit_leaves_no_outcome() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 115.0, 60.0);
+    w.drain_events();
+    let extract = w.content().rules.run.extract_for;
+    steps(&mut w, secs(extract + 0.5));
+    assert!(w.hero(a).is_none(), "out and gone");
+    assert!(w.take_outcomes().is_empty());
+    assert!(!w.is_over(), "the party is still in");
+    let out = events_of(&mut w, |e| match e {
+        Event::RivalOut { player, exit } => Some((*player, *exit)),
+        _ => None,
+    });
+    assert_eq!(out, vec![(a, 0)]);
+    assert_eq!(w.rivals.out, vec![a], "counted out");
+    assert!(!w.is_parted(a), "no client watches from a rival");
+}
+
+#[test]
+fn a_rival_out_by_an_exit_takes_what_it_carried_and_drops_nothing() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 115.0, 60.0);
+    let carried = everything_held(&w, &[a]);
+    assert!(!carried.is_empty());
+    let before = w.raid.containers.len();
+    let extract = w.content().rules.run.extract_for;
+    steps(&mut w, secs(extract + 0.5));
+    assert!(w.hero(a).is_none());
+    assert!(w.pack(a).is_none(), "its pack went with it, not to a stash");
+    assert_eq!(
+        w.raid.containers.len(),
+        before,
+        "no pile at the exit, no body: nothing was dropped for a friend to take"
+    );
+    assert!(!w.raid.containers.iter().any(|c| c.holder == Holder::Pile));
+}
+
+#[test]
+fn rivals_never_revive_heroes_nor_lend_them_their_eyes() {
+    // A sentry at (60, 100): 37 yards from (60, 63), inside the 40-yard fog; 45 from (60, 55),
+    // outside it. The two spots are 8 yards apart, inside the 10 yards sight is shared over.
+    let mut w = world("", &format!("{}\n", sentry_line(60.0, 100.0)));
+    join(&mut w, 0, 60.0, 55.0);
+    join(&mut w, 1, 60.0, 63.0);
+    assert!(!w.seen_by(0).is_empty(), "a teammate's eyes count");
+    put(&mut w, 1, 20.0, 20.0, V2::new(1.0, 0.0), Gait::Still);
+    let a = rival(&mut w, 0, "digger", 0, 60.0, 63.0);
+    put(&mut w, 0, 60.0, 55.0, V2::new(0.0, 1.0), Gait::Still);
+    w.step();
+    assert!(
+        w.seen_by(0).is_empty(),
+        "a rival's eyes are not a teammate's"
+    );
+    // Downed with an up rival beside them, the hero is never revived.
+    put(&mut w, a, 61.0, 55.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    w.hurt_hero(0, 5000.0);
+    let revive = w.content().rules.combat.revive_for;
+    steps(&mut w, secs(revive + 1.0));
+    assert!(matches!(w.hero(0).unwrap().fight.life, Life::Downed { .. }));
+    assert!(events_of(&mut w, |e| matches!(e, Event::Revived { .. }).then_some(())).is_empty());
+}
+
+#[test]
+fn a_slain_rival_drops_everything_and_counts_as_a_kill() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    let before = everything_held(&w, &[0, a]);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    assert_eq!(
+        w.hero(a).unwrap().fight.life,
+        Life::Dead,
+        "rivals die at once"
+    );
+    w.step();
+    let body = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Hero(a))
+        .expect("its body holds what it had");
+    let held: Vec<usize> = body
+        .stacks
+        .iter()
+        .flatten()
+        .map(|s| usize::from(s.item))
+        .collect();
+    let c = w.content().clone();
+    for item in ["shovel", "tunic", "sack", "gem"] {
+        assert!(held.contains(&c.item(item).unwrap()), "{item} dropped");
+    }
+    assert_eq!(w.raid.kills_of(0), 1);
+    assert!(
+        w.raid.slain_of(0).is_empty(),
+        "a rival is no kind of enemy slain"
+    );
+    let died = events_of(&mut w, |e| match e {
+        Event::RivalDied { player, by } => Some((*player, *by)),
+        _ => None,
+    });
+    assert_eq!(died, vec![(a, Some(0))]);
+    // Nothing is copied or lost: the body holds exactly what the rival had.
+    assert_eq!(everything_held(&w, &[0, a]), before);
+}
+
+#[test]
+fn a_slain_rival_drops_everything_even_where_a_hero_would_keep_what_it_brought() {
+    let rules = rules("").replace("combat:", "run: (death_loss: found_only), combat:");
+    let c = Content::from_ron(ContentSources {
+        classes: CLASSES,
+        map: MAP,
+        rules: &rules,
+        enemies: ENEMIES,
+        spawns: "[]",
+        abilities: ABILITIES,
+        items: ITEMS,
+        loot: LOOT,
+        monsters: "[]",
+        rivals: RIVALS,
+    })
+    .unwrap();
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    w.step();
+    let shovel = w.content().item("shovel").unwrap();
+    let body = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Hero(a))
+        .expect("a body");
+    assert!(body
+        .stacks
+        .iter()
+        .flatten()
+        .any(|s| usize::from(s.item) == shovel));
+}
+
+#[test]
+fn a_rival_dying_is_told_once_and_its_killer_is_the_last_hero_to_strike_it() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    join(&mut w, 1, 22.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    let b = rival(&mut w, 1, "digger", 1, 31.0, 60.0);
+    // A hero struck it, then the world finished it: the hero slew it.
+    w.wound(a, 10.0, Some(UnitRef::Hero(1)));
+    w.wound(a, 10.0, Some(UnitRef::Hero(0)));
+    w.hurt_hero(a, 5000.0);
+    // A rival of another party striking it is no slayer; nor is nobody.
+    w.wound(b, 10.0, Some(UnitRef::Hero(a)));
+    w.hurt_hero(b, 5000.0);
+    steps(&mut w, 3);
+    let mut died = events_of(&mut w, |e| match e {
+        Event::RivalDied { player, by } => Some((*player, *by)),
+        _ => None,
+    });
+    died.sort();
+    assert_eq!(died, vec![(a, Some(0)), (b, None)], "one each, one killer");
+    assert_eq!(w.raid.kills_of(0), 1);
+    assert_eq!(w.raid.kills_of(1), 0);
+}
+
+#[test]
+fn a_kill_of_a_rival_and_of_an_enemy_each_count_once() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    w.events.push(Event::EnemyDied {
+        id: 777,
+        by: Some(0),
+    });
+    w.events.push(Event::RivalDied {
+        player: RIVAL_BASE,
+        by: Some(0),
+    });
+    w.events.push(Event::RivalDied {
+        player: RIVAL_BASE + 1,
+        by: None,
+    });
+    w.tally_kills();
+    w.tally_kills();
+    assert_eq!(w.raid.kills_of(0), 2);
+}
+
+#[test]
+fn with_downed_set_a_rival_goes_down_and_its_friend_revives_it() {
+    let mut w = world("downed: true", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    let b = rival(&mut w, 1, "digger", 0, 31.0, 60.0);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    assert!(matches!(w.hero(a).unwrap().fight.life, Life::Downed { .. }));
+    let revive = w.content().rules.combat.revive_for;
+    steps(&mut w, secs(revive + 0.5));
+    assert!(w.hero(a).unwrap().fight.up(), "its own party revives it");
+    assert!(w.hero(b).unwrap().fight.up());
+}
+
+#[test]
+fn a_downed_rival_is_not_revived_by_a_hero() {
+    let mut w = world("downed: true", "");
+    join(&mut w, 0, 30.0, 61.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    // The hero stands beside it for longer than a revive takes.
+    let revive = w.content().rules.combat.revive_for;
+    steps(&mut w, secs(revive + 1.0));
+    assert!(
+        matches!(
+            w.hero(a).unwrap().fight.life,
+            Life::Downed { .. } | Life::Dead
+        ),
+        "the other side never gets it up"
+    );
+    assert!(events_of(&mut w, |e| matches!(e, Event::Revived { .. }).then_some(())).is_empty());
+}
+
+#[test]
+fn a_rival_slips_out_unseen_only_once_no_hero_sees_it() {
+    let mut w = world("", "");
+    join(&mut w, 0, 60.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
+    let carried = everything_held(&w, &[a]);
+    assert!(!carried.is_empty());
+    let before = w.raid.containers.len();
+    assert!(!w.rival_leaves_unseen(a), "the hero sees it 10 yards off");
+    assert!(w.hero(a).is_some() && w.rivals.out.is_empty());
+    // A friend of its own sees nothing for the party: only the party's eyes count.
+    let c = rival(&mut w, 1, "digger", 0, 70.0, 61.0);
+    put(&mut w, 0, 5.0, 5.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    assert!(
+        w.rival_leaves_unseen(a),
+        "the hero is far off: nobody sees it"
+    );
+    assert!(w.hero(a).is_none() && w.pack(a).is_none());
+    assert_eq!(w.rivals.out, vec![a], "counted out");
+    assert_eq!(w.raid.containers.len(), before, "no pile, no body");
+    assert!(w.take_outcomes().is_empty());
+    assert!(!w.is_parted(a));
+    assert!(
+        events_of(&mut w, |e| matches!(e, Event::RivalOut { .. })
+            .then_some(()))
+        .is_empty(),
+        "nobody saw it go"
+    );
+    // It is not a hero, a dead rival, nor a rival gone already.
+    assert!(
+        !w.rival_leaves_unseen(0),
+        "a hero of the party never slips away"
+    );
+    assert!(w.hero(0).is_some());
+    assert!(!w.rival_leaves_unseen(a));
+    w.hurt_hero(c, 5000.0);
+    assert!(!w.rival_leaves_unseen(c), "the dead stay as bodies");
+    assert_eq!(w.rivals.out, vec![a]);
+}
+
+#[test]
+fn a_downed_hero_does_not_see_a_rival_leave() {
+    let mut w = world("", "");
+    join(&mut w, 0, 60.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 66.0, 60.0);
+    // A hero downed does not watch.
+    w.hurt_hero(0, 5000.0);
+    assert!(w.rival_leaves_unseen(a));
+    assert!(w.hero(a).is_none());
+}
+
+#[test]
+fn rivals_roll_their_carried_find_with_dice_of_their_own() {
+    use super::carry_dice;
+    // Twin seeds and twin players all roll apart; a rival never rolls what a chest did.
+    let first = |seed: u64, player: PlayerId| carry_dice(seed, player).unit();
+    let mut same_seed_twins = 0;
+    let mut same_player_twins = 0;
+    for s in 0..100u64 {
+        let s = s * 2 + 1000;
+        if first(s, RIVAL_BASE) == first(s ^ 1, RIVAL_BASE) {
+            same_seed_twins += 1;
+        }
+        if first(s, RIVAL_BASE) == first(s, RIVAL_BASE + 1) {
+            same_player_twins += 1;
+        }
+    }
+    assert_eq!(same_seed_twins, 0, "twin seeds roll alike");
+    assert_eq!(same_player_twins, 0, "twin rivals roll alike");
+}
+
+#[test]
+fn a_new_raid_starts_without_the_last_raids_rivals() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 115.0, 60.0);
+    w.rivals.next = 3;
+    w.rivals.out.push(a);
+    let again = RaidRoll::standard(&w.content().clone(), 2);
+    w.begin_raid(again).unwrap();
+    assert!(w.rivals.bodies.is_empty() && w.rivals.out.is_empty());
+    assert_eq!(w.rivals.next, 0);
 }

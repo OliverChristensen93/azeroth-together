@@ -4,7 +4,7 @@
 
 use super::{Exiting, Fate, HeroOutcome, Holder, Raid, RaidRoll, Recovery};
 use crate::{
-    Content, DeathLoss, Event, Inventory, Life, Loudness, PlayerId, Stack, World, DT, V2, V3,
+    Content, DeathLoss, Event, Inventory, Life, Loudness, PlayerId, Side, Stack, World, DT, V2, V3,
 };
 
 /// The exit (an index into the map's exits) whose ring `pos` stands in while it is open now
@@ -39,7 +39,18 @@ impl World {
                 _ => None,
             })
             .collect();
+        // A rival slain counts as a kill, but is no enemy of the book of kinds slain.
+        let rivals: Vec<PlayerId> = self.events[from..]
+            .iter()
+            .filter_map(|e| match e {
+                Event::RivalDied { by: Some(p), .. } => Some(*p),
+                _ => None,
+            })
+            .collect();
         self.raid.counted = self.events.len();
+        for p in rivals {
+            self.raid.add_kill(p);
+        }
         for (p, id) in by {
             self.raid.add_kill(p);
             if let Some(e) = self.enemies.iter().find(|e| e.id == id) {
@@ -104,6 +115,13 @@ impl World {
     /// `player` is out by exit `exit`: everything they carry is theirs to keep, and they leave
     /// the world.
     pub(super) fn extract(&mut self, player: PlayerId, exit: usize) {
+        // A rival is out as a hero is, but the raid is not its: no outcome (spec §7.4).
+        if self.side_of(player).is_rival() {
+            if self.hero(player).is_some_and(|h| h.fight.up()) {
+                self.rival_leaves(player, exit);
+            }
+            return;
+        }
         if self.raid.over || !self.hero(player).is_some_and(|h| h.fight.up()) {
             return;
         }
@@ -126,23 +144,28 @@ impl World {
     }
 
     /// Every hero dead since the last step leaves their body where they fell (spec §8.2),
-    /// holding what `death_loss` takes; friends can search it this raid.
+    /// holding what `death_loss` takes; friends can search it this raid. A rival's body holds
+    /// everything it had (spec §7.4), and its death is told.
     pub(crate) fn step_deaths(&mut self) {
         if self.raid.mirror.is_some() {
             return;
         }
         let content = self.content().clone();
-        let mode = content.rules.run.death_loss;
-        let dead: Vec<(PlayerId, V2, f32)> = self
+        let dead: Vec<(PlayerId, V2, f32, bool)> = self
             .heroes
             .iter()
             .filter(|h| {
                 h.fight.life == Life::Dead
                     && !self.raid.fallen.iter().any(|(p, _, _)| *p == h.player)
             })
-            .map(|h| (h.player, h.pos, h.z))
+            .map(|h| (h.player, h.pos, h.z, h.side.is_rival()))
             .collect();
-        for (player, at, z) in dead {
+        for (player, at, z, rival) in dead {
+            let mode = if rival {
+                DeathLoss::Everything
+            } else {
+                content.rules.run.death_loss
+            };
             let death = self
                 .raid
                 .pack_mut(player, &content)
@@ -155,7 +178,8 @@ impl World {
             let body = if death.lost.is_empty() {
                 0
             } else {
-                let slots = usize::from(content.rules.run.container_slots);
+                // A rival's whole kit fits its body, whatever a hero's holds.
+                let slots = usize::from(content.rules.run.container_slots).max(death.lost.len());
                 self.raid.add_container(
                     Holder::Hero(player),
                     at,
@@ -172,29 +196,45 @@ impl World {
                 self.heroes[hi].carry.lantern = None;
             }
             self.refresh_carry(player);
+            if rival {
+                let by = self.rivals.struck_by(player);
+                self.events.push(Event::RivalDied { player, by });
+            }
         }
     }
 
-    /// With every hero out or dead the raid is over (spec §8.1), and each dead hero's outcome is
-    /// settled now: what is left on their body by then is what a recovery holds. A client's
-    /// mirror has no raid to end: its host tells it.
+    /// With every hero of the party out or dead the raid is over (spec §8.1), and each dead
+    /// hero's outcome is settled now: what is left on their body by then is what a recovery
+    /// holds. Rivals do not count (spec §7.4): the raid is the party's, so it ends with them
+    /// whatever the rivals do, and settles no outcome for a rival. A client's mirror has no raid
+    /// to end: its host tells it.
     pub(crate) fn step_over(&mut self) {
         if self.raid.mirror.is_some() {
             return;
         }
-        if !self.heroes.is_empty() {
+        if self.heroes.iter().any(|h| h.side == Side::Party) {
             self.raid.had_heroes = true;
         }
         if self.raid.over || !self.raid.had_heroes {
             return;
         }
-        if !self.heroes.iter().all(|h| h.fight.life == Life::Dead) {
+        if !self
+            .heroes
+            .iter()
+            .filter(|h| h.side == Side::Party)
+            .all(|h| h.fight.life == Life::Dead)
+        {
             return;
         }
         // Every hero who has died is on the books before anyone is settled.
         self.step_deaths();
         self.raid.over = true;
-        let dead: Vec<PlayerId> = self.heroes.iter().map(|h| h.player).collect();
+        let dead: Vec<PlayerId> = self
+            .heroes
+            .iter()
+            .filter(|h| h.side == Side::Party)
+            .map(|h| h.player)
+            .collect();
         for p in dead {
             self.settle_dead(p);
         }
@@ -314,6 +354,7 @@ impl World {
         let heroes: Vec<(PlayerId, bool)> = self
             .heroes
             .iter()
+            .filter(|h| h.side == Side::Party)
             .map(|h| (h.player, h.fight.life == Life::Dead))
             .collect();
         for (p, dead) in heroes {

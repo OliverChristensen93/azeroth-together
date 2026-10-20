@@ -1032,6 +1032,9 @@ pub(super) fn event_for(event: &Event, me: PlayerId, near: impl Fn(UnitRef) -> b
         | Event::Died { player } => hero(*player),
         Event::Revived { player, by } => hero(*player) || hero(*by),
         Event::EnemyDied { id, by } => involves(UnitRef::Enemy(*id)) || by.is_some_and(hero),
+        // A rival is a hero of another side: told to those near it, and to its slayer.
+        Event::RivalDied { player, by } => hero(*player) || by.is_some_and(hero),
+        Event::RivalOut { player, .. } => hero(*player),
         // The night is everyone's (spec §7.2): its cues, its stages, the hunt's closing and the
         // ravens, and the banshee's wail (a line heard everywhere), however far from their hero.
         Event::NightCue { .. }
@@ -1736,6 +1739,19 @@ mod tests {
         let by = |p| Event::EnemyDied { id: 1, by: Some(p) };
         assert!(!event_for(&by(5), 0, |_| false));
         assert!(event_for(&by(0), 0, |_| false));
+    }
+
+    #[test]
+    fn a_rivals_death_and_leaving_go_to_those_near_it_and_to_its_slayer() {
+        let died = |by| Event::RivalDied { player: 64, by };
+        let near = |u| u == UnitRef::Hero(64);
+        assert!(event_for(&died(None), 0, near));
+        assert!(!event_for(&died(None), 0, |_| false), "a far rival's death is not sent");
+        assert!(event_for(&died(Some(0)), 0, |_| false), "its slayer is told wherever it fell");
+        assert!(!event_for(&died(Some(1)), 0, |_| false));
+        let out = Event::RivalOut { player: 64, exit: 1 };
+        assert!(event_for(&out, 0, near));
+        assert!(!event_for(&out, 0, |_| false));
     }
 
     #[test]

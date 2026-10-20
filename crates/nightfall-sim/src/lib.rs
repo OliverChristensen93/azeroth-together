@@ -74,8 +74,8 @@ pub use raid::{
     Loadout, LootView, OpenView, RaidRoll, Recovery,
 };
 pub use rivals::{
-    KitDef, PartyDef, PoiDef, RivalContent, RivalKindDef, RivalRules, RouteDef, RouteEnd,
-    RoutePlace, RIVAL_BUDGET, RIVAL_POOL,
+    KitDef, PartyDef, PoiDef, RivalContent, RivalKindDef, RivalMark, RivalRules, RivalView,
+    RouteDef, RouteEnd, RoutePlace, Side, RIVAL_BASE, RIVAL_BUDGET, RIVAL_POOL,
 };
 pub use senses::{Alert, Gait, Loudness, Mark, Stance};
 pub use sight::{CHEST_HEIGHT, EYE_HEIGHT, KEEP_EXTRA};

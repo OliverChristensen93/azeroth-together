@@ -9,7 +9,7 @@ mod extract;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use containers::{in_reach, search_of, seed_for};
+pub(crate) use containers::{in_reach, roll_table, search_of, seed_for};
 
 use std::collections::BTreeSet;
 
@@ -574,6 +574,8 @@ impl World {
             return Err(format!("no weather {} in rules.ron", roll.weather));
         }
         self.raid = Raid::new(&content, roll);
+        // The last raid's rivals are gone with it (their bodies, parties, numbers).
+        self.rivals = crate::rivals::Rivals::default();
         // A new raid's clock starts over.
         self.night = crate::night::Night::new(&content, &self.raid.roll);
         // The raid's own enemies, on the map if there is one (the rolled monsters are out now).

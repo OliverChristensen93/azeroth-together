@@ -20,7 +20,8 @@ pub(crate) use react::step_enemies;
 pub use visibility::{Gait, Stance};
 
 pub(crate) use awareness::State;
-use awareness::{Mind, Shout};
+pub(crate) use awareness::Mind;
+use awareness::Shout;
 use noise::step_radius;
 use react::Way;
 use visibility::{visibility, Light};

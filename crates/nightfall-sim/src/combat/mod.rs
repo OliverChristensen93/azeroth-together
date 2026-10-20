@@ -253,6 +253,13 @@ pub enum Event {
         id: u32,
         by: Option<PlayerId>,
     },
+    /// A rival died, by `by`'s hand when a hero of the party's (spec §7.4).
+    RivalDied {
+        player: PlayerId,
+        by: Option<PlayerId>,
+    },
+    /// A rival got out by exit `exit`, everything it carried with it.
+    RivalOut { player: PlayerId, exit: u8 },
     /// A stage of the night is coming (spec §7.2): its cue sounds and its line shows, `warn`
     /// seconds before it lands.
     NightCue { stage: u8 },

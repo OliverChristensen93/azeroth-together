@@ -4,7 +4,7 @@
 //! that holds only the enemies near their own hero. Sub-project 3 hides the others from the
 //! interface (the `Concealed` marker), and enemies' sight of heroes will use the same query.
 
-use crate::{Enemy, Hero, PlayerId, Snapshot, UnitRef, World, V3};
+use crate::{Enemy, Hero, PlayerId, Side, Snapshot, UnitRef, World, V2, V3};
 
 /// How high a unit's eyes are over its floor, yards.
 pub const EYE_HEIGHT: f32 = 1.7;
@@ -17,7 +17,8 @@ pub const KEEP_EXTRA: f32 = 15.0;
 
 impl World {
     /// The ids of the enemies `player`'s hero sees, in the world's order; none for a player
-    /// without a hero.
+    /// without a hero. Only the hero's own side's eyes count: a rival standing by is not a
+    /// teammate.
     pub fn seen_by(&self, player: PlayerId) -> Vec<u32> {
         let Some(me) = self.hero(player) else {
             return Vec::new();
@@ -28,7 +29,9 @@ impl World {
         let watchers: Vec<&Hero> = self
             .heroes
             .iter()
-            .filter(|h| h.player == player || h.pos.distance(me.pos) <= share)
+            .filter(|h| {
+                h.player == player || (h.side == me.side && h.pos.distance(me.pos) <= share)
+            })
             .collect();
         self.enemies
             .iter()
@@ -108,11 +111,16 @@ impl World {
     /// A ray is only cast between two points on the map's grid, and only once they are within
     /// `range` of each other, so no ray is ever long; a unit off the grid (or not at a number) is
     /// unseen rather than walked towards across millions of columns that hold nothing.
+    fn sees(&self, hero: &Hero, enemy: &Enemy, range: f32) -> bool {
+        self.sees_at(hero, enemy.pos, enemy.z, range)
+    }
+
+    /// [`World::sees`] for a unit of any kind at `pos` (feet at `z`).
     // The distance check is a negated comparison on purpose, so a NaN fails it.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
-    fn sees(&self, hero: &Hero, enemy: &Enemy, range: f32) -> bool {
+    fn sees_at(&self, hero: &Hero, pos: V2, z: f32, range: f32) -> bool {
         // Written so that a distance that is not a number fails it.
-        if !(hero.pos.distance(enemy.pos) <= range) {
+        if !(hero.pos.distance(pos) <= range) {
             return false;
         }
         match self.map() {
@@ -120,13 +128,22 @@ impl World {
             Some(map) => {
                 let grid = map.grid();
                 grid.column_of(hero.pos).is_some()
-                    && grid.column_of(enemy.pos).is_some()
+                    && grid.column_of(pos).is_some()
                     && map.line_of_sight(
                         V3::at(hero.pos, hero.z + EYE_HEIGHT),
-                        V3::at(enemy.pos, enemy.z + CHEST_HEIGHT),
+                        V3::at(pos, z + CHEST_HEIGHT),
                     )
             }
         }
+    }
+
+    /// Whether a hero of the party who is up sees a unit standing at `pos` (feet at `z`): within
+    /// the fog and in line of sight. A rival that no hero sees may leave the raid unseen.
+    pub(crate) fn party_sees(&self, pos: V2, z: f32) -> bool {
+        let fog = self.fog().end;
+        self.heroes
+            .iter()
+            .any(|h| h.side == Side::Party && h.fight.up() && self.sees_at(h, pos, z, fog))
     }
 }
 

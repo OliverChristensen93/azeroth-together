@@ -27,6 +27,9 @@ impl World {
         if !self.heroes[hi].fight.up() || !amount.is_finite() || amount <= 0.0 {
             return;
         }
+        if let Some(UnitRef::Hero(p)) = by {
+            self.rival_struck(player, p);
+        }
         // An enemy's blow carries its zone's might (spec §8.1).
         let amount = amount * self.might_of(by);
         let linger = self.content.rules.combat.combat_linger;
@@ -55,6 +58,22 @@ impl World {
     /// enemy after them loses them.
     fn down(&mut self, hi: usize) {
         let content = self.content.clone();
+        // A rival dies at 0 health unless the rules let it go down as heroes do (spec §7.4:
+        // "killed, they drop" their bags; a 45-second crawl would only delay it).
+        if self.heroes[hi].side.is_rival() && !content.rules.rivals.downed {
+            self.stop_cast(hi, Stop::Interrupted);
+            let h = &mut self.heroes[hi];
+            let player = h.player;
+            h.hp = 0.0;
+            h.stealthed = false;
+            h.fight.life = Life::Dead;
+            h.fight.attacking = None;
+            h.fight.sprint = 0.0;
+            self.senses.lose(player, &content.rules.senses.awareness);
+            self.rederive(player);
+            self.events.push(Event::Died { player });
+            return;
+        }
         self.stop_cast(hi, Stop::Interrupted);
         let h = &mut self.heroes[hi];
         let player = h.player;
@@ -86,10 +105,17 @@ impl World {
             self.heroes[hi].pos,
             self.heroes[hi].z,
         );
+        let side = self.heroes[hi].side;
+        // A side revives only its own: a rival standing by never gets a hero up.
         let reviver = self
             .heroes
             .iter()
-            .find(|o| o.player != player && o.fight.up() && o.pos.distance(pos) <= r.revive_reach)
+            .find(|o| {
+                o.player != player
+                    && o.side == side
+                    && o.fight.up()
+                    && o.pos.distance(pos) <= r.revive_reach
+            })
             .map(|o| o.player);
         let left = left - DT;
         let revive = match reviver {

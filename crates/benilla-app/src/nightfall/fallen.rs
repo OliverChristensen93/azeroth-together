@@ -37,6 +37,7 @@ pub(super) fn status(me: &Hero, heroes: &[Hero], r: &CombatRules) -> Option<Stri
             .iter()
             .find(|h| {
                 h.player != me.player
+                    && h.side == me.side
                     && matches!(h.fight.life, Life::Downed { .. })
                     && h.pos.distance(me.pos) <= r.revive_reach
             })
@@ -183,6 +184,7 @@ mod tests {
                 ..HeroFight::default()
             },
             carry: Default::default(),
+            side: nightfall_sim::Side::Party,
         }
     }
 

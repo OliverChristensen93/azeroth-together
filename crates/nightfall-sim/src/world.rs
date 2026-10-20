@@ -13,6 +13,7 @@ use crate::enemies::{self, Brain, Enemy, Order, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::night::{Night, NightView};
 use crate::raid::{Carry, Raid};
+use crate::rivals::{Rivals, Side};
 use crate::senses::{self, Gait, Senses, Stance};
 use crate::{ActPress, Content, Inventory, LootView, RaidRoll, V2, V3};
 
@@ -107,6 +108,8 @@ pub struct Hero {
     pub fight: HeroFight,
     /// What they carry (spec §8.2), as every client sees it.
     pub carry: Carry,
+    /// The party's, or a rival party's (spec §7.4).
+    pub side: Side,
 }
 
 /// Everything a client needs to draw the world as the host has it.
@@ -161,6 +164,8 @@ pub struct World {
     pub(crate) raid: Raid,
     /// The night: its clock on the host, what the host sent on a client's mirror.
     pub(crate) night: Night,
+    /// The rivals' host-only state (spec §7.4).
+    pub(crate) rivals: Rivals,
 }
 
 impl World {
@@ -184,6 +189,7 @@ impl World {
             combat: Combat::default(),
             raid,
             night,
+            rivals: Rivals::default(),
         }
     }
 
@@ -244,6 +250,7 @@ impl World {
             noise: 0.0,
             fight: HeroFight::new(def, &self.content.rules.combat),
             carry: Carry::default(),
+            side: Side::Party,
         });
         Ok(())
     }
@@ -256,6 +263,7 @@ impl World {
         self.senses.forget(player);
         self.combat.forget(player);
         self.night.trails.retain(|t| t.player != player);
+        self.rivals.forget(player);
     }
 
     pub fn hero(&self, player: PlayerId) -> Option<&Hero> {

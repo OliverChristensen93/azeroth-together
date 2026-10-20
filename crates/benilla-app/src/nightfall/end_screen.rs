@@ -3,7 +3,7 @@
 //! and Continue (alone or hosting) back to the menu. A joined player waits for their host.
 
 use bevy::prelude::*;
-use nightfall_sim::{Content, Fate, HeroOutcome, Life};
+use nightfall_sim::{Content, Fate, HeroOutcome, Life, Side};
 
 use super::exits::clock;
 use super::run::{EndRun, Sim};
@@ -125,6 +125,12 @@ pub(super) enum Screen {
     Over(Vec<HeroOutcome>, bool),
 }
 
+/// Whether any hero of the party is in the world: rivals are not the others still to come out
+/// (spec §7.4: the raid is the party's).
+fn has_party(heroes: &[nightfall_sim::Hero]) -> bool {
+    heroes.iter().any(|h| h.side == Side::Party)
+}
+
 /// The screen the raid asks for: `joined` is whether our host, not we, takes us on from here.
 fn screen_of(sim: Option<&Sim>, joined: bool) -> Screen {
     let Some(s) = sim else {
@@ -134,11 +140,11 @@ fn screen_of(sim: Option<&Sim>, joined: bool) -> Screen {
         Some(all) => Screen::Over(all.clone(), joined),
         // Out of the raid (the heroes of a joined mirror are none before its first state, which is
         // not "out"), with others still to come out or fall.
-        None if s.world.hero(s.me).is_none() && !s.world.heroes.is_empty() => Screen::Waiting(
+        None if s.world.hero(s.me).is_none() && has_party(&s.world.heroes) => Screen::Waiting(
             s.world
                 .heroes
                 .iter()
-                .filter(|h| h.fight.life != Life::Dead)
+                .filter(|h| h.side == Side::Party && h.fight.life != Life::Dead)
                 .map(|h| h.name.clone())
                 .collect(),
             joined,
@@ -236,7 +242,7 @@ pub(super) fn continue_click(
 /// Once the raid is over the controller stays off too, so no death popup comes up over the end
 /// screen.
 pub(super) fn out_of_raid(sim: Res<Sim>, mut player: ResMut<crate::player::Player>) {
-    let out = sim.world.hero(sim.me).is_none() && !sim.world.heroes.is_empty();
+    let out = sim.world.hero(sim.me).is_none() && has_party(&sim.world.heroes);
     if (out || sim.over.is_some()) && player.active {
         player.active = false;
     }
@@ -284,6 +290,25 @@ mod tests {
             screen_of(Some(&sim), true),
             Screen::Waiting(vec!["Friend".to_string()], true)
         );
+    }
+
+    #[test]
+    fn rivals_are_not_among_the_others_still_to_come_out() {
+        let mut sim = raid_of_three();
+        let mut rival = sim.world.heroes[1].clone();
+        rival.player = 64;
+        rival.name = "Digger".into();
+        rival.side = nightfall_sim::Side::Rival(0);
+        sim.world.heroes.push(rival);
+        sim.world.heroes[2].fight.life = Life::Dead;
+        sim.world.heroes.retain(|h| h.player != 0);
+        assert_eq!(
+            screen_of(Some(&sim), false),
+            Screen::Waiting(vec!["Friend".to_string()], false)
+        );
+        // With only rivals left in the world nothing is waited for.
+        sim.world.heroes.retain(|h| h.side.is_rival());
+        assert_eq!(screen_of(Some(&sim), false), Screen::None);
     }
 
     #[test]
