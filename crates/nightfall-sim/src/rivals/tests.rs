@@ -2195,6 +2195,7 @@ fn followers_keep_behind_their_leader() {
     join(&mut w, 0, 110.0, 110.0);
     let members = party(&mut w, "watch", 0.8, 10.0, 60.0, 3);
     steps(&mut w, secs(3.0));
+    let start = w.hero(members[0]).unwrap().pos;
     for _ in 0..secs(10.0) {
         w.step();
         let (Some(lead), Some(follow)) = (w.hero(members[0]), w.hero(members[1])) else {
@@ -2207,6 +2208,10 @@ fn followers_keep_behind_their_leader() {
             follow.pos
         );
     }
+    assert!(
+        w.hero(members[0]).unwrap().pos.distance(start) > 10.0,
+        "the leader walked, the others after it"
+    );
 }
 
 #[test]
@@ -2565,7 +2570,8 @@ fn twin_seeds_bring_parties_with_different_dice() {
 
 #[test]
 fn rival_bots_do_not_run_on_a_mirror() {
-    // A mirror has no map: its rivals are drawn from the host's snapshots, never moved.
+    // A mirror has no map: its rivals are drawn from the host's snapshots, never moved. Even
+    // handed the host's bodies and parties, it moves nobody.
     let mut host = world("pois: (1, 1)", "");
     join(&mut host, 0, 110.0, 110.0);
     party(&mut host, "diggers", 0.1, 10.0, 60.0, 7);
@@ -2574,13 +2580,11 @@ fn rival_bots_do_not_run_on_a_mirror() {
     let mut mirror = World::new(Arc::new(content("pois: (1, 1)", "")));
     mirror.begin_mirror();
     mirror.apply_snapshot(snap);
+    mirror.rivals.bodies = host.rivals.bodies.clone();
+    mirror.rivals.parties = host.rivals.parties.clone();
     let at: Vec<V2> = mirror.heroes.iter().map(|h| h.pos).collect();
     assert!(mirror.heroes.iter().any(|h| h.side.is_rival()));
     steps(&mut mirror, secs(5.0));
-    assert!(
-        mirror.rivals.parties.is_empty(),
-        "a mirror knows no parties"
-    );
     assert_eq!(
         mirror.heroes.iter().map(|h| h.pos).collect::<Vec<_>>(),
         at,
@@ -2613,16 +2617,23 @@ fn a_bold_party_with_nothing_left_to_loot_hunts_the_noise_it_heard() {
     join(&mut w, 0, 100.0, 20.0);
     let members = party(&mut w, "watch", 0.9, 10.0, 60.0, 3);
     let mut hunted = false;
+    let mut nearest = f32::MAX;
     for i in 0..secs(240.0) {
         // The rogue runs on the spot far off, keeping a noise going.
         let x = 100.0 + (i % 2) as f32 * 0.1;
         put(&mut w, 0, x, 20.0, V2::new(1.0, 0.0), Gait::Run);
         w.step();
         hunted |= matches!(w.rivals.parties[0].goal, crate::rivals::Goal::Hunt { .. });
+        for &m in &members {
+            if let Some(h) = w.hero(m) {
+                nearest = nearest.min(h.pos.distance(V2::new(100.0, 20.0)));
+            }
+        }
     }
     assert!(hunted, "it went after the noise");
     assert!(w.rivals.parties[0].hunted);
-    assert!(!members.is_empty());
+    // And it came nearer the noise than the entry it started from (98 yards off).
+    assert!(nearest < 60.0, "{nearest} yards from the noise");
 }
 
 #[test]
@@ -2669,6 +2680,25 @@ fn a_client_is_sent_only_the_rivals_within_its_heros_reach() {
     assert!(ids(&snap).contains(&0), "its own hero");
     assert!(ids(&snap).contains(&near));
     assert!(!ids(&snap).contains(&far), "{:?}", ids(&snap));
+    // The party is sent whole: a friend far off is still in it, and a rival beside the friend is
+    // not, being out of the first hero's reach.
+    w.add_hero(1, "rogue", "Friend", 1, 0).unwrap();
+    put(&mut w, 1, 119.0, 119.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    let snap = w.snapshot_for(0);
+    assert!(ids(&snap).contains(&1), "the party whole: {:?}", ids(&snap));
+    assert!(!ids(&snap).contains(&far));
+    // The friend sees the rival beside them, and not the near one 100 yards off.
+    let snap = w.snapshot_for(1);
+    assert!(ids(&snap).contains(&far) && !ids(&snap).contains(&near));
+    // A player who has left is sent no rival at all.
+    w.remove_hero(1);
+    let snap = w.snapshot_for(1);
+    assert!(
+        snap.heroes.iter().all(|h| !h.side.is_rival()),
+        "{:?}",
+        ids(&snap)
+    );
 }
 
 #[test]
@@ -3193,4 +3223,171 @@ fn a_world_with_rivals_plays_the_same_twice() {
         w.snapshot()
     };
     assert_eq!(run(), run());
+}
+
+#[test]
+fn a_container_the_host_will_not_open_is_given_up_after_give_up_seconds() {
+    // Both crates stand 4 yards above the rivals' floor: the host refuses every `Open` (it
+    // reaches 3 yards up), so only the loot clock lets the party get on.
+    let mut w = world("pois: (1, 1), give_up: 8.0", "");
+    for c in &mut w.raid.containers {
+        c.z = Some(4.0);
+    }
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    steps(&mut w, secs(120.0));
+    let p = &w.rivals.parties[0];
+    assert_eq!(p.visited, vec![0], "the point is done: {:?}", p.goal);
+    assert!(
+        w.raid
+            .containers
+            .iter()
+            .any(|c| c.at == V2::new(60.0, 60.0) && !c.searched),
+        "and never opened"
+    );
+    assert!(members
+        .iter()
+        .all(|&m| w.hero(m).is_none_or(|h| h.fight.up())));
+    // The party carried on to the exit: it is gone, out by the gate or unseen.
+    assert!(w.rivals.out.len() == members.len(), "{:?}", w.rival_debug());
+}
+
+#[test]
+fn a_loot_reach_the_host_would_refuse_is_refused_at_load() {
+    assert!(refused("loot_reach: 50.0", RIVALS));
+    assert!(!refused("loot_reach: 2.5", RIVALS));
+}
+
+#[test]
+fn a_goal_given_up_for_the_next_keeps_the_idle_time_it_had() {
+    // The backstop must see through a party cycling through points it cannot reach: giving one
+    // point up for a nearer one is no headway (the call to `Progress::rebase`).
+    let mut w = world("pois: (2, 2)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let p = &mut w.rivals.parties[0];
+    p.progress = super::travel::Progress::aged(10.0, 500.0);
+    p.visited = vec![0];
+    p.looting = None;
+    p.goal = crate::rivals::Goal::Loot { poi: 0 };
+    p.next_poi = Some(1);
+    p.place = Some(RoutePlace::Entry(0));
+    w.step();
+    let p = &w.rivals.parties[0];
+    assert!(
+        matches!(p.goal, crate::rivals::Goal::Loot { poi: 1 }),
+        "{:?}",
+        p.goal
+    );
+    assert!(p.progress.idle() >= 10.0, "idle {}", p.progress.idle());
+}
+
+#[test]
+fn a_leader_held_for_a_follower_is_not_idle_and_the_follower_alone_slips_away() {
+    // A follower sealed in a room (no way to its leader) is `pinned`; its leader waits for it and
+    // that wait is no idleness, so the party does not leave: only the follower does, after
+    // `stuck_for`, and the leader goes on.
+    let mut b = flat(120.0);
+    house(&mut b, V2::new(12.0, 40.0), V2::new(20.0, 48.0), None, true);
+    let mut w = world_on(b.finish(), "pois: (1, 1), stuck_for: 20.0", "", |c| {
+        RaidRoll::standard(c, 1)
+    });
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let hi = w.hero_slot(members[1]).unwrap();
+    w.heroes[hi].pos = V2::new(16.0, 44.0);
+    let at = w.heroes[hi].pos;
+    put(
+        &mut w,
+        members[1],
+        at.x,
+        at.y,
+        V2::new(1.0, 0.0),
+        Gait::Still,
+    );
+    steps(&mut w, secs(10.0));
+    let pinned = w.rivals.body(members[1]).map_or(0.0, |b| b.pinned);
+    assert!(
+        pinned > 5.0,
+        "the sealed follower counts its time: {pinned}"
+    );
+    assert!(!w.rivals.parties[0].leaving, "the wait is no idleness");
+    steps(&mut w, secs(20.0));
+    assert!(w.hero(members[1]).is_none(), "the sealed one slipped out");
+    assert!(w.hero(members[0]).is_some(), "its leader did not");
+    assert_eq!(w.rivals.out, vec![members[1]]);
+}
+
+#[test]
+fn a_new_leader_searches_its_own_leg_and_does_not_walk_the_old_ones() {
+    let mut w = world_routes("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    steps(&mut w, secs(6.0));
+    let old = w.rivals.parties[0]
+        .journey
+        .as_ref()
+        .and_then(|j| j.travel.path())
+        .expect("the old leader walks a leg");
+    w.wound(members[0], 5000.0, None);
+    w.step();
+    let new = w.rivals.parties[0]
+        .journey
+        .as_ref()
+        .and_then(|j| j.travel.path())
+        .expect("the new leader has a leg");
+    assert!(
+        !Arc::ptr_eq(&old, &new),
+        "the new leader walked the old leader's leg"
+    );
+}
+
+#[test]
+fn the_parties_are_served_from_a_start_that_moves_on() {
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    for n in 0..3u8 {
+        let def = w.content().party("diggers").unwrap();
+        w.add_party(
+            def,
+            n,
+            0.1,
+            V2::new(10.0, 40.0 + f32::from(n) * 10.0),
+            u64::from(n),
+        );
+    }
+    let mut firsts = Vec::new();
+    for _ in 0..6 {
+        w.step();
+        firsts.push(w.rivals.first);
+    }
+    assert_eq!(firsts, vec![1, 2, 0, 1, 2, 0]);
+}
+
+#[test]
+fn a_rival_does_not_dodge_into_another_blow_about_to_land() {
+    // A second blow covers every spot it could step to, 40 yards round: the dodge is not taken.
+    let (mut w, members) = smash_world("dodge: 1.0, pois: (1, 1)", 30.0);
+    let mut dodged = false;
+    for i in 0..secs(8.0) {
+        let at = w.hero(members[0]).map_or(V2::new(30.0, 60.0), |h| h.pos);
+        w.telegraphs.retain(|t| t.id < 9_000);
+        w.telegraphs.push(crate::Telegraph {
+            id: 9_000 + i as u32,
+            enemy: 0,
+            by: None,
+            ability: 0,
+            shape: crate::Shape::Circle { radius: 40.0 },
+            at: crate::V3::new(at.x, at.y, 0.0),
+            facing: V2::new(1.0, 0.0),
+            left: 5.0,
+            total: 5.0,
+        });
+        w.step();
+        dodged |= w
+            .drain_events()
+            .iter()
+            .any(|e| matches!(e, Event::Dodged { player } if members.contains(player)));
+    }
+    assert!(!dodged, "it dodged into the second blow");
 }

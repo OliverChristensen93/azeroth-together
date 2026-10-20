@@ -108,8 +108,9 @@ impl Default for RivalRules {
 }
 
 impl RivalRules {
-    /// Why these numbers cannot work, if they cannot; `immune` is `combat.dodge.immune`.
-    fn check(&self, immune: f32) -> Result<(), String> {
+    /// Why these numbers cannot work, if they cannot; `immune` is `combat.dodge.immune` and `reach` is
+    /// `run.reach`, how near the host lets a hero search a container.
+    fn check(&self, immune: f32, reach: f32) -> Result<(), String> {
         let shares = [
             self.engage_at,
             self.hunt_at,
@@ -148,6 +149,12 @@ impl RivalRules {
             return Err(format!(
                 "dodge_at is at most combat.dodge.immune ({immune}): a rival that dodges earlier \
                  walks back into the blow once its immunity is over"
+            ));
+        }
+        if self.loot_reach > reach {
+            return Err(format!(
+                "loot_reach is at most run.reach ({reach}): a rival that stands farther would ask \
+                 to search a container the host refuses"
             ));
         }
         if self.parties_out.0 > self.parties_out.1 {
@@ -331,7 +338,7 @@ impl RivalContent {
         content
             .rules
             .rivals
-            .check(content.rules.combat.dodge.immune)
+            .check(content.rules.combat.dodge.immune, content.rules.run.reach)
             .map_err(|why| ContentError::Invalid(format!("rules.ron: rivals: {why}")))?;
         let leave_by = match content.rules.rivals.leave_by.clone() {
             Some(k) => Some(content.stage(&k).ok_or_else(|| {

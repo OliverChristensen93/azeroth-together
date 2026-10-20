@@ -89,12 +89,19 @@ impl World {
             self.plan_party(pi);
         }
         self.slip_away_unseen();
-        let members: Vec<(usize, PlayerId)> = self
-            .rivals
-            .parties
-            .iter()
-            .enumerate()
-            .flat_map(|(pi, p)| p.members.iter().map(move |&m| (pi, m)))
+        // The parties are served from a start that moves on each step, so a shortage of the
+        // rivals' pool never starves the same ones (a rival starved for `stuck_for` would vanish).
+        let n = self.rivals.parties.len();
+        self.rivals.first = (self.rivals.first + 1) % n.max(1);
+        let first = self.rivals.first;
+        let members: Vec<(usize, PlayerId)> = (0..n)
+            .map(|k| (first + k) % n)
+            .flat_map(|pi| {
+                self.rivals.parties[pi]
+                    .members
+                    .iter()
+                    .map(move |&m| (pi, m))
+            })
             .collect();
         for (pi, player) in members {
             self.drive(pi, player);
@@ -145,6 +152,16 @@ impl World {
             return;
         };
         let lpos = self.hero(leader).map_or(V2::ZERO, |h| h.pos);
+        // A new leader does not walk the old one's cached leg from where it stands.
+        if self.rivals.parties[pi].leader != Some(leader) {
+            let p = &mut self.rivals.parties[pi];
+            if p.leader.is_some() {
+                if let Some(j) = &mut p.journey {
+                    j.travel.replan();
+                }
+            }
+            p.leader = Some(leader);
+        }
         if let Goal::Flee { left, .. } | Goal::Hunt { left, .. } = &mut self.rivals.parties[pi].goal
         {
             *left -= DT;
@@ -157,7 +174,8 @@ impl World {
         }
         {
             let p = &mut self.rivals.parties[pi];
-            if p.looting.is_none() && p.next_poi.is_none() && p.pois_left > 0 {
+            let left = (0..content.rivals.pois.len()).any(|i| !p.visited.contains(&i));
+            if p.looting.is_none() && p.next_poi.is_none() && p.pois_left > 0 && left {
                 let roll = p.dice.unit();
                 p.next_poi = next_poi(&content.rivals.pois, &p.visited, lpos, roll);
             }
@@ -317,7 +335,11 @@ impl World {
             Some(j) => j.travel.left(lpos),
             None => lpos.distance(place),
         };
-        p.progress.tick(d, DT);
+        // A leader held for its party is neither idle nor stalled: a follower that cannot come is
+        // dealt with by its own `pinned` clock.
+        if !waiting {
+            p.progress.tick(d, DT);
+        }
         if d < p.best - HEADWAY {
             p.best = d;
             p.stalled = 0.0;
@@ -850,8 +872,27 @@ impl World {
             .and_then(|b| b.loot)
             .filter(|&id| self.lootable(id, player));
         let target = mine.or_else(|| self.pick_container(pi, player, hi, poi));
+        // A clock on the container it is after: a search the host keeps refusing (a container on
+        // another floor, out of reach) is given up on past `give_up`, as a point is.
+        let give_up = content.rules.rivals.give_up;
+        let mut gave_up = None;
         if let Some(b) = self.rivals.body_mut(player) {
+            if b.loot != target {
+                b.loot_for = 0.0;
+            } else if target.is_some() {
+                b.loot_for += DT;
+            }
             b.loot = target;
+            if let Some(id) = target.filter(|_| b.loot_for >= give_up) {
+                b.done.push(id);
+                b.loot = None;
+                b.loot_for = 0.0;
+                gave_up = Some(id);
+            }
+        }
+        if gave_up.is_some() {
+            plan.act = Some(Act::Close);
+            return;
         }
         let Some(id) = target else {
             return self.go_with_party(pi, player, hi, centre, false, false, plan);
@@ -1123,7 +1164,8 @@ impl World {
             .clamp(pos + way * content.rules.combat.dodge.distance);
         let map = self.map()?;
         let end = V3::at(to, map.floor_within(to, z, 1.0)?);
-        map.walk_line(V3::at(pos, z), end).then_some(end)
+        // Out of the shape it flees and out of any other that has not landed.
+        (map.walk_line(V3::at(pos, z), end) && !self.in_danger(player, to)).then_some(end)
     }
 
     /// Whether `at` lies in a telegraph that has not landed yet and would hurt `player`.

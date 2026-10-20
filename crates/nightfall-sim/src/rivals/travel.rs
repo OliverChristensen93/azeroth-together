@@ -73,6 +73,12 @@ impl Travel {
                 .sum::<f32>()
     }
 
+    /// The path of the leg being walked, once searched.
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> Option<Arc<[V3]>> {
+        self.path.clone()
+    }
+
     /// Whether the next [`Travel::step`] starts a search (the leg's path is not known yet).
     pub(crate) fn needs_search(&self) -> bool {
         self.path.is_none() && self.to < self.points.len()
@@ -155,6 +161,22 @@ impl Progress {
     /// is still given up on.
     pub(crate) fn rebase(&mut self) {
         self.rebased = true;
+    }
+
+    /// Seconds with no headway.
+    #[cfg(test)]
+    pub(crate) fn idle(&self) -> f32 {
+        self.idle
+    }
+
+    /// A count that has run `idle` seconds and was nearest `best` yards from its goal.
+    #[cfg(test)]
+    pub(crate) fn aged(idle: f32, best: f32) -> Self {
+        Self {
+            best: Some(best),
+            idle,
+            rebased: false,
+        }
     }
 
     /// Starts counting again (a new goal, a fight, a rest).

@@ -96,6 +96,8 @@ pub(crate) struct Rivals {
     /// Floors the navigator had looked at when the rivals' turn began, to keep their searches to
     /// [`RIVAL_POOL`].
     pub(crate) floors_start: u64,
+    /// The party the bots serve first this step; it moves on each step.
+    pub(crate) first: usize,
 }
 
 /// What a client is told of the rivals: which its hero sees, and the marks they show it.
@@ -140,6 +142,9 @@ pub(crate) struct RivalBody {
     pub(crate) act: Option<ActPress>,
     /// The container it is looting.
     pub(crate) loot: Option<u32>,
+    /// Seconds it has been after that container: past `give_up` it is done with it (a search the
+    /// host keeps refusing must not hold the party for ever).
+    pub(crate) loot_for: f32,
     /// Containers it is done with.
     pub(crate) done: Vec<u32>,
     /// Seconds it has wanted to move and could not (no way, no floors): at `stuck_for` it slips
@@ -193,6 +198,8 @@ pub(crate) struct Party {
     pub(crate) progress: Progress,
     /// The backstop has called: its members slip away unseen as soon as no hero sees them.
     pub(crate) leaving: bool,
+    /// The leader it was planned for last step.
+    pub(crate) leader: Option<PlayerId>,
 }
 
 /// A leader's walk to a place of the content's routes.
@@ -250,6 +257,7 @@ impl RivalBody {
             act_seq: 0,
             act: None,
             loot: None,
+            loot_for: 0.0,
             done: Vec::new(),
             pinned: 0.0,
         }
@@ -458,6 +466,7 @@ impl World {
             journey: None,
             progress: Progress::default(),
             leaving: false,
+            leader: None,
         });
         members
     }
