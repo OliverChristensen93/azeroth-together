@@ -470,8 +470,10 @@ impl World {
         // Last: every kill of the step counted, then whether the raid is over.
         self.tally_kills();
         self.step_over();
-        // The rivals' turn, with the step's navigator budget still open: their searches are the
-        // pool `STEP_FLOORS` leaves them. A mirror has no map and runs no bots.
+        // The roll's parties come in unseen, then the rivals' turn, with the step's navigator budget
+        // still open: their searches are the pool `STEP_FLOORS` leaves them. A mirror has no map and
+        // brings in or runs nothing.
+        self.step_rival_arrivals();
         self.step_rivals();
         // Noises are heard the step they are made, or the next; none waits longer.
         self.senses.noises.clear();

@@ -7,8 +7,8 @@ use crate::heightmap::testmap::{flat, house};
 use crate::heightmap::HeightMap;
 use crate::{
     Alert, CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose, Holder, KitDef,
-    Life, PlayerId, PlayerInput, RaidRoll, Refusal, RoutePlace, Side, UnitRef, World, RIVAL_BASE,
-    TICK_HZ, V2,
+    Life, PlayerId, PlayerInput, RaidRoll, Refusal, RivalOut, RoutePlace, Side, UnitRef, World,
+    RIVAL_BASE, TICK_HZ, V2,
 };
 
 pub(super) const CLASSES: &str = r#"[
@@ -2766,4 +2766,245 @@ fn the_same_party_walks_the_same_way_twice() {
     };
     assert_eq!(run(5), run(5), "the same dice walk the same way");
     assert_ne!(run(5), run(6), "other dice walk another way");
+}
+
+#[test]
+fn the_same_seed_brings_the_same_rivals_and_seeds_differ() {
+    let c = content("", "");
+    assert_eq!(RaidRoll::roll(&c, 42).rivals, RaidRoll::roll(&c, 42).rivals);
+    let rolls: Vec<Vec<RivalOut>> = (0..30).map(|s| RaidRoll::roll(&c, s).rivals).collect();
+    assert!(rolls.iter().any(|r| r != &rolls[0]));
+}
+
+#[test]
+fn raids_of_twin_seeds_bring_different_rivals() {
+    // `Dice::new` sets bit 0, so a seed and its twin roll alike unless the seed is hashed first
+    // (ruling 6); the dice of every party are hashed from the seed too.
+    let c = content("", "");
+    let key = |r: Vec<RivalOut>| -> Vec<(u8, u8, u32, u32)> {
+        r.iter()
+            .map(|o| (o.party, o.entry, o.at.to_bits(), o.aggression.to_bits()))
+            .collect()
+    };
+    let same = (0..100u64)
+        .filter(|&s| key(RaidRoll::roll(&c, s).rivals) == key(RaidRoll::roll(&c, s ^ 1).rivals))
+        .count();
+    assert!(same < 5, "{same} of 100 twin seeds rolled the same rivals");
+    for s in 0..100u64 {
+        let (a, b) = (
+            RaidRoll::roll(&c, s).rivals,
+            RaidRoll::roll(&c, s ^ 1).rivals,
+        );
+        for (x, y) in a.iter().zip(&b) {
+            assert_ne!(
+                x.seed, y.seed,
+                "twin seeds {s}: the party's own dice differ"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_rivals_do_not_disturb_the_rest_of_the_roll() {
+    let with = content("", "");
+    let without = content_with("", "", "");
+    for seed in 0..20 {
+        let (a, b) = (RaidRoll::roll(&with, seed), RaidRoll::roll(&without, seed));
+        assert!(b.rivals.is_empty(), "no rivals.ron, no rivals");
+        assert_eq!(
+            (a.exits, a.weather, a.monsters, a.closes, a.entry),
+            (b.exits, b.weather, b.monsters, b.closes, b.entry)
+        );
+    }
+}
+
+#[test]
+fn parties_out_bounds_the_parties_and_a_party_at_odds_zero_never_comes() {
+    let c = content("parties_out: (1, 2), arrive: (30.0, 90.0)", "");
+    let blades = c.party("blades").unwrap() as u8;
+    let mut counts = [0usize; 3];
+    for seed in 0..200 {
+        let out = RaidRoll::roll(&c, seed).rivals;
+        assert!((1..=2).contains(&out.len()), "seed {seed}: {out:?}");
+        counts[out.len()] += 1;
+        for o in &out {
+            assert_ne!(o.party, blades);
+            assert!((30.0..=90.0).contains(&o.at));
+            let (lo, hi) = c.rivals.parties[usize::from(o.party)].aggression;
+            assert!((lo..=hi).contains(&o.aggression));
+            assert!(usize::from(o.entry) < c.rivals.entries.len());
+        }
+        let mut parties: Vec<u8> = out.iter().map(|o| o.party).collect();
+        parties.dedup();
+        assert_eq!(parties.len(), out.len(), "a party comes once");
+    }
+    assert!(counts[2] > 0, "two come up when the dice allow: {counts:?}");
+}
+
+#[test]
+fn a_party_at_odds_a_half_comes_about_half_the_raids_and_parties_out_tops_up() {
+    let half = RIVALS.replace(
+        "aggression: (0.8, 0.9),\n         odds: 1.0",
+        "aggression: (0.8, 0.9),\n         odds: 0.5",
+    );
+    assert_ne!(half, RIVALS);
+    let c = content_with("parties_out: (0, 2)", &half, "");
+    let watch = c.party("watch").unwrap() as u8;
+    let came = (0..400u64)
+        .filter(|&s| {
+            RaidRoll::roll(&c, s)
+                .rivals
+                .iter()
+                .any(|o| o.party == watch)
+        })
+        .count();
+    assert!((120..280).contains(&came), "{came} of 400");
+    // With at least two wanted and only two at odds above zero, both are brought.
+    let c = content("parties_out: (2, 2)", "");
+    assert!((0..50u64).all(|s| RaidRoll::roll(&c, s).rivals.len() == 2));
+}
+
+#[test]
+fn the_standard_roll_brings_none_and_a_roll_naming_a_missing_party_is_refused() {
+    let c = Arc::new(content("", ""));
+    assert!(RaidRoll::standard(&c, 1).rivals.is_empty());
+    let mut bad = RaidRoll::standard(&c, 1);
+    bad.rivals.push(RivalOut {
+        party: 9,
+        ..RivalOut::default()
+    });
+    assert!(World::new(c.clone()).begin_raid(bad).is_err());
+    let mut far = RaidRoll::standard(&c, 1);
+    far.rivals.push(RivalOut {
+        entry: 5,
+        ..RivalOut::default()
+    });
+    assert!(World::new(c.clone()).begin_raid(far).is_err());
+    let mut nan = RaidRoll::standard(&c, 1);
+    nan.rivals.push(RivalOut {
+        at: f32::NAN,
+        ..RivalOut::default()
+    });
+    assert!(World::new(c.clone()).begin_raid(nan).is_err());
+    let mut ok = RaidRoll::standard(&c, 1);
+    ok.rivals.push(RivalOut::default());
+    assert!(World::new(c).begin_raid(ok).is_ok());
+}
+
+/// A world on open ground whose roll brings `plan`, a hero (player 0) at `(x, y)`.
+fn world_with_plan(plan: RivalOut, x: f32, y: f32) -> World {
+    let mut w = world_on(open(), "", "", |c| {
+        let mut r = RaidRoll::standard(c, 1);
+        r.rivals.push(plan);
+        r
+    });
+    join(&mut w, 0, x, y);
+    w
+}
+
+const PLAN: RivalOut = RivalOut {
+    party: 0,
+    entry: 0,
+    at: 5.0,
+    aggression: 0.15,
+    seed: 3,
+};
+
+#[test]
+fn rivals_arrive_late_and_unseen_with_numbers_of_their_own() {
+    // A hero two yards from the rivals' entry: nobody comes while they stand there.
+    let mut w = world_with_plan(PLAN, 12.0, 60.0);
+    steps(&mut w, secs(10.0));
+    assert!(
+        w.heroes.iter().all(|h| h.side == Side::Party),
+        "not in their sight"
+    );
+    put(&mut w, 0, 80.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    steps(&mut w, secs(2.0));
+    let rivals: Vec<&crate::Hero> = w.heroes.iter().filter(|h| h.side.is_rival()).collect();
+    assert_eq!(rivals.len(), 2);
+    assert!(rivals
+        .iter()
+        .all(|h| h.player >= RIVAL_BASE && h.side == Side::Rival(0)));
+    assert_ne!(rivals[0].player, rivals[1].player);
+    assert!(
+        rivals.iter().all(|h| !h.carry.worn.is_empty()),
+        "dressed in their gear"
+    );
+    let gem = w.content().item("gem").unwrap();
+    assert!(rivals
+        .iter()
+        .all(|h| w.raid.pack(h.player).is_some_and(|p| p.count_of(gem) >= 1)));
+    assert_eq!(w.rivals.parties[0].aggression, 0.15);
+    // It comes once.
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.heroes.iter().filter(|h| h.side.is_rival()).count(), 2);
+}
+
+#[test]
+fn a_party_does_not_come_before_its_time() {
+    let late = RivalOut { at: 30.0, ..PLAN };
+    let mut w = world_with_plan(late, 100.0, 100.0);
+    steps(&mut w, secs(28.0));
+    assert!(w.heroes.iter().all(|h| !h.side.is_rival()), "not yet");
+    steps(&mut w, secs(4.0));
+    assert_eq!(w.heroes.iter().filter(|h| h.side.is_rival()).count(), 2);
+}
+
+#[test]
+fn a_hero_who_is_down_does_not_keep_a_party_waiting() {
+    let mut w = world_with_plan(PLAN, 12.0, 60.0);
+    steps(&mut w, secs(10.0));
+    assert!(w.heroes.iter().all(|h| !h.side.is_rival()));
+    w.wound(0, 1.0e6, None);
+    w.step();
+    assert!(!w.hero(0).unwrap().fight.up());
+    steps(&mut w, secs(2.0));
+    assert_eq!(w.heroes.iter().filter(|h| h.side.is_rival()).count(), 2);
+}
+
+#[test]
+fn a_new_raid_brings_its_rivals_afresh() {
+    let mut w = world_with_plan(PLAN, 100.0, 100.0);
+    steps(&mut w, secs(8.0));
+    assert_eq!(w.heroes.iter().filter(|h| h.side.is_rival()).count(), 2);
+    let c = w.content().clone();
+    let mut again = RaidRoll::standard(&c, 2);
+    again.rivals.push(PLAN);
+    w.begin_raid(again).unwrap();
+    assert!(w.rivals.arrived.is_empty() && w.rivals.parties.is_empty());
+    assert_eq!(w.rivals.next, 0, "numbers start over");
+}
+
+#[test]
+fn a_mirror_brings_in_no_rivals_of_its_own() {
+    // A client's world has the roll but no map: its rivals come only in the host's snapshots.
+    let c = Arc::new(content("", ""));
+    let mut roll = RaidRoll::standard(&c, 1);
+    roll.rivals.push(PLAN);
+    let mut mirror = World::new(c);
+    mirror.begin_raid(roll).unwrap();
+    mirror.begin_mirror();
+    steps(&mut mirror, secs(10.0));
+    assert!(mirror.heroes.iter().all(|h| !h.side.is_rival()));
+    assert!(mirror.rivals.parties.is_empty());
+}
+
+#[test]
+fn a_roll_with_rivals_crosses_the_wire() {
+    let c = content("", "");
+    let r = RaidRoll::roll(&c, 11);
+    assert!(!r.rivals.is_empty());
+    let bytes = postcard::to_stdvec(&r).unwrap();
+    let back: RaidRoll = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(back, r);
+}
+#[test]
+fn another_rival_at_the_entry_does_not_keep_a_party_from_coming() {
+    // Only heroes of the players' party can see a party come in; a rival standing at the entry
+    // (an earlier party that has not walked off yet) is no eyes.
+    let mut w = world_with_plan(PLAN, 100.0, 100.0);
+    rival(&mut w, 5, "digger", 1, 11.0, 60.0);
+    steps(&mut w, secs(8.0));
+    assert!(w.rivals.parties.len() == 1, "the roll's party came");
 }

@@ -18,7 +18,8 @@ impl RaidRoll {
     /// whatever falls, one exit is open from the start and `open_least` at some time. At
     /// `hunt_close`, one exit open by the hunt that is not late or pinned closes as it lands,
     /// never the last. The weather by its weights; the monsters each at its odds, between
-    /// `monsters_out` of them, and every `always` one.
+    /// `monsters_out` of them, and every `always` one. The rival parties out, by the
+    /// rivals' rules (spec §7.4).
     pub fn roll(content: &Content, seed: u64) -> Self {
         let x = &content.rules.night.exits;
         let cart = content.rules.run.cart_opens_at;
@@ -60,6 +61,8 @@ impl RaidRoll {
         roll.closes = hunt_closing(&roll.exits, content, &mut dice);
         roll.weather = pick_weather(content, &mut dice);
         roll.monsters = pick_monsters(content, &mut dice);
+        // The rivals' own dice, so the rest of the roll stays as it was.
+        roll.rivals = crate::rivals::pick_rivals(content, seed);
         roll
     }
 }

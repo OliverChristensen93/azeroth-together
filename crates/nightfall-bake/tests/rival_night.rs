@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use nightfall_bake::{load_or_bake, BakeRequest};
 use nightfall_sim::{
-    Content, ContentSources, Event, HeightMap, PlayerId, PlayerInput, RaidRoll, World, RIVAL_POOL,
-    STEP_FLOORS, TICK_HZ,
+    Content, ContentSources, Event, HeightMap, PlayerId, PlayerInput, RaidRoll, RivalOut, World,
+    RIVAL_BASE, RIVAL_POOL, STEP_FLOORS, TICK_HZ,
 };
 
 /// Seconds of night simulated: past the hunt (1200) and Stitches (1560) of the shipped stages.
@@ -108,20 +108,32 @@ fn night(
             .unwrap_or_else(|| panic!("no exit {key}"));
         roll.exits[i].open = false;
     }
+    // Every shipped party comes at once, by the roll, as the game brings them: unseen, since the
+    // hero stands past `arrive_unseen` of every rival entry.
+    for (number, def) in (0..content.rivals.parties.len()).enumerate() {
+        let (lo, hi) = content.rivals.parties[def].aggression;
+        roll.rivals.push(RivalOut {
+            party: def as u8,
+            entry: (number % content.rivals.entries.len()) as u8,
+            at: 0.0,
+            aggression: lo + (hi - lo) * 0.5,
+            seed: seed + number as u64,
+        });
+    }
     let mut w = World::new(content.clone());
     w.begin_raid(roll).expect("the roll is accepted");
     w.attach_map(map.clone());
     w.add_hero(0, "rogue", "Hero", 1, 0).expect("a hero joins");
     w.set_input(0, PlayerInput::default());
     w.step();
-    let mut members = Vec::new();
-    for (number, def) in (0..content.rivals.parties.len()).enumerate() {
-        let entry = content.rivals.entries[number % content.rivals.entries.len()];
-        let (lo, hi) = content.rivals.parties[def].aggression;
-        let aggression = lo + (hi - lo) * 0.5;
-        members.extend(w.add_party(def, number as u8, aggression, entry, seed + number as u64));
+    // A second for the roll to bring them in (it tries every second).
+    for _ in 0..(2 * TICK_HZ as usize) {
+        w.step();
     }
-    w.step();
+    let members: Vec<PlayerId> = (RIVAL_BASE..RIVAL_BASE + 32)
+        .filter(|&p| w.hero(p).is_some())
+        .collect();
+    assert!(!members.is_empty(), "the roll brought the parties in");
     let (mut worst, mut worst_floors) = (Duration::ZERO, 0u64);
     let steps = (secs * TICK_HZ as f32) as usize;
     let mut out_by_exit = 0;

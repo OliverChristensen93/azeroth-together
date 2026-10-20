@@ -16,7 +16,8 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Content, EquipSlot, Inventory, ItemKind, Place, PlayerId, RunRules, Stack, World, V2, V3,
+    Content, EquipSlot, Inventory, ItemKind, Place, PlayerId, RivalOut, RunRules, Stack, World, V2,
+    V3,
 };
 
 /// What a hero carries, as every client sees it.
@@ -203,6 +204,9 @@ pub struct RaidRoll {
     pub monsters: Vec<u8>,
     /// The exit that closes as the hunt lands, and when (spec §7.2: "one exit may close").
     pub closes: Option<(u8, f32)>,
+    /// The rival parties out (spec §7.4), in the order they were rolled.
+    #[serde(default)]
+    pub rivals: Vec<RivalOut>,
 }
 
 impl RaidRoll {
@@ -231,6 +235,7 @@ impl RaidRoll {
                 .map(|(i, _)| i as u8)
                 .collect(),
             closes: None,
+            rivals: Vec::new(),
         }
     }
 
@@ -572,6 +577,21 @@ impl World {
         }
         if usize::from(roll.weather) >= content.rules.night.weather.len().max(1) {
             return Err(format!("no weather {} in rules.ron", roll.weather));
+        }
+        for o in &roll.rivals {
+            if usize::from(o.party) >= content.rivals.parties.len()
+                || usize::from(o.entry) >= content.rivals.entries.len()
+            {
+                return Err(format!(
+                    "no rival party {} or entry {} in rivals.ron",
+                    o.party, o.entry
+                ));
+            }
+            if !(o.at.is_finite() && o.aggression.is_finite()) {
+                return Err(
+                    "a rival party comes at a time and an aggression that are numbers".into(),
+                );
+            }
         }
         self.raid = Raid::new(&content, roll);
         // The last raid's rivals are gone with it (their bodies, parties, numbers).

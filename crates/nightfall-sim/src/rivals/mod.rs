@@ -7,6 +7,7 @@
 //! the party's: it ends with the party, rivals settle no outcome, and only a side revives its
 //! own.
 
+mod arrivals;
 mod content;
 mod drive;
 mod goals;
@@ -20,6 +21,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use arrivals::pick_rivals;
+pub use arrivals::RivalOut;
 pub use content::{
     KitDef, PartyDef, PoiDef, RivalContent, RivalKindDef, RivalRules, RouteDef, RouteEnd,
     RoutePlace,
@@ -75,11 +78,8 @@ pub(crate) struct Rivals {
     /// The parties a roll brought.
     pub(crate) parties: Vec<Party>,
     /// Which of the roll's parties have come.
-    // The arrivals that read them come with the raid's roll (Task 9).
-    #[allow(dead_code)]
     pub(crate) arrived: Vec<bool>,
     /// Seconds until arrivals are tried again.
-    #[allow(dead_code)]
     pub(crate) try_in: f32,
     /// Rival numbers handed out: the next is `RIVAL_BASE + next`.
     pub(crate) next: u8,
@@ -394,9 +394,7 @@ impl World {
     /// at `aggression`, its dice from `seed`: each member a rival of its kind, numbered from
     /// [`RIVAL_BASE`] up, the first at `at` and the rest 1.5 yards around it, each named by the
     /// dice from its kind's names; the party visits between `pois` points. The members made.
-    ///
-    /// Public so the real-bake tests can bring a party in until the raid's roll does (Task 9).
-    pub fn add_party(
+    pub(crate) fn add_party(
         &mut self,
         def: usize,
         number: u8,
