@@ -573,6 +573,11 @@ impl World {
         let hc = &mut self.combat.heroes[ci];
         hc.swing_in = (hc.swing_in - DT).max(0.0);
         let ready = hc.swing_in <= 0.0;
+        // A hero stunned, sapped or the like lands no blow, whoever laid it on (a rival or
+        // an enemy); the target stays, for when it lets go.
+        if hc.held.is_some_and(|h| h.kind.out()) {
+            return;
+        }
         let hero = &self.heroes[hi];
         let Some(id) = hero.fight.attacking else {
             return;

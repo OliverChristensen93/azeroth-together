@@ -1907,3 +1907,142 @@ fn a_rival_held_out_of_the_fight_neither_looks_nor_thinks() {
     assert_eq!(w.rival_mind(a).unwrap().level(0), 0.0);
     assert!(w.rival_view(0).marks.is_empty());
 }
+
+/// Hero `player` held by `kind` for 30 s, as a rival's Cheap Shot would hold them.
+fn hold_hero(w: &mut World, player: PlayerId, kind: ControlKind) {
+    let ci = w.combat.hero_index(player);
+    w.combat.heroes[ci].held = Some(crate::combat::Held {
+        kind,
+        left: 30.0,
+        by: RIVAL_BASE,
+        spell: 0,
+    });
+    let hi = w.hero_slot(player).unwrap();
+    w.heroes[hi].fight.held = Some(kind);
+}
+
+#[test]
+fn a_hero_held_by_a_rival_stops_auto_attacking_its_enemy() {
+    let mut w = world("", &format!("{}\n", sentry_line(24.0, 60.0)));
+    join(&mut w, 0, 20.0, 60.0);
+    let brute = w.enemies[0].id;
+    press(&mut w, 0, 1, 2, Some(UnitRef::Enemy(brute)));
+    w.step();
+    steps(&mut w, secs(4.5));
+    let swings = |w: &mut World| {
+        events_of(w, |e| match e {
+            Event::Swing {
+                by: UnitRef::Hero(0),
+                ..
+            } => Some(()),
+            _ => None,
+        })
+        .len()
+    };
+    assert!(swings(&mut w) >= 2, "it swings at the brute while free");
+    hold_hero(&mut w, 0, ControlKind::Stun);
+    steps(&mut w, secs(5.0));
+    assert_eq!(swings(&mut w), 0, "a stunned hero lands no blow");
+}
+
+/// A mage (player 1) at `(x, y)` facing +x, its first input taken.
+fn join_mage(w: &mut World, x: f32, y: f32) {
+    w.add_hero(1, "mage", "Mage", 1, 1).unwrap();
+    put(w, 1, x, y, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+}
+
+#[test]
+fn a_cast_spell_at_a_rival_lands_when_the_cast_ends() {
+    let mut w = world("", "");
+    join_mage(&mut w, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    w.drain_events();
+    press(&mut w, 1, 1, 1, Some(UnitRef::Hero(a)));
+    w.step();
+    steps(&mut w, secs(1.5));
+    assert!(
+        damage_to(&w.drain_events(), UnitRef::Hero(a)).is_empty(),
+        "still casting"
+    );
+    steps(&mut w, secs(0.8));
+    let events = w.drain_events();
+    assert_eq!(
+        damage_to(&events, UnitRef::Hero(a)),
+        vec![150.0],
+        "100 x 1.5: unaware, an ambush: {events:?}"
+    );
+    assert_eq!(w.hero(a).unwrap().hp, 750.0);
+}
+
+#[test]
+fn a_cast_at_a_rival_stops_when_the_rival_falls_or_leaves() {
+    for leaves in [false, true] {
+        let mut w = world("", "");
+        join_mage(&mut w, 20.0, 60.0);
+        let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+        w.drain_events();
+        press(&mut w, 1, 1, 1, Some(UnitRef::Hero(a)));
+        w.step();
+        steps(&mut w, secs(0.5));
+        if leaves {
+            w.remove_hero(a);
+        } else {
+            w.hurt_hero(a, 5000.0);
+        }
+        w.step();
+        let events = w.drain_events();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                Event::CastStop {
+                    by: UnitRef::Hero(1),
+                    why: crate::Stop::TargetLost,
+                    ..
+                }
+            )),
+            "leaves {leaves}: {events:?}"
+        );
+        steps(&mut w, secs(2.5));
+        assert!(damage_to(&w.drain_events(), UnitRef::Hero(a)).is_empty());
+    }
+}
+
+#[test]
+fn a_slow_and_a_hold_on_a_hero_survive_the_senses_working_speed_out_again() {
+    // M12: whatever re-derives a hero's speed between steps (a stealth press, a blow) goes
+    // through `set_pace`, which lays the foes' slow and hold on last.
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    w.rederive(0);
+    let free = w.hero(0).unwrap().speed;
+    let ci = w.combat.hero_index(0);
+    w.combat.heroes[ci].slow = Some(crate::combat::Slowed {
+        by: 0.5,
+        left: 5.0,
+        spell: 0,
+    });
+    w.rederive(0);
+    assert!((w.hero(0).unwrap().speed - free * 0.5).abs() < 1e-4);
+    w.combat.heroes[ci].slow = None;
+    hold_hero(&mut w, 0, ControlKind::Root);
+    w.rederive(0);
+    assert!(w.hero(0).unwrap().fight.rooted, "feet held");
+}
+
+#[test]
+fn a_mirror_keeps_the_hold_its_host_sent() {
+    // A client's mirror runs no steps, and no hold of its own to run down: the snapshot's
+    // `fight.held` stays through whatever sets its pace.
+    let mut host = world("", "");
+    join(&mut host, 0, 20.0, 60.0);
+    hold_hero(&mut host, 0, ControlKind::Stun);
+    let snap = host.snapshot_for(0);
+    let mut mirror = World::new(Arc::new(content("", "")));
+    mirror.begin_mirror();
+    mirror.apply_snapshot(snap);
+    assert_eq!(mirror.hero(0).unwrap().fight.held, Some(ControlKind::Stun));
+    let hi = mirror.hero_slot(0).unwrap();
+    mirror.set_pace(hi);
+    assert_eq!(mirror.hero(0).unwrap().fight.held, Some(ControlKind::Stun));
+}
