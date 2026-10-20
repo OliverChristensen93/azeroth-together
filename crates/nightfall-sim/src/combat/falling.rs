@@ -16,11 +16,23 @@ impl World {
         self.wound(player, amount, None);
     }
 
-    /// `player`'s hero takes `amount` damage `by` something: it breaks their stealth (spec §6.3),
-    /// ends their meal, keeps them in combat, and at 0 health downs them. Nothing happens to a
-    /// hero who is not up, nor for an amount that is not a positive number (health never becomes
-    /// one that is not a number).
+    /// `player`'s hero takes `amount` damage `by` something (see [`World::wound_by`]).
     pub(crate) fn wound(&mut self, player: PlayerId, amount: f32, by: Option<UnitRef>) {
+        self.wound_by(player, amount, by, false, false);
+    }
+
+    /// `player`'s hero takes `amount` damage `by` something, a crit or an ambush as shown: it
+    /// breaks their stealth (spec §6.3), ends their meal, keeps them in combat, and at 0 health
+    /// downs them. Nothing happens to a hero who is not up, nor for an amount that is not a
+    /// positive number (health never becomes one that is not a number).
+    pub(crate) fn wound_by(
+        &mut self,
+        player: PlayerId,
+        amount: f32,
+        by: Option<UnitRef>,
+        crit: bool,
+        ambush: bool,
+    ) {
         let Some(hi) = self.hero_slot(player) else {
             return;
         };
@@ -40,8 +52,8 @@ impl World {
             to: UnitRef::Hero(player),
             by,
             amount,
-            crit: false,
-            ambush: false,
+            crit,
+            ambush,
         });
         self.break_stealth(player);
         // Every blow breaks an extraction under way, whatever else changes their health this step.

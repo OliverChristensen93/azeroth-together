@@ -1035,6 +1035,8 @@ pub(super) fn event_for(event: &Event, me: PlayerId, near: impl Fn(UnitRef) -> b
         // A rival is a hero of another side: told to those near it, and to its slayer.
         Event::RivalDied { player, by } => hero(*player) || by.is_some_and(hero),
         Event::RivalOut { player, .. } => hero(*player),
+        // A heal is its own hero's: no one else needs to know of the health it gave.
+        Event::Healed { player, .. } => *player == me,
         // The night is everyone's (spec §7.2): its cues, its stages, the hunt's closing and the
         // ravens, and the banshee's wail (a line heard everywhere), however far from their hero.
         Event::NightCue { .. }
@@ -1752,6 +1754,9 @@ mod tests {
         let out = Event::RivalOut { player: 64, exit: 1 };
         assert!(event_for(&out, 0, near));
         assert!(!event_for(&out, 0, |_| false));
+        let healed = |player| Event::Healed { player, amount: 60.0 };
+        assert!(event_for(&healed(0), 0, |_| false), "a heal reaches its own hero");
+        assert!(!event_for(&healed(64), 0, |_| true), "not those who only see it");
     }
 
     #[test]

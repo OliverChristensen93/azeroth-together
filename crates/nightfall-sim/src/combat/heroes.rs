@@ -26,6 +26,8 @@ pub(crate) const MELEE: f32 = 5.0;
 pub(crate) struct Aimed {
     pub(crate) ability: usize,
     pub(crate) enemy: Option<usize>,
+    /// Its hostile hero.
+    pub(crate) foe: Option<PlayerId>,
     pub(crate) at: Option<V3>,
 }
 
@@ -107,6 +109,13 @@ impl World {
         if !f.up() {
             return Err(Refusal::Down);
         }
+        if self
+            .combat
+            .hero(hero.player)
+            .is_some_and(|hc| hc.held.is_some_and(|h| h.kind.out()))
+        {
+            return Err(Refusal::Held);
+        }
         if f.casting.is_some() {
             return Err(Refusal::Busy);
         }
@@ -151,6 +160,7 @@ impl World {
             Aim::Me => Ok(Aimed {
                 ability,
                 enemy: None,
+                foe: None,
                 at: None,
             }),
             Aim::Ground => {
@@ -161,13 +171,14 @@ impl World {
                 Ok(Aimed {
                     ability,
                     enemy: None,
+                    foe: None,
                     at: Some(at),
                 })
             }
             Aim::Enemy => {
                 let id = match target {
                     Some(UnitRef::Enemy(id)) => id,
-                    Some(UnitRef::Hero(_)) => return Err(Refusal::BadTarget),
+                    Some(UnitRef::Hero(p)) => return self.check_foe(hi, ability, p),
                     None => return Err(Refusal::NoTarget),
                 };
                 let ei = self
@@ -204,6 +215,7 @@ impl World {
                 Ok(Aimed {
                     ability,
                     enemy: Some(ei),
+                    foe: None,
                     at: None,
                 })
             }
@@ -256,7 +268,10 @@ impl World {
         let content = self.content.clone();
         let a = &content.abilities[aimed.ability];
         let player = self.heroes[hi].player;
-        let target = aimed.enemy.map(|ei| UnitRef::Enemy(self.enemies[ei].id));
+        let target = aimed
+            .enemy
+            .map(|ei| UnitRef::Enemy(self.enemies[ei].id))
+            .or(aimed.foe.map(UnitRef::Hero));
         let ability = aimed.ability as u16;
         if a.gcd > 0.0 {
             self.heroes[hi].fight.gcd = a.gcd;
@@ -281,6 +296,7 @@ impl World {
         self.combat.heroes[ci].cast = Some(CastState {
             ability: aimed.ability,
             enemy: aimed.enemy,
+            foe: aimed.foe,
             at: aimed.at,
             from,
             elapsed: 0.0,
@@ -336,7 +352,10 @@ impl World {
     /// It goes off (or a channel ticks): it lands, and every client sees it.
     fn go(&mut self, hi: usize, aimed: Aimed) {
         let player = self.heroes[hi].player;
-        let hits = self.land(player, aimed.ability, aimed.enemy, aimed.at);
+        let hits = match aimed.foe {
+            Some(foe) => self.land_at_foe(player, aimed.ability, foe),
+            None => self.land(player, aimed.ability, aimed.enemy, aimed.at),
+        };
         self.events.push(Event::CastGo {
             by: UnitRef::Hero(player),
             ability: aimed.ability as u16,
@@ -419,8 +438,10 @@ impl World {
         for hi in 0..self.heroes.len() {
             self.step_fall(hi);
             self.tick_hero(hi);
+            self.tick_foe_holds(hi);
             self.step_cast(hi);
             self.swing(hi);
+            self.swing_foe(hi);
             self.step_meal(hi);
         }
     }
@@ -489,18 +510,22 @@ impl World {
         if cs.enemy.is_some_and(|ei| self.enemies[ei].hp <= 0.0) {
             return self.stop_cast(hi, Stop::TargetLost);
         }
+        if cs.foe.is_some_and(|p| !self.hero(p).is_some_and(|h| h.fight.up())) {
+            return self.stop_cast(hi, Stop::TargetLost);
+        }
         if let Some(c) = &mut self.heroes[hi].fight.casting {
             c.left = (c.total - cs.elapsed).max(0.0);
         }
         let aimed = Aimed {
             ability: cs.ability,
             enemy: cs.enemy,
+            foe: cs.foe,
             at: cs.at,
         };
         if a.channel > 0.0 {
             // Like a cast's end, every tick needs the target in sight: checked each step, so a
             // channel breaks the moment its target steps behind cover, before any tick lands.
-            if !self.in_sight_of(hi, aimed.enemy) {
+            if !(self.in_sight_of(hi, aimed.enemy) && self.foe_in_sight(hi, aimed.foe)) {
                 return self.stop_cast(hi, Stop::TargetLost);
             }
             let every = a.channel / a.ticks as f32;
@@ -514,7 +539,7 @@ impl World {
             }
         } else if cs.elapsed + 1e-4 >= a.cast {
             // WoW checks range only as a cast begins; at its end the target must still be seen.
-            if !self.in_sight_of(hi, aimed.enemy) {
+            if !(self.in_sight_of(hi, aimed.enemy) && self.foe_in_sight(hi, aimed.foe)) {
                 return self.stop_cast(hi, Stop::TargetLost);
             }
             self.heroes[hi].fight.casting = None;
@@ -615,5 +640,7 @@ impl World {
         };
         hero.speed = base * sprint * cast * life;
         hero.fight.rooted = moving == Some(Moving::Rooted) || hero.fight.life == Life::Dead;
+        // A hostile hero's slow and hold go on top, whoever called this.
+        self.foe_pace(hi);
     }
 }

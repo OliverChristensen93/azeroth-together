@@ -6,6 +6,7 @@
 
 mod effects;
 mod falling;
+mod foes;
 pub(crate) mod heroes;
 mod hold;
 mod rules;
@@ -88,6 +89,11 @@ pub struct HeroFight {
     pub eating: f32,
     /// Conjured drinks carried (spec §6.2).
     pub drinks: u8,
+    /// Combo points are on this hostile hero, not an enemy (a rival's or a hero's builder).
+    pub combo_hero: Option<PlayerId>,
+    /// What holds them (a rival's control, spec §7.4): their feet are held and they cannot
+    /// press while it is one that takes them out of the fight.
+    pub held: Option<ControlKind>,
 }
 
 impl HeroFight {
@@ -165,6 +171,8 @@ pub enum Refusal {
     NotInSight,
     /// Eat and Drink with nothing to eat or drink in the backpack.
     NoFood,
+    /// Stunned, incapacitated or otherwise held by a rival's control.
+    Held,
 }
 
 /// An ability press: the latest, repeated in every input until the next, so an input replaced
@@ -246,6 +254,8 @@ pub enum Event {
         player: PlayerId,
         by: PlayerId,
     },
+    /// Health back to a hero from a heal of their own.
+    Healed { player: PlayerId, amount: f32 },
     Died {
         player: PlayerId,
     },
@@ -364,6 +374,13 @@ pub(crate) struct HeroCombat {
     pub(crate) meal: Option<Meal>,
     /// How much faster Sprint makes them while it lasts.
     pub(crate) sprint_by: f32,
+    /// A hostile hero's hold on them, its slow, and its bleeds.
+    pub(crate) held: Option<Held>,
+    pub(crate) slow: Option<Slowed>,
+    pub(crate) burns: Vec<Burn>,
+    /// The hostile hero their auto-attack swings at, and the seconds to its next blow.
+    pub(crate) swing_at: Option<PlayerId>,
+    pub(crate) foe_swing_in: f32,
 }
 
 /// A meal under way: health and mana back a second.
@@ -379,6 +396,8 @@ pub(crate) struct CastState {
     pub(crate) ability: usize,
     /// Its enemy, an index into the world's enemies.
     pub(crate) enemy: Option<usize>,
+    /// Its hostile hero, by player.
+    pub(crate) foe: Option<PlayerId>,
     pub(crate) at: Option<V3>,
     /// Where the hero stood as it began.
     pub(crate) from: V2,

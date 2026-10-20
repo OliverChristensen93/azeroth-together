@@ -24,7 +24,7 @@ pub(crate) const MANA: u8 = 0;
 /// A blow of `amount` with the ambush's multiplier on it; one too big for a float stays as big as
 /// one can be rather than becoming infinity (which `strike` would drop). A blow that is not a
 /// number stays so, for `strike` to drop.
-fn boost(amount: f32, by: f32) -> f32 {
+pub(super) fn boost(amount: f32, by: f32) -> f32 {
     let boosted = amount * by;
     if amount.is_finite() && by.is_finite() && !boosted.is_finite() {
         f32::MAX.copysign(boosted)
@@ -48,7 +48,7 @@ fn diameter(points: &[V2]) -> f32 {
 }
 
 /// A length of time a timer can run: a number, and above 0.
-fn span(secs: f32) -> bool {
+pub(super) fn span(secs: f32) -> bool {
     secs.is_finite() && secs > 0.0
 }
 
@@ -81,13 +81,25 @@ impl World {
             (_, Some(c)) if reaches && a.radius > 0.0 => self.enemies_within(c, a.radius),
             _ => Vec::new(),
         };
+        // Area abilities reach the hostile heroes in them too (spec §7.4), those it has a clear
+        // line to as an enemy's area blow has.
+        let foes: Vec<PlayerId> = match (a.aim, centre) {
+            (Aim::Enemy, _) => Vec::new(),
+            (_, Some(c)) if reaches && a.radius > 0.0 => self
+                .foes_within(player, c, a.radius)
+                .into_iter()
+                .filter(|&p| self.foe_in_sight(hi, Some(p)))
+                .collect(),
+            _ => Vec::new(),
+        };
         // A finisher spends every combo point at once.
-        let (combo, combo_on) = if a.needs.combo {
+        let (combo, combo_on, combo_hero) = if a.needs.combo {
             let f = &mut self.heroes[hi].fight;
             let on = f.combo_on.take();
-            (std::mem::take(&mut f.combo), on)
+            let on_hero = f.combo_hero.take();
+            (std::mem::take(&mut f.combo), on, on_hero)
         } else {
-            (0, None)
+            (0, None, None)
         };
         for &ei in &targets {
             let id = self.enemies[ei].id;
@@ -95,19 +107,26 @@ impl World {
             let combo = if combo_on == Some(id) { combo } else { 0 };
             self.land_on(player, ability, ei, combo);
         }
+        for &p in &foes {
+            // Points on another unit give a finisher no bonus here either.
+            let combo = if combo_hero == Some(p) { combo } else { 0 };
+            self.land_foe(player, ability, p, combo);
+        }
         for effect in &a.effects {
             self.land_self(player, effect, centre, a.radius);
         }
-        targets
+        let mut hits: Vec<UnitRef> = targets
             .iter()
             .map(|&ei| UnitRef::Enemy(self.enemies[ei].id))
-            .collect()
+            .collect();
+        hits.extend(foes.into_iter().map(UnitRef::Hero));
+        hits
     }
 
     /// Ability `ability` lands on enemy `ei`, a finisher's `combo` points behind it. The ambush is
     /// asked once, before anything lands, and multiplies every damage and weapon effect of the
     /// ability: one ability is one strike, so an opener's every blow is a blow from the shadows.
-    fn land_on(&mut self, player: PlayerId, ability: usize, ei: usize, combo: u8) {
+    pub(crate) fn land_on(&mut self, player: PlayerId, ability: usize, ei: usize, combo: u8) {
         let content = self.content.clone();
         let a = &content.abilities[ability];
         let Some(hi) = self.hero_slot(player) else {
@@ -208,6 +227,7 @@ impl World {
                     }
                     f.combo = f.combo.saturating_add(n).min(max);
                     f.combo_on = Some(id);
+                    f.combo_hero = None;
                 }
                 _ => {}
             }
@@ -219,6 +239,9 @@ impl World {
             self.alert(id, player);
         }
         if a.attack && content.classes[self.heroes[hi].class].swing.is_some() {
+            // One target at a time: a hero they were swinging at is let be.
+            let ci = self.combat.hero_index(player);
+            self.combat.heroes[ci].swing_at = None;
             self.heroes[hi].fight.attacking = Some(id);
         }
     }
@@ -327,7 +350,7 @@ impl World {
 
     /// What `effect` does to `player`'s hero themselves; `spot` is where a ground ability went,
     /// `radius` how far around it reaches.
-    fn land_self(&mut self, player: PlayerId, effect: &Effect, spot: Option<V2>, radius: f32) {
+    pub(crate) fn land_self(&mut self, player: PlayerId, effect: &Effect, spot: Option<V2>, radius: f32) {
         let Some(hi) = self.hero_slot(player) else {
             return;
         };
@@ -350,6 +373,12 @@ impl World {
             Effect::Blink { distance } => {
                 let to = self.blink_to(hi, distance);
                 self.events.push(Event::Blinked { player, to });
+                // A rival's body is the host's to move: its bot walks on from there.
+                if self.heroes[hi].side.is_rival() {
+                    let h = &mut self.heroes[hi];
+                    h.pos = to.ground();
+                    h.z = to.z;
+                }
             }
             Effect::Distract { secs } => {
                 let Some(spot) = spot else {
@@ -418,6 +447,19 @@ impl World {
                         }
                     }
                     self.refresh_carry(player);
+                }
+            }
+            Effect::Heal { min, max } => {
+                let amount = self.combat.dice.between(min, max);
+                let h = &mut self.heroes[hi];
+                let before = h.hp;
+                h.hp = (h.hp + amount).min(h.max_hp);
+                let healed = h.hp - before;
+                if healed > 0.0 {
+                    self.events.push(Event::Healed {
+                        player,
+                        amount: healed,
+                    });
                 }
             }
             _ => {}

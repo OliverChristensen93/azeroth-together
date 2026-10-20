@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::heightmap::testmap::flat;
 use crate::heightmap::HeightMap;
 use crate::{
-    Content, ContentSources, Event, Gait, HeroPose, Holder, KitDef, Life, PlayerId, PlayerInput,
+    CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose, Holder, KitDef, Life, PlayerId, PlayerInput, Refusal,
     RaidRoll, RoutePlace, Side, UnitRef, World, RIVAL_BASE, TICK_HZ, V2,
 };
 
@@ -970,4 +970,283 @@ fn a_new_raid_starts_without_the_last_raids_rivals() {
     w.begin_raid(again).unwrap();
     assert!(w.rivals.bodies.is_empty() && w.rivals.out.is_empty());
     assert_eq!(w.rivals.next, 0);
+}
+
+/// `player` presses action `slot` at `target`, standing still; numbered `seq` (a new press
+/// needs a new number, as from a client).
+pub(super) fn press(w: &mut World, player: PlayerId, seq: u8, slot: u8, target: Option<UnitRef>) {
+    let h = w.hero(player).unwrap();
+    let pose = HeroPose {
+        pos: h.pos,
+        facing: h.facing,
+        z: h.z,
+    };
+    w.set_input(
+        player,
+        PlayerInput {
+            pose: Some(pose),
+            cast: Some(CastPress {
+                seq,
+                slot,
+                target,
+                at: None,
+            }),
+            ..Default::default()
+        },
+    );
+}
+
+/// The damage `to` took in these events.
+pub(super) fn damage_to(events: &[Event], to: UnitRef) -> Vec<f32> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Damage { to: t, amount, .. } if *t == to => Some(*amount),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A hero at (20, 60) facing +x and a digger 3 yards in front of it facing the hero.
+fn duel() -> (World, PlayerId) {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 23.0, 60.0);
+    put(&mut w, a, 23.0, 60.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    w.drain_events();
+    (w, a)
+}
+
+#[test]
+fn a_hero_strikes_a_rival_and_the_rival_strikes_back() {
+    let (mut w, a) = duel();
+    press(&mut w, 0, 1, 2, Some(UnitRef::Hero(a)));
+    w.step();
+    let events = w.drain_events();
+    // The press and the auto-attack it starts, in the same step (as against an enemy).
+    let hit = damage_to(&events, UnitRef::Hero(a));
+    assert_eq!(hit.len(), 2, "{events:?}");
+    assert!(w.hero(a).unwrap().hp < 900.0);
+    assert_eq!(w.hero(0).unwrap().fight.combo_hero, Some(a), "a combo point on the rival");
+    press(&mut w, a, 1, 1, Some(UnitRef::Hero(0)));
+    w.step();
+    let events = w.drain_events();
+    assert_eq!(damage_to(&events, UnitRef::Hero(0)).len(), 2, "{events:?}");
+    assert!(w.hero(0).unwrap().hp < 1000.0);
+}
+
+#[test]
+fn friends_and_rivals_of_another_party_cannot_be_targeted() {
+    let (mut w, a) = duel();
+    join(&mut w, 1, 21.0, 61.0);
+    let b = rival(&mut w, 1, "digger", 1, 24.0, 61.0);
+    w.drain_events();
+    press(&mut w, 0, 1, 2, Some(UnitRef::Hero(1)));
+    press(&mut w, a, 1, 1, Some(UnitRef::Hero(b)));
+    w.step();
+    let refused = events_of(&mut w, |e| match e {
+        Event::Refused { player, why } => Some((*player, *why)),
+        _ => None,
+    });
+    assert!(refused.contains(&(0, Refusal::BadTarget)));
+    assert!(refused.contains(&(a, Refusal::BadTarget)));
+}
+
+#[test]
+fn a_hold_roots_the_hero_and_refuses_presses_until_a_blow_frees_it() {
+    let (mut w, a) = duel();
+    press(&mut w, a, 1, 2, Some(UnitRef::Hero(0)));
+    w.step();
+    let h = w.hero(0).unwrap();
+    assert_eq!(h.fight.held, Some(ControlKind::Incapacitate));
+    assert!(h.fight.rooted, "held feet");
+    w.drain_events();
+    press(&mut w, 0, 1, 2, Some(UnitRef::Hero(a)));
+    w.step();
+    let refused = events_of(&mut w, |e| match e {
+        Event::Refused { player: 0, why } => Some(*why),
+        _ => None,
+    });
+    assert_eq!(refused, vec![Refusal::Held]);
+    steps(&mut w, secs(1.0));
+    press(&mut w, a, 2, 1, Some(UnitRef::Hero(0)));
+    w.step();
+    assert_eq!(w.hero(0).unwrap().fight.held, None);
+    assert!(!w.hero(0).unwrap().fight.rooted);
+}
+
+#[test]
+fn a_hold_runs_out_by_itself() {
+    let (mut w, a) = duel();
+    press(&mut w, a, 1, 2, Some(UnitRef::Hero(0)));
+    w.step();
+    assert!(w.hero(0).unwrap().fight.held.is_some());
+    steps(&mut w, secs(4.2));
+    assert_eq!(w.hero(0).unwrap().fight.held, None);
+}
+
+#[test]
+fn an_area_ability_reaches_the_hostile_heroes_in_it_and_spares_friends() {
+    let mut w = world("", "");
+    w.add_hero(0, "mage", "Mage", 1, 1).unwrap();
+    put(&mut w, 0, 20.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    join(&mut w, 1, 22.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 25.0, 60.0);
+    let far = rival(&mut w, 1, "digger", 0, 40.0, 60.0);
+    w.drain_events();
+    press(&mut w, 0, 1, 4, None);
+    w.step();
+    let events = w.drain_events();
+    assert_eq!(damage_to(&events, UnitRef::Hero(a)).len(), 1);
+    assert!(damage_to(&events, UnitRef::Hero(1)).is_empty(), "a friend is spared");
+    assert!(damage_to(&events, UnitRef::Hero(far)).is_empty(), "out of reach");
+    assert!(events.iter().any(|e| matches!(e, Event::CastGo { hits, .. } if hits.contains(&UnitRef::Hero(a)))));
+    assert_eq!(w.hero(a).unwrap().fight.held, Some(ControlKind::Root));
+}
+
+#[test]
+fn a_bandage_heals_its_rival_tick_by_tick() {
+    let (mut w, a) = duel();
+    w.wound(a, 400.0, Some(UnitRef::Hero(0)));
+    let before = w.hero(a).unwrap().hp;
+    press(&mut w, a, 1, 3, None);
+    steps(&mut w, secs(3.2));
+    let healed: f32 = events_of(&mut w, |e| match e {
+        Event::Healed { player, amount } if *player == a => Some(*amount),
+        _ => None,
+    })
+    .iter()
+    .sum();
+    assert!((healed - 180.0).abs() < 1e-3, "three ticks of 60: {healed}");
+    assert!((w.hero(a).unwrap().hp - (before + 180.0)).abs() < 1e-3);
+}
+
+#[test]
+fn a_slow_and_a_bleed_on_a_hero_run_their_course() {
+    let (mut w, a) = duel();
+    let speed = w.hero(0).unwrap().speed;
+    let ci = w.combat.hero_index(0);
+    w.combat.heroes[ci].slow = Some(crate::combat::Slowed {
+        by: 0.5,
+        left: 1.0,
+        spell: 1,
+    });
+    w.combat.heroes[ci].burns.push(crate::combat::Burn {
+        by: a,
+        amount: 10.0,
+        every: 1.0,
+        next: 1.0,
+        left: 3.0,
+        spell: 2,
+        silent: true,
+    });
+    w.step();
+    assert!(w.hero(0).unwrap().speed < speed * 0.6, "slowed by half");
+    steps(&mut w, secs(3.2));
+    let ticks = damage_to(&w.drain_events(), UnitRef::Hero(0));
+    assert_eq!(ticks, vec![10.0, 10.0, 10.0]);
+    assert!((w.hero(0).unwrap().speed - speed).abs() < 1e-3, "the slow is gone");
+}
+
+#[test]
+fn an_area_ability_does_not_reach_a_rival_behind_a_wall() {
+    let mut b = flat(120.0);
+    crate::heightmap::testmap::house(&mut b, V2::new(26.0, 50.0), V2::new(36.0, 70.0), None, true);
+    let mut w = world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1));
+    w.add_hero(0, "mage", "Mage", 1, 1).unwrap();
+    put(&mut w, 0, 20.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    let clear = rival(&mut w, 1, "digger", 0, 20.0, 66.0);
+    w.drain_events();
+    press(&mut w, 0, 1, 4, None);
+    w.step();
+    let events = w.drain_events();
+    assert!(damage_to(&events, UnitRef::Hero(a)).is_empty(), "{events:?}");
+    assert_eq!(w.hero(a).unwrap().fight.held, None);
+    assert_eq!(damage_to(&events, UnitRef::Hero(clear)).len(), 1, "in the open it lands");
+}
+
+#[test]
+fn a_press_at_a_rival_behind_a_wall_is_refused_for_sight() {
+    let mut b = flat(120.0);
+    crate::heightmap::testmap::house(&mut b, V2::new(26.0, 50.0), V2::new(36.0, 70.0), None, true);
+    let mut w = world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1));
+    w.add_hero(0, "mage", "Mage", 1, 1).unwrap();
+    put(&mut w, 0, 20.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    w.drain_events();
+    press(&mut w, 0, 1, 1, Some(UnitRef::Hero(a)));
+    w.step();
+    let refused = events_of(&mut w, |e| match e {
+        Event::Refused { player: 0, why } => Some(*why),
+        _ => None,
+    });
+    assert_eq!(refused, vec![Refusal::NotInSight]);
+}
+
+/// The damage of a hack from a digger at the hero, with the shovel's bonus as given.
+fn hack_with_shovel(bonus: &str) -> f32 {
+    let items = ITEMS.replace(
+        r#"slot: Some(MainHand))"#,
+        &format!("slot: Some(MainHand), bonus: (damage: {bonus}))"),
+    );
+    let c = Content::from_ron(ContentSources {
+        classes: CLASSES,
+        map: MAP,
+        rules: &rules(""),
+        enemies: ENEMIES,
+        spawns: "[]",
+        abilities: ABILITIES,
+        items: &items,
+        loot: LOOT,
+        monsters: "[]",
+        rivals: RIVALS,
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 23.0, 60.0);
+    put(&mut w, a, 23.0, 60.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    w.drain_events();
+    press(&mut w, a, 1, 1, Some(UnitRef::Hero(0)));
+    w.step();
+    damage_to(&w.drain_events(), UnitRef::Hero(0))[0]
+}
+
+#[test]
+fn a_rivals_worn_gear_counts_in_its_blows_as_a_heros_does() {
+    let plain = hack_with_shovel("0.0");
+    let sharp = hack_with_shovel("1.0");
+    assert!(plain > 0.0);
+    assert!((sharp - 2.0 * plain).abs() < 1e-3, "{plain} -> {sharp}");
+}
+
+#[test]
+fn a_hero_swings_at_one_target_at_a_time() {
+    let (mut w, a) = duel();
+    press(&mut w, 0, 1, 2, Some(UnitRef::Hero(a)));
+    w.step();
+    let ci = w.combat.hero_index(0);
+    assert_eq!(w.combat.heroes[ci].swing_at, Some(a));
+    assert_eq!(w.hero(0).unwrap().fight.attacking, None);
+}
+
+#[test]
+fn the_first_blow_at_an_unaware_rival_is_an_ambush_and_says_so() {
+    let (mut w, a) = duel();
+    press(&mut w, 0, 1, 2, Some(UnitRef::Hero(a)));
+    w.step();
+    let ambush: Vec<bool> = events_of(&mut w, |e| match e {
+        Event::Damage { to, ambush, .. } if *to == UnitRef::Hero(a) => Some(*ambush),
+        _ => None,
+    });
+    assert_eq!(ambush.first(), Some(&true), "{ambush:?}");
 }
