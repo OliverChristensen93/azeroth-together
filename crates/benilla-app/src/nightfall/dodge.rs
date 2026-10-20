@@ -195,7 +195,8 @@ mod tests {
         // Left of north is west, +y.
         assert_eq!(dodge_way(north, STRAFE_LEFT), V2::new(0.0, 1.0));
         let d = dodge_way(north, FORWARD | STRAFE_RIGHT);
-        assert!((d.x - 0.7071).abs() < 1e-3 && (d.y + 0.7071).abs() < 1e-3);
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((d.x - s).abs() < 1e-3 && (d.y + s).abs() < 1e-3);
         // Forward and back cancel: back it is.
         assert_eq!(dodge_way(north, FORWARD | BACKWARD), V2::new(-1.0, 0.0));
     }

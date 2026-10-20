@@ -143,8 +143,19 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   Rivals (sub-project 7): `rivals.ron` (kinds, parties, points of interest, entries, `routes`)
   and `rules.ron`'s `rivals:`; each kind becomes a class `rival:<key>` after the heroes' (the
   menus offer `Content::playable`). A custom `NIGHTFALL_CONTENT` folder needs `rivals.ron` too
-  (an empty file is no rivals); `routes` is all or nothing, see the file's comments. Enemy traits
-  in `enemies.ron`: `watched` (Mor'Ladim), `tracker`, `hunter`, `road_sight` (the Dark Riders),
+  (an empty file is no rivals); `routes` is all or nothing, see the file's comments.
+  A rival is a hero of another side (`Hero::side`, numbers from `RIVAL_BASE` 64) moved only by the
+  `PlayerInput` its bot sets, so enemies, noise, searches, bodies and exits treat it as a hero
+  (protocol 8). `nightfall-sim/src/rivals/` is the AI (`kit.rs` ability choice by tag, `goals.rs`
+  party goals, `mind.rs` senses both ways, `drive.rs` the bots, `travel.rs` the routes,
+  `arrivals.rs` the roll's parties) and `combat/foes.rs` the fight between heroes and rivals. The
+  client draws rivals as hostile WoW players (`nightfall/rivals_view.rs`), concealed while no hero
+  of the party sees them. `rules.ron`'s `rivals:` holds every number the bots go by. The
+  `cutthroats` party has full rogue kits and odds 0, for playtesting full kits against simplified
+  ones (spec 13). Test hooks: `NIGHTFALL_RIVALS=<party>,...` (the planned raid's rivals, out of
+  the party's sight, at `NIGHTFALL_RIVALS_AT` seconds, 5 by default), `NIGHTFALL_TRACE_RIVALS=1`
+  (each party's goal every 2 s).
+  Enemy traits in `enemies.ron`: `watched` (Mor'Ladim), `tracker`, `hunter`, `road_sight` (the Dark Riders),
   `mount`, `step_sound`; the banshee's wail is an ability with `Alarm(radius)`.
   `nightfall-sim/src/night/` is the rules (`RaidRoll::roll`, the clock, arrivals, the hunt, scent,
   Mor'Ladim, the alarm, ravens); the height map knows water from the ADT liquids (`BAKE_VERSION`

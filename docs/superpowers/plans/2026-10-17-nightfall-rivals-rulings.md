@@ -69,4 +69,4 @@ for `2026-10-17-nightfall-rivals.md`. One line each: what; why; cost if wrong.
 - Another hero (or a rival) moving under 4 yards a second is drawn with WoW's walk; friends walking now walk too; cost if wrong: one constant.
 - Heals show as green numbers (`COLOR_HEAL`); a rival's Blink moves its body on the host, and the client glides it there; cost if wrong: looks.
 - Test hooks: `NIGHTFALL_RIVALS=<party>,…` makes the planned raid's rivals those parties (at `NIGHTFALL_RIVALS_AT`, 5 s by default, the middle of their aggression, by the entry nearest the first map entry out of `arrive_unseen`), `NIGHTFALL_TRACE_RIVALS=1` logs each party's goal; cost if wrong: test hooks only.
-- Task 12's shots are where the looks are judged (outfits from `class_id`, the walk, the stealth fade on a player unit); what they show is noted here after the run.
+- No shots were taken for this sub-project (the user tests by hand). The looks to judge first are the outfits (every kind is drawn in human start clothes with its base class's weapons, D9), the walk of a slow rival, and the stealth fade on a player unit; the checklist of things to try is in the Task 12 report.
