@@ -13,7 +13,7 @@ use benilla_world::world_point::{Subject, WorldPoint};
 use bevy::prelude::*;
 use together_sim::{
     Event, InteractState, InteractableKind, PickupKind, PlayerId, PotLoot, PowerUp, Target,
-    CHAMPION_SCALE, ELITE_SCALE, V2,
+    CAMP_SCALE, ELITE_SCALE, V2,
 };
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
@@ -123,20 +123,23 @@ pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
 /// the part. Gem ids share the world's id counter, so these sit far above them.
 const SHRINE_SERIAL_BASE: u64 = 0x4000_0000;
 
-/// Creature entries of elites: this plus their kind's own entry, so the name cache files them
-/// apart, ranked elite, which gives their target frame its gold dragon.
-const ELITE_ENTRY_BASE: u32 = 0x8000;
+/// Creature entries of rares: this plus their kind's own entry, so the name cache files them
+/// apart, ranked rare, which gives their target frame its silver dragon.
+const RARE_ENTRY_BASE: u32 = 0x8000;
 
-/// Creature entries of bosses, the same way: ranked boss, which gives theirs a skull.
+/// Creature entries of camps' elites, the same way: ranked elite, a gold dragon.
+const ELITE_ENTRY_BASE: u32 = 0xA000;
+
+/// Creature entries of bosses, the same way: ranked boss, a gold dragon and a skull for a level.
 const BOSS_ENTRY_BASE: u32 = 0xC000;
 
-/// Creature entries of champions: ranked rare elite, a silver dragon, and titled "Champion".
-const CHAMPION_ENTRY_BASE: u32 = 0xA000;
-const RANK_RARE_ELITE: u32 = 2;
-
-/// `CreatureTemplate.rank` of an elite and of a boss.
+/// `CreatureTemplate.rank` of an elite, a boss and a rare.
 const RANK_ELITE: u32 = 1;
 const RANK_BOSS: u32 = 3;
+const RANK_RARE: u32 = 4;
+
+/// A boss is drawn at least this many times an ordinary enemy's size.
+const BOSS_MIN_SCALE: f32 = 2.0;
 
 /// The colour of gold in combat text, 0xAARRGGBB.
 const COLOR_GOLD: u32 = 0xFFFF_D100;
@@ -327,8 +330,6 @@ pub(super) fn apply_events(
             | Event::BossCame { .. }
             | Event::BossDied { .. }
             | Event::Surrounded { .. }
-            | Event::ChampionCame { .. }
-            | Event::ChampionDied { .. }
             | Event::EscortDone { .. } => {}
             Event::PotBroken { by, loot, .. } => {
                 // What came out, over whoever broke it: everyone sees what a friend found.
@@ -510,19 +511,24 @@ pub(super) fn sync(
             continue;
         }
         let def = &content.enemies[enemy.def];
-        // One creature template per enemy kind, and one more for its elites: the entry names it.
+        // One creature template per enemy kind and rank: the entry names it, the rank dresses its
+        // target frame. Rares a little bigger, camps' elites more, bosses at least twice the size.
         let base = enemy.def as u32 + 1;
-        let champion = world.champions.contains(&enemy.id);
+        let guard = world.guards.contains(&enemy.id);
         let (entry, rank, scale) = if enemy.boss {
-            (BOSS_ENTRY_BASE + base, RANK_BOSS, def.scale)
-        } else if champion {
             (
-                CHAMPION_ENTRY_BASE + base,
-                RANK_RARE_ELITE,
-                def.scale * ELITE_SCALE * CHAMPION_SCALE,
+                BOSS_ENTRY_BASE + base,
+                RANK_BOSS,
+                def.scale.max(BOSS_MIN_SCALE),
+            )
+        } else if guard {
+            (
+                ELITE_ENTRY_BASE + base,
+                RANK_ELITE,
+                def.scale * ELITE_SCALE * CAMP_SCALE,
             )
         } else if enemy.elite {
-            (ELITE_ENTRY_BASE + base, RANK_ELITE, def.scale * ELITE_SCALE)
+            (RARE_ENTRY_BASE + base, RANK_RARE, def.scale * ELITE_SCALE)
         } else {
             (base, 0, def.scale)
         };
@@ -531,7 +537,7 @@ pub(super) fn sync(
                 entry,
                 Some(CreatureRecord {
                     name: def.name.clone(),
-                    subname: champion.then(|| "Champion".to_string()),
+                    subname: None,
                     creature_type: 0,
                     pet_family: 0,
                     rank,

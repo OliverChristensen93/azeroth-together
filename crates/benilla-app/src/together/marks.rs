@@ -1,4 +1,4 @@
-//! Where things are: the minimap's marks (the boss, champions and elites, a banner's
+//! Where things are: the minimap's marks (the boss, camps' elites and rares, a banner's
 //! destination, caches, and for a dwarf's Treasure Finding every chest, shrine and pot), the
 //! arena's edge on the minimap and as a glowing fence on the ground, and each shrine's circle on
 //! the ground, filling as it is stood in.
@@ -75,13 +75,13 @@ pub(super) fn fill_minimap(sim: Res<Sim>, mut extras: ResMut<MinimapExtras>) {
         if e.boss {
             let name = format!("{kind} (boss)");
             blips.push(blip(e.pos, ExtraShape::Skull, 16.0, white, true, name));
-        } else if world.champions.contains(&e.id) {
-            let name = format!("{kind} (champion)");
-            let orange = [1.0, 0.75, 0.2, 1.0];
-            blips.push(blip(e.pos, ExtraShape::RedDot, 14.0, orange, true, name));
-        } else if e.elite {
+        } else if world.guards.contains(&e.id) {
             let name = format!("{kind} (elite)");
-            blips.push(blip(e.pos, ExtraShape::RedDot, 9.0, white, false, name));
+            blips.push(blip(e.pos, ExtraShape::RedDot, 12.0, white, false, name));
+        } else if e.elite {
+            let name = format!("{kind} (rare)");
+            let silver = [0.8, 0.8, 1.0, 1.0];
+            blips.push(blip(e.pos, ExtraShape::RedDot, 9.0, silver, false, name));
         }
     }
     extras.blips = blips;

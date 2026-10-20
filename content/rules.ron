@@ -22,13 +22,13 @@
     surround_from: 150.0,
     surround_every: 150.0,
     surround_secs: 12.0,
-    // A champion, an elite mini-boss a few tiers above the horde that leaves a cache, comes
-    // `champion_from` seconds in and every `champion_every` after: halfway between the bosses.
-    champion_from: 120.0,
-    champion_every: 240.0,
-    // Health in ordinary enemies: an elite has `elite_health` of its own kind's; a champion and
-    // a boss have `champion_health` and `boss_health` of the horde's strongest kind at the time.
-    elite_health: 8.0,
-    champion_health: 15.0,
+    // Health in ordinary enemies. A rare (now and then in the horde, and a Challenge Idol's)
+    // has `rare_health` of its own kind's; an elite (a camp's guard) `elite_health`; a boss
+    // `boss_health` of the horde's strongest kind at the time, and the run's last boss (the
+    // `final_boss`th) `final_boss_health`.
+    rare_health: 15.0,
+    elite_health: 30.0,
     boss_health: 50.0,
+    final_boss_health: 75.0,
+    final_boss: 3,
 )

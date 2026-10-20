@@ -558,7 +558,8 @@ impl World {
     }
 
     /// The `count` enemies nearest `from` within `range`, elites and bosses first when
-    /// `elites_first`, never `exclude`; nearest first.
+    /// `elites_first`, never `exclude`; nearest first. A camp's elite at rest (whole, guarding)
+    /// comes last of all, so aimed spells never pull a camp on their own.
     pub(super) fn pick_targets(
         &self,
         from: V2,
@@ -567,17 +568,25 @@ impl World {
         elites_first: bool,
         exclude: Option<u32>,
     ) -> Vec<(u32, f32)> {
-        let mut near: Vec<(u32, f32, bool)> = self
+        // 0 an elite or boss the spell seeks out, 1 anything else, 2 a camp's elite at rest.
+        let mut near: Vec<(u32, f32, u8)> = self
             .enemies
             .iter()
             .filter(|e| e.hp > 0.0 && Some(e.id) != exclude)
-            .map(|e| (e.id, from.distance(e.pos), e.elite || e.boss))
+            .map(|e| {
+                let resting = self.guards.contains(&e.id) && e.hp >= e.max_hp;
+                let rank = if resting {
+                    2
+                } else if elites_first && (e.elite || e.boss) {
+                    0
+                } else {
+                    1
+                };
+                (e.id, from.distance(e.pos), rank)
+            })
             .filter(|&(_, d, _)| d <= range)
             .collect();
-        near.sort_by(|a, b| {
-            let rank = |x: &(u32, f32, bool)| elites_first && !x.2;
-            rank(a).cmp(&rank(b)).then(a.1.total_cmp(&b.1))
-        });
+        near.sort_by(|a, b| a.2.cmp(&b.2).then(a.1.total_cmp(&b.1)));
         near.truncate(count);
         near.into_iter().map(|(id, d, _)| (id, d)).collect()
     }

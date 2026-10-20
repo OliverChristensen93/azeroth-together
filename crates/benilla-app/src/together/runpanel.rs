@@ -76,7 +76,6 @@ pub(super) struct Seen {
     boss_warned: f32,
     boss_here: bool,
     surrounded: bool,
-    champions: Vec<u32>,
     warning_until: f32,
 }
 
@@ -395,19 +394,6 @@ pub(super) fn refresh(
         warning = Some("Surrounded!\nThey come from every side".into());
     }
     seen.surrounded = surrounded;
-    if let Some(&id) = world
-        .champions
-        .iter()
-        .find(|id| !seen.champions.contains(id))
-    {
-        if let Some(e) = world.enemy(id) {
-            warning = Some(format!(
-                "A champion has appeared: {}\nFind it on your minimap: it guards a cache",
-                content.enemies[e.def].name
-            ));
-        }
-    }
-    seen.champions.clone_from(&world.champions);
     {
         let mut q = texts.p6();
         if let Ok((mut t, mut color)) = q.single_mut() {

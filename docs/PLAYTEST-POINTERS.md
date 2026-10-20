@@ -121,6 +121,32 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
   The menu lists your race's racials under the class text.
 - **Tome text:** "Raises your armor for the run." is now "Raises your armor."
 
+## Round 4: four enemy ranks
+
+Champions are gone. The enemies are now:
+
+| Rank | What | Health | Size | Target frame |
+|---|---|---|---|---|
+| Normal | the horde | 1× | 1× | plain |
+| Rare | about 1 in 70 horde spawns from 1:30; a Challenge Idol raises 2 (one more per extra hero) | 15× its own kind | 1.3× | silver dragon |
+| Elite | the camps' guards: fixed spots, 20 yd aggro, 35 yd leash, evade home and heal; back 3 min after a kill | 30× its own kind (two steps above the horde) | 1.6× | gold dragon |
+| Boss | the zone's boss, the next 4 min after the last dies | 50× the horde's strongest kind at the time; the **3rd** boss (the last) 75× | at least 2× (bigger models keep their own) | gold dragon with skull |
+
+- All the numbers are in `rules.ron`: `rare_health`, `elite_health`, `boss_health`,
+  `final_boss_health`, `final_boss`.
+- Rewards: rares 5× XP and gold, elites 10×. Bosses leave a cache, as before.
+- Minimap: elites are larger red dots ("(elite)" on hover), rares smaller pale dots ("(rare)").
+- **Decision for you:** you wrote both "rares (15x hp)" and "rares (10x hp)". I used 15×; it's
+  `rare_health` in `rules.ron`.
+- **Decision for you:** "the last boss" is the third boss of a run. The run's clock goes on
+  after 15 min, so any boss after the third is also 75×.
+- **Decision for you:** Gurubashi Arena has no elite camp now. With its 30 yd leash, a 30×
+  elite would stand within reach of the start, and a paladin's elite-seeking spell spent a whole
+  test minute on it without killing anything.
+- **Change:** aimed spells now treat a camp elite at rest (full health, guarding) as the last
+  choice, so they don't pull a camp on their own. Once it's in a fight it's a normal target.
+  Area spells still hit it if you stand close.
+
 ## Round 3
 
 - **Talent tooltips** showed raw colour codes (`|cffffc800…|r`). The hover text was written

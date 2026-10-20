@@ -447,38 +447,37 @@ pub struct Rules {
     pub surround_every: f32,
     #[serde(default = "surround_secs")]
     pub surround_secs: f32,
-    /// A champion (an elite mini-boss) comes `champion_from` seconds in, and every
-    /// `champion_every` after.
-    #[serde(default = "champion_from")]
-    pub champion_from: f32,
-    #[serde(default = "champion_every")]
-    pub champion_every: f32,
-    /// Health, in ordinary enemies: an elite of its own kind's, and a champion and a boss of the
-    /// horde's strongest kind at the time.
+    /// Health, in ordinary enemies: a rare and an elite of their own kind's; a boss of the
+    /// horde's strongest kind at the time, and the run's last boss (the `final_boss`th) more.
+    #[serde(default = "rare_health")]
+    pub rare_health: f32,
     #[serde(default = "elite_health")]
     pub elite_health: f32,
-    #[serde(default = "champion_health")]
-    pub champion_health: f32,
     #[serde(default = "boss_health")]
     pub boss_health: f32,
+    #[serde(default = "final_boss_health")]
+    pub final_boss_health: f32,
+    #[serde(default = "final_boss")]
+    pub final_boss: u32,
+}
+
+fn rare_health() -> f32 {
+    15.0
+}
+fn final_boss_health() -> f32 {
+    75.0
+}
+fn final_boss() -> u32 {
+    3
 }
 
 fn elite_health() -> f32 {
-    8.0
-}
-fn champion_health() -> f32 {
-    15.0
+    30.0
 }
 fn boss_health() -> f32 {
     50.0
 }
 
-fn champion_from() -> f32 {
-    120.0
-}
-fn champion_every() -> f32 {
-    240.0
-}
 
 fn enemy_speed() -> f32 {
     1.35
@@ -509,11 +508,11 @@ impl Default for Rules {
             surround_from: surround_from(),
             surround_every: surround_every(),
             surround_secs: surround_secs(),
-            champion_from: champion_from(),
-            champion_every: champion_every(),
+            rare_health: rare_health(),
             elite_health: elite_health(),
-            champion_health: champion_health(),
             boss_health: boss_health(),
+            final_boss_health: final_boss_health(),
+            final_boss: final_boss(),
         }
     }
 }

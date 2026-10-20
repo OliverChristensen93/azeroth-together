@@ -124,7 +124,8 @@
         item_level: 45,
         shrines_at_once: 2,
         pots: 3,
-        elite_camps: 1,
+        // No camp: the arena is too small to keep out of an elite's reach.
+        elite_camps: 0,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),

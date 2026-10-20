@@ -133,12 +133,8 @@ impl World {
                 continue;
             }
             // A few tiers above the horde: a camp is worth the detour from the first minute.
-            let def = self.tier_ahead(super::champions::CAMP_TIERS_AHEAD);
             let pos = self.camps[c].pos;
-            let id = self.spawn_enemy(def, pos, pos + V2::new(1.0, 0.0), true);
-            if let Some(e) = self.enemies.last_mut() {
-                e.home = Some(pos);
-            }
+            let id = self.spawn_camp_elite(pos);
             self.camps[c].elite = Some(id);
         }
     }

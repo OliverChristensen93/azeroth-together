@@ -20,8 +20,8 @@ mod affixes;
 mod hazards;
 mod horde;
 mod pause;
-pub(crate) mod champions;
-pub use champions::CHAMPION_SCALE;
+pub(crate) mod ranks;
+pub use ranks::CAMP_SCALE;
 mod meter;
 mod hunter;
 mod paladin;
@@ -91,16 +91,17 @@ const GOLD_CHANCE: f32 = 0.3;
 const GOLD_PER_XP: f32 = 1.5;
 /// Random tomes mixed into the options a level-up deals from.
 const LEVEL_UP_TOMES: usize = 2;
-/// An elite's health, experience and gold, in ordinary enemies of its kind...
+/// A rare's health (in tests; the rules' `rare_health` in play), experience and gold, in ordinary
+/// enemies of its kind...
 #[cfg(test)]
-pub(crate) const ELITE_HEALTH: f32 = 8.0;
+pub(crate) const ELITE_HEALTH: f32 = 15.0;
 const ELITE_REWARD: u32 = 5;
 /// ...its damage and its size.
 const ELITE_DAMAGE: f32 = 1.25;
-pub const ELITE_SCALE: f32 = 1.4;
-/// A Challenge Idol raises this many elites, and this many more per hero...
-const CHALLENGE_ELITES: usize = 4;
-const CHALLENGE_PER_HERO: usize = 2;
+pub const ELITE_SCALE: f32 = 1.3;
+/// A Challenge Idol raises this many rares, and this many more per hero (two alone)...
+const CHALLENGE_ELITES: usize = 1;
+const CHALLENGE_PER_HERO: usize = 1;
 /// ...in a ring this far from it.
 const CHALLENGE_RING: (f32, f32) = (9.0, 14.0);
 /// The zone's boss comes this many seconds in, and again as many after each one falls.
@@ -118,7 +119,7 @@ const SPAWN_RING: (f32, f32) = (34.0, 42.0);
 const SPAWN_EVERY: f32 = 0.12;
 /// The share of its health a living hero gets back at each level-up.
 const LEVEL_UP_HEAL: f32 = 0.1;
-/// How far a camp's elite or a champion follows a hero from its camp before it gives up the
+/// How far a camp's elite follows a hero from its camp before it gives up the
 /// chase, runs home out of reach (at this times its speed) and heals, as WoW's mobs evade.
 pub const CAMP_LEASH: f32 = 35.0;
 const EVADE_SPEED: f32 = 1.6;
@@ -259,10 +260,6 @@ pub enum Event {
     AffixGained { affix: Affix },
     /// For `secs` the horde comes from every side, not only from behind.
     Surrounded { secs: f32 },
-    /// A champion (a mini-boss, enemy `id` of kind `def`) came.
-    ChampionCame { id: u32, def: usize },
-    /// A champion died; a cache stands where it fell.
-    ChampionDied { id: u32 },
     /// An enemy hit a hero in melee.
     Swing {
         enemy: u32,
@@ -634,9 +631,9 @@ pub struct EnemyState {
     pub moving: bool,
     pub elite: bool,
     pub boss: bool,
-    /// A champion: an elite mini-boss ([`World::champions`]).
+    /// A camp's elite ([`World::guards`]); `elite` without it is a rare.
     #[serde(default)]
-    pub champion: bool,
+    pub guard: bool,
     /// Health and its maximum, rounded up to whole points.
     pub hp: u32,
     pub max_hp: u32,
@@ -759,9 +756,10 @@ pub struct World {
     /// until its flow field is worked out again.
     pub obstacles: Option<crate::obstacles::Obstacles>,
     flow_timer: f32,
-    /// The champions alive, by enemy id, and seconds into the run the next one comes.
-    pub champions: Vec<u32>,
-    pub next_champion: f32,
+    /// The camps' elites alive, by enemy id: the elite rank ([`ranks`]); and how many bosses have
+    /// come.
+    pub guards: Vec<u32>,
+    pub bosses_come: u32,
     /// Seconds left of a surround, when the horde comes from every side; and seconds into the
     /// run the next one starts.
     pub surround: f32,
@@ -820,15 +818,14 @@ impl World {
             evading: Vec::new(),
             obstacles: None,
             flow_timer: 0.0,
-            champions: Vec::new(),
-            next_champion: f32::INFINITY,
+            guards: Vec::new(),
+            bosses_come: 0,
             surround: 0.0,
             next_surround: f32::INFINITY,
             xp_rate: 1.0,
             learn_rank: 1,
         };
         world.next_surround = world.content.rules.surround_from;
-        world.next_champion = world.content.rules.champion_from;
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
             world.place(kind, pos);
@@ -1098,7 +1095,7 @@ impl World {
                     moving: e.moving,
                     elite: e.elite,
                     boss: e.boss,
-                    champion: self.champions.contains(&e.id),
+                    guard: self.guards.contains(&e.id),
                     hp: e.hp.max(0.0).ceil() as u32,
                     max_hp: e.max_hp.ceil() as u32,
                     status: e.status.bits(),
@@ -1130,10 +1127,10 @@ impl World {
         self.affixes = snapshot.affixes;
         let center = self.center();
         let defs = &self.content.enemies;
-        self.champions = snapshot
+        self.guards = snapshot
             .enemies
             .iter()
-            .filter(|s| s.champion)
+            .filter(|s| s.guard)
             .map(|s| s.id)
             .collect();
         self.enemies = snapshot
@@ -1218,7 +1215,6 @@ impl World {
         self.tend_surround();
         self.spawn_enemies();
         self.spawn_bosses();
-        self.spawn_champions();
         self.move_enemies();
         self.tend_mechanics();
         self.tend_affixes();
@@ -1692,13 +1688,24 @@ impl World {
         let angle = self.rng.range(0.0, std::f32::consts::TAU);
         let pos = near + V2::from_angle(angle, SPAWN_RING.0);
         self.spawn_enemy(def, pos, near, false);
-        // As tough as the rules' `boss_health` of the horde's strongest now, and more with more
-        // heroes: the boss keeps pace with the run however late it comes.
-        let hp = self.content.rules.boss_health * self.horde_health() * party;
+        // As tough as the rules' `boss_health` of the horde's strongest now (the run's last boss,
+        // `final_boss_health`), and more with more heroes: a boss keeps pace with the run however
+        // late it comes. At least twice an ordinary enemy's size.
+        self.bosses_come += 1;
+        let rules = &self.content.rules;
+        let times = if self.bosses_come >= rules.final_boss {
+            rules.final_boss_health
+        } else {
+            rules.boss_health
+        };
+        let hp = times * self.horde_health() * party;
+        let kind = &self.content.enemies[def];
+        let radius = kind.radius * kind.scale.max(ranks::BOSS_MIN_SCALE);
         let boss = self.enemies.last_mut().expect("just spawned");
         boss.boss = true;
         boss.hp = hp;
         boss.max_hp = hp;
+        boss.radius = radius;
         self.events.push(Event::BossCame { def });
     }
 
@@ -1716,7 +1723,7 @@ impl World {
         let progress = (self.elapsed / RUN_SECS).min(1.0);
         let d = self.difficulty;
         let (health, hits, size) = if elite {
-            (self.content.rules.elite_health, ELITE_DAMAGE, ELITE_SCALE)
+            (self.content.rules.rare_health, ELITE_DAMAGE, ELITE_SCALE)
         } else {
             (1.0, 1.0, 1.0)
         };
@@ -1797,7 +1804,7 @@ impl World {
                 .expect("living is not empty");
             let to = target - e.pos;
             let dist = to.length();
-            // A camp's elite (or a champion) guards its camp. It fights a hero who comes near or
+            // A camp's elite guards its camp. It fights a hero who comes near or
             // hurts it, but only so far from home: past its leash it runs back out of reach and
             // heals, as WoW's mobs evade. With no fight on, it waits at home.
             if let Some(home) = e.home {
@@ -2128,12 +2135,19 @@ impl World {
                 self.place(InteractableKind::Cache, pos);
                 self.events.push(Event::BossDied { id });
             }
-            self.champion_fell(id, pos);
+            let guard = self.guards.contains(&id);
+            self.guards.retain(|&g| g != id);
             if elite {
                 self.drop_gear(boss);
             }
             // An elite is worth several, and always carries gold; so is a boss.
-            let reward = if elite { ELITE_REWARD } else { 1 };
+            let reward = if guard {
+                ranks::CAMP_REWARD
+            } else if elite {
+                ELITE_REWARD
+            } else {
+                1
+            };
             let worth = self.content.enemies[def].xp;
             let gold = if elite || self.rng.f32() < GOLD_CHANCE {
                 ((worth as f32 * GOLD_PER_XP).ceil() as u32).max(1) * reward
