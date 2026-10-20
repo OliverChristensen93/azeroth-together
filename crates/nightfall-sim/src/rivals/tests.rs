@@ -423,3 +423,37 @@ fn route_mistakes_are_refused() {
     ));
 }
 
+#[test]
+fn the_kit_leaves_stealth_out_and_marks_the_big_move() {
+    use super::kit::kit_of;
+    use crate::Tag;
+
+    let c = content("", "");
+    let digger = &c.rivals.kinds[c.rival_kind("digger").unwrap()];
+    let kit = kit_of(digger.class, digger.big_ability, &c);
+    assert_eq!(
+        kit.iter().map(|k| k.slot).collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+    assert!(kit[3].big && kit[3].tags.contains(&Tag::Nuke));
+    assert_eq!(
+        kit[3].reach, 6.0,
+        "an on-self telegraph reaches its own size"
+    );
+    assert!(
+        kit[0].sight && kit[0].reach == 5.0,
+        "the fight wants a clear line at every range"
+    );
+    let blade = &c.rivals.kinds[c.rival_kind("blade").unwrap()];
+    let kit = kit_of(blade.class, blade.big_ability, &c);
+    let keys: Vec<&str> = kit
+        .iter()
+        .map(|k| c.abilities[k.ability].key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["strike", "finish", "ambush"],
+        "Stealth is pressed by count"
+    );
+    assert!(kit[2].opener);
+}

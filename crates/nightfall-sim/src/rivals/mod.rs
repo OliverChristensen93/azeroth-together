@@ -3,6 +3,9 @@
 //! later ones make each a hero of another side, driven by its bot.
 
 mod content;
+// The bot that calls it comes with the rivals' minds; until then only the tests do.
+#[allow(dead_code)]
+mod kit;
 #[cfg(test)]
 mod tests;
 
