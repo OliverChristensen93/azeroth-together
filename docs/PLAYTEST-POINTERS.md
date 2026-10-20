@@ -136,8 +136,7 @@ Champions are gone. The enemies are now:
   `final_boss_health`, `final_boss`.
 - Rewards: rares 5× XP and gold, elites 10×. Bosses leave a cache, as before.
 - Minimap: elites are larger red dots ("(elite)" on hover), rares smaller pale dots ("(rare)").
-- **Decision for you:** you wrote both "rares (15x hp)" and "rares (10x hp)". I used 15×; it's
-  `rare_health` in `rules.ron`.
+- **Decided:** rares stay at 15× (`rare_health` in `rules.ron`).
 - **Decision for you:** "the last boss" is the third boss of a run. The run's clock goes on
   after 15 min, so any boss after the third is also 75×.
 - **Decision for you:** Gurubashi Arena has no elite camp now. With its 30 yd leash, a 30×
