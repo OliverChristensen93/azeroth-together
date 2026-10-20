@@ -21,6 +21,9 @@ pub use visibility::{Gait, Stance};
 
 pub(crate) use awareness::State;
 pub(crate) use awareness::Mind;
+pub(crate) use awareness::Sensed;
+pub(crate) use react::sense;
+pub(crate) use visibility::notice_range;
 use awareness::Shout;
 use noise::step_radius;
 use react::Way;

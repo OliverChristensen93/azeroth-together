@@ -101,6 +101,7 @@ impl World {
             pack: self.raid.pack(player).map(|i| (player, i.clone())),
             loot: self.loot_view(Some(player)),
             night: self.night_view(),
+            rivals: self.rival_view(player),
         }
     }
 

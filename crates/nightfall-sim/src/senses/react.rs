@@ -123,7 +123,7 @@ pub(crate) fn step_enemies(
             } else {
                 (fog, notice)
             };
-            sense(e, mind, eye, h, &noises, &map, reach, scale, r)
+            sense(e.pos, e.facing, mind, eye, h, &noises, &map, reach, scale, r)
         }));
         for &player in &gone {
             if let Some(heard) = overheard(e, eye, player, &noises, &map, r) {
@@ -232,10 +232,12 @@ fn overheard(
         .map(|n| n.at)
 }
 
-/// What enemy `e` sees and hears of hero `h` this step.
+/// What a looker at `from`, facing `facing`, with `mind`, sees and hears of hero `h` this step: an
+/// enemy, or a rival (spec §7.4: the same rules both ways).
 #[allow(clippy::too_many_arguments)]
-fn sense(
-    e: &Enemy,
+pub(crate) fn sense(
+    from: V2,
+    facing: V2,
     mind: &Mind,
     eye: V3,
     h: &Hero,
@@ -256,20 +258,20 @@ fn sense(
     let grid = map.grid();
     // A ray is only cast between points on the map's grid, so none is ever longer than the fog
     // and a unit off the grid (or not at a number) is unseen rather than walked towards.
-    let on_grid = e.pos.is_finite()
+    let on_grid = from.is_finite()
         && h.pos.is_finite()
         && eye.is_finite()
         && feet.is_finite()
-        && grid.column_of(e.pos).is_some()
+        && grid.column_of(from).is_some()
         && grid.column_of(h.pos).is_some();
-    let d = e.pos.distance(h.pos);
+    let d = from.distance(h.pos);
     // An enemy whose facing is not a number looks at the hero from the side.
-    let facing = if e.facing.is_finite() {
-        facing_factor(e.facing, h.pos - e.pos, mind.cone, r)
+    let cone_factor = if facing.is_finite() {
+        facing_factor(facing, h.pos - from, mind.cone, r)
     } else {
         r.side
     };
-    let range = notice_range(h.visibility * notice, facing, fog, r);
+    let range = notice_range(h.visibility * notice, cone_factor, fog, r);
     // How far a ray is worth casting: an enemy after this hero keeps track of them through the
     // fog; any other can notice them no further than its notice range, and a sleeper not at all.
     let looks = if mind.alerted_to(h.player) {

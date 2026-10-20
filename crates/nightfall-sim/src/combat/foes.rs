@@ -92,10 +92,13 @@ impl World {
         )
     }
 
-    /// Whether hero `target` is not aware of `by`: for now, not in combat (Task 7 asks a rival's
-    /// mind instead).
-    pub(crate) fn foe_unaware(&self, target: PlayerId, _by: PlayerId) -> bool {
-        self.hero(target).is_some_and(|t| !t.fight.in_combat)
+    /// Whether hero `target` is not aware of `by`: a rival whose mind is not alerted to them
+    /// (spec §5.4, as an enemy's), a hero of the party not in combat.
+    pub(crate) fn foe_unaware(&self, target: PlayerId, by: PlayerId) -> bool {
+        match self.rival_mind(target) {
+            Some(m) => !m.alerted_to(by),
+            None => self.hero(target).is_some_and(|t| !t.fight.in_combat),
+        }
     }
 
     /// The ambush multiplier on a blow from `by` at hero `target` (spec §5.4): the senses'
@@ -259,6 +262,10 @@ impl World {
             if !self.hero(foe).is_some_and(|h| h.fight.up()) {
                 return;
             }
+        }
+        // A hostile ability alerts the rival it lands on, and its party with it.
+        if a.alerts {
+            self.alert_rival(foe, player);
         }
         if a.attack && content.classes[self.heroes[hi].class].swing.is_some() {
             // One target at a time: the enemy they were swinging at is let be.

@@ -361,6 +361,7 @@ impl World {
                 self.heroes[hi].fight.attacking = None;
                 self.combat.heroes[ci].combat_for = 0.0;
                 self.senses.lose(player, &content.rules.senses.awareness);
+                self.rivals_lose(player);
                 self.enter_stealth(player);
             }
             Effect::Sprint { by, secs } => {

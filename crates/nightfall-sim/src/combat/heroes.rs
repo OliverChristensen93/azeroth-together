@@ -459,7 +459,7 @@ impl World {
         let content = self.content.clone();
         let r = &content.rules.combat;
         let player = self.heroes[hi].player;
-        let hunted = self.senses.hunted(player);
+        let hunted = self.senses.hunted(player) || self.rival_hunts(player);
         let stealth = self.stealth_of(self.heroes[hi].class);
         let ci = self.combat.hero_index(player);
         let hc = &mut self.combat.heroes[ci];

@@ -13,7 +13,7 @@ use crate::enemies::{self, Brain, Enemy, Order, Planner};
 use crate::heightmap::{HeightMap, Navigator};
 use crate::night::{Night, NightView};
 use crate::raid::{Carry, Raid};
-use crate::rivals::{Rivals, Side};
+use crate::rivals::{RivalView, Rivals, Side};
 use crate::senses::{self, Gait, Senses, Stance};
 use crate::{ActPress, Content, Inventory, LootView, RaidRoll, V2, V3};
 
@@ -127,6 +127,9 @@ pub struct Snapshot {
     pub loot: LootView,
     /// The night: its stage, the weather, the ravens (spec §7.2, §8.1).
     pub night: NightView,
+    /// The rivals this player's hero sees and their marks for them (spec §4.3, §5.5): each
+    /// player's own, from [`World::snapshot_for`]; empty from [`World::snapshot`].
+    pub rivals: RivalView,
 }
 
 #[derive(Debug, PartialEq)]
@@ -431,6 +434,8 @@ impl World {
         let (fog, notice) = (self.fog().end, self.notice_scale());
         // The hunt listens to this step's noises before the enemies' senses take them: `step_enemies`
         // empties the list, so a hunt that listened after it would hear nothing.
+        // Rivals sense the step's noises before the enemies take them (and before the hunt).
+        self.perceive_rivals();
         self.night_listen();
         if let Some(nav) = self
             .nav
@@ -479,6 +484,7 @@ impl World {
             pack: None,
             loot: self.loot_view(None),
             night: self.night_view(),
+            rivals: RivalView::default(),
         }
     }
 
@@ -509,6 +515,7 @@ impl World {
         self.raid.mirror = Some(snapshot.loot);
         self.raid.packs = snapshot.pack.into_iter().collect();
         self.night.mirror = Some(snapshot.night);
+        self.rivals.mirror = Some(snapshot.rivals);
     }
 }
 

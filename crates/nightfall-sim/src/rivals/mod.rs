@@ -14,6 +14,7 @@ mod goals;
 // The bot that calls it comes with the rivals' minds; until then only the tests do.
 #[allow(dead_code)]
 mod kit;
+mod mind;
 #[cfg(test)]
 mod tests;
 #[allow(dead_code)]
@@ -312,7 +313,7 @@ impl World {
     }
 
     /// Rival `player` was struck by `by`: a hero of the party, remembered as the one who slew
-    /// it if it dies of it.
+    /// it if it dies of it, and the rival and its party are alerted to them.
     pub(crate) fn rival_struck(&mut self, player: PlayerId, by: PlayerId) {
         if !(self.side_of(player).is_rival() && self.hostile(player, by)) {
             return;
@@ -320,6 +321,7 @@ impl World {
         if let Some(b) = self.rivals.body_mut(player) {
             b.struck_by = Some(by);
         }
+        self.alert_rival(player, by);
     }
 
     /// Rival `player` is out by `exit`, seen: everything it carries goes with it, and nobody

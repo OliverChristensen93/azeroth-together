@@ -3,11 +3,12 @@
 
 use std::sync::Arc;
 
-use crate::heightmap::testmap::flat;
+use crate::heightmap::testmap::{flat, house};
 use crate::heightmap::HeightMap;
 use crate::{
-    CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose, Holder, KitDef, Life, PlayerId, PlayerInput, Refusal,
-    RaidRoll, RoutePlace, Side, UnitRef, World, RIVAL_BASE, TICK_HZ, V2,
+    Alert, CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose, Holder, KitDef,
+    Life, PlayerId, PlayerInput, RaidRoll, Refusal, RoutePlace, Side, UnitRef, World, RIVAL_BASE,
+    TICK_HZ, V2,
 };
 
 pub(super) const CLASSES: &str = r#"[
@@ -1028,7 +1029,11 @@ fn a_hero_strikes_a_rival_and_the_rival_strikes_back() {
     let hit = damage_to(&events, UnitRef::Hero(a));
     assert_eq!(hit.len(), 2, "{events:?}");
     assert!(w.hero(a).unwrap().hp < 900.0);
-    assert_eq!(w.hero(0).unwrap().fight.combo_hero, Some(a), "a combo point on the rival");
+    assert_eq!(
+        w.hero(0).unwrap().fight.combo_hero,
+        Some(a),
+        "a combo point on the rival"
+    );
     press(&mut w, a, 1, 1, Some(UnitRef::Hero(0)));
     w.step();
     let events = w.drain_events();
@@ -1100,9 +1105,17 @@ fn an_area_ability_reaches_the_hostile_heroes_in_it_and_spares_friends() {
     w.step();
     let events = w.drain_events();
     assert_eq!(damage_to(&events, UnitRef::Hero(a)).len(), 1);
-    assert!(damage_to(&events, UnitRef::Hero(1)).is_empty(), "a friend is spared");
-    assert!(damage_to(&events, UnitRef::Hero(far)).is_empty(), "out of reach");
-    assert!(events.iter().any(|e| matches!(e, Event::CastGo { hits, .. } if hits.contains(&UnitRef::Hero(a)))));
+    assert!(
+        damage_to(&events, UnitRef::Hero(1)).is_empty(),
+        "a friend is spared"
+    );
+    assert!(
+        damage_to(&events, UnitRef::Hero(far)).is_empty(),
+        "out of reach"
+    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::CastGo { hits, .. } if hits.contains(&UnitRef::Hero(a)))));
     assert_eq!(w.hero(a).unwrap().fight.held, Some(ControlKind::Root));
 }
 
@@ -1147,7 +1160,10 @@ fn a_slow_and_a_bleed_on_a_hero_run_their_course() {
     steps(&mut w, secs(3.2));
     let ticks = damage_to(&w.drain_events(), UnitRef::Hero(0));
     assert_eq!(ticks, vec![10.0, 10.0, 10.0]);
-    assert!((w.hero(0).unwrap().speed - speed).abs() < 1e-3, "the slow is gone");
+    assert!(
+        (w.hero(0).unwrap().speed - speed).abs() < 1e-3,
+        "the slow is gone"
+    );
 }
 
 #[test]
@@ -1164,9 +1180,16 @@ fn an_area_ability_does_not_reach_a_rival_behind_a_wall() {
     press(&mut w, 0, 1, 4, None);
     w.step();
     let events = w.drain_events();
-    assert!(damage_to(&events, UnitRef::Hero(a)).is_empty(), "{events:?}");
+    assert!(
+        damage_to(&events, UnitRef::Hero(a)).is_empty(),
+        "{events:?}"
+    );
     assert_eq!(w.hero(a).unwrap().fight.held, None);
-    assert_eq!(damage_to(&events, UnitRef::Hero(clear)).len(), 1, "in the open it lands");
+    assert_eq!(
+        damage_to(&events, UnitRef::Hero(clear)).len(),
+        1,
+        "in the open it lands"
+    );
 }
 
 #[test]
@@ -1273,7 +1296,10 @@ fn a_wall_between_a_hero_and_a_rival_hides_it_from_the_hero() {
     let mut w = world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1));
     join(&mut w, 0, 50.0, 60.0);
     let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
-    assert!(w.rival_leaves_unseen(a), "20 yards off behind a roofed house: unseen");
+    assert!(
+        w.rival_leaves_unseen(a),
+        "20 yards off behind a roofed house: unseen"
+    );
     // The same distance in the open is seen.
     let mut w = world("", "");
     join(&mut w, 0, 50.0, 60.0);
@@ -1308,13 +1334,23 @@ fn a_rivals_big_move_shows_first_then_lands_on_its_foes_inside() {
     );
     steps(&mut w, secs(1.3));
     let events = w.drain_events();
-    assert_eq!(damage_to(&events, UnitRef::Hero(0)).len(), 1, "inside: {events:?}");
-    assert!(damage_to(&events, UnitRef::Hero(1)).is_empty(), "10 yards off: outside");
+    assert_eq!(
+        damage_to(&events, UnitRef::Hero(0)).len(),
+        1,
+        "inside: {events:?}"
+    );
+    assert!(
+        damage_to(&events, UnitRef::Hero(1)).is_empty(),
+        "10 yards off: outside"
+    );
     assert!(
         damage_to(&events, UnitRef::Hero(friend)).is_empty(),
         "its friend is spared"
     );
-    assert!(w.enemies[0].hp < sentry_hp, "a monster inside is struck too");
+    assert!(
+        w.enemies[0].hp < sentry_hp,
+        "a monster inside is struck too"
+    );
     assert!(w.telegraphs.iter().all(|t| t.by != Some(a)));
 }
 
@@ -1337,7 +1373,10 @@ fn a_hero_who_dodges_sees_the_big_move_miss() {
     );
     steps(&mut w, secs(0.4));
     let events = w.drain_events();
-    assert!(damage_to(&events, UnitRef::Hero(0)).is_empty(), "{events:?}");
+    assert!(
+        damage_to(&events, UnitRef::Hero(0)).is_empty(),
+        "{events:?}"
+    );
     assert!(events
         .iter()
         .any(|e| matches!(e, Event::Evaded { player: 0, .. })));
@@ -1371,7 +1410,10 @@ fn a_wall_shields_a_hero_from_a_rivals_big_move() {
     w.step();
     steps(&mut w, secs(1.4));
     let events = w.drain_events();
-    assert!(damage_to(&events, UnitRef::Hero(0)).is_empty(), "{events:?}");
+    assert!(
+        damage_to(&events, UnitRef::Hero(0)).is_empty(),
+        "{events:?}"
+    );
     // The same two in the open: struck.
     let mut w = world("", "");
     join(&mut w, 0, 63.0, 60.0);
@@ -1411,4 +1453,457 @@ fn a_big_move_is_lost_when_its_caster_steps_away_or_dodges() {
         steps(&mut w, secs(1.5));
         assert!(damage_to(&w.drain_events(), UnitRef::Hero(0)).is_empty());
     }
+}
+
+/// Walk `player` from `from` to `to` over `n` steps at `gait`, facing the way it goes, with
+/// `stealth_presses` in every input.
+fn walk(w: &mut World, player: PlayerId, from: V2, to: V2, n: usize, gait: Gait, presses: u8) {
+    let way = (to - from).normalize_or_zero();
+    for i in 1..=n {
+        let at = from + (to - from) * (i as f32 / n as f32);
+        w.set_input(
+            player,
+            PlayerInput {
+                pose: Some(HeroPose {
+                    pos: at,
+                    facing: way,
+                    z: 0.0,
+                }),
+                gait,
+                stealth_presses: presses,
+                ..Default::default()
+            },
+        );
+        w.step();
+    }
+}
+
+#[test]
+fn a_sneaking_rogue_passes_behind_a_rival_and_a_running_one_is_heard() {
+    let mut w = world("", "");
+    join(&mut w, 0, 54.0, 40.0);
+    join(&mut w, 1, 54.0, 39.0);
+    let a = rival(&mut w, 0, "digger", 0, 60.0, 60.0);
+    put(&mut w, a, 60.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    // Hero 0 steps into stealth, then sneaks past 6 yards behind the rival.
+    walk(
+        &mut w,
+        0,
+        V2::new(54.0, 40.0),
+        V2::new(54.0, 41.0),
+        3,
+        Gait::Still,
+        1,
+    );
+    assert!(w.hero(0).unwrap().stealthed);
+    walk(
+        &mut w,
+        0,
+        V2::new(54.0, 41.0),
+        V2::new(54.0, 80.0),
+        secs(16.0),
+        Gait::Walk,
+        1,
+    );
+    let r = w.content().rules.senses.awareness.clone();
+    assert!(
+        w.rival_mind(a).unwrap().level(0) < r.suspicious,
+        "unnoticed and unheard"
+    );
+    // Hero 1 runs the same way: its footsteps carry.
+    walk(
+        &mut w,
+        1,
+        V2::new(54.0, 39.0),
+        V2::new(54.0, 80.0),
+        secs(6.0),
+        Gait::Run,
+        0,
+    );
+    assert!(
+        w.rival_mind(a).unwrap().level(1) >= r.suspicious,
+        "heard running past"
+    );
+}
+
+/// A roofed house over (60, 50)-(80, 70) on a flat 120-yard map.
+fn walled_world() -> World {
+    let mut b = flat(120.0);
+    house(&mut b, V2::new(60.0, 50.0), V2::new(80.0, 70.0), None, true);
+    world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1))
+}
+
+/// Hero 0 runs up and down a yard at `x`, `y` for about two seconds.
+fn pace(w: &mut World, x: f32, y: f32) {
+    for _ in 0..5 {
+        walk(w, 0, V2::new(x, y), V2::new(x + 1.0, y), 6, Gait::Run, 0);
+        walk(w, 0, V2::new(x + 1.0, y), V2::new(x, y), 6, Gait::Run, 0);
+    }
+}
+
+#[test]
+fn a_rival_hears_a_hero_behind_a_wall_it_cannot_see_through() {
+    // M14: rivals listen before the enemies take the step's noises; with them listening last,
+    // this hero (out of sight, behind a roofed house's wall) would be heard by nobody.
+    let mut w = walled_world();
+    join(&mut w, 0, 63.0, 60.0);
+    // Outside the west wall, looking away from the house.
+    let a = rival(&mut w, 0, "digger", 0, 58.0, 60.0);
+    put(&mut w, a, 58.0, 60.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    assert_eq!(w.rival_mind(a).unwrap().level(0), 0.0);
+    pace(&mut w, 63.0, 60.0);
+    let m = w.rival_mind(a).unwrap();
+    assert!(
+        m.level(0) > 0.0 || m.is_alerted(),
+        "the rival heard the footsteps through the wall: {:?}",
+        m.state
+    );
+    // The same run far out of hearing leaves it calm.
+    let mut w = walled_world();
+    join(&mut w, 0, 75.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 58.0, 60.0);
+    put(&mut w, a, 58.0, 60.0, V2::new(-1.0, 0.0), Gait::Still);
+    pace(&mut w, 75.0, 60.0);
+    assert_eq!(w.rival_mind(a).unwrap().level(0), 0.0);
+}
+
+#[test]
+fn a_sentry_hears_a_rival_walk_past_and_strikes_it_once_it_is_found() {
+    let mut w = world("", &format!("{}\n", sentry_line(60.0, 60.0)));
+    join(&mut w, 0, 10.0, 10.0);
+    // The sentry faces south; the rival passes 3 yards behind it, inside a walking step's
+    // hearing.
+    let a = rival(&mut w, 0, "digger", 0, 57.0, 63.0);
+    walk(
+        &mut w,
+        a,
+        V2::new(57.0, 63.0),
+        V2::new(63.0, 63.0),
+        secs(3.0),
+        Gait::Walk,
+        0,
+    );
+    assert!(
+        !w.marks_for(a).is_empty(),
+        "the rival's footsteps were heard"
+    );
+    // In front of it, the sentry finds the rival and goes for it as for a hero.
+    walk(
+        &mut w,
+        a,
+        V2::new(63.0, 63.0),
+        V2::new(60.0, 56.0),
+        secs(2.0),
+        Gait::Walk,
+        0,
+    );
+    steps(&mut w, secs(8.0));
+    assert!(w.marks_for(a).iter().any(|m| m.alert == Alert::Alerted));
+    let events = w.drain_events();
+    assert!(
+        !damage_to(&events, UnitRef::Hero(a)).is_empty(),
+        "struck: {events:?}"
+    );
+}
+
+#[test]
+fn an_unaware_rival_takes_an_ambush_and_its_party_hears_of_it() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 23.0, 60.0);
+    let b = rival(&mut w, 1, "digger", 0, 30.0, 60.0);
+    put(&mut w, a, 23.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    w.drain_events();
+    press(&mut w, 0, 1, 2, Some(UnitRef::Hero(a)));
+    w.step();
+    let first = w.drain_events();
+    let hit = first.iter().find_map(|e| match e {
+        Event::Damage {
+            to, amount, ambush, ..
+        } if *to == UnitRef::Hero(a) => Some((*amount, *ambush)),
+        _ => None,
+    });
+    assert!(hit.is_some_and(|(_, ambush)| ambush), "{first:?}");
+    assert!(w.rival_mind(a).unwrap().alerted_to(0));
+    assert!(
+        w.rival_mind(b).unwrap().alerted_to(0),
+        "the shout reached its friend"
+    );
+    // Alerted now: the next blow is no ambush.
+    steps(&mut w, secs(1.1));
+    press(&mut w, 0, 2, 2, Some(UnitRef::Hero(a)));
+    w.step();
+    let second = w.drain_events();
+    assert!(second
+        .iter()
+        .any(|e| matches!(e, Event::Damage { to, ambush: false, .. } if *to == UnitRef::Hero(a))));
+}
+
+#[test]
+fn an_opener_is_refused_on_a_rival_that_has_found_the_hero() {
+    let (mut w, a) = duel();
+    // Stealthed first (the rival loses sight of the hero), then told of them again.
+    walk(
+        &mut w,
+        0,
+        V2::new(20.0, 60.0),
+        V2::new(20.0, 60.0),
+        3,
+        Gait::Still,
+        1,
+    );
+    assert!(w.hero(0).unwrap().stealthed);
+    // An unaware rival may be opened on; one alerted to the hero may not.
+    assert!(w.foe_unaware(a, 0));
+    w.alert_rival(a, 0);
+    assert!(w.rival_mind(a).unwrap().alerted_to(0));
+    assert!(!w.foe_unaware(a, 0));
+    w.drain_events();
+    w.set_input(
+        0,
+        PlayerInput {
+            stealth_presses: 1,
+            cast: Some(CastPress {
+                seq: 1,
+                slot: 74,
+                target: Some(UnitRef::Hero(a)),
+                at: None,
+            }),
+            ..Default::default()
+        },
+    );
+    w.step();
+    let refused = events_of(&mut w, |e| match e {
+        Event::Refused { player: 0, why } => Some(*why),
+        _ => None,
+    });
+    assert_eq!(refused, vec![Refusal::Aware]);
+}
+
+#[test]
+fn the_hero_sees_rivals_in_the_open_not_behind_walls_nor_far_in_stealth() {
+    let mut b = flat(120.0);
+    house(
+        &mut b,
+        V2::new(30.0, 70.0),
+        V2::new(35.0, 90.0),
+        None,
+        false,
+    );
+    let mut w = world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1));
+    join(&mut w, 0, 20.0, 60.0);
+    let open = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    // The line from (20, 60) to (40, 85) crosses the house's west wall.
+    let walled = rival(&mut w, 1, "digger", 0, 40.0, 85.0);
+    let sneak = rival(&mut w, 2, "blade", 0, 30.0, 50.0);
+    walk(
+        &mut w,
+        sneak,
+        V2::new(30.0, 50.0),
+        V2::new(30.0, 50.0),
+        3,
+        Gait::Still,
+        1,
+    );
+    assert!(w.hero(sneak).unwrap().stealthed);
+    put(&mut w, 0, 20.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    let seen = w.snapshot_for(0).rivals.seen;
+    assert!(seen.contains(&open));
+    assert!(!seen.contains(&walled), "behind the house");
+    assert!(
+        !seen.contains(&sneak),
+        "a still blade in stealth, 14 yards off"
+    );
+    put(&mut w, 0, 29.0, 51.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    assert!(
+        w.snapshot_for(0).rivals.seen.contains(&sneak),
+        "close enough to make it out"
+    );
+}
+
+#[test]
+fn a_rival_marks_the_hero_it_suspects_then_is_alerted_to() {
+    let mut w = world("", "");
+    join(&mut w, 0, 40.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 60.0, 60.0);
+    put(&mut w, a, 60.0, 60.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    // Running toward it, in its front cone (M15: two seconds fill the suspicion past the mark).
+    walk(
+        &mut w,
+        0,
+        V2::new(40.0, 60.0),
+        V2::new(48.0, 60.0),
+        secs(2.0),
+        Gait::Run,
+        0,
+    );
+    let marks = w.rival_view(0).marks;
+    assert!(marks.iter().any(|m| m.rival == a), "{marks:?}");
+    walk(
+        &mut w,
+        0,
+        V2::new(48.0, 60.0),
+        V2::new(50.0, 60.0),
+        secs(4.0),
+        Gait::Run,
+        0,
+    );
+    assert!(w.rival_view(0).marks.contains(&crate::RivalMark {
+        rival: a,
+        alert: Alert::Alerted
+    }));
+}
+
+#[test]
+fn a_vanish_makes_rivals_lose_the_rogue() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    w.alert_rival(a, 0);
+    assert!(w.rival_mind(a).unwrap().alerted_to(0));
+    w.rivals_lose(0);
+    assert!(!w.rival_mind(a).unwrap().is_alerted());
+}
+
+#[test]
+fn a_hero_a_rival_is_alerted_to_is_in_combat_until_it_loses_them() {
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
+    w.step();
+    assert!(!w.hero(0).unwrap().fight.in_combat);
+    w.alert_rival(a, 0);
+    w.step();
+    assert!(w.hero(0).unwrap().fight.in_combat, "hunted by a rival");
+    w.rivals_lose(0);
+    steps(&mut w, secs(1.0));
+    assert!(!w.hero(0).unwrap().fight.in_combat);
+}
+
+#[test]
+fn a_mirror_takes_the_rival_view_its_host_sent() {
+    let mut host = world("", "");
+    join(&mut host, 0, 20.0, 60.0);
+    let a = rival(&mut host, 0, "digger", 0, 30.0, 60.0);
+    host.alert_rival(a, 0);
+    host.step();
+    let snap = host.snapshot_for(0);
+    assert!(snap.rivals.seen.contains(&a));
+    let mut mirror = World::new(Arc::new(content("", "")));
+    mirror.begin_mirror();
+    mirror.apply_snapshot(snap.clone());
+    assert_eq!(mirror.rival_view(0), snap.rivals);
+}
+/// A world on open ground whose rogue has a Vanish on action 5 and the tests' Slow on action 6.
+fn rogue_world() -> World {
+    let abilities = ABILITIES.replace(
+        r#"(key: "ambush""#,
+        r#"(key: "vanish", name: "Vanish", spell: 1856, aim: Me, cooldown: 60.0, keeps_stealth: true,
+     effects: [Vanish], tags: [Escape]),
+    (key: "ambush""#,
+    );
+    let classes = CLASSES.replace(
+        r#"(74, "ambush")"#,
+        r#"(74, "ambush"), (5, "vanish"), (6, "slow")"#,
+    );
+    let c = Content::from_ron(ContentSources {
+        classes: &classes,
+        map: MAP,
+        rules: &rules(""),
+        enemies: ENEMIES,
+        spawns: "[]",
+        abilities: &abilities,
+        items: ITEMS,
+        loot: LOOT,
+        monsters: "[]",
+        rivals: RIVALS,
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    w
+}
+
+#[test]
+fn pressing_vanish_makes_rivals_lose_the_rogue() {
+    // The effect itself, not `rivals_lose`: a rogue with a Vanish on its bar presses it.
+    let mut w = rogue_world();
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    w.alert_rival(a, 0);
+    assert!(w.rival_mind(a).unwrap().alerted_to(0));
+    press(&mut w, 0, 1, 5, None);
+    w.step();
+    assert!(
+        !w.rival_mind(a).unwrap().is_alerted(),
+        "a Vanish pressed loses it"
+    );
+}
+
+#[test]
+fn a_blow_that_does_no_damage_still_alerts_the_rival_and_its_party() {
+    // Slow lands no damage: only the ability's own alert (D13) tells the rival and its friend.
+    let mut w = rogue_world();
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    let b = rival(&mut w, 1, "digger", 0, 33.0, 60.0);
+    put(&mut w, a, 30.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    put(&mut w, b, 33.0, 60.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    assert!(!w.rival_mind(a).unwrap().alerted_to(0));
+    w.drain_events();
+    press(&mut w, 0, 1, 6, Some(UnitRef::Hero(a)));
+    w.step();
+    assert!(damage_to(&w.drain_events(), UnitRef::Hero(a)).is_empty());
+    assert!(w.rival_mind(a).unwrap().alerted_to(0), "the slowed rival");
+    assert!(w.rival_mind(b).unwrap().alerted_to(0), "and its friend");
+}
+
+#[test]
+fn any_wound_from_a_hero_alerts_the_rival_it_lands_on() {
+    // A bleed's tick or any damage that is no ability's landing: `rival_struck` alerts.
+    let mut w = world("", "");
+    join(&mut w, 0, 20.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
+    let b = rival(&mut w, 1, "digger", 0, 73.0, 60.0);
+    assert!(!w.rival_mind(a).unwrap().is_alerted());
+    w.wound(a, 10.0, Some(UnitRef::Hero(0)));
+    assert!(w.rival_mind(a).unwrap().alerted_to(0));
+    assert!(w.rival_mind(b).unwrap().alerted_to(0), "its party is told");
+}
+
+#[test]
+fn a_rival_held_out_of_the_fight_neither_looks_nor_thinks() {
+    let mut w = world("", "");
+    join(&mut w, 0, 40.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 60.0, 60.0);
+    put(&mut w, a, 60.0, 60.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    let ci = w.combat.hero_index(a);
+    w.combat.heroes[ci].held = Some(crate::combat::Held {
+        kind: ControlKind::Incapacitate,
+        left: 30.0,
+        by: 0,
+        spell: 0,
+    });
+    // Running at it in plain view, in its front cone: the control in the marks test fills it.
+    walk(
+        &mut w,
+        0,
+        V2::new(40.0, 60.0),
+        V2::new(48.0, 60.0),
+        secs(2.0),
+        Gait::Run,
+        0,
+    );
+    assert_eq!(w.rival_mind(a).unwrap().level(0), 0.0);
+    assert!(w.rival_view(0).marks.is_empty());
 }
