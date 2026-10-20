@@ -73,10 +73,7 @@ pub(super) struct StatusText;
 /// Which (menu, run bar) show: the menu at Nightfall's menu, the run bar during its runs.
 pub(super) fn roots_visible(mode: GameMode, phase: Phase) -> (bool, bool) {
     let ours = mode == GameMode::Nightfall;
-    (
-        ours && phase == Phase::Inn,
-        ours && phase == Phase::Playing,
-    )
+    (ours && phase == Phase::Inn, ours && phase == Phase::Playing)
 }
 
 /// The code or address in pasted text, whatever surrounds it.
@@ -185,7 +182,11 @@ pub(super) fn build_menu(
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
         ))
         .with_children(|panel| {
-            panel.spawn(text(&super::inn().place.name, 22.0, Color::srgb(0.85, 0.8, 0.6)));
+            panel.spawn(text(
+                &super::inn().place.name,
+                22.0,
+                Color::srgb(0.85, 0.8, 0.6),
+            ));
             panel
                 .spawn(Node {
                     column_gap: Val::Px(10.0),
@@ -382,7 +383,12 @@ pub(super) fn refresh_menu(
     // Settings left on are said, so a raid without rivals is never a mystery. A joined player's
     // own settings do not apply, so they are not said.
     let body = if !net.playtest.is_default() && !net.is_client() {
-        format!("{body}\nPlaytest settings are on (the Playtest button).")
+        match super::night::refusal(&super::content(), &net.playtest) {
+            Some(why) => {
+                format!("{body}\nPlaytest settings cannot be used; the plain rules stand: {why}")
+            }
+            None => format!("{body}\nPlaytest settings are on (the Playtest button)."),
+        }
     } else {
         body
     };
@@ -393,8 +399,8 @@ pub(super) fn refresh_menu(
     }
     let visible = shown(&net.role);
     for (action, mut node) in &mut buttons {
-        let on = matches!(action, MenuAction::Class(_) | MenuAction::Back)
-            || visible.contains(action);
+        let on =
+            matches!(action, MenuAction::Class(_) | MenuAction::Back) || visible.contains(action);
         let display = if on { Display::Flex } else { Display::None };
         if node.display != display {
             node.display = display;

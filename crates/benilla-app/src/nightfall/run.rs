@@ -83,6 +83,19 @@ fn entry_of(roll: Option<&RaidRoll>) -> [f32; 3] {
         .to_owned()
 }
 
+/// The content a joined player's mirror world is built on: the shipped rules with the host's rule for
+/// what a death takes, so the client notes and settles a raid as the host does. The shared content
+/// itself when the rule is the same.
+fn mirror_content(death_loss: nightfall_sim::DeathLoss) -> std::sync::Arc<nightfall_sim::Content> {
+    let base = content();
+    if base.rules.run.death_loss == death_loss {
+        return base;
+    }
+    let mut c = (*base).clone();
+    c.rules.run.death_loss = death_loss;
+    std::sync::Arc::new(c)
+}
+
 impl Sim {
     /// A run for everyone in `roster` (just us, alone), stepped here: the raid as the host (or we,
     /// alone) planned it in the inn.
@@ -147,8 +160,13 @@ impl Sim {
 
     /// A joined run: an empty world, filled by the host's snapshots. `planned` is the raid the
     /// host told us in the lobby, which says where it enters the map.
-    fn mirror(me: PlayerId, planned: Option<&RaidRoll>) -> Self {
-        let mut world = World::new(content());
+    fn mirror(
+        me: PlayerId,
+        planned: Option<&RaidRoll>,
+        death_loss: nightfall_sim::DeathLoss,
+    ) -> Self {
+        // The host's rule for what a death takes, so what we note and settle follows it.
+        let mut world = World::new(mirror_content(death_loss));
         // Until the host's first snapshot there is no loot to show: not the raid this world rolls.
         world.begin_mirror();
         Self {
@@ -167,6 +185,12 @@ impl Sim {
             over: None,
             entry: entry_of(planned),
         }
+    }
+
+    /// A joined run under the host's death rule, for tests.
+    #[cfg(test)]
+    pub(super) fn mirror_for_test(death_loss: nightfall_sim::DeathLoss) -> Self {
+        Self::mirror(1, None, death_loss)
     }
 
     /// A hosted run around `world`, for tests of the systems that read it: nothing seen, no marks.
@@ -415,6 +439,7 @@ pub(super) fn start_run(
             return;
         };
         c.start = false;
+        let loss = c.death_loss;
         let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
         // The host gave our hero the pick it last had of us. A stash that has changed since (a
         // move the host had not heard of when it started) cannot be committed: it would leave the
@@ -435,7 +460,7 @@ pub(super) fn start_run(
         }
         // The raid as the host planned it in the lobby: where it enters the map.
         info!("nightfall: a raid begins (joined)");
-        commands.insert_resource(Sim::mirror(me, net.planned_raid().as_ref()));
+        commands.insert_resource(Sim::mirror(me, net.planned_raid().as_ref(), loss));
         player.active = false;
         input.new_run();
         inn_state.reset();
@@ -652,7 +677,7 @@ pub(super) fn step_sim(
                 | Heard::Lost(_)
                 | Heard::Lobby(..)
                 | Heard::InnPoses(_)
-                | Heard::Start(_) => {}
+                | Heard::Start(..) => {}
             }
         }
         sim.play_back(time.delta_secs());
@@ -683,9 +708,10 @@ pub(super) fn step_sim(
             sim.world.set_input(sim.me, input.with_pose(input.pose));
         }
         let from = sim.world.events().len();
+        let before = sim.world.elapsed;
         sim.world.step();
         if let Some(p) = super::fallen::frail_player() {
-            if super::fallen::crossed(super::fallen::FRAIL_AT, sim.world.elapsed) {
+            if super::fallen::crossed(super::fallen::FRAIL_AT, before, sim.world.elapsed) {
                 if let Some(blow) = sim.world.hero(p).map(super::fallen::frail_blow) {
                     sim.world.hurt_hero(p, blow);
                 }
@@ -747,7 +773,7 @@ pub(super) fn leave_run(
 /// anything tells them the run has ended. The end screen is the run being over, not leaving it.
 fn abandon_raid(sim: &mut Sim, net: &mut Net, end: &mut EndRun, stash: &mut Stash) {
     if net.is_client() {
-        stash.profile.settle_missing(&content());
+        stash.profile.settle_missing(sim.world.content());
         stash.save();
         net.leave("You left the raid");
         end.0 = true;
@@ -870,7 +896,7 @@ mod tests {
             !World::new(content()).loot_view(Some(1)).marks.is_empty(),
             "the shipped content places containers"
         );
-        let mirror = Sim::mirror(1, None);
+        let mirror = Sim::mirror(1, None, Default::default());
         let view = mirror.world.loot_view(Some(1));
         assert!(view.marks.is_empty() && view.open.is_none());
         // The first snapshot of the host replaces it, as before.

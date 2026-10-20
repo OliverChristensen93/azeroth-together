@@ -1591,6 +1591,32 @@ mod tests {
         assert!(gone.loadout.safe.is_empty() && gone.stash.is_empty());
     }
     #[test]
+    fn a_joiner_notes_what_a_death_would_leave_by_the_hosts_rule() {
+        let content = shipped();
+        let mut hosts = (*content).clone();
+        hosts.rules.run.death_loss = nightfall_sim::DeathLoss::FoundOnly;
+        let kept_by = |name: &str, rule: &Content| {
+            let mut stash = Stash::open_at(Some(dir(name).join("stash.ron")), &content);
+            stash.profile.loadout = SavedInventory {
+                pack: vec![stack("tough_bread", 2)],
+                ..SavedInventory::default()
+            };
+            let brought = told(&stash, 0, &content);
+            assert_eq!(stash.begin_raid(0, &brought, &content), Ok(true));
+            assert!(note_pack(&mut stash, Some(&brought.inventory), rule));
+            stash.profile.in_raid.unwrap().kept.unwrap().pack.len()
+        };
+        // Under found_only what was brought is kept; under the default rule the pack is not.
+        assert_eq!(kept_by("joiner-own-rule", &content), 0);
+        assert_eq!(kept_by("joiner-host-rule", &hosts), 1);
+        // The mirror world a joiner plays on carries the host's rule, so `note_carry` follows it.
+        let mirror = super::super::run::Sim::mirror_for_test(nightfall_sim::DeathLoss::FoundOnly);
+        assert_eq!(
+            mirror.world.content().rules.run.death_loss,
+            nightfall_sim::DeathLoss::FoundOnly
+        );
+    }
+    #[test]
     fn a_stash_another_game_is_using_is_read_and_left_alone() {
         let content = shipped();
         let path = dir("shut-out").join("stash.ron");

@@ -45,9 +45,10 @@ pub(super) fn status(me: &Hero, heroes: &[Hero], r: &CombatRules) -> Option<Stri
     }
 }
 
-/// Whether the step that brought the run to `elapsed` seconds crossed `at`.
-pub(super) fn crossed(at: f32, elapsed: f32) -> bool {
-    elapsed >= at && elapsed - DT < at
+/// Whether the step that took the run from `before` to `after` seconds crossed `at`. (The night's
+/// speed makes a step more than `DT` long, so the step's own span is what counts.)
+pub(super) fn crossed(at: f32, before: f32, after: f32) -> bool {
+    after >= at && before < at
 }
 
 /// `NIGHTFALL_FRAIL`'s player, if set.
@@ -240,9 +241,12 @@ mod tests {
 
     #[test]
     fn the_frail_hook_falls_once() {
-        assert!(!crossed(FRAIL_AT, FRAIL_AT - DT));
-        assert!(crossed(FRAIL_AT, FRAIL_AT + DT * 0.5));
-        assert!(!crossed(FRAIL_AT, FRAIL_AT + DT * 1.5));
+        assert!(!crossed(FRAIL_AT, FRAIL_AT - 2.0 * DT, FRAIL_AT - DT));
+        assert!(crossed(FRAIL_AT, FRAIL_AT - DT * 0.5, FRAIL_AT + DT * 0.5));
+        assert!(!crossed(FRAIL_AT, FRAIL_AT + DT * 0.5, FRAIL_AT + DT * 1.5));
+        // A step of four times DT (the night at x4) still crosses it once.
+        assert!(crossed(FRAIL_AT, FRAIL_AT - DT, FRAIL_AT + 3.0 * DT));
+        assert!(!crossed(FRAIL_AT, FRAIL_AT + 3.0 * DT, FRAIL_AT + 7.0 * DT));
     }
 
     #[test]

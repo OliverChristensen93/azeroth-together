@@ -4,7 +4,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, RaidRoll, Snapshot,
+    DeathLoss, Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, RaidRoll,
+    Snapshot,
 };
 
 /// Bumped whenever a message changes shape: a client and host must agree.
@@ -108,8 +109,9 @@ pub enum ServerMsg {
         raid: RaidRoll,
     },
     /// The run begins. `raid` numbers it (each start is the next number), and a client tags its
-    /// inputs with it.
-    Start { raid: u32 },
+    /// inputs with it. `death_loss` is the host's rule for what a death takes (the playtest settings
+    /// may change it), which a joined player settles by too.
+    Start { raid: u32, death_loss: DeathLoss },
     /// The world after a step, as this player gets it: the enemies and telegraphs near their
     /// hero, which enemies their hero sees (spec §4.3), what each thinks of their hero (§5.5), and
     /// what happened since the last state this player got (§6).
@@ -269,6 +271,12 @@ mod tests {
         };
         let bytes = postcard::to_stdvec(&msg).unwrap();
         assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), msg);
+        let start = ServerMsg::Start {
+            raid: 3,
+            death_loss: DeathLoss::FoundOnly,
+        };
+        let bytes = postcard::to_stdvec(&start).unwrap();
+        assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), start);
         let poses = ServerMsg::InnPoses(vec![(
             0,
             HeroPose {

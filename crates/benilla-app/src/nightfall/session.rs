@@ -267,6 +267,9 @@ pub(super) struct ClientSide {
     pub start: bool,
     /// The number of the run the host started last, which our inputs are tagged with.
     raid: u32,
+    /// The host's rule for what a death takes, from its last Start: the mirror world and the
+    /// settling of a raid that never ended follow it, not our own settings.
+    pub death_loss: nightfall_sim::DeathLoss,
     /// The next raid as the host planned it, from its last lobby.
     pub planned: Option<RaidRoll>,
     /// The pick we last told the host.
@@ -424,6 +427,7 @@ impl Net {
             poses: HashMap::new(),
             start: false,
             raid: 0,
+            death_loss: Default::default(),
             planned: None,
             sent_pick: None,
             sent_pose: None,
@@ -628,7 +632,15 @@ impl Net {
             // The next Start waits for each joiner's pick after this raid, not the one before it.
             clear_picks(h.peers.iter_mut().map(|p| &mut p.picked));
             let raid = h.raid;
-            h.host.lock().unwrap().broadcast(&ServerMsg::Start { raid });
+            let death_loss = super::night::effective(&content(), &self.playtest)
+                .0
+                .rules
+                .run
+                .death_loss;
+            h.host
+                .lock()
+                .unwrap()
+                .broadcast(&ServerMsg::Start { raid, death_loss });
         }
     }
 
@@ -657,7 +669,7 @@ impl Net {
                     self.solo_raid = Some(replan(roll, &self.playtest));
                 }
             }
-            Role::Host(h) => h.planned = replan(&h.planned, &self.playtest),
+            Role::Host(h) => replan_lobby(&mut h.planned, &mut h.sent, &self.playtest),
             Role::Client(_) => {}
         }
     }
@@ -668,6 +680,14 @@ impl Net {
             self.solo_raid = Some(plan_raid(&self.playtest));
         }
     }
+}
+
+/// The host's planned raid rolled again under new settings. The lobby goes out again with it, so
+/// joiners read what will be played; their Ready stands (a client that sent it once never sends
+/// it again).
+fn replan_lobby(planned: &mut RaidRoll, sent: &mut Option<Vec<LobbyPlayer>>, playtest: &Playtest) {
+    *planned = replan(planned, playtest);
+    *sent = None;
 }
 
 /// This player's host key, `benilla-config/together-host-key.txt`: the same file Survivors uses,
@@ -925,8 +945,9 @@ pub(super) fn lobby(
                     ClientEvent::Message(ServerMsg::InnPoses(poses)) => {
                         c.poses = sane_poses(poses, |p| inn().place.bounds.clamp(p));
                     }
-                    ClientEvent::Message(ServerMsg::Start { raid }) => {
+                    ClientEvent::Message(ServerMsg::Start { raid, death_loss }) => {
                         c.raid = raid;
+                        c.death_loss = death_loss;
                         c.start = true;
                     }
                     ClientEvent::Message(
@@ -1159,7 +1180,7 @@ pub(super) enum Heard {
     /// `Ended` is kept like the lobby.
     InnPoses(Vec<(PlayerId, HeroPose)>),
     /// The host started the next run (number `raid`), possibly in the same poll as `Ended`.
-    Start(u32),
+    Start(u32, nightfall_sim::DeathLoss),
     Lost(String),
 }
 
@@ -1194,7 +1215,9 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
                 heard.push(Heard::Lobby(players, raid));
             }
             ClientEvent::Message(ServerMsg::InnPoses(poses)) => heard.push(Heard::InnPoses(poses)),
-            ClientEvent::Message(ServerMsg::Start { raid }) => heard.push(Heard::Start(raid)),
+            ClientEvent::Message(ServerMsg::Start { raid, death_loss }) => {
+                heard.push(Heard::Start(raid, death_loss));
+            }
             ClientEvent::Message(ServerMsg::Outcome(o)) => heard.push(Heard::Outcome(o)),
             ClientEvent::Message(ServerMsg::RunOver { outcomes }) => {
                 heard.push(Heard::RunOver(outcomes));
@@ -1227,7 +1250,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                     _ => None,
                 });
                 let start = after_ended(heard, |h| match h {
-                    Heard::Start(raid) => Some(*raid),
+                    Heard::Start(raid, loss) => Some((*raid, *loss)),
                     _ => None,
                 });
                 let poses = after_ended(heard, |h| match h {
@@ -1250,8 +1273,9 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                         c.lobby = players;
                         c.planned = Some(raid);
                     }
-                    if let Some(raid) = start {
+                    if let Some((raid, loss)) = start {
                         c.raid = raid;
+                        c.death_loss = loss;
                         c.start = true;
                     }
                 }
@@ -1266,7 +1290,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
             | Heard::RunOver(_)
             | Heard::Lobby(..)
             | Heard::InnPoses(_)
-            | Heard::Start(_) => {}
+            | Heard::Start(..) => {}
         }
     }
     false
@@ -1282,6 +1306,25 @@ pub(super) fn close_on_exit(mut exits: MessageReader<AppExit>, mut net: ResMut<N
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_settings_replan_the_hosts_raid_and_send_the_lobby_again() {
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let c = content();
+        let mut planned = RaidRoll::standard(&c, 9);
+        let mut sent = Some(Vec::new());
+        let p = Playtest {
+            monsters: nightfall_sim::MonstersOut::None,
+            ..Default::default()
+        };
+        replan_lobby(&mut planned, &mut sent, &p);
+        assert_eq!(planned.seed, 9, "the same night");
+        assert!(planned
+            .monsters
+            .iter()
+            .all(|&m| c.monsters[usize::from(m)].always));
+        assert!(sent.is_none(), "so the next lobby tick broadcasts it");
+    }
 
     #[test]
     fn a_name_is_trimmed_to_twelve_visible_characters() {
@@ -1456,12 +1499,16 @@ mod tests {
         };
         let start_of = |heard: &[Heard]| {
             after_ended(heard, |h| match h {
-                Heard::Start(raid) => Some(*raid),
+                Heard::Start(raid, _) => Some(*raid),
                 _ => None,
             })
         };
         // The host ended the run and started the next in one poll.
-        let heard = [Heard::Ended, lobby("A"), Heard::Start(2)];
+        let heard = [
+            Heard::Ended,
+            lobby("A"),
+            Heard::Start(2, Default::default()),
+        ];
         assert_eq!(start_of(&heard), Some(2));
         // The lobby that came with the end brings the planned raid with it.
         let players = after_ended(&heard, |h| match h {
@@ -1470,13 +1517,25 @@ mod tests {
         });
         assert_eq!(players, Some((1, 9)));
         // A start before the end belongs to the run that ended; none is no start.
-        assert_eq!(start_of(&[Heard::Start(1), Heard::Ended]), None);
+        assert_eq!(
+            start_of(&[Heard::Start(1, Default::default()), Heard::Ended]),
+            None
+        );
         assert_eq!(start_of(&[Heard::Ended]), None);
         assert_eq!(start_of(&[]), None);
         // After two ends, the last start after the last end.
-        let heard = [Heard::Ended, Heard::Start(2), Heard::Ended, Heard::Start(3)];
+        let heard = [
+            Heard::Ended,
+            Heard::Start(2, Default::default()),
+            Heard::Ended,
+            Heard::Start(3, Default::default()),
+        ];
         assert_eq!(start_of(&heard), Some(3));
-        let heard = [Heard::Ended, Heard::Start(2), Heard::Ended];
+        let heard = [
+            Heard::Ended,
+            Heard::Start(2, Default::default()),
+            Heard::Ended,
+        ];
         assert_eq!(start_of(&heard), None);
     }
 
@@ -1777,16 +1836,34 @@ mod tests {
         let died = |by| Event::RivalDied { player: 64, by };
         let near = |u| u == UnitRef::Hero(64);
         assert!(event_for(&died(None), 0, near));
-        assert!(!event_for(&died(None), 0, |_| false), "a far rival's death is not sent");
-        assert!(event_for(&died(Some(0)), 0, |_| false), "its slayer is told wherever it fell");
+        assert!(
+            !event_for(&died(None), 0, |_| false),
+            "a far rival's death is not sent"
+        );
+        assert!(
+            event_for(&died(Some(0)), 0, |_| false),
+            "its slayer is told wherever it fell"
+        );
         assert!(!event_for(&died(Some(1)), 0, |_| false));
-        let out = Event::RivalOut { player: 64, exit: 1 };
+        let out = Event::RivalOut {
+            player: 64,
+            exit: 1,
+        };
         // Told to everyone: it asks `near` of nothing, as the rival is gone when events are sent.
         assert!(event_for(&out, 0, |_| false));
         assert!(event_for(&out, 3, |_| false));
-        let healed = |player| Event::Healed { player, amount: 60.0 };
-        assert!(event_for(&healed(0), 0, |_| false), "a heal reaches its own hero");
-        assert!(!event_for(&healed(64), 0, |_| true), "not those who only see it");
+        let healed = |player| Event::Healed {
+            player,
+            amount: 60.0,
+        };
+        assert!(
+            event_for(&healed(0), 0, |_| false),
+            "a heal reaches its own hero"
+        );
+        assert!(
+            !event_for(&healed(64), 0, |_| true),
+            "not those who only see it"
+        );
     }
 
     #[test]
@@ -1873,7 +1950,8 @@ mod tests {
         let rival = nightfall_sim::RIVAL_BASE;
         let miss = |from| Event::Evaded { player: 1, from };
         // Heard by those near the rival that threw it.
-        assert!(event_for(&miss(UnitRef::Hero(rival)), 0, |u| u == UnitRef::Hero(rival)));
+        assert!(event_for(&miss(UnitRef::Hero(rival)), 0, |u| u
+            == UnitRef::Hero(rival)));
         assert!(!event_for(&miss(UnitRef::Hero(rival)), 0, |_| false));
         // Enemy 0 stands beside someone else: that is no reason to tell them of a rival's miss.
         assert!(!event_for(&miss(UnitRef::Hero(rival)), 0, |u| u == UnitRef::Enemy(0)));

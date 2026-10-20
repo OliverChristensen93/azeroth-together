@@ -97,6 +97,12 @@ pub(super) fn effective(content: &Arc<Content>, playtest: &Playtest) -> (Arc<Con
     }
 }
 
+/// Why the playtest settings cannot be applied to this content, if they cannot ([`effective`] then
+/// plays the plain rules).
+pub(super) fn refusal(content: &Arc<Content>, playtest: &Playtest) -> Option<String> {
+    playtest.content_for(content).err()
+}
+
 /// [`plan`] under the playtest settings, with the hooks from the environment, which win over
 /// them: `NIGHTFALL_WEATHER`, `NIGHTFALL_MONSTERS`, `NIGHTFALL_RIVALS`.
 pub(super) fn plan_from_env(content: &Arc<Content>, seed: u64, playtest: &Playtest) -> RaidRoll {
@@ -530,7 +536,10 @@ mod tests {
         app.add_systems(Update, (cues, super::super::ravens::cries, hear).chain());
         app.update();
         let heard = &app.world().resource::<Heard>().sounds;
-        let cue = c.rules.night.stages[1].cue.as_ref().expect("stage 1 has a cue");
+        let cue = c.rules.night.stages[1]
+            .cue
+            .as_ref()
+            .expect("stage 1 has a cue");
         assert!(
             heard
                 .iter()
@@ -540,8 +549,9 @@ mod tests {
         let cry = c.rules.night.ravens.cry.as_ref().expect("the ravens cry");
         let at = c.map.flocks[0];
         assert!(
-            heard.iter().any(|s| s.sound == cue_of(cry)
-                && s.at == Some(Vec3::new(-at.y, 0.0, -at.x))),
+            heard
+                .iter()
+                .any(|s| s.sound == cue_of(cry) && s.at == Some(Vec3::new(-at.y, 0.0, -at.x))),
             "the flock's cry comes from where it sat: {heard:?}"
         );
     }
@@ -558,7 +568,8 @@ mod tests {
             .position(|w| w.key == "rain")
             .unwrap();
         let mut host = nightfall_sim::World::new(c.clone());
-        host.begin_raid(plan(&c, 5, &Playtest::default(), Some("rain"), None)).unwrap();
+        host.begin_raid(plan(&c, 5, &Playtest::default(), Some("rain"), None))
+            .unwrap();
         host.add_hero(0, "rogue", "Host", 1, 0).unwrap();
         let mut mirror = nightfall_sim::World::new(c.clone());
         mirror.begin_mirror();
@@ -604,13 +615,18 @@ mod tests {
             asleep: false,
             fight: Default::default(),
         };
-        world.enemies.push(walker(here + nightfall_sim::V2::new(10.0, 0.0)));
+        world
+            .enemies
+            .push(walker(here + nightfall_sim::V2::new(10.0, 0.0)));
         let mut app = app_for(Sim::for_test(world));
         let body = app
             .world_mut()
             .spawn(Transform::from_translation(Vec3::new(1.0, 2.0, 3.0)))
             .id();
-        app.world_mut().resource_mut::<EnemyViews>().drawn.insert(9, body);
+        app.world_mut()
+            .resource_mut::<EnemyViews>()
+            .drawn
+            .insert(9, body);
         app.add_systems(Update, (step_sounds, hear).chain());
         app.update();
         let heard = app.world().resource::<Heard>().sounds.clone();

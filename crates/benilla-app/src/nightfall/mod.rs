@@ -401,9 +401,9 @@ impl Plugin for NightfallPlugin {
             .add_systems(
                 Update,
                 auto_brain::plan
-                    // Once the world is stepped, before the walk, the looting and the Stealth
-                    // presses that read it.
-                    .after(view::sync)
+                    // Before the walk, the looting and the Stealth presses that read it (a frame
+                    // behind the world is fine; ordering it after the step would loop round the
+                    // pose the Stealth press comes before).
                     .before(exits::autoexit)
                     .before(stance::auto_stealth)
                     .before(loot_view::autoloot)
