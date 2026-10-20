@@ -72,6 +72,8 @@ impl World {
         let content = self.content.clone();
         // A rival dies at 0 health unless the rules let it go down as heroes do (spec §7.4:
         // "killed, they drop" their bags; a 45-second crawl would only delay it).
+        // It is told twice on purpose: `Died` is the body's fall (the "Dead" text over it, as for
+        // any hero), `RivalDied` the raid's account of it (the kill and the loot).
         if self.heroes[hi].side.is_rival() && !content.rules.rivals.downed {
             self.stop_cast(hi, Stop::Interrupted);
             let h = &mut self.heroes[hi];

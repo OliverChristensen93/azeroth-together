@@ -229,7 +229,11 @@ mod tests {
             "Reviving Hero0..."
         );
         let far = hero(1, 10.0, Life::Up);
-        assert_eq!(status(&far, &[friend, far.clone()], &r), None);
+        assert_eq!(status(&far, &[friend.clone(), far.clone()], &r), None);
+        // A downed rival beside an up hero is no friend to revive.
+        let mut foe = friend;
+        foe.side = nightfall_sim::Side::Rival(0);
+        assert_eq!(status(&me, &[foe, me.clone()], &r), None);
         // Up and alone: nothing to say.
         assert_eq!(status(&me, &[me.clone()], &r), None);
     }

@@ -1250,3 +1250,33 @@ fn the_first_blow_at_an_unaware_rival_is_an_ambush_and_says_so() {
     });
     assert_eq!(ambush.first(), Some(&true), "{ambush:?}");
 }
+
+#[test]
+fn a_rival_stays_while_any_one_hero_of_the_party_sees_it() {
+    let mut w = world("", "");
+    join(&mut w, 0, 60.0, 60.0);
+    join(&mut w, 1, 5.0, 5.0);
+    // Far from one hero, near the other.
+    let a = rival(&mut w, 0, "digger", 0, 66.0, 60.0);
+    assert!(!w.rival_leaves_unseen(a), "the near hero sees it");
+    assert!(w.hero(a).is_some());
+    // Both far: now it may go.
+    put(&mut w, 0, 5.0, 8.0, V2::new(1.0, 0.0), Gait::Still);
+    w.step();
+    assert!(w.rival_leaves_unseen(a));
+}
+
+#[test]
+fn a_wall_between_a_hero_and_a_rival_hides_it_from_the_hero() {
+    let mut b = flat(120.0);
+    crate::heightmap::testmap::house(&mut b, V2::new(60.0, 50.0), V2::new(80.0, 70.0), None, true);
+    let mut w = world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1));
+    join(&mut w, 0, 50.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
+    assert!(w.rival_leaves_unseen(a), "20 yards off behind a roofed house: unseen");
+    // The same distance in the open is seen.
+    let mut w = world("", "");
+    join(&mut w, 0, 50.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
+    assert!(!w.rival_leaves_unseen(a));
+}

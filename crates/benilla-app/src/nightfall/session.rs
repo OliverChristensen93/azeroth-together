@@ -1034,7 +1034,9 @@ pub(super) fn event_for(event: &Event, me: PlayerId, near: impl Fn(UnitRef) -> b
         Event::EnemyDied { id, by } => involves(UnitRef::Enemy(*id)) || by.is_some_and(hero),
         // A rival is a hero of another side: told to those near it, and to its slayer.
         Event::RivalDied { player, by } => hero(*player) || by.is_some_and(hero),
-        Event::RivalOut { player, .. } => hero(*player),
+        // Told to every player in the raid: the rival is gone from the world by the time events
+        // are filtered, so nothing could place it for `near` (an exit is seen by someone).
+        Event::RivalOut { .. } => true,
         // A heal is its own hero's: no one else needs to know of the health it gave.
         Event::Healed { player, .. } => *player == me,
         // The night is everyone's (spec §7.2): its cues, its stages, the hunt's closing and the
@@ -1752,8 +1754,9 @@ mod tests {
         assert!(event_for(&died(Some(0)), 0, |_| false), "its slayer is told wherever it fell");
         assert!(!event_for(&died(Some(1)), 0, |_| false));
         let out = Event::RivalOut { player: 64, exit: 1 };
-        assert!(event_for(&out, 0, near));
-        assert!(!event_for(&out, 0, |_| false));
+        // Told to everyone: it asks `near` of nothing, as the rival is gone when events are sent.
+        assert!(event_for(&out, 0, |_| false));
+        assert!(event_for(&out, 3, |_| false));
         let healed = |player| Event::Healed { player, amount: 60.0 };
         assert!(event_for(&healed(0), 0, |_| false), "a heal reaches its own hero");
         assert!(!event_for(&healed(64), 0, |_| true), "not those who only see it");
