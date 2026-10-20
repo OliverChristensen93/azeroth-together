@@ -1566,6 +1566,23 @@ mod tests {
     }
 
     #[test]
+    fn a_joined_run_is_made_on_the_death_rule_of_the_start_it_was_sent() {
+        use nightfall_sim::DeathLoss;
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let mut net = Net::default();
+        net.join("127.0.0.1:9");
+        let Role::Client(c) = &mut net.role else {
+            panic!("joined")
+        };
+        for loss in [DeathLoss::FoundOnly, DeathLoss::Everything] {
+            c.note_start(1, loss);
+            let sim = super::super::run::Sim::joined(c, 1);
+            assert_eq!(sim.world.content().rules.run.death_loss, loss);
+        }
+    }
+
+    #[test]
     fn the_poses_that_come_with_the_end_are_kept_and_the_old_ones_forgotten() {
         use nightfall_sim::V2;
         let _ = super::super::CONTENT.set(super::super::shipped_content());

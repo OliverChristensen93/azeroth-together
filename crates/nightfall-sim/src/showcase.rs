@@ -18,6 +18,8 @@ const RADII: usize = 6;
 const SPREAD: i32 = 40;
 /// Degrees between the bearings tried.
 const SPREAD_STEP: i32 = 8;
+/// How many radii the kinds take turns starting at, so they do not all stand on one circle.
+const STAGGER: usize = 3;
 /// Yards two showcase enemies keep apart.
 const APART: f32 = 10.0;
 /// Yards around the entry within which a flock is settled for the showcase.
@@ -51,7 +53,7 @@ fn stands(nav: &mut Navigator, p: V2) -> Option<V3> {
 /// is not water, is outside the arrive-unseen ring (and [`OUTSIDE`] yards past it), keeps
 /// [`APART`] yards from the others, and has a path from the entry within the errand budget. The
 /// kinds go round the entry in the content's order, each tried at its own bearing and then
-/// [`SPREAD`] degrees either side of it, nearest radius first.
+/// [`SPREAD`] degrees either side of it, its own first radius first (see [`STAGGER`]).
 pub fn plan(content: &Content, nav: &mut Navigator, entry: V2) -> ShowcasePlan {
     let mut out = ShowcasePlan::default();
     let ring = content.rules.night.arrive_unseen + OUTSIDE;
@@ -72,7 +74,8 @@ pub fn plan(content: &Content, nav: &mut Navigator, entry: V2) -> ShowcasePlan {
                 }
                 let degrees = (sign * step * SPREAD_STEP) as f32;
                 let angle = base + degrees.to_radians();
-                for r in 0..RADII {
+                // Each kind starts at a radius of its own (three in turn), so the ring is not one circle.
+                for r in (0..RADII).map(|k| (k + i % STAGGER) % RADII) {
                     let p = entry + V2::from_angle(angle, ring + r as f32 * RADIUS_STEP);
                     if out
                         .enemies
@@ -242,6 +245,15 @@ mod tests {
                 assert!(a.ground().distance(b.ground()) >= APART);
             }
         }
+        // Not all on one circle: the kinds start at different radii.
+        let mut radii: Vec<i32> = p
+            .enemies
+            .iter()
+            .map(|(_, _, a)| a.ground().distance(entry()).round() as i32 / 4)
+            .collect();
+        radii.sort_unstable();
+        radii.dedup();
+        assert!(radii.len() >= 2, "{radii:?}");
         // The flock beside the entry is settled; the far one is not.
         assert_eq!(p.flocks, vec![0]);
         // No rivals in this content.

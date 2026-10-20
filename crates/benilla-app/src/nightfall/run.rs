@@ -187,6 +187,12 @@ impl Sim {
         }
     }
 
+    /// A joined run: the world the host planned for us in the lobby, on the death rule of the
+    /// Start we were sent (not our own settings).
+    pub(super) fn joined(c: &session::ClientSide, me: PlayerId) -> Self {
+        Self::mirror(me, c.planned.as_ref(), c.death_loss)
+    }
+
     /// A joined run under the host's death rule, for tests.
     #[cfg(test)]
     pub(super) fn mirror_for_test(death_loss: nightfall_sim::DeathLoss) -> Self {
@@ -452,7 +458,8 @@ pub(super) fn start_run(
             return;
         };
         c.start = false;
-        let loss = c.death_loss;
+        // The world is made now, from what the Start told us, while the borrow is at hand.
+        let sim = Sim::joined(c, me);
         let own = session::own_pick(&selection, session::own_loadout(&selection, &stash));
         // The host gave our hero the pick it last had of us. A stash that has changed since (a
         // move the host had not heard of when it started) cannot be committed: it would leave the
@@ -473,7 +480,7 @@ pub(super) fn start_run(
         }
         // The raid as the host planned it in the lobby: where it enters the map.
         info!("nightfall: a raid begins (joined)");
-        commands.insert_resource(Sim::mirror(me, net.planned_raid().as_ref(), loss));
+        commands.insert_resource(sim);
         player.active = false;
         input.new_run();
         inn_state.reset();

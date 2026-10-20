@@ -130,6 +130,11 @@ pub(super) struct BoardRoot;
 #[derive(Component)]
 pub(super) struct BoardBody;
 
+/// The board's lines, the part rebuilt when they change. The Ready button is not in it: it lives as
+/// long as the board, so a press is never lost to a rebuild in the same frame.
+#[derive(Component)]
+pub(super) struct BoardLines;
+
 #[derive(Component)]
 pub(super) struct ReadyButton;
 
@@ -138,6 +143,7 @@ pub(super) struct BoardFont(Handle<Font>);
 
 pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
+    let ready_font = font.clone();
     commands
         .spawn((
             BoardRoot,
@@ -167,7 +173,18 @@ pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>)
                 },
                 BackgroundColor(PANEL),
                 BorderColor::all(EDGE),
-            ));
+            ))
+            .with_children(|body| {
+                body.spawn((
+                    BoardLines,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    },
+                ));
+                widgets::text_button(body, &ready_font, ReadyButton, "Ready");
+            });
         });
     commands.insert_resource(BoardFont(font));
 }
@@ -222,7 +239,9 @@ pub(super) fn rebuild(
     state: Res<InnState>,
     real: Res<Time<Real>>,
     font: Option<Res<BoardFont>>,
-    body: Query<Entity, With<BoardBody>>,
+    body: Query<Entity, With<BoardLines>>,
+    buttons: Query<&Children, With<ReadyButton>>,
+    mut captions: Query<&mut Text>,
     mut last: Local<(f32, bool, Vec<Line>)>,
 ) {
     if !open.0 {
@@ -283,13 +302,18 @@ pub(super) fn rebuild(
             };
             b.spawn(text(font, l, size, color));
         }
-        widgets::text_button(
-            b,
-            font,
-            ReadyButton,
-            if state.ready { "Not Ready" } else { "Ready" },
-        );
     });
+    // The button stays; its caption follows Ready.
+    let caption = if state.ready { "Not Ready" } else { "Ready" };
+    for children in &buttons {
+        for child in children.iter() {
+            if let Ok(mut t) = captions.get_mut(child) {
+                if t.0 != caption {
+                    t.0 = caption.to_owned();
+                }
+            }
+        }
+    }
     last.1 = state.ready;
     last.2 = lines;
 }

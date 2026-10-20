@@ -336,6 +336,7 @@ impl Plugin for NightfallPlugin {
                 ..default()
             })
             .init_resource::<playtest::PlaytestOpen>()
+            .init_resource::<trader::PendingSale>()
             .init_resource::<session::InnState>()
             .init_resource::<inn::InnViews>()
             .init_resource::<npcs::NpcViews>()

@@ -33,6 +33,41 @@ pub(super) enum TraderButton {
 #[derive(Resource)]
 pub(super) struct TraderFont(Handle<Font>);
 
+/// The sale the trader waits to have confirmed: the stash slot and the item in it (so a slot that
+/// shifted under a changed stash is not taken for the one asked about).
+#[derive(Resource, Default, Debug, PartialEq, Eq)]
+pub(super) struct PendingSale(pub Option<(usize, String)>);
+
+/// The first quality that asks before it is sold: rare (WoW's 3) and better.
+const CONFIRM_FROM_QUALITY: u8 = 3;
+
+/// What a press on a stash row's Sell does.
+#[derive(Debug, PartialEq, Eq)]
+enum SalePress {
+    /// Sell now.
+    Sell,
+    /// Ask first; the row now says "Sure?".
+    Ask,
+}
+
+/// A press on Sell for slot `n` holding `key` of `quality`, given the sale already asked about:
+/// common stacks sell at once, a rare-or-better one asks and is sold by a second press on the
+/// same row. The sale asked about after the press is returned beside it.
+fn sale_press(
+    pending: &Option<(usize, String)>,
+    n: usize,
+    key: &str,
+    quality: u8,
+) -> (SalePress, Option<(usize, String)>) {
+    if quality < CONFIRM_FROM_QUALITY {
+        return (SalePress::Sell, None);
+    }
+    match pending {
+        Some((m, k)) if *m == n && k == key => (SalePress::Sell, None),
+        _ => (SalePress::Ask, Some((n, key.to_owned()))),
+    }
+}
+
 pub(super) fn spawn_root(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     commands.spawn((
@@ -100,11 +135,16 @@ pub(super) fn rebuild(
     stash: Res<Stash>,
     lock: Res<StashLock>,
     panel: Res<InnPanel>,
+    pending: Res<PendingSale>,
     font: Option<Res<TraderFont>>,
     body: Query<Entity, With<TraderBody>>,
 ) {
     let inn = inn();
-    if !(stash.is_changed() || lock.is_changed() || panel.is_changed()) || !trading(&panel, &inn)
+    if !(stash.is_changed()
+        || lock.is_changed()
+        || panel.is_changed()
+        || pending.is_changed())
+        || !trading(&panel, &inn)
     {
         return;
     }
@@ -198,7 +238,13 @@ pub(super) fn rebuild(
                             12.0,
                             Color::WHITE,
                         ));
-                        widgets::text_button(r, font, TraderButton::Sell(n), "Sell");
+                        let asked = pending.0.as_ref().is_some_and(|(m, k)| *m == n && *k == s.item);
+                        widgets::text_button(
+                            r,
+                            font,
+                            TraderButton::Sell(n),
+                            if asked { "Sure?" } else { "Sell" },
+                        );
                     });
                 }
             });
@@ -234,6 +280,7 @@ pub(super) fn clicks(
     lock: Res<StashLock>,
     mut stash: ResMut<Stash>,
     mut panel: ResMut<InnPanel>,
+    mut pending: ResMut<PendingSale>,
 ) {
     let content = content();
     let inn = inn();
@@ -247,8 +294,32 @@ pub(super) fn clicks(
             continue;
         }
         match b {
-            TraderButton::Close => panel.0 = None,
-            _ => {
+            TraderButton::Close => {
+                panel.0 = None;
+                pending.0 = None;
+            }
+            TraderButton::Sell(n) => {
+                let asked = stash.profile.stash.get(*n).map(|s| {
+                    let quality = content.item(&s.item).map_or(0, |k| content.items[k].quality);
+                    sale_press(&pending.0, *n, &s.item, quality)
+                });
+                let Some((press, next)) = asked else {
+                    // No such stack: the trade says so.
+                    trade(&mut stash, *b, lock.0, &inn, &content);
+                    continue;
+                };
+                if pending.0 != next {
+                    pending.0 = next;
+                }
+                if press == SalePress::Sell {
+                    trade(&mut stash, *b, lock.0, &inn, &content);
+                }
+            }
+            TraderButton::Buy(_) => {
+                // Buying takes a sale waiting for its confirmation back.
+                if pending.0.is_some() {
+                    pending.0 = None;
+                }
                 trade(&mut stash, *b, lock.0, &inn, &content);
             }
         }
@@ -430,6 +501,27 @@ mod tests {
         assert!(!trading(&InnPanel(Some(at(NpcRole::Banker))), &inn));
         assert!(!trading(&InnPanel(None), &inn));
         assert!(!trading(&InnPanel(Some(inn.npcs.len())), &inn));
+    }
+
+    #[test]
+    fn a_rare_stack_asks_before_it_sells_and_a_common_one_does_not() {
+        // Common and uncommon sell at once and leave nothing pending.
+        assert_eq!(sale_press(&None, 2, "ruby_shard", 1), (SalePress::Sell, None));
+        assert_eq!(sale_press(&None, 2, "ruby_shard", 2), (SalePress::Sell, None));
+        // A rare one asks, then sells on a second press of the same row.
+        let (press, pending) = sale_press(&None, 2, "gem", 3);
+        assert_eq!(press, SalePress::Ask);
+        assert_eq!(pending, Some((2, "gem".to_owned())));
+        assert_eq!(sale_press(&pending, 2, "gem", 3), (SalePress::Sell, None));
+        // A press on another row, or another item in the same slot, asks afresh.
+        assert_eq!(
+            sale_press(&pending, 3, "gem", 4),
+            (SalePress::Ask, Some((3, "gem".to_owned())))
+        );
+        assert_eq!(
+            sale_press(&pending, 2, "other", 3),
+            (SalePress::Ask, Some((2, "other".to_owned())))
+        );
     }
 
     #[test]

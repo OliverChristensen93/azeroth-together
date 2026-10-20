@@ -228,12 +228,13 @@ fn autoextract() -> bool {
 
 /// The middle of the open exit nearest `from`; none when every exit is shut (or late).
 fn nearest_open_exit(exits: &[ExitMark], content: &Content, from: V2) -> Option<V2> {
-    exits
+    let open: Vec<V2> = exits
         .iter()
         .filter(|e| e.open)
         .filter_map(|e| content.map.exits.get(usize::from(e.exit)))
         .map(|d| d.at)
-        .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
+        .collect();
+    super::auto_brain::nearest_exit(&open, from)
 }
 
 /// `NIGHTFALL_AUTOPLAY_EXTRACT`: the autoplay walks to the nearest open exit (without it, once the
