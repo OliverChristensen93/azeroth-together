@@ -329,7 +329,8 @@ Also:
 
 ## Playing this branch
 
-Run **`D:\Gameszeroth-together-pointers	argeteleasezeroth-together.exe`**. This branch
+Run **`D:\Games\azeroth-together-pointers\target\release\azeroth-together.exe`**. This branch
+eleasezeroth-together.exe`**. This branch
 has its own build folder now. The main checkout's `target\` is shared with other branches (the
 weather session builds there), and two checkouts in one build folder overwrite each other's
 compiled code and exe.
