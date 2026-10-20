@@ -11,6 +11,11 @@
 //! - Shafts ([`shafts`]): screen-space sun (and faint moon) rays, a radial blur of the bright sky
 //!   toward the sun, plus the storm's cool, drained grade and the flash, in one post pass.
 //! - Clock ([`clock`]): the request's minute of the day into the engine's `WorldTime`.
+//! - Bolts ([`bolt`]): each strike also draws a jagged bolt in the sky, mostly where you look.
+//! - Mist ([`mist`]): low, soft sheets of mist over the ground (a zone's own, more in rain).
+//! - Beams ([`beams`]): slanted sunbeams in the air around the player, seen from any camera.
+//! - Lens drops: raindrops on the camera in rain, in the post pass.
+//! - Wind ([`wind`]): gusts that lean the engine's rain and mist, harder in a storm.
 //!
 //! Techniques after Corfirean/modern-wow-renderer's ideas (no code taken; it carries no
 //! licence): rays only from bright sky near the sun, the moon's rays at about a third of the
@@ -20,17 +25,21 @@ use bevy::prelude::*;
 
 use benilla_world::weather::WeatherKind;
 
+mod beams;
+mod bolt;
 mod clock;
 mod lightning;
+mod mist;
 pub(crate) mod schedule;
 mod shafts;
 mod weather;
+mod wind;
 
 pub(crate) use schedule::ZoneSky;
 
 /// Which effects are on. A game may change it at any time; `WOW_ATMOS` sets where it starts:
-/// `off` for none, or a comma list of effects to leave out (`-rays,-lightning`); `WOW_RAYS=<n>`
-/// scales the shafts (1 is the default strength).
+/// `off` for none, or a comma list of effects to leave out (`-rays,-lightning`); `WOW_RAYS=<n>`,
+/// `WOW_MIST=<n>` and `WOW_BEAMS=<n>` scale the shafts, the mist and the beams (1 the default).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct AtmosphereSettings {
     pub weather: bool,
@@ -40,7 +49,19 @@ pub(crate) struct AtmosphereSettings {
     pub grade: bool,
     /// Whether a game's schedule moves the time of day; off, it keeps its fixed hour.
     pub clock: bool,
+    /// Low ground mist.
+    pub mist: bool,
+    /// World-space sunbeams around the player.
+    pub beams: bool,
+    /// Raindrops on the camera.
+    pub lens: bool,
+    /// Wind gusts in the weather.
+    pub wind: bool,
     pub ray_strength: f32,
+    /// Scales the ground mist's opacity (`WOW_MIST`, 1 the default).
+    pub mist_strength: f32,
+    /// Scales the sunbeams' brightness (`WOW_BEAMS`, 1 the default).
+    pub beam_strength: f32,
 }
 
 impl Default for AtmosphereSettings {
@@ -51,7 +72,13 @@ impl Default for AtmosphereSettings {
             rays: true,
             grade: true,
             clock: true,
+            mist: true,
+            beams: true,
+            lens: true,
+            wind: true,
             ray_strength: 1.0,
+            mist_strength: 1.0,
+            beam_strength: 1.0,
         }
     }
 }
@@ -73,12 +100,20 @@ impl AtmosphereSettings {
                         s.rays = false;
                         s.grade = false;
                         s.clock = false;
+                        s.mist = false;
+                        s.beams = false;
+                        s.lens = false;
+                        s.wind = false;
                     }
                     "weather" => s.weather = on,
                     "lightning" => s.lightning = on,
                     "rays" => s.rays = on,
                     "grade" => s.grade = on,
                     "clock" => s.clock = on,
+                    "mist" => s.mist = on,
+                    "beams" => s.beams = on,
+                    "lens" => s.lens = on,
+                    "wind" => s.wind = on,
                     _ => {}
                 }
             }
@@ -90,10 +125,18 @@ impl AtmosphereSettings {
     }
 
     fn from_env() -> Self {
-        Self::parse(
+        let scale = |name: &str| {
+            crate::webenv::var(name)
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .map(|n| n.max(0.0))
+        };
+        let mut s = Self::parse(
             crate::webenv::var("WOW_ATMOS").as_deref(),
             crate::webenv::var("WOW_RAYS").as_deref(),
-        )
+        );
+        s.mist_strength = scale("WOW_MIST").unwrap_or(1.0);
+        s.beam_strength = scale("WOW_BEAMS").unwrap_or(1.0);
+        s
     }
 }
 
@@ -107,6 +150,8 @@ pub(crate) struct SkyRequest {
     pub intensity: f32,
     /// How stormy, 0..1: lightning comes only in rain with a storm above 0.
     pub storm: f32,
+    /// The zone's own ground mist, 0..1 (rain adds to it).
+    pub mist: f32,
     /// The minute of the day (0..1440) to draw, or `None` to leave the clock alone.
     pub minute: Option<f32>,
     /// Whether a game is steering at all; when it stops, the plugin clears its weather.
@@ -116,6 +161,16 @@ pub(crate) struct SkyRequest {
 /// The atmosphere's frame state the post pass draws: the lightning flash now, 0..1.
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub(crate) struct Flash(pub f32);
+
+/// `WOW_ATMOS_DUMP=1`: whether this second's debug lines are due (`next` is the caller's).
+pub(super) fn dump_due(now: f32, next: &mut f32) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("WOW_ATMOS_DUMP").is_some()) || now < *next {
+        return false;
+    }
+    *next = now + 1.0;
+    true
+}
 
 /// The plugin. Add it once; it does nothing until a game writes an active [`SkyRequest`].
 pub(crate) struct AtmospherePlugin;
@@ -129,6 +184,10 @@ impl Plugin for AtmospherePlugin {
         lightning::plugin(app);
         clock::plugin(app);
         shafts::plugin(app);
+        bolt::plugin(app);
+        mist::plugin(app);
+        beams::plugin(app);
+        wind::plugin(app);
     }
 }
 
@@ -141,6 +200,9 @@ mod tests {
         assert_eq!(AtmosphereSettings::parse(None, None), AtmosphereSettings::default());
         let off = AtmosphereSettings::parse(Some("off"), None);
         assert!(!off.weather && !off.lightning && !off.rays && !off.grade && !off.clock);
+        assert!(!off.mist && !off.beams && !off.lens && !off.wind);
+        let no_mist = AtmosphereSettings::parse(Some("-mist,-lens"), None);
+        assert!(!no_mist.mist && !no_mist.lens && no_mist.beams && no_mist.wind);
         let some = AtmosphereSettings::parse(Some("-rays, -lightning"), Some("1.5"));
         assert!(some.weather && !some.lightning && !some.rays && some.grade);
         assert_eq!(some.ray_strength, 1.5);

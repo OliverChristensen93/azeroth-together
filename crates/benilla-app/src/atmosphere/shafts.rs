@@ -18,7 +18,7 @@ use bevy::shader::ShaderRef;
 
 use benilla_world::lighting::{LightingConsumeSet, WowLighting};
 use benilla_world::view::WorldCamera;
-use benilla_world::weather::{storm_blend, WeatherState};
+use benilla_world::weather::{storm_blend, WeatherKind, WeatherState};
 
 use super::{AtmosphereSettings, Flash, SkyRequest};
 
@@ -31,6 +31,8 @@ pub(super) struct AtmosPost {
     color: Vec4,
     /// x flash, y storm grade, z reach, w decay per tap.
     mood: Vec4,
+    /// x rain on the lens, y seconds.
+    lens: Vec4,
 }
 
 impl FullscreenMaterial for AtmosPost {
@@ -122,7 +124,7 @@ fn screen_fade(ndc: Vec2, facing: f32) -> f32 {
 
 /// Whether any of the pass's effects is on.
 fn wanted(s: &AtmosphereSettings) -> bool {
-    s.rays || s.grade || s.lightning
+    s.rays || s.grade || s.lightning || s.lens
 }
 
 fn attach(
@@ -161,9 +163,12 @@ fn drive(
     if dump {
         *next_dump = time.elapsed_secs_f64() + 1.0;
     }
-    let (wet, storm) = weather
-        .map(|w| (w.effect_density, storm_blend(w.sky_density)))
-        .unwrap_or((0.0, 0.0));
+    let (wet, storm, rain) = weather
+        .map(|w| {
+            let rain = if w.effect_kind == WeatherKind::Rain { w.effect_density } else { 0.0 };
+            (w.effect_density, storm_blend(w.sky_density), rain)
+        })
+        .unwrap_or((0.0, 0.0, 0.0));
     for (camera, cam_gt, mut post) in &mut cams {
         let aspect = camera
             .logical_viewport_size()
@@ -173,6 +178,7 @@ fn drive(
             light: Vec4::new(0.5, 0.5, 0.0, 1.0),
             color: Vec4::new(1.0, 1.0, 1.0, aspect),
             mood: Vec4::new(0.0, 0.0, REACH, DECAY),
+            lens: Vec4::ZERO,
         };
         if settings.rays {
             if let Some(light) = light_of(&lighting) {
@@ -197,6 +203,9 @@ fn drive(
         }
         if settings.lightning {
             next.mood.x = flash.0;
+        }
+        if settings.lens && req.active && rain > 0.0 {
+            next.lens = Vec4::new(rain, (time.elapsed_secs_f64() % 1000.0) as f32, 0.0, 0.0);
         }
         if dump {
             let sun = lighting.celestial_dir();

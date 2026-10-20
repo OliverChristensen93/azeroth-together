@@ -10,12 +10,13 @@
 // dry_start: seconds before the first wet spell may come.
 // minute:    the minute of the day the run starts at (0..1440; 1020 is 17:00).
 // day_speed: game minutes the clock moves per second of run (0.075: 90 minutes in a 20-minute run).
+// mist:      the zone's own low ground mist, 0..1, whatever the weather (rain adds more).
 // A zone left out is fine weather at 13:00. `TOGETHER_WEATHER` and `TOGETHER_HOUR` override.
 {
     // Late afternoon into sunset: low sun for the shafts, now and then a shower.
     "elwynn": (
         precip: Rain, wet: 0.25, storms: 0.15, spell: 150.0, intensity: (0.3, 0.7),
-        dry_start: 60.0, minute: 1020.0, day_speed: 0.075,
+        dry_start: 60.0, minute: 1020.0, day_speed: 0.075, mist: 0.15,
     ),
     // Dry farmland: rare showers, an afternoon sun.
     "westfall": (
@@ -25,12 +26,12 @@
     // Gloomy and wet, often stormy, toward dusk.
     "duskwood": (
         precip: Rain, wet: 0.55, storms: 0.4, spell: 120.0, intensity: (0.4, 0.9),
-        dry_start: 30.0, minute: 1080.0, day_speed: 0.05,
+        dry_start: 30.0, minute: 1080.0, day_speed: 0.05, mist: 0.6,
     ),
     // Stranglethorn's tropical downpours.
     "gurubashi_arena": (
         precip: Rain, wet: 0.3, storms: 0.3, spell: 120.0, intensity: (0.5, 1.0),
-        dry_start: 60.0, minute: 840.0, day_speed: 0.05,
+        dry_start: 60.0, minute: 840.0, day_speed: 0.05, mist: 0.25,
     ),
     // Silithus: sandstorms.
     "gates_of_ahnqiraj": (

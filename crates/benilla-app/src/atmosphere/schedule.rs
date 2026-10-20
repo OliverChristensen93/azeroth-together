@@ -37,6 +37,8 @@ pub(crate) struct ZoneSky {
     pub minute: f32,
     /// Game minutes the clock moves per second of run; 0 holds the hour.
     pub day_speed: f32,
+    /// The zone's ground mist, 0..1, whatever the weather (rain adds its own).
+    pub mist: f32,
 }
 
 impl Default for ZoneSky {
@@ -50,6 +52,7 @@ impl Default for ZoneSky {
             dry_start: 0.0,
             minute: 780.0,
             day_speed: 0.0,
+            mist: 0.0,
         }
     }
 }
@@ -80,6 +83,7 @@ pub(crate) fn sky_at(sky: &ZoneSky, seed: u64, t: f32, settings: &AtmosphereSett
     };
     let mut req = SkyRequest {
         minute: Some(minute),
+        mist: if settings.mist { sky.mist.clamp(0.0, 1.0) } else { 0.0 },
         active: true,
         ..Default::default()
     };

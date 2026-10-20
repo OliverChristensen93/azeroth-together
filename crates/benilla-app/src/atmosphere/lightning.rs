@@ -13,6 +13,7 @@ use benilla_world::weather::{WeatherKind, WeatherState};
 
 use crate::sound::{Cue, SoundCue};
 
+use super::bolt::BoltSpawn;
 use super::{AtmosphereSettings, Flash, SkyRequest};
 
 /// The Blasted Lands lightning bolt kit: three cracks with their rumble.
@@ -75,8 +76,9 @@ impl Storm {
         mean * (0.4 + 1.2 * self.roll())
     }
 
-    /// A new strike at `now`: two or three pulses, a near one brighter.
-    fn strike(&mut self, now: f64) -> Strike {
+    /// A new strike at `now`: two or three pulses, a near one brighter. Three in four fall
+    /// within a third of a turn of `facing` (the camera's bearing), so most bolts are seen.
+    fn strike(&mut self, now: f64, facing: Option<f32>) -> Strike {
         let delay = 0.3 + 4.2 * self.roll();
         let near = 1.0 - delay / 4.5;
         let peak = 0.45 + 0.55 * near;
@@ -88,7 +90,10 @@ impl Storm {
             at: now,
             pulses,
             delay,
-            bearing: self.roll() * std::f32::consts::TAU,
+            bearing: match facing {
+                Some(f) if self.roll() < 0.75 => f + (self.roll() - 0.5) * 2.1,
+                _ => self.roll() * std::f32::consts::TAU,
+            },
             thundered: false,
         }
     }
@@ -96,8 +101,12 @@ impl Storm {
 
 /// A strike's flash `t` seconds after it, 0..1.
 fn flash_of(strike: &Strike, t: f32) -> f32 {
-    strike
-        .pulses
+    flash_of_pulses(&strike.pulses, t)
+}
+
+/// The flash of `pulses` (offset seconds, strength) `t` seconds in, 0..1.
+pub(super) fn flash_of_pulses(pulses: &[(f32, f32)], t: f32) -> f32 {
+    pulses
         .iter()
         .filter(|&&(o, _)| t >= o)
         .map(|&(o, s)| s * (-(t - o) / PULSE_DECAY).exp())
@@ -120,6 +129,7 @@ fn strike_and_flash(
     mut flash: ResMut<Flash>,
     mut lighting: ResMut<WowLighting>,
     mut cues: MessageWriter<SoundCue>,
+    mut bolts: MessageWriter<BoltSpawn>,
 ) {
     let now = time.elapsed_secs_f64();
     let raining = weather
@@ -133,7 +143,17 @@ fn strike_and_flash(
     if stormy {
         storm.next -= time.delta_secs();
         if storm.next <= 0.0 {
-            let s = storm.strike(now);
+            let facing = cam.iter().next().map(|t| {
+                let f = t.forward();
+                f.z.atan2(f.x)
+            });
+            let s = storm.strike(now, facing);
+            bolts.write(BoltSpawn {
+                bearing: s.bearing,
+                delay: s.delay,
+                pulses: s.pulses.clone(),
+                seed: storm.rng ^ (now.to_bits()),
+            });
             storm.strikes.push(s);
             storm.next = storm.gap(req.storm);
         }
@@ -176,7 +196,7 @@ mod tests {
     #[test]
     fn a_strike_flashes_in_pulses_and_fades() {
         let mut storm = Storm::default();
-        let s = storm.strike(0.0);
+        let s = storm.strike(0.0, None);
         assert!(s.pulses.len() >= 2);
         let peak = s.pulses.iter().map(|p| p.1).fold(0.0, f32::max);
         let brightest = s
@@ -197,7 +217,7 @@ mod tests {
         let heavy: f32 = (0..n).map(|_| storm.gap(1.0)).sum::<f32>() / n as f32;
         assert!(heavy < light * 0.5, "{heavy} vs {light}");
         for _ in 0..200 {
-            let s = storm.strike(0.0);
+            let s = storm.strike(0.0, Some(1.0));
             let d = thunder_at(Vec3::ZERO, s.bearing, s.delay).xz().length();
             assert!((20.0..100.0).contains(&d), "{d}");
         }

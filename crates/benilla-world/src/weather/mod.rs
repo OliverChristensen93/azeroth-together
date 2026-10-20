@@ -15,10 +15,12 @@ use bevy::prelude::*;
 
 use crate::dev_state::DebugState;
 
+mod gust; // a game's wind (fork carry)
 mod precip;
 
 /// Rain's forced-fog window, read by the effect lane's `EffectFog::Rain` row.
 pub(crate) use precip::{RAIN_FOG_END, RAIN_FOG_START};
+pub use gust::WeatherGust;
 
 /// Wire weather types (`SMSG_WEATHER` / vmangos `WeatherType`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
