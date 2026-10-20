@@ -329,12 +329,12 @@ Also:
 
 ## Playing this branch
 
-The release build shares the main checkout's `target/` folder, so
-`D:\Games\azeroth-together\target\release\azeroth-together.exe` is now this branch's build until
-another branch is built there. A dev build reads `content/` from the source folder it was built
-from, so it uses this worktree's content files. It uses your usual saves (talents, armory, pick)
-in `D:\Games\azeroth-together\benilla-config`; my test runs used a separate scratch folder
-(`BENILLA_HOME`) and left your saves alone. To build it yourself, from the worktree, reuse the
-main checkout's build folder. Otherwise it's a cold ~17 min build and several GB on a D: drive
-with 17 GB free:
-`CARGO_TARGET_DIR=D:/Games/azeroth-together/target cargo build --release -p azeroth-together`.
+Run **`D:\Gameszeroth-together-pointers	argeteleasezeroth-together.exe`**. This branch
+has its own build folder now. The main checkout's `target\` is shared with other branches (the
+weather session builds there), and two checkouts in one build folder overwrite each other's
+compiled code and exe.
+- The exe reads this worktree's `content\` and borrows the main checkout's `WoW\Data`.
+- It uses your usual saves in `D:\Gameszeroth-togetherenilla-config`. My test runs used a
+  scratch folder (`BENILLA_HOME`) and left your saves alone.
+- To rebuild, run `cargo build --release -p azeroth-together` from the worktree, with no
+  `CARGO_TARGET_DIR` set.
