@@ -41,10 +41,8 @@ pub(crate) fn ui_chunk(
     if last == Some((session, phase)) {
         return None;
     }
-    Some(match phase {
-        super::Phase::Inn => "UIParent:Show()",
-        super::Phase::Playing => "UIParent:Show()",
-    })
+    // The same in the inn and in a run: the interface is up.
+    Some("UIParent:Show()")
 }
 
 /// The Lua that leaves `UIParent` as a launch starts, shown, when Nightfall goes, after `last`.

@@ -366,6 +366,8 @@ pub(super) fn rebuild(
                     let touches = upgrade_touches_loadout(p, s, &inn);
                     action(r, font, lock, touches, PanelButton::Upgrade(s), "Upgrade");
                 });
+            } else if level.is_some() {
+                b.spawn(text(font, "  Fully upgraded.", 11.0, GREY));
             }
             for (r, recipe) in inn.recipes.iter().enumerate().filter(|(_, d)| d.station == s) {
                 if !p.knows(r, &inn) {
