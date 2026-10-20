@@ -6,9 +6,9 @@ use std::sync::Arc;
 use crate::heightmap::testmap::{flat, house};
 use crate::heightmap::HeightMap;
 use crate::{
-    Alert, CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose, Holder, KitDef,
-    Life, PlayerId, PlayerInput, RaidRoll, Refusal, RivalOut, RoutePlace, Side, UnitRef, World,
-    RIVAL_BASE, TICK_HZ, V2,
+    Act, ActPress, Alert, CastPress, Content, ContentSources, ControlKind, Event, Gait, HeroPose,
+    Holder, KitDef, Life, PlayerId, PlayerInput, RaidRoll, Refusal, RivalOut, RoutePlace, Side,
+    UnitRef, World, RIVAL_BASE, TICK_HZ, V2,
 };
 
 pub(super) const CLASSES: &str = r#"[
@@ -3007,4 +3007,190 @@ fn another_rival_at_the_entry_does_not_keep_a_party_from_coming() {
     rival(&mut w, 5, "digger", 1, 11.0, 60.0);
     steps(&mut w, secs(8.0));
     assert!(w.rivals.parties.len() == 1, "the roll's party came");
+}
+
+/// A world on open ground whose roll brings `plans`, the party's hero (player 0) far off at
+/// (110, 110).
+fn raid_with(rivals_rules: &str, spawns: &str, plans: &[RivalOut]) -> World {
+    let mut w = world_on(open(), rivals_rules, spawns, |c| {
+        let mut r = RaidRoll::standard(c, 1);
+        r.rivals.extend_from_slice(plans);
+        r
+    });
+    join(&mut w, 0, 110.0, 110.0);
+    w
+}
+
+fn plan(party: u8, aggression: f32) -> RivalOut {
+    RivalOut {
+        party,
+        entry: 0,
+        at: 0.0,
+        aggression,
+        seed: 21,
+    }
+}
+
+/// Hero 0 runs back and forth between `a` and `b` for `n` steps, a loud walk.
+fn run_between(w: &mut World, a: V2, b: V2, n: usize) {
+    for i in 0..n {
+        let t = ((i as f32 / secs(3.0) as f32) % 2.0 - 1.0).abs();
+        let at = a + (b - a) * t;
+        put(w, 0, at.x, at.y, (b - a).normalize_or_zero(), Gait::Run);
+        w.step();
+    }
+}
+
+fn rivals_up(w: &World) -> usize {
+    w.heroes
+        .iter()
+        .filter(|h| h.side.is_rival() && h.fight.up())
+        .count()
+}
+
+#[test]
+fn a_cautious_party_loots_its_points_and_extracts() {
+    let mut w = raid_with("pois: (2, 2)", "", &[plan(0, 0.1)]);
+    w.drain_events();
+    steps(&mut w, secs(300.0));
+    assert!(emptied(&w, V2::new(60.0, 60.0)) && emptied(&w, V2::new(90.0, 30.0)));
+    let out = events_of(&mut w, |e| {
+        matches!(e, Event::RivalOut { .. }).then_some(())
+    });
+    assert_eq!(out.len(), 2, "both out");
+    assert_eq!(rivals_up(&w), 0);
+    assert!(
+        w.raid
+            .containers
+            .iter()
+            .all(|c| !matches!(c.holder, Holder::Hero(_))),
+        "no bodies"
+    );
+    assert!(w.take_outcomes().is_empty(), "rivals settle no outcome");
+}
+
+#[test]
+fn a_bold_party_done_looting_hunts_a_noisy_hero_and_fights_it() {
+    let mut w = raid_with("pois: (1, 1), hunt_for: 150.0", "", &[plan(1, 0.9)]);
+    w.drain_events();
+    // While they loot, the hero runs about 50 yards off, loud.
+    run_between(
+        &mut w,
+        V2::new(100.0, 100.0),
+        V2::new(100.0, 90.0),
+        secs(240.0),
+    );
+    assert!(w.rivals.parties[0].hunted, "they went hunting");
+    let events = w.drain_events();
+    let hit = |e: &Event| matches!(e, Event::Damage { to: UnitRef::Hero(0), by: Some(UnitRef::Hero(r)), .. } if *r >= RIVAL_BASE);
+    // They found the hero and struck it: a blow in the events, or health already lost.
+    let h = w.hero(0).unwrap();
+    assert!(
+        events.iter().any(hit) || !h.fight.up() || h.hp < h.max_hp,
+        "they found and fought the hero"
+    );
+}
+
+#[test]
+fn a_party_fights_the_monster_guarding_its_point_then_loots_it() {
+    let mut w = raid_with(
+        "pois: (1, 1)",
+        &format!("{}\n", sentry_line(62.0, 60.0)),
+        &[plan(0, 0.1)],
+    );
+    w.drain_events();
+    steps(&mut w, secs(240.0));
+    let events = w.drain_events();
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::EnemyDied { by: Some(p), .. } if *p >= RIVAL_BASE)));
+    let poi = &w.content().rivals.pois[w.rivals.parties[0].visited[0]];
+    assert!(emptied(&w, V2::new(poi.at.0, poi.at.1)));
+}
+
+#[test]
+fn a_slain_rival_drops_its_bag_for_the_hero_to_take() {
+    let mut w = raid_with("", "", &[]);
+    let a = rival(&mut w, 0, "digger", 0, 105.0, 110.0);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    w.step();
+    let body = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Hero(a))
+        .map(|c| c.id)
+        .expect("a body");
+    put(&mut w, 0, 106.0, 110.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    let act = |w: &mut World, seq: u8, act: Act| {
+        let h = w.hero(0).unwrap();
+        let pose = HeroPose {
+            pos: h.pos,
+            facing: h.facing,
+            z: h.z,
+        };
+        w.set_input(
+            0,
+            PlayerInput {
+                pose: Some(pose),
+                act: Some(ActPress { seq, act }),
+                ..Default::default()
+            },
+        );
+        w.step();
+    };
+    act(&mut w, 1, Act::Open(body));
+    steps(&mut w, secs(10.0));
+    act(&mut w, 2, Act::TakeAll);
+    let sack = w.content().item("sack").unwrap();
+    assert!(
+        w.raid.pack(0).unwrap().count_of(sack) >= 1,
+        "its bag is the hero's now"
+    );
+}
+
+#[test]
+fn every_party_leaves_or_dies_within_the_night() {
+    for seed in [1, 2] {
+        let c = content("arrive: (0.0, 60.0), pois: (1, 2)", "");
+        let roll = RaidRoll::roll(&c, seed);
+        assert!(!roll.rivals.is_empty());
+        let mut w = World::new(Arc::new(c));
+        w.begin_raid(roll).unwrap();
+        w.attach_map(Arc::new(open()));
+        join(&mut w, 0, 110.0, 110.0);
+        steps(&mut w, secs(900.0));
+        let left: Vec<String> = w
+            .heroes
+            .iter()
+            .filter(|h| h.side.is_rival() && h.fight.up())
+            .map(|h| format!("{} at ({:.0}, {:.0})", h.name, h.pos.x, h.pos.y))
+            .collect();
+        assert!(
+            left.is_empty(),
+            "seed {seed}: {left:?}\n{:#?}",
+            w.rival_debug()
+        );
+        assert!(!w.rivals.out.is_empty() || w.heroes.iter().any(|h| h.side.is_rival()));
+    }
+}
+
+#[test]
+fn a_world_with_rivals_plays_the_same_twice() {
+    let run = || {
+        let mut w = raid_with(
+            "pois: (1, 2)",
+            &format!("{}\n", sentry_line(62.0, 60.0)),
+            &[plan(0, 0.2), plan(1, 0.9)],
+        );
+        run_between(
+            &mut w,
+            V2::new(100.0, 100.0),
+            V2::new(100.0, 80.0),
+            secs(80.0),
+        );
+        w.snapshot()
+    };
+    assert_eq!(run(), run());
 }
