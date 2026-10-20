@@ -83,7 +83,17 @@ impl World {
         let reach = self.reach();
         Snapshot {
             elapsed: self.elapsed,
-            heroes: self.heroes.clone(),
+            // Rivals are cut to the reach as enemies are (the corrections' ruling 3), not by
+            // sight: a wall hides them on screen. The party is always sent whole.
+            heroes: self
+                .heroes
+                .iter()
+                .filter(|h| {
+                    !h.side.is_rival()
+                        || (!parted && near.is_none_or(|p| p.distance(h.pos) <= reach))
+                })
+                .cloned()
+                .collect(),
             enemies: self
                 .enemies
                 .iter()

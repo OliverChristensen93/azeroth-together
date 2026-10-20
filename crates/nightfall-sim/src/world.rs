@@ -150,7 +150,7 @@ pub struct World {
     /// What each enemy means to do, beside it in `enemies`: the host's alone, never sent.
     pub(crate) brains: Vec<Brain>,
     /// The height map and its paths, once attached: the host's alone.
-    nav: Option<Navigator>,
+    pub(crate) nav: Option<Navigator>,
     /// What the content asked that the map could not give (a patrol point no path reaches).
     pub(crate) warnings: Vec<String>,
     /// What the enemies share in choosing their ways (the path budget, the points found sealed).
@@ -434,7 +434,8 @@ impl World {
         let (fog, notice) = (self.fog().end, self.notice_scale());
         // The hunt listens to this step's noises before the enemies' senses take them: `step_enemies`
         // empties the list, so a hunt that listened after it would hear nothing.
-        // Rivals sense the step's noises before the enemies take them (and before the hunt).
+        // Rivals sense the step's noises before the enemies take them (and before the hunt); their
+        // bots' turn is the last of the step.
         self.perceive_rivals();
         self.night_listen();
         if let Some(nav) = self
@@ -469,6 +470,9 @@ impl World {
         // Last: every kill of the step counted, then whether the raid is over.
         self.tally_kills();
         self.step_over();
+        // The rivals' turn, with the step's navigator budget still open: their searches are the
+        // pool `STEP_FLOORS` leaves them. A mirror has no map and runs no bots.
+        self.step_rivals();
         // Noises are heard the step they are made, or the next; none waits longer.
         self.senses.noises.clear();
         self.elapsed += DT;

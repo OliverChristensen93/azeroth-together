@@ -19,6 +19,24 @@ impl World {
     /// step's noises (`step_enemies` empties them), so what rivals hear is what was made this
     /// step. A rival held out of the fight neither looks nor thinks.
     pub(crate) fn perceive_rivals(&mut self) {
+        // The loudest noise a hero of the party made lately (the night's hunt memory).
+        let memory = self.content().rules.night.hunt.memory;
+        let now = self.elapsed;
+        if self.rivals.rumour.is_some_and(|(_, _, t)| now - t > memory) {
+            self.rivals.rumour = None;
+        }
+        let loudest = self
+            .senses
+            .noises
+            .iter()
+            .filter(|n| self.side_of(n.by) == Side::Party && self.hero(n.by).is_some())
+            .max_by(|a, b| a.radius.total_cmp(&b.radius))
+            .map(|n| (n.at, n.radius));
+        if let Some((at, radius)) = loudest {
+            if self.rivals.rumour.is_none_or(|(_, r, _)| radius >= r) {
+                self.rivals.rumour = Some((at, radius, now));
+            }
+        }
         let Some(map) = self.map().cloned() else {
             return;
         };

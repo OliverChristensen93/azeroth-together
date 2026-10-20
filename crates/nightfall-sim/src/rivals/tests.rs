@@ -2046,3 +2046,724 @@ fn a_mirror_keeps_the_hold_its_host_sent() {
     mirror.set_pace(hi);
     assert_eq!(mirror.hero(0).unwrap().fight.held, Some(ControlKind::Stun));
 }
+
+/// Party kind `key` brought in at `(x, y)` as party 0, at `aggression`, with dice `seed`.
+pub(super) fn party(
+    w: &mut World,
+    key: &str,
+    aggression: f32,
+    x: f32,
+    y: f32,
+    seed: u64,
+) -> Vec<PlayerId> {
+    let def = w.content().party(key).unwrap();
+    let members = w.add_party(def, 0, aggression, V2::new(x, y), seed);
+    w.step();
+    members
+}
+
+/// Whether the crate at `at` has been searched and emptied.
+pub(super) fn emptied(w: &World, at: V2) -> bool {
+    w.raid
+        .containers
+        .iter()
+        .find(|c| c.at.distance(at) < 0.5 && matches!(c.holder, Holder::Placed(_)))
+        .is_some_and(|c| c.searched && c.stacks.iter().all(Option::is_none))
+}
+
+#[test]
+fn a_party_walks_around_a_house_to_its_point_and_loots_the_crate() {
+    // A closed house stands between the rivals' entry and the yard.
+    let mut b = flat(120.0);
+    house(
+        &mut b,
+        V2::new(40.0, 50.0),
+        V2::new(50.0, 70.0),
+        None,
+        false,
+    );
+    let mut w = world_on(b.finish(), "pois: (1, 1)", "", |c| RaidRoll::standard(c, 1));
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    assert_eq!(members.len(), 2);
+    let mut inside = false;
+    for _ in 0..secs(80.0) {
+        w.step();
+        for &m in &members {
+            if let Some(h) = w.hero(m) {
+                inside |= (40.0..=50.0).contains(&h.pos.x) && (50.0..=70.0).contains(&h.pos.y);
+            }
+        }
+    }
+    assert!(!inside, "nobody walked through the house");
+    let p = &w.rivals.parties[0];
+    assert_eq!(p.visited.len(), 1);
+    let poi = &w.content().rivals.pois[p.visited[0]];
+    assert!(
+        emptied(&w, V2::new(poi.at.0, poi.at.1)),
+        "its crate searched and emptied"
+    );
+}
+
+#[test]
+fn a_party_done_looting_walks_out_by_the_nearest_open_exit() {
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    w.drain_events();
+    steps(&mut w, secs(120.0));
+    let out = events_of(&mut w, |e| match e {
+        Event::RivalOut { player, exit } => Some((*player, *exit)),
+        _ => None,
+    });
+    assert_eq!(out.len(), 2, "{out:?}");
+    for (p, _) in &out {
+        assert!(members.contains(p));
+    }
+    assert!(members.iter().all(|&m| w.hero(m).is_none()));
+}
+
+#[test]
+fn a_rival_in_a_fight_presses_once_per_choice() {
+    let mut w = world(
+        "pois: (1, 1)",
+        &format!(
+            "{}\n",
+            r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (30.0, 60.0), facing: 180.0)),"#
+        ),
+    );
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    w.drain_events();
+    steps(&mut w, secs(40.0));
+    let events = w.drain_events();
+    let refused: Vec<Refusal> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Refused { player, why } if members.contains(player) => Some(*why),
+            _ => None,
+        })
+        .collect();
+    let mashing = [
+        Refusal::Busy,
+        Refusal::NotReady,
+        Refusal::NoPower,
+        Refusal::Moving,
+    ];
+    assert!(refused.iter().all(|r| !mashing.contains(r)), "{refused:?}");
+    assert!(refused.len() <= 2, "{refused:?}");
+    let blows = events
+        .iter()
+        .filter(|e| {
+            matches!(e, Event::Damage { to: UnitRef::Enemy(_), by: Some(UnitRef::Hero(p)), .. } if members.contains(p))
+        })
+        .count();
+    assert!(blows >= 4, "they fought the sentry on their way: {blows}");
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::EnemyDied { by: Some(p), .. } if members.contains(p))));
+}
+
+#[test]
+fn a_party_with_no_way_in_gives_the_point_up_and_leaves() {
+    // The only point of interest is inside a sealed, roofed house.
+    let rivals = RIVALS.replace(
+        r#"(key: "barn", name: "The Barn", at: (90.0, 30.0), radius: 6.0)"#,
+        r#"(key: "barn", name: "The Barn", at: (60.0, 60.0), radius: 3.0)"#,
+    );
+    let mut b = flat(120.0);
+    house(&mut b, V2::new(55.0, 55.0), V2::new(65.0, 65.0), None, true);
+    let c = content_with("pois: (2, 2), give_up: 5.0", &rivals, "");
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(b.finish()));
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    w.drain_events();
+    steps(&mut w, secs(90.0));
+    assert_eq!(w.rivals.parties[0].visited.len(), 2, "both points given up");
+    let out = events_of(&mut w, |e| {
+        matches!(e, Event::RivalOut { .. }).then_some(())
+    });
+    assert_eq!(out.len(), members.len(), "and out by an exit");
+}
+
+#[test]
+fn followers_keep_behind_their_leader() {
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "watch", 0.8, 10.0, 60.0, 3);
+    steps(&mut w, secs(3.0));
+    for _ in 0..secs(10.0) {
+        w.step();
+        let (Some(lead), Some(follow)) = (w.hero(members[0]), w.hero(members[1])) else {
+            panic!("both walk");
+        };
+        assert!(
+            lead.pos.distance(follow.pos) <= 6.0,
+            "{:?} {:?}",
+            lead.pos,
+            follow.pos
+        );
+    }
+}
+
+#[test]
+fn a_sneaking_kind_goes_in_stealth_on_its_way() {
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "blades", 0.5, 10.0, 60.0, 5);
+    assert_eq!(members.len(), 3);
+    steps(&mut w, secs(3.0));
+    assert!(members.iter().all(|&m| w.hero(m).unwrap().stealthed));
+}
+
+/// A monster with a telegraphed smash on itself, for the dodge.
+const SMASHER: &str = r#"
+    (key: "smasher", name: "Smasher", display: 200, level: 30, hp: 3000.0, walk_speed: 2.5,
+     run_speed: 6.0, swing: Some((min: 10.0, max: 10.0, every: 2.0)),
+     moves: [(ability: "dig", every: 6.0)]),
+]"#;
+
+/// A smasher at (32, 60) alerted to the first of a digger party standing at (30, 60).
+fn smash_world(rivals_rules: &str, party_x: f32) -> (World, Vec<PlayerId>) {
+    let enemies = ENEMIES.trim_end().trim_end_matches(']').to_string() + SMASHER;
+    let c = Content::from_ron(ContentSources {
+        classes: CLASSES,
+        map: MAP,
+        rules: &rules(rivals_rules),
+        enemies: &enemies,
+        spawns: r#"[(place: "Post", kind: "smasher", behaviour: Sentry(at: (32.0, 60.0), facing: 180.0)),]"#,
+        abilities: ABILITIES,
+        items: ITEMS,
+        loot: LOOT,
+        monsters: "[]",
+        rivals: RIVALS,
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, party_x, 60.0, 7);
+    let id = w.enemies[0].id;
+    w.alert(id, members[0]);
+    w.drain_events();
+    (w, members)
+}
+
+#[test]
+fn a_rival_dodges_a_telegraph_it_stands_in() {
+    let (mut w, members) = smash_world("dodge: 1.0, pois: (1, 1)", 30.0);
+    steps(&mut w, secs(8.0));
+    let events = w.drain_events();
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Dodged { player } if members.contains(player))));
+    for &m in &members {
+        assert!(
+            damage_to(&events, UnitRef::Hero(m))
+                .iter()
+                .all(|&d| d < 100.0),
+            "the smash missed: {:?}",
+            damage_to(&events, UnitRef::Hero(m))
+        );
+    }
+}
+
+#[test]
+fn a_rival_stays_out_of_a_telegraph_it_was_not_in_until_it_has_landed() {
+    // A blow is kept about to land round the yard, 8 yards out, while a digger party walks to
+    // the yard: they stop at its edge and walk in once it is gone.
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let down = |w: &mut World| {
+        w.telegraphs.clear();
+        w.telegraphs.push(crate::Telegraph {
+            id: 9_999,
+            enemy: 0,
+            by: None,
+            ability: 0,
+            shape: crate::Shape::Circle { radius: 8.0 },
+            at: crate::V3::new(60.0, 60.0, 0.0),
+            facing: V2::new(1.0, 0.0),
+            left: 1.0,
+            total: 1.2,
+        });
+    };
+    let mut nearest = f32::MAX;
+    for _ in 0..secs(60.0) {
+        down(&mut w);
+        w.step();
+        for &m in &members {
+            let d = w.hero(m).unwrap().pos.distance(V2::new(60.0, 60.0));
+            nearest = nearest.min(d);
+        }
+    }
+    assert!(
+        nearest > 7.9,
+        "one walked in to {nearest} yards of its centre"
+    );
+    assert!(nearest < 12.0, "they came up to its edge: {nearest}");
+    // It has landed (or gone): they go in and loot.
+    w.telegraphs.clear();
+    steps(&mut w, secs(30.0));
+    let p = &w.rivals.parties[0];
+    assert!(
+        p.looting.is_some() || !p.visited.is_empty(),
+        "and then walk in: {:?}",
+        p.goal
+    );
+}
+
+/// [`world_on`] with `rivals.ron` of the routes' kind ([`with_routes`]), open ground.
+fn world_routes(rivals_rules: &str, spawns: &str) -> World {
+    let c = content_with(rivals_rules, &with_routes(), spawns);
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    w
+}
+
+#[test]
+fn a_party_walks_the_routes_of_the_content_and_leaves_by_the_exit_they_end_at() {
+    let mut w = world_routes("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    // It starts at the entry and has its route to the yard.
+    steps(&mut w, secs(2.0));
+    let p = &w.rivals.parties[0];
+    assert_eq!(p.entry, Some(0));
+    assert_eq!(p.journey.as_ref().map(|j| j.to), Some(RoutePlace::Poi(0)));
+    w.drain_events();
+    steps(&mut w, secs(150.0));
+    let p = &w.rivals.parties[0];
+    assert_eq!(p.place, Some(RoutePlace::Poi(0)), "it was at the yard");
+    assert_eq!(p.visited, vec![0]);
+    let out = events_of(&mut w, |e| match e {
+        Event::RivalOut { player, exit } => Some((*player, *exit)),
+        _ => None,
+    });
+    assert_eq!(out.len(), members.len(), "{out:?}");
+    // The yard's routes end at the east and north gates and the cart; the east is the shortest.
+    assert!(out.iter().all(|&(_, exit)| exit == 0), "{out:?}");
+}
+
+#[test]
+fn a_party_goes_from_one_point_to_another_by_way_of_its_entry() {
+    // The content has a route from the entry to each point and from each point to each exit,
+    // none between two points: the party walks back by the entry. It is found out by where it
+    // is when its first point is done.
+    let mut w = world_routes("pois: (2, 2), give_up: 40.0", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let mut at_yard = false;
+    let mut nearest_entry_after = f32::MAX;
+    for _ in 0..secs(200.0) {
+        w.step();
+        let p = &w.rivals.parties[0];
+        at_yard |= !p.visited.is_empty();
+        if at_yard && p.visited.len() == 1 && p.looting.is_none() {
+            if let Some(h) = w.hero(members[0]) {
+                nearest_entry_after = nearest_entry_after.min(h.pos.distance(V2::new(10.0, 60.0)));
+            }
+        }
+    }
+    assert!(at_yard, "the first point was done");
+    assert!(
+        nearest_entry_after < 8.0,
+        "on its way to the second it passed its entry: {nearest_entry_after}"
+    );
+}
+
+#[test]
+fn a_route_between_two_points_is_made_of_the_routes_to_their_entry_and_a_way_out_from_an_entry_of_the_best_point(
+) {
+    let mut w = world_routes("pois: (2, 2)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let rc = w.content().rivals.clone();
+    let len = |p: &[V2]| -> f32 { p.windows(2).map(|s| s[0].distance(s[1])).sum() };
+    // Entry to an exit: by the point with the shortest whole way.
+    let exit = RoutePlace::Exit(0);
+    let whole = w.route_points(0, exit).unwrap();
+    let best = (0..rc.pois.len())
+        .filter_map(|q| {
+            let a = rc.route(RoutePlace::Entry(0), RoutePlace::Poi(q))?;
+            let b = rc.route(RoutePlace::Poi(q), exit)?;
+            Some(len(&a) + len(&b))
+        })
+        .fold(f32::MAX, f32::min);
+    assert!(
+        (len(&whole) - best).abs() < 1e-3,
+        "{} against {best}",
+        len(&whole)
+    );
+    assert_eq!(whole.first(), Some(&V2::new(10.0, 60.0)));
+    assert_eq!(whole.last(), Some(&V2::new(115.0, 60.0)));
+    // A point to another: by the entry, the joint once.
+    w.rivals.parties[0].place = Some(RoutePlace::Poi(0));
+    let across = w.route_points(0, RoutePlace::Poi(1)).unwrap();
+    assert_eq!(across.first(), Some(&V2::new(60.0, 60.0)));
+    assert_eq!(across.last(), Some(&V2::new(90.0, 30.0)));
+    assert_eq!(
+        across.iter().filter(|&&p| p == V2::new(10.0, 60.0)).count(),
+        1
+    );
+    // The place it stands at has no route to itself.
+    assert_eq!(w.route_points(0, RoutePlace::Poi(0)), None);
+}
+
+#[test]
+fn rivals_search_inside_the_pool_the_step_leaves_them() {
+    // Many parties walking round a long wall at once, each wanting its own searches.
+    let mut b = flat(120.0);
+    b.add_box(V2::new(30.0, 0.0), V2::new(31.0, 100.0), 0.0, 10.0);
+    let mut w = world_on(b.finish(), "pois: (1, 1), paths_per_step: 40", "", |c| {
+        RaidRoll::standard(c, 1)
+    });
+    join(&mut w, 0, 110.0, 110.0);
+    for number in 0..6u8 {
+        let def = w.content().party("diggers").unwrap();
+        w.add_party(
+            def,
+            number,
+            0.1,
+            V2::new(20.0, 10.0 + f32::from(number) * 12.0),
+            u64::from(number),
+        );
+    }
+    w.step();
+    let mut worst = 0;
+    let mut searched = 0;
+    for _ in 0..secs(30.0) {
+        let before = w.nav.as_ref().unwrap().floors_looked_at();
+        w.step();
+        let spent = (w.nav.as_ref().unwrap().floors_looked_at() - before) as usize;
+        worst = worst.max(spent);
+        searched += spent;
+    }
+    assert!(searched > 0, "they searched");
+    assert!(
+        worst <= crate::RIVAL_POOL,
+        "one step looked at {worst} floors"
+    );
+}
+
+#[test]
+fn a_party_sealed_in_slips_away_unseen_when_no_hero_sees_it() {
+    // A roofed room with no door: nothing in it can go anywhere.
+    let mut b = flat(120.0);
+    house(&mut b, V2::new(50.0, 50.0), V2::new(62.0, 62.0), None, true);
+    let mut w = world_on(
+        b.finish(),
+        "pois: (1, 1), stuck_for: 10.0, give_up: 3.0",
+        "",
+        |c| RaidRoll::standard(c, 1),
+    );
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 55.0, 55.0, 7);
+    assert_eq!(members.len(), 2);
+    w.drain_events();
+    steps(&mut w, secs(60.0));
+    assert!(
+        members.iter().all(|&m| w.hero(m).is_none()),
+        "they are gone"
+    );
+    assert_eq!(w.rivals.out.len(), 2, "counted out");
+    let events = w.drain_events();
+    assert!(
+        !events.iter().any(|e| matches!(e, Event::RivalOut { .. })),
+        "nobody saw them go"
+    );
+}
+
+#[test]
+fn a_party_stays_while_a_hero_watches_it_stuck() {
+    // A pen of walls too high to climb and low enough to see over: the hero outside sees in.
+    let mut b = flat(120.0);
+    for (min, max) in [
+        (V2::new(50.0, 50.0), V2::new(62.0, 50.5)),
+        (V2::new(50.0, 61.5), V2::new(62.0, 62.0)),
+        (V2::new(50.0, 50.0), V2::new(50.5, 62.0)),
+        (V2::new(61.5, 50.0), V2::new(62.0, 62.0)),
+    ] {
+        b.add_box(min, max, 0.0, 1.0);
+    }
+    let mut w = world_on(
+        b.finish(),
+        "pois: (1, 1), stuck_for: 10.0, give_up: 3.0",
+        "",
+        |c| RaidRoll::standard(c, 1),
+    );
+    join(&mut w, 0, 70.0, 56.0);
+    let members = party(&mut w, "diggers", 0.1, 55.0, 55.0, 7);
+    steps(&mut w, secs(30.0));
+    assert!(
+        members.iter().any(|&m| w.hero(m).is_some()),
+        "in plain sight they stay, whatever the backstop says"
+    );
+}
+
+#[test]
+fn every_party_leaves_or_dies_within_the_night_on_the_small_map() {
+    let mut w = world_routes(
+        "pois: (1, 2)",
+        &format!(
+            "{}\n{}\n",
+            r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (60.0, 62.0), facing: 180.0)),"#,
+            r#"(place: "Post2", kind: "brute", behaviour: Sentry(at: (92.0, 30.0), facing: 180.0)),"#
+        ),
+    );
+    join(&mut w, 0, 110.0, 110.0);
+    let mut all = Vec::new();
+    for (number, (key, aggression)) in [
+        ("diggers", 0.1),
+        ("watch", 0.9),
+        ("blades", 0.5),
+        ("diggers", 0.6),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let def = w.content().party(key).unwrap();
+        let at = V2::new(10.0, 56.0 + number as f32 * 3.0);
+        all.extend(w.add_party(def, number as u8, aggression, at, number as u64 + 1));
+    }
+    w.step();
+    steps(&mut w, secs(900.0));
+    let left: Vec<PlayerId> = all
+        .iter()
+        .copied()
+        .filter(|&m| w.hero(m).is_some_and(|h| h.fight.up()))
+        .collect();
+    assert!(left.is_empty(), "still about after the night: {left:?}");
+}
+
+#[test]
+fn twin_seeds_bring_parties_with_different_dice() {
+    let same = (0..100u64)
+        .filter(|&s| {
+            let mut a = world("", "");
+            let mut b = world("", "");
+            let def = a.content().party("diggers").unwrap();
+            let ma = a.add_party(def, 0, 0.1, V2::new(10.0, 60.0), s);
+            let mb = b.add_party(def, 0, 0.1, V2::new(10.0, 60.0), s ^ 1);
+            let names = |w: &World, m: &[PlayerId]| -> Vec<String> {
+                m.iter().map(|&p| w.hero(p).unwrap().name.clone()).collect()
+            };
+            names(&a, &ma) == names(&b, &mb)
+                && a.rivals.parties[0].pois_left == b.rivals.parties[0].pois_left
+        })
+        .count();
+    assert!(same < 40, "{same} of 100 twin seeds rolled the same party");
+}
+
+#[test]
+fn rival_bots_do_not_run_on_a_mirror() {
+    // A mirror has no map: its rivals are drawn from the host's snapshots, never moved.
+    let mut host = world("pois: (1, 1)", "");
+    join(&mut host, 0, 110.0, 110.0);
+    party(&mut host, "diggers", 0.1, 10.0, 60.0, 7);
+    steps(&mut host, secs(5.0));
+    let snap = host.snapshot_for(0);
+    let mut mirror = World::new(Arc::new(content("pois: (1, 1)", "")));
+    mirror.begin_mirror();
+    mirror.apply_snapshot(snap);
+    let at: Vec<V2> = mirror.heroes.iter().map(|h| h.pos).collect();
+    assert!(mirror.heroes.iter().any(|h| h.side.is_rival()));
+    steps(&mut mirror, secs(5.0));
+    assert!(
+        mirror.rivals.parties.is_empty(),
+        "a mirror knows no parties"
+    );
+    assert_eq!(
+        mirror.heroes.iter().map(|h| h.pos).collect::<Vec<_>>(),
+        at,
+        "nobody moved by themselves"
+    );
+}
+
+#[test]
+fn the_party_remembers_the_loudest_noise_a_hero_made_lately() {
+    let mut w = world("pois: (1, 1)", "");
+    rival(&mut w, 0, "digger", 0, 10.0, 10.0);
+    join(&mut w, 0, 100.0, 100.0);
+    // Running is loud: the noise is kept with where it came from.
+    put(&mut w, 0, 100.0, 100.0, V2::new(1.0, 0.0), Gait::Run);
+    w.step();
+    put(&mut w, 0, 101.0, 100.0, V2::new(1.0, 0.0), Gait::Run);
+    w.step();
+    let (at, radius, _) = w.rivals.rumour.expect("a noise was kept");
+    assert!(at.ground().distance(V2::new(101.0, 100.0)) < 3.0 && radius > 0.0);
+    // Forgotten after the hunt's memory.
+    let memory = w.content().rules.night.hunt.memory;
+    put(&mut w, 0, 101.0, 100.0, V2::new(1.0, 0.0), Gait::Still);
+    steps(&mut w, secs(memory + 2.0));
+    assert!(w.rivals.rumour.is_none());
+}
+
+#[test]
+fn a_bold_party_with_nothing_left_to_loot_hunts_the_noise_it_heard() {
+    let mut w = world("pois: (1, 1), hunt_at: 0.7", "");
+    join(&mut w, 0, 100.0, 20.0);
+    let members = party(&mut w, "watch", 0.9, 10.0, 60.0, 3);
+    let mut hunted = false;
+    for i in 0..secs(240.0) {
+        // The rogue runs on the spot far off, keeping a noise going.
+        let x = 100.0 + (i % 2) as f32 * 0.1;
+        put(&mut w, 0, x, 20.0, V2::new(1.0, 0.0), Gait::Run);
+        w.step();
+        hunted |= matches!(w.rivals.parties[0].goal, crate::rivals::Goal::Hunt { .. });
+    }
+    assert!(hunted, "it went after the noise");
+    assert!(w.rivals.parties[0].hunted);
+    assert!(!members.is_empty());
+}
+
+#[test]
+fn the_trace_has_a_line_for_each_party() {
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let lines = w.rival_debug();
+    assert_eq!(lines.len(), 1);
+    assert!(
+        lines[0].contains("Diggers") && lines[0].contains("aggression 0.10"),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_client_is_sent_only_the_rivals_within_its_heros_reach() {
+    // A short view, so the 120-yard map has a far corner.
+    let c = Content::from_ron(ContentSources {
+        classes: CLASSES,
+        map: MAP,
+        rules: &rules("pois: (1, 1)").replace("view_distance: 200.0", "view_distance: 45.0"),
+        enemies: ENEMIES,
+        spawns: "[]",
+        abilities: ABILITIES,
+        items: ITEMS,
+        loot: LOOT,
+        monsters: "[]",
+        rivals: RIVALS,
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 20.0, 60.0);
+    let near = rival(&mut w, 0, "digger", 0, 30.0, 60.0);
+    let far = rival(&mut w, 1, "digger", 0, 119.0, 119.0);
+    let reach = w.reach();
+    assert!(w.hero(far).unwrap().pos.distance(V2::new(20.0, 60.0)) > reach);
+    let ids =
+        |s: &crate::Snapshot| -> Vec<PlayerId> { s.heroes.iter().map(|h| h.player).collect() };
+    let snap = w.snapshot_for(0);
+    assert!(ids(&snap).contains(&0), "its own hero");
+    assert!(ids(&snap).contains(&near));
+    assert!(!ids(&snap).contains(&far), "{:?}", ids(&snap));
+}
+
+#[test]
+fn a_rival_that_could_not_move_for_stuck_for_seconds_slips_out_alone() {
+    let mut w = world("pois: (1, 1), stuck_for: 20.0", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    w.rivals.body_mut(members[1]).unwrap().pinned = 20.0;
+    w.step();
+    assert!(w.hero(members[1]).is_none(), "the pinned one is gone");
+    assert!(w.hero(members[0]).is_some(), "its friend walks on");
+    assert_eq!(w.rivals.out, vec![members[1]]);
+}
+
+#[test]
+fn the_way_from_one_point_to_another_is_not_walked_twice_where_the_ways_in_share_a_start() {
+    // Both ways in leave the entry by the same waypoint: back from the yard only as far as it,
+    // then on to the barn, never to the entry itself.
+    let routes = with_routes()
+        .replace(
+            r#"(from: Entry(0), to: Poi("yard"), via: [])"#,
+            r#"(from: Entry(0), to: Poi("yard"), via: [(30.0, 60.0)])"#,
+        )
+        .replace(
+            r#"(from: Entry(0), to: Poi("barn"), via: [(50.0, 45.0)])"#,
+            r#"(from: Entry(0), to: Poi("barn"), via: [(30.0, 60.0), (50.0, 45.0)])"#,
+        );
+    let c = content_with("pois: (2, 2)", &routes, "");
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 110.0, 110.0);
+    party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    w.rivals.parties[0].place = Some(RoutePlace::Poi(0));
+    let across = w.route_points(0, RoutePlace::Poi(1)).unwrap();
+    assert_eq!(
+        across,
+        vec![
+            V2::new(60.0, 60.0),
+            V2::new(30.0, 60.0),
+            V2::new(50.0, 45.0),
+            V2::new(90.0, 30.0)
+        ]
+    );
+}
+
+#[test]
+fn a_leader_waits_for_a_follower_that_falls_behind() {
+    let mut w = world("pois: (1, 1)", "");
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    // The follower is rooted where it stands; the leader may not walk off from it.
+    hold_hero(&mut w, members[1], ControlKind::Root);
+    let held_at = w.hero(members[1]).unwrap().pos;
+    steps(&mut w, secs(20.0));
+    let lead = w.hero(members[0]).unwrap().pos;
+    assert!(
+        lead.distance(held_at) <= 15.0,
+        "the leader walked on to {lead:?} from {held_at:?}"
+    );
+    // Freed, they go on together.
+    let hi = w.hero_slot(members[1]).unwrap();
+    w.heroes[hi].fight.held = None;
+    let ci = w.combat.hero_index(members[1]);
+    w.combat.heroes[ci].held = None;
+    steps(&mut w, secs(20.0));
+    assert!(w.hero(members[0]).unwrap().pos.distance(held_at) > 25.0);
+}
+
+#[test]
+fn the_same_party_walks_the_same_way_twice() {
+    let run = |seed: u64| -> Vec<(i32, i32)> {
+        let mut w = world_routes(
+            "pois: (1, 2)",
+            &format!(
+                "{}\n",
+                r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (60.0, 62.0), facing: 180.0)),"#
+            ),
+        );
+        join(&mut w, 0, 110.0, 110.0);
+        let members = party(&mut w, "watch", 0.8, 10.0, 60.0, seed);
+        let mut trail = Vec::new();
+        for i in 0..secs(90.0) {
+            w.step();
+            if i % 30 == 0 {
+                for &m in &members {
+                    if let Some(h) = w.hero(m) {
+                        trail.push(((h.pos.x * 100.0) as i32, (h.pos.y * 100.0) as i32));
+                    }
+                }
+            }
+        }
+        trail
+    };
+    assert_eq!(run(5), run(5), "the same dice walk the same way");
+    assert_ne!(run(5), run(6), "other dice walk another way");
+}

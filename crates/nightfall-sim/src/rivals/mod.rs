@@ -8,16 +8,12 @@
 //! own.
 
 mod content;
-// Their callers come with the rivals' minds (Task 8); until then only the tests do.
-#[allow(dead_code)]
+mod drive;
 mod goals;
-// The bot that calls it comes with the rivals' minds; until then only the tests do.
-#[allow(dead_code)]
 mod kit;
 mod mind;
 #[cfg(test)]
 mod tests;
-#[allow(dead_code)]
 mod travel;
 
 use std::sync::Arc;
@@ -30,6 +26,7 @@ pub use content::{
 };
 use goals::Goal;
 use kit::{kit_of, KitSlot};
+use travel::{Progress, Travel};
 pub use travel::{RIVAL_BUDGET, RIVAL_POOL};
 
 use crate::combat::Dice;
@@ -46,6 +43,13 @@ pub const RIVAL_BASE: PlayerId = 64;
 /// Mixed into a raid's seed for the dice a rival's carried find is rolled with, so no rival rolls
 /// what a chest did.
 const CARRY_STREAM: u64 = 0x5249_5641_4c53_0001;
+
+/// Mixed into the seed a party is brought in with, for the dice of its names, its points and its
+/// own choices.
+const PARTY_STREAM: u64 = 0x5249_5641_4c53_0002;
+
+/// Yards from a rival entry at which a party counts as having come in by it.
+const ENTRY_NEAR: f32 = 3.0;
 
 /// Whose side a hero is on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,8 +68,6 @@ impl Side {
 }
 
 /// The rivals' host-only state: never sent (a client's mirror keeps only [`Rivals::mirror`]).
-// The bots that read most of it come with Task 8.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Rivals {
     /// One per rival in the raid, the dead included.
@@ -73,8 +75,11 @@ pub(crate) struct Rivals {
     /// The parties a roll brought.
     pub(crate) parties: Vec<Party>,
     /// Which of the roll's parties have come.
+    // The arrivals that read them come with the raid's roll (Task 9).
+    #[allow(dead_code)]
     pub(crate) arrived: Vec<bool>,
     /// Seconds until arrivals are tried again.
+    #[allow(dead_code)]
     pub(crate) try_in: f32,
     /// Rival numbers handed out: the next is `RIVAL_BASE + next`.
     pub(crate) next: u8,
@@ -84,6 +89,13 @@ pub(crate) struct Rivals {
     pub(crate) out: Vec<PlayerId>,
     /// A client's mirror: the view of rivals its host sent.
     pub(crate) mirror: Option<RivalView>,
+    /// The loudest noise a hero of the party made lately: where, its radius and when. A hunting
+    /// party goes toward it when its own ears have nothing, as the night's hunters go toward the
+    /// loudest noise (spec §7.2).
+    pub(crate) rumour: Option<(V3, f32, f32)>,
+    /// Floors the navigator had looked at when the rivals' turn began, to keep their searches to
+    /// [`RIVAL_POOL`].
+    pub(crate) floors_start: u64,
 }
 
 /// What a client is told of the rivals: which its hero sees, and the marks they show it.
@@ -101,7 +113,6 @@ pub struct RivalMark {
 }
 
 /// One rival's mind and bot.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct RivalBody {
     pub(crate) player: PlayerId,
@@ -131,10 +142,12 @@ pub(crate) struct RivalBody {
     pub(crate) loot: Option<u32>,
     /// Containers it is done with.
     pub(crate) done: Vec<u32>,
+    /// Seconds it has wanted to move and could not (no way, no floors): at `stuck_for` it slips
+    /// out unseen.
+    pub(crate) pinned: f32,
 }
 
 /// Where a rival is walking: its path and the goal it was searched for.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Way {
     pub(crate) path: Option<Arc<[V3]>>,
@@ -142,10 +155,11 @@ pub(crate) struct Way {
     pub(crate) toward: Option<V2>,
     /// The last search found no way.
     pub(crate) failed: bool,
+    /// A search that found no way is not tried again for the same goal before this time.
+    pub(crate) retry_at: f32,
 }
 
 /// One rival party in the raid.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct Party {
     pub(crate) number: u8,
@@ -169,6 +183,23 @@ pub(crate) struct Party {
     pub(crate) best: f32,
     pub(crate) stalled: f32,
     pub(crate) dice: Dice,
+    /// The rival entry it came in by, if it came in at one.
+    pub(crate) entry: Option<usize>,
+    /// The last place of the content's routes it was at: its entry, then each point it looted.
+    pub(crate) place: Option<RoutePlace>,
+    /// The route its leader is walking.
+    pub(crate) journey: Option<Journey>,
+    /// The backstop's clock: seconds with no headway toward any goal.
+    pub(crate) progress: Progress,
+    /// The backstop has called: its members slip away unseen as soon as no hero sees them.
+    pub(crate) leaving: bool,
+}
+
+/// A leader's walk to a place of the content's routes.
+#[derive(Clone, Debug)]
+pub(crate) struct Journey {
+    pub(crate) to: RoutePlace,
+    pub(crate) travel: Travel,
 }
 
 impl Rivals {
@@ -220,6 +251,7 @@ impl RivalBody {
             act: None,
             loot: None,
             done: Vec::new(),
+            pinned: 0.0,
         }
     }
 }
@@ -252,8 +284,6 @@ impl World {
     /// of the kind's class named `name`, standing on the floor there, wearing its gear (its bag in
     /// its first bag slot) and carrying its kind's `carry` roll. Its first input is set, the
     /// baseline every hero's first input is.
-    // Task 8's arrivals are its first caller; until then only the tests are.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_rival_hero(
         &mut self,
         player: PlayerId,
@@ -339,8 +369,6 @@ impl World {
     /// spec §7.4), with all it carries, once no hero of the party sees it. Nothing is told:
     /// nobody saw it go. Whether it went is returned; it stays while any hero sees it, and when
     /// it is no rival, is not up, or is gone already.
-    // Task 8's bots are its first caller; until then only the tests are.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn rival_leaves_unseen(&mut self, player: PlayerId) -> bool {
         let Some(h) = self.hero(player) else {
             return false;
@@ -360,5 +388,111 @@ impl World {
         // It left alive: it is no hero who parted the raid, and no client watches from it.
         self.raid.parted.retain(|p| *p != player);
         self.rivals.out.push(player);
+    }
+
+    /// Party kind `def` (an index into the rivals' parties) comes in at `at` as party `number`,
+    /// at `aggression`, its dice from `seed`: each member a rival of its kind, numbered from
+    /// [`RIVAL_BASE`] up, the first at `at` and the rest 1.5 yards around it, each named by the
+    /// dice from its kind's names; the party visits between `pois` points. The members made.
+    ///
+    /// Public so the real-bake tests can bring a party in until the raid's roll does (Task 9).
+    pub fn add_party(
+        &mut self,
+        def: usize,
+        number: u8,
+        aggression: f32,
+        at: V2,
+        seed: u64,
+    ) -> Vec<PlayerId> {
+        let content = self.content().clone();
+        let d = &content.rivals.parties[def];
+        let (lo, hi) = content.rules.rivals.pois;
+        // Hashed, so twin seeds roll different parties (`Dice::new` alone keeps one bit less).
+        let mut dice = Dice::new(seed_for(seed ^ PARTY_STREAM, u64::from(number)));
+        let mut members = Vec::new();
+        for (i, &kind) in d.kinds.iter().enumerate() {
+            let Some(player) = RIVAL_BASE.checked_add(self.rivals.next) else {
+                break;
+            };
+            self.rivals.next = self.rivals.next.saturating_add(1);
+            let spot = if i == 0 {
+                at
+            } else {
+                at + V2::from_angle(i as f32 * std::f32::consts::TAU / 3.0, 1.5)
+            };
+            let k = &content.rivals.kinds[kind];
+            let name = match k.names.len() {
+                0 => k.name.clone(),
+                n => k.names[((dice.unit() * n as f32) as usize).min(n - 1)].clone(),
+            };
+            if self
+                .add_rival_hero(player, kind, Side::Rival(number), spot, &name)
+                .is_ok()
+            {
+                members.push(player);
+            }
+        }
+        let span = f32::from(hi - lo + 1);
+        let pois_left = lo + ((dice.unit() * span) as u8).min(hi - lo);
+        let entry = content
+            .rivals
+            .entries
+            .iter()
+            .position(|e| e.distance(at) <= ENTRY_NEAR);
+        self.rivals.parties.push(Party {
+            number,
+            def,
+            aggression,
+            members: members.clone(),
+            goal: Goal::Wait,
+            visited: Vec::new(),
+            pois_left,
+            next_poi: None,
+            looting: None,
+            hurt_by: None,
+            hunted: false,
+            shut: Vec::new(),
+            best: f32::INFINITY,
+            stalled: 0.0,
+            dice,
+            entry,
+            place: entry.map(RoutePlace::Entry),
+            journey: None,
+            progress: Progress::default(),
+            leaving: false,
+        });
+        members
+    }
+
+    /// One line per rival party, for `NIGHTFALL_TRACE_RIVALS`: its goal, aggression and members
+    /// (with health and where they stand). Empty on a client's mirror.
+    pub fn rival_debug(&self) -> Vec<String> {
+        let content = self.content();
+        self.rivals
+            .parties
+            .iter()
+            .map(|p| {
+                let members: Vec<String> = p
+                    .members
+                    .iter()
+                    .filter_map(|&m| self.hero(m))
+                    .map(|h| {
+                        format!(
+                            "{} {} {:.0}/{:.0} ({:.1}, {:.1})",
+                            h.player, h.name, h.hp, h.max_hp, h.pos.x, h.pos.y
+                        )
+                    })
+                    .collect();
+                format!(
+                    "party {} {}: {:?}, aggression {:.2}, {} points left [{}]",
+                    p.number,
+                    content.rivals.parties[p.def].name,
+                    p.goal,
+                    p.aggression,
+                    p.pois_left,
+                    members.join("; ")
+                )
+            })
+            .collect()
     }
 }

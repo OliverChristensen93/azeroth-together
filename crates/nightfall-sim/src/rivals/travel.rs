@@ -60,11 +60,6 @@ impl Travel {
         }
     }
 
-    /// The route's last waypoint.
-    pub(crate) fn end(&self) -> Option<V2> {
-        self.points.last().copied()
-    }
-
     /// Yards of route left from `at`: the way to the next waypoint and the legs after it. It only
     /// falls as the party walks on, so a winding route is never mistaken for being stuck.
     pub(crate) fn left(&self, at: V2) -> f32 {
@@ -76,6 +71,11 @@ impl Travel {
                 .windows(2)
                 .map(|w| w[0].distance(w[1]))
                 .sum::<f32>()
+    }
+
+    /// Whether the next [`Travel::step`] starts a search (the leg's path is not known yet).
+    pub(crate) fn needs_search(&self) -> bool {
+        self.path.is_none() && self.to < self.points.len()
     }
 
     /// Forgets the leg's path (after a flight or a fight moved the party off it): the next step
@@ -126,6 +126,9 @@ impl Travel {
 pub(crate) struct Progress {
     best: Option<f32>,
     idle: f32,
+    /// The next [`Progress::tick`] starts from its own `left` without ending the idleness: the
+    /// goal changed, not the headway.
+    rebased: bool,
 }
 
 impl Progress {
@@ -133,6 +136,11 @@ impl Progress {
     /// again. Called while the party is going somewhere; a fight or a rest is not idleness, and
     /// the bot [`Progress::reset`]s for them.
     pub(crate) fn tick(&mut self, left: f32, dt: f32) {
+        if std::mem::take(&mut self.rebased) {
+            self.best = Some(left);
+            self.idle += dt;
+            return;
+        }
         match self.best {
             Some(b) if left > b - HEADWAY => self.idle += dt,
             _ => {
@@ -140,6 +148,13 @@ impl Progress {
                 self.idle = 0.0;
             }
         }
+    }
+
+    /// The goal changed (a point given up for the next): what is left is measured from the new
+    /// one, but the time already idle stays, so a party that cycles through goals it cannot reach
+    /// is still given up on.
+    pub(crate) fn rebase(&mut self) {
+        self.rebased = true;
     }
 
     /// Starts counting again (a new goal, a fight, a rest).
@@ -209,7 +224,6 @@ mod tests {
             V2::new(50.0, 10.0),
             V2::new(50.0, 60.0),
         ]);
-        assert_eq!(t.end(), Some(V2::new(50.0, 60.0)));
         let start = V3::new(10.0, 10.0, 0.0);
         let (end, at) = walk(&mut t, &mut n, start, 1.0, 400);
         assert_eq!(end, Walk::Arrived);
@@ -321,6 +335,26 @@ mod tests {
         }
         assert!(p.stuck(&r));
         p.reset();
+        assert!(!p.stuck(&r));
+    }
+
+    #[test]
+    fn a_new_goal_measures_from_itself_but_keeps_the_idle_time() {
+        let r = RivalRules::default();
+        let mut p = Progress::default();
+        p.tick(100.0, 1.0);
+        for _ in 0..40 {
+            p.tick(100.0, 1.0);
+        }
+        // The goal changed to a nearer one: that alone is no headway.
+        p.rebase();
+        p.tick(10.0, 1.0);
+        for _ in 0..(r.stuck_for as usize - 41) {
+            p.tick(10.0, 1.0);
+        }
+        assert!(p.stuck(&r), "the idle time carried over");
+        // But getting nearer the new goal is.
+        p.tick(8.0, 1.0);
         assert!(!p.stuck(&r));
     }
 
