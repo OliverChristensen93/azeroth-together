@@ -3652,3 +3652,35 @@ fn a_hero_held_out_of_the_fight_cannot_dodge_but_a_rooted_one_can() {
         .iter()
         .any(|e| matches!(e, Event::Dodged { player: 0 })));
 }
+
+#[test]
+fn the_showcase_stands_an_enemy_of_each_kind_outside_the_ring_and_a_party_at_the_nearest_point() {
+    let mut w = world(
+        "",
+        r#"(place: "Gate", kind: "brute", behaviour: Sentry(at: (100.0, 100.0), facing: 0.0)),"#,
+    );
+    join(&mut w, 0, 5.0, 60.0);
+    let (before, parties) = (w.enemies.len(), w.rivals.parties.len());
+    let lines = w.run_showcase();
+    assert!(lines.is_empty(), "{lines:?}");
+    // The one kind of the test content, outside the 50-yard ring.
+    assert_eq!(w.enemies.len(), before + 1);
+    let brute = w.enemies.last().unwrap();
+    assert!(brute.pos.distance(V2::new(5.0, 60.0)) > 50.0, "{:?}", brute.pos);
+    // The party stands at the point nearest the entry, "the yard", and plays on.
+    assert_eq!(w.rivals.parties.len(), parties + 1);
+    let party = w.rivals.parties.last().unwrap();
+    assert_eq!(party.members.len(), 2);
+    for &m in &party.members {
+        assert!(w.hero(m).unwrap().pos.distance(V2::new(60.0, 60.0)) < 3.0);
+    }
+    steps(&mut w, secs(20.0));
+}
+
+#[test]
+fn without_the_showcase_nothing_extra_stands() {
+    let mut w = world("", "");
+    join(&mut w, 0, 5.0, 60.0);
+    steps(&mut w, secs(5.0));
+    assert!(w.enemies.is_empty() && w.rivals.parties.is_empty());
+}

@@ -363,6 +363,19 @@ pub(super) fn autoplay() -> bool {
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_AUTOPLAY").is_some())
 }
 
+/// Whether `NIGHTFALL_SHOWCASE` (the value given, if set) asks for the showcase: anything but
+/// unset, empty or `0`.
+pub(super) fn showcase_wanted(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// `NIGHTFALL_SHOWCASE=1`: the host puts one of each enemy kind, a rival party and a flock of
+/// ravens near the start (see [`nightfall_sim::World::run_showcase`]).
+fn showcase() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| showcase_wanted(std::env::var("NIGHTFALL_SHOWCASE").ok().as_deref()))
+}
+
 pub(super) fn trace_pos() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("NIGHTFALL_TRACE_POS").is_some())
@@ -688,6 +701,11 @@ pub(super) fn step_sim(
     if sim.world.map().is_none() {
         if let Some(map) = terrain.ready() {
             sim.world.attach_map(map.clone());
+            if showcase() {
+                for line in sim.world.run_showcase() {
+                    warn!("{line}");
+                }
+            }
             sim.log_new_warnings();
         }
     }
@@ -846,6 +864,14 @@ fn known_companion(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_showcase_is_asked_for_only_by_a_value_that_is_not_empty_or_zero() {
+        assert!(!super::showcase_wanted(None));
+        assert!(!super::showcase_wanted(Some("")));
+        assert!(!super::showcase_wanted(Some("0")));
+        assert!(super::showcase_wanted(Some("1")));
+    }
+
     #[test]
     fn a_begin_that_could_not_be_saved_takes_ready_back() {
         assert!(!super::ready_after_begin(true, false));

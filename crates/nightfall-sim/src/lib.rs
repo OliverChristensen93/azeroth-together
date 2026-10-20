@@ -26,6 +26,7 @@ mod profile;
 mod raid;
 mod rivals;
 mod senses;
+mod showcase;
 mod sight;
 mod stations;
 mod world;
@@ -82,6 +83,7 @@ pub use rivals::{
     RivalView, RouteDef, RouteEnd, RoutePlace, Side, RIVAL_BASE, RIVAL_BUDGET, RIVAL_POOL,
 };
 pub use senses::{Alert, Gait, Loudness, Mark, Stance};
+pub use showcase::{plan as showcase_plan, ShowcasePlan};
 pub use sight::{CHEST_HEIGHT, EYE_HEIGHT, KEEP_EXTRA};
 pub use stations::StationError;
 pub use world::{Hero, HeroPose, PlayerId, PlayerInput, Snapshot, World, WorldError, DT, TICK_HZ};
