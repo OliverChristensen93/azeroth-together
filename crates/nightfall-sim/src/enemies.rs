@@ -29,8 +29,9 @@ pub const WANDER_BUDGET: usize = 4_000;
 /// (`nightfall-bake`'s `roads` test measures it); a goal that takes more than this is taken for
 /// walled off and refused.
 pub const ERRAND_BUDGET: usize = 32_000;
-/// Floors all of a step's searches may look at together: an errand's, one patrol's and two
-/// wanderers'. A search starts only while what is left covers its whole budget, so no step
+/// Floors all of a step's searches may look at together: an errand's, one patrol's, two
+/// wanderers' and the rivals' own pool ([`crate::RIVAL_POOL`], their routes' legs). A search
+/// starts only while what is left covers its whole budget, so no step
 /// spends more on paths than this however many enemies are lost. Measured on the real Duskwood bake
 /// in release (`the_worst_step_of_path_planning_fits_its_time`, cold navigator): the worst step
 /// the night's errands, patrol legs and wanderers can make takes 13 to 15 ms (a hunter's
@@ -38,8 +39,10 @@ pub const ERRAND_BUDGET: usize = 32_000;
 /// again), and the bound with a patrol search spending its whole budget as well, which no real
 /// leg does (the costliest needs 8 400 floors), 22 to 27 ms, under the 33 ms tick. An errand's whole
 /// budget is kept apart, so a hunter sent where no way leads can never keep the patrols from
-/// planning that step.
-pub const STEP_FLOORS: usize = ERRAND_BUDGET + PATROL_BUDGET + 2 * WANDER_BUDGET;
+/// planning that step. With the rivals' two leg searches in (the dearest shipped leg is 812 floors)
+/// the same step takes 12 ms and the ceiling 24 ms.
+pub const STEP_FLOORS: usize =
+    ERRAND_BUDGET + PATROL_BUDGET + 2 * WANDER_BUDGET + crate::rivals::RIVAL_POOL;
 /// Within this many yards of a point, an enemy is there.
 pub(crate) const ARRIVE: f32 = 0.6;
 /// A hunt goal this near one that had no way there is refused too (yards).

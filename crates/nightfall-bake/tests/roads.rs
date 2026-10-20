@@ -323,7 +323,9 @@ fn a_hunters_errand_across_duskwood_fits_its_budget() {
         (0, 0, 0, Vec::new(), 0u64);
     let mut cost: Vec<u64> = Vec::new();
     for from in &starts {
-        let Some(a) = stand(&map, *from) else { continue };
+        let Some(a) = stand(&map, *from) else {
+            continue;
+        };
         for dist in [60.0, 100.0, 150.0] {
             for k in 0..8 {
                 let goal = *from + V2::from_angle(k as f32 * std::f32::consts::TAU / 8.0, dist);
@@ -345,14 +347,23 @@ fn a_hunters_errand_across_duskwood_fits_its_budget() {
                 cost.push(spent);
                 // And as the hunter asks for it, on a step's leftovers.
                 nav.begin_step(ERRAND_BUDGET);
-                if !matches!(nav.plan_path(a, b, false, ERRAND_BUDGET), PathPlan::Found(_)) {
-                    refused.push(format!("{from:?} -> {goal:?} ({dist:.0} yd, needs {spent})"));
+                if !matches!(
+                    nav.plan_path(a, b, false, ERRAND_BUDGET),
+                    PathPlan::Found(_)
+                ) {
+                    refused.push(format!(
+                        "{from:?} -> {goal:?} ({dist:.0} yd, needs {spent})"
+                    ));
                 }
             }
         }
     }
     cost.sort_unstable();
-    let pct = |p: usize| cost.get(cost.len().saturating_sub(1) * p / 100).copied().unwrap_or(0);
+    let pct = |p: usize| {
+        cost.get(cost.len().saturating_sub(1) * p / 100)
+            .copied()
+            .unwrap_or(0)
+    };
     println!(
         "errands: {tried} tried, {reachable} found within {REFERENCE} floors, {beyond} not; floors median {} p90 {} p99 {} worst {worst}; budget {ERRAND_BUDGET}; refused {}",
         pct(50),
@@ -367,7 +378,10 @@ fn a_hunters_errand_across_duskwood_fits_its_budget() {
     for r in refused.iter().take(20) {
         println!("  refused: {r}");
     }
-    assert!(reachable > 100, "too few reachable errands to say anything: {reachable}");
+    assert!(
+        reachable > 100,
+        "too few reachable errands to say anything: {reachable}"
+    );
     // Nearly every errand fits; the few that wind round water or ridges for more are refused.
     assert!(
         refused.len() * 50 <= reachable,
@@ -449,7 +463,8 @@ fn the_worst_step_of_path_planning_fits_its_time() {
                 starts.push(c);
                 for radius in [25.0, 40.0] {
                     for k in 0..8 {
-                        let spot = c + V2::from_angle(k as f32 * std::f32::consts::TAU / 8.0, radius);
+                        let spot =
+                            c + V2::from_angle(k as f32 * std::f32::consts::TAU / 8.0, radius);
                         if let (Some(a), Some(b)) = (at(c), at(spot)) {
                             rings.push((a, b));
                         }
@@ -493,10 +508,32 @@ fn the_worst_step_of_path_planning_fits_its_time() {
         legs.len(),
         rings.len()
     );
+    // The rivals: every leg of every shipped route, both ways; a party asks for one leg at a time and
+    // `paths_per_step` (2) parties may search in one step.
+    let mut rival_legs: Vec<(V3, V3)> = Vec::new();
+    for r in &content.rivals.routes {
+        for w in r.points.windows(2) {
+            if let (Some(a), Some(b)) = (at(w[0]), at(w[1])) {
+                rival_legs.push((a, b));
+                rival_legs.push((b, a));
+            }
+        }
+    }
+    let rivals = costliest(
+        &map,
+        &rival_legs,
+        nightfall_sim::RIVAL_BUDGET,
+        content.rules.rivals.paths_per_step as usize,
+    );
     let errand = costliest(&map, &errands, ERRAND_BUDGET, 1);
     let patrol = costliest(&map, &legs, PATROL_BUDGET, 1);
     let wander = costliest(&map, &rings, nightfall_sim::WANDER_BUDGET, 2);
-    for (name, v) in [("errand", &errand), ("patrol", &patrol), ("wander", &wander)] {
+    for (name, v) in [
+        ("errand", &errand),
+        ("patrol", &patrol),
+        ("wander", &wander),
+        ("rival", &rivals),
+    ] {
         for (a, b, floors, took) in v {
             println!("{name}: {floors} floors, {took:?}, {a:?} -> {b:?}");
         }
@@ -511,6 +548,7 @@ fn the_worst_step_of_path_planning_fits_its_time() {
             (&errand, ERRAND_BUDGET),
             (&patrol, PATROL_BUDGET),
             (&wander, nightfall_sim::WANDER_BUDGET),
+            (&rivals, nightfall_sim::RIVAL_BUDGET),
         ] {
             for &(a, b, _, _) in v.iter() {
                 let _ = nav.plan_path(a, b, false, budget);
@@ -530,6 +568,7 @@ fn the_worst_step_of_path_planning_fits_its_time() {
             (&errand, ERRAND_BUDGET),
             (&heavy[1..].to_vec(), PATROL_BUDGET),
             (&wander, nightfall_sim::WANDER_BUDGET),
+            (&rivals, nightfall_sim::RIVAL_BUDGET),
         ] {
             for &(a, b, _, _) in v.iter() {
                 let _ = nav.plan_path(a, b, false, budget);
@@ -538,14 +577,19 @@ fn the_worst_step_of_path_planning_fits_its_time() {
         ceiling = ceiling.max(t.elapsed());
     }
     let ceiling_ms = ceiling.as_secs_f64() * 1000.0;
-    println!("ceiling step (a patrol search spending {PATROL_BUDGET} floors too): {ceiling_ms:.1} ms");
+    println!(
+        "ceiling step (a patrol search spending {PATROL_BUDGET} floors too): {ceiling_ms:.1} ms"
+    );
     let ms = worst.as_secs_f64() * 1000.0;
     println!(
         "worst step: {ms:.1} ms for up to {} floors (target {TARGET_MS} ms in release)",
         nightfall_sim::STEP_FLOORS
     );
     if !cfg!(debug_assertions) {
-        assert!(ms <= TARGET_MS, "the worst step takes {ms:.1} ms, over {TARGET_MS} ms: lower the budgets");
+        assert!(
+            ms <= TARGET_MS,
+            "the worst step takes {ms:.1} ms, over {TARGET_MS} ms: lower the budgets"
+        );
         assert!(
             ceiling_ms <= CEILING_MS,
             "the ceiling step takes {ceiling_ms:.1} ms, over {CEILING_MS} ms: lower the budgets"
