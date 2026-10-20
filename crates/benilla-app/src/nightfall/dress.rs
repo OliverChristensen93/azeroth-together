@@ -3,6 +3,7 @@
 //! through item templates a server would send. So each piece gets a stand-in template carrying
 //! just its look, filed in [`Items`] as a server answer would be.
 
+use benilla_protocol::field::FIELD_UNIT_BYTES_1;
 use benilla_protocol::messages::ItemInfo;
 use bevy::prelude::*;
 
@@ -96,7 +97,9 @@ pub(super) fn pieces(
 }
 
 /// A player body of `race` and `sex` (its `ChrRaces` display), in the class's starting outfit and
-/// holding the class's weapons. The hero and the menu's preview are both this.
+/// holding the class's weapons. The hero and the menu's preview are both this. `faction` is the
+/// faction template it is born with, and `hidden` has it born untrackable, so a body that is to be
+/// concealed is never a frame friendly or findable.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_player_body(
     commands: &mut Commands,
@@ -106,12 +109,17 @@ pub(super) fn spawn_player_body(
     (race, sex): (u8, u8),
     serial: u64,
     level: u32,
+    (faction, hidden): (u32, bool),
     pos: Vec3,
     yaw: f32,
 ) -> Option<Entity> {
     let display = char_create.0.body_display(race, sex)?;
     let outfit = char_create.0.start_outfit(race, class.class_id, sex);
-    let worn = wear(items, &pieces(outfit, &class.weapons));
+    let mut worn = wear(items, &pieces(outfit, &class.weapons));
+    if hidden {
+        // Born untrackable (no minimap dot), as the caller means to keep it concealed.
+        worn.push((FIELD_UNIT_BYTES_1, super::conceal::UNTRACKABLE_BYTES_1));
+    }
     let weapons: Vec<Weapon> = class
         .weapons
         .iter()
@@ -135,7 +143,7 @@ pub(super) fn spawn_player_body(
             display,
             scale: 1.0,
             level,
-            faction: super::units::FACTION_PLAYER,
+            faction,
             bytes0: u32::from(race)
                 | u32::from(class.class_id) << 8
                 | u32::from(sex) << 16

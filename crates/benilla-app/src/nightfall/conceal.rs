@@ -103,21 +103,7 @@ pub(super) fn enemies(
                 commands.entity(e).remove::<Concealed>();
             }
         }
-        // Read through the shared reference: only a real clear may mark the resource changed.
-        if selection.target == Some(e) {
-            if !hide {
-                grace.seen = Some(e);
-                grace.entity = None;
-            } else if grace.seen != Some(e) {
-                // Never seen while selected: there is no sight to lose.
-                clear_selection(&mut selection);
-            } else if grace.entity != Some(e) {
-                grace.entity = Some(e);
-                grace.since = now;
-            } else if now - grace.since >= TARGET_GRACE {
-                clear_selection(&mut selection);
-            }
-        }
+        follow_target(&mut grace, &mut selection, e, hide, now);
         let stand = if enemy.asleep { STAND_SLEEP } else { STAND };
         let now = bytes_1(
             &store.0,
@@ -132,7 +118,39 @@ pub(super) fn enemies(
                 .merge(ObjectFields::from_pairs(&[(FIELD_UNIT_BYTES_1, want)]));
         }
     }
-    // The selection moved on (or was cleared elsewhere): the old target's clock is not the new one's.
+    settle_grace(&mut grace, &selection);
+}
+
+/// The selected body `e`, seen or not this frame (`hide`): a seen one earns its grace, one out of
+/// sight starts the clock, and the selection lets go of it once the grace is spent. Shared by the
+/// enemies and the rivals, each with a [`TargetGrace`] of its own.
+pub(super) fn follow_target<S: std::ops::DerefMut<Target = Selection>>(
+    grace: &mut TargetGrace,
+    selection: &mut S,
+    e: Entity,
+    hide: bool,
+    now: f32,
+) {
+    // Read through the shared reference: only a real clear may mark the resource changed.
+    if selection.target != Some(e) {
+        return;
+    }
+    if !hide {
+        grace.seen = Some(e);
+        grace.entity = None;
+    } else if grace.seen != Some(e) {
+        // Never seen while selected: there is no sight to lose.
+        clear_selection(&mut *selection);
+    } else if grace.entity != Some(e) {
+        grace.entity = Some(e);
+        grace.since = now;
+    } else if now - grace.since >= TARGET_GRACE {
+        clear_selection(&mut *selection);
+    }
+}
+
+/// The selection moved on (or was cleared elsewhere): the old target's clock is not the new one's.
+pub(super) fn settle_grace(grace: &mut TargetGrace, selection: &Selection) {
     if grace.entity.is_some() && grace.entity != selection.target {
         grace.entity = None;
     }

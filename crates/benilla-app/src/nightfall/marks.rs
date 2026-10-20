@@ -56,9 +56,8 @@ pub(super) fn draw(
     cams: Query<(&Camera, &Transform), With<WorldCamera>>,
     bodies: Query<(&Transform, Has<Concealed>)>,
     mut views: ResMut<MarkViews>,
-    mut texts: Query<(&mut Node, &mut Text, &mut TextColor, &mut Visibility), With<MarkText>>,
+    mut texts: MarkTexts,
 ) {
-    let s = ui_scale.0;
     let cam = cams.single().ok();
     // A node that went with the last run is made again when its enemy is next marked.
     views.nodes.retain(|_, e| texts.contains(*e));
@@ -70,14 +69,7 @@ pub(super) fn draw(
         .filter(|m| sim.world.enemy(m.enemy).is_some())
         .map(|m| m.enemy)
         .collect();
-    views.nodes.retain(|id, &mut node| {
-        if marked.contains(id) {
-            return true;
-        }
-        commands.entity(node).despawn();
-        false
-    });
-    let mut shown = HashSet::new();
+    let mut placed = Vec::new();
     for m in &sim.marks {
         let Some(enemy) = sim.world.enemy(m.enemy) else {
             continue;
@@ -99,14 +91,62 @@ pub(super) fn draw(
         let Ok(at) = camera.world_to_viewport(&GlobalTransform::from(*cam_tf), head) else {
             continue;
         };
-        let node = *views.nodes.entry(m.enemy).or_insert_with(|| {
+        placed.push((m.enemy, m.alert, at));
+    }
+    show_marks(
+        &mut commands,
+        &assets,
+        ui_scale.0,
+        &mut views.nodes,
+        &mut texts,
+        &marked,
+        &placed,
+    );
+}
+
+/// The text nodes of one kind of mark, keyed by whose they are.
+pub(super) type MarkTexts<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut Node,
+        &'static mut Text,
+        &'static mut TextColor,
+        &'static mut Visibility,
+    ),
+    With<MarkText>,
+>;
+
+/// Puts each of `placed` (whose, its mark, the screen point over its head) in a node of its own,
+/// made when the mark first appears, and hides the node of a mark that is not placed this frame;
+/// the node of anyone no longer in `marked` is despawned. Enemies' and rivals' marks both go
+/// through this, so the two look and sit alike.
+pub(super) fn show_marks<K: std::hash::Hash + Eq + Copy>(
+    commands: &mut Commands,
+    assets: &AssetServer,
+    ui_scale: f32,
+    nodes: &mut HashMap<K, Entity>,
+    texts: &mut MarkTexts,
+    marked: &HashSet<K>,
+    placed: &[(K, Alert, Vec2)],
+) {
+    nodes.retain(|id, &mut node| {
+        if marked.contains(id) {
+            return true;
+        }
+        commands.entity(node).despawn();
+        false
+    });
+    let mut shown = HashSet::new();
+    for &(key, alert, at) in placed {
+        let node = *nodes.entry(key).or_insert_with(|| {
             commands
                 .spawn((
                     MarkText,
                     NightfallEntity,
                     Text::new(""),
                     TextFont {
-                        font: crate::char_select::wow_font(&assets),
+                        font: crate::char_select::wow_font(assets),
                         font_size: SIZE,
                         ..default()
                     },
@@ -124,17 +164,17 @@ pub(super) fn draw(
         let Ok((mut n, mut text, mut color, mut vis)) = texts.get_mut(node) else {
             continue;
         };
-        shown.insert(m.enemy);
-        let (glyph, tint) = mark_face(m.alert);
-        n.left = Val::Px(at.x / s - HALF_W);
-        n.top = Val::Px(at.y / s - HIGH);
+        shown.insert(key);
+        let (glyph, tint) = mark_face(alert);
+        n.left = Val::Px(at.x / ui_scale - HALF_W);
+        n.top = Val::Px(at.y / ui_scale - HIGH);
         if text.0 != glyph {
             text.0 = glyph.into();
         }
         color.0 = tint;
         *vis = Visibility::Inherited;
     }
-    for (id, &node) in &views.nodes {
+    for (id, &node) in nodes.iter() {
         if !shown.contains(id) {
             if let Ok((_, _, _, mut vis)) = texts.get_mut(node) {
                 *vis = Visibility::Hidden;

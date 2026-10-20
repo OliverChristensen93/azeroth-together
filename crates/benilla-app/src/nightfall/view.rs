@@ -8,12 +8,14 @@ use benilla_world::world_point::WorldPoint;
 use bevy::prelude::*;
 use nightfall_sim::{PlayerId, V2};
 
+use super::rivals_view;
 use super::run::Sim;
 use super::units::{self, ShownVitals, UnitKind};
 use super::{content, dress};
 use crate::creature_anim::{move_flags, MovementState};
 use crate::names::NameCache;
 use crate::net::{GuidIndex, ObjectStore, SelfGuid};
+use crate::target::Concealed;
 
 /// Player guids are this plus the player's number.
 pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
@@ -100,6 +102,7 @@ pub(super) fn sync(
             (hero.race, hero.sex),
             serial,
             content.rules.hero_level,
+            (rivals_view::faction_of(hero.side), hero.side.is_rival()),
             at,
             units::yaw_of(hero.facing),
         ) else {
@@ -107,6 +110,10 @@ pub(super) fn sync(
         };
         index.0.insert(guid, e);
         names.insert_player(guid, hero.name.clone(), None);
+        if hero.side.is_rival() {
+            // Never visible before the first sight check says so.
+            commands.entity(e).insert(Concealed);
+        }
         if hero.player == sim.me {
             self_guid.0 = Some(guid);
         } else {
@@ -177,6 +184,16 @@ fn run_speeds(run: f32) -> benilla_protocol::MoveSpeeds {
 /// Yards a second under which another hero is drawn walking, not running.
 const WALK_UNDER: f32 = 4.0;
 
+/// The movement flags of a hero going `speed` yards a second: still, walking under WoW's
+/// walk-to-run line (a hero or a rival drawn walking), or running.
+fn flags_for(speed: f32) -> u32 {
+    match speed {
+        s if s <= 0.1 => 0,
+        s if s < WALK_UNDER => move_flags::FORWARD | move_flags::WALK_MODE,
+        _ => move_flags::FORWARD,
+    }
+}
+
 /// Every other hero between its last two states, on the ground, turned the way it goes, running
 /// when it moves.
 pub(super) fn place(
@@ -200,12 +217,7 @@ pub(super) fn place(
             let target = Quat::from_rotation_y(units::yaw_of(p.facing));
             tf.rotation = tf.rotation.slerp(target, turn);
         }
-        // Under WoW's walk-to-run line a hero (or a rival) is drawn walking.
-        let flags = match p.speed {
-            s if s <= 0.1 => 0,
-            s if s < WALK_UNDER => move_flags::FORWARD | move_flags::WALK_MODE,
-            _ => move_flags::FORWARD,
-        };
+        let flags = flags_for(p.speed);
         if mv.speed != p.speed || mv.flags != flags {
             mv.speed = p.speed;
             mv.flags = flags;
@@ -245,6 +257,13 @@ mod tests {
         sim.world.heroes[0].fight.life = life;
         world.run_system_once(write_vitals).unwrap();
         world.get::<ObjectStore>(body).unwrap().0.unit_health()
+    }
+
+    #[test]
+    fn a_slow_hero_walks_and_a_still_one_stands_and_a_quick_one_runs() {
+        assert_eq!(flags_for(0.1), 0);
+        assert_eq!(flags_for(3.9), move_flags::FORWARD | move_flags::WALK_MODE);
+        assert_eq!(flags_for(WALK_UNDER), move_flags::FORWARD);
     }
 
     #[test]

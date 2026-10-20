@@ -340,6 +340,8 @@ impl Plugin for NightfallPlugin {
             .init_resource::<enemies::EnemyViews>()
             .init_resource::<marks::MarkViews>()
             .init_resource::<rivals_view::RivalMarkViews>()
+            .init_resource::<rivals_view::RivalSight>()
+            .init_resource::<rivals_view::RivalGrace>()
             .init_resource::<telegraphs::TelegraphViews>()
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
@@ -688,6 +690,7 @@ impl Plugin for NightfallPlugin {
                     auras::enemies,
                     stance::trace,
                     marks::draw,
+                    rivals_view::look,
                     rivals_view::hostile,
                     rivals_view::conceal,
                     rivals_view::marks,

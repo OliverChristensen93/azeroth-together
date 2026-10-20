@@ -23,6 +23,7 @@ use super::view::Views;
 use crate::creature_anim::Engaged;
 use crate::net::{MoveModeMessage, ObjectStore, SelfGuid, TeleportMessage};
 use crate::spell::Cooldowns;
+use crate::target::Concealed;
 use crate::ui_action::{CastErrors, UiError, UiErrorKeys};
 use crate::ui_cast::{CastBarEdge, CastBarFeed};
 
@@ -264,10 +265,16 @@ pub(super) fn show_events(
     mut cast_errors: ResMut<CastErrors>,
     mut teleports: MessageWriter<TeleportMessage>,
     mut teleport_counter: Local<u32>,
+    concealed: Query<(), With<Concealed>>,
 ) {
     let content = sim.world.content();
+    // A rival our hero does not see shows nothing of its fight: no cast, number or sound.
     let body = |u: UnitRef| match u {
-        UnitRef::Hero(p) => views.heroes.get(&p).copied(),
+        UnitRef::Hero(p) => views
+            .heroes
+            .get(&p)
+            .copied()
+            .filter(|e| !concealed.contains(*e)),
         UnitRef::Enemy(id) => enemy_views.drawn.get(&id).copied(),
     };
     let me = UnitRef::Hero(sim.me);
@@ -1302,5 +1309,30 @@ mod tests {
             Some(enemy_guid(0, 99)),
             "engaged the frame it appears"
         );
+    }
+
+    #[test]
+    fn a_concealed_body_shows_no_casts_numbers_or_heals() {
+        use crate::creature_anim::CastEvent;
+        let by = UnitRef::Hero(0);
+        let mut stage = Stage::new(vec![
+            Event::ChannelStart {
+                by,
+                ability: 0,
+                target: None,
+                secs: 3.0,
+            },
+            Event::Healed {
+                player: 0,
+                amount: 40.0,
+            },
+        ]);
+        // A rival our hero does not see is a concealed body, whatever the events say of it.
+        stage.world.entity_mut(stage.hero).insert(Concealed);
+        stage.show();
+        assert!(stage.drain::<CastEvent>().is_empty());
+        assert!(stage
+            .drain::<crate::combat_text::CombatTextSpawn>()
+            .is_empty());
     }
 }

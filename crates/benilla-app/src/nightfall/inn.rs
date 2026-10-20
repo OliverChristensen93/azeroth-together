@@ -173,6 +173,7 @@ pub(super) fn sync(
             (class.race, class.sex),
             INN_SERIAL_BASE,
             level,
+            (units::FACTION_PLAYER, false),
             at,
             yaw,
         ) else {
@@ -232,6 +233,7 @@ pub(super) fn sync(
             (f.hero.race, f.hero.sex),
             serial,
             level,
+            (units::FACTION_PLAYER, false),
             at,
             units::yaw_of(pose.facing),
         ) else {
