@@ -1,7 +1,7 @@
 //! The senses on screen (spec §5.5, §10): an eye under the player frame that opens and brightens
 //! with the hero's visibility (its number beneath, for tuning), up to three rings around it for
-//! the loudest noise they made in the last second, and a heartbeat while an enemy alerted to them
-//! is near. The vignette is the night grade's ([`super::grade::follow_visibility`]).
+//! the loudest noise they made in the last second, and a heartbeat while an enemy or a rival
+//! alerted to them is near. The vignette is the night grade's ([`super::grade::follow_visibility`]).
 
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
@@ -228,6 +228,28 @@ pub(super) struct Beat {
     dub: Option<f32>,
 }
 
+/// The yards from our hero to the nearest unit alerted to them: an enemy by its mark, or a rival
+/// by `view`'s (spec §7.4: rivals notice heroes as enemies do).
+fn nearest_hunter(sim: &Sim, view: &nightfall_sim::RivalView) -> Option<f32> {
+    let h = sim.world.hero(sim.me)?;
+    let enemies = sim
+        .marks
+        .iter()
+        .filter(|m| m.alert == Alert::Alerted)
+        .filter_map(|m| sim.world.enemy(m.enemy))
+        .map(|e| e.pos);
+    let rivals = view
+        .marks
+        .iter()
+        .filter(|m| m.alert == Alert::Alerted)
+        .filter_map(|m| sim.world.hero(m.rival))
+        .map(|r| r.pos);
+    enemies
+        .chain(rivals)
+        .map(|p| p.distance(h.pos))
+        .min_by(f32::total_cmp)
+}
+
 /// The heartbeat (spec §10): a lub-dub through WoW's own `PlaySoundFile`, faster the nearer the
 /// nearest enemy alerted to our hero, while one is within `heartbeat_within` yards. A missing
 /// sound file only makes it silent.
@@ -235,18 +257,12 @@ pub(super) fn heartbeat(
     sim: Res<Sim>,
     script: Option<NonSend<UiScript>>,
     real: Res<Time<Real>>,
+    sight: Res<super::rivals_view::RivalSight>,
     mut beat: Local<Beat>,
 ) {
     let within = sim.world.content().rules.senses.heartbeat_within;
     let now = real.elapsed_secs();
-    let nearest = sim.world.hero(sim.me).and_then(|h| {
-        sim.marks
-            .iter()
-            .filter(|m| m.alert == Alert::Alerted)
-            .filter_map(|m| sim.world.enemy(m.enemy))
-            .map(|e| e.pos.distance(h.pos))
-            .min_by(f32::total_cmp)
-    });
+    let nearest = nearest_hunter(&sim, &sight.0);
     let Some(interval) = nearest.and_then(|d| beat_interval(d, within)) else {
         // The first beat comes at once when a hunter closes in.
         beat.next = now;
@@ -296,6 +312,26 @@ mod tests {
         assert_eq!(ring_count(4.0), 1);
         assert_eq!(ring_count(12.0), 2);
         assert_eq!(ring_count(40.0), 3);
+    }
+
+    #[test]
+    fn a_rival_alerted_to_us_sets_the_heart_going_as_an_enemy_does() {
+        use nightfall_sim::{RivalMark, RivalView, Side, V2};
+        let mut sim = Sim::for_test(nightfall_sim::World::new(super::super::shipped_content()));
+        sim.world.add_hero(0, "rogue", "Me", 1, 0).unwrap();
+        sim.world.add_hero(1, "rogue", "Rival", 1, 0).unwrap();
+        sim.world.heroes[1].side = Side::Rival(0);
+        let me = sim.world.heroes[0].pos;
+        sim.world.heroes[1].pos = me + V2::new(10.0, 0.0);
+        let mark = |alert| RivalView {
+            seen: Vec::new(),
+            marks: vec![RivalMark { rival: 1, alert }],
+        };
+        let near = nearest_hunter(&sim, &mark(Alert::Alerted)).expect("the rival is heard");
+        assert!((near - 10.0).abs() < 1e-3, "{near}");
+        // A rival that only suspects us gives no beat, nor does a view with none.
+        assert_eq!(nearest_hunter(&sim, &mark(Alert::Suspicious)), None);
+        assert_eq!(nearest_hunter(&sim, &RivalView::default()), None);
     }
 
     #[test]

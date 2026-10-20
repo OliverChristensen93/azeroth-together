@@ -211,10 +211,55 @@ impl World {
         }
         p.goal = goal;
         self.keep_journey(pi, goal, lpos);
+        self.fight_clock(pi, &living, view.foe.is_some());
         let waiting = self.waits_for_party(pi, leader);
         self.headway(pi, lpos, waiting);
         let p = &mut self.rivals.parties[pi];
         p.leaving = p.progress.stuck(&content.rules.rivals);
+    }
+
+    /// The fight clock (a party in a fight with monsters only): no blow dealt or taken, and no
+    /// member nearer its monsters, for `give_up` seconds means a foe it cannot reach, so those
+    /// monsters are shunned and the party goes on to its errand. A fight with a hero never runs it.
+    fn fight_clock(&mut self, pi: usize, living: &[PlayerId], vs_hero: bool) {
+        let give_up = self.content().rules.rivals.give_up;
+        let foes = self.party_foes(pi, living);
+        let fighting = matches!(self.rivals.parties[pi].goal, Goal::Fight) && !vs_hero;
+        if !fighting || foes.is_empty() {
+            let p = &mut self.rivals.parties[pi];
+            p.fight_for = 0.0;
+            p.fight_mark = f32::INFINITY;
+            p.fight_best = f32::INFINITY;
+            return;
+        }
+        let health: f32 = living
+            .iter()
+            .filter_map(|&m| self.hero(m))
+            .map(|h| h.hp)
+            .chain(foes.iter().map(|&ei| self.enemies[ei].hp))
+            .sum();
+        let nearest = living
+            .iter()
+            .filter_map(|&m| self.hero(m))
+            .flat_map(|h| foes.iter().map(move |&ei| (h.pos, ei)))
+            .map(|(at, ei)| at.distance(self.enemies[ei].pos))
+            .min_by(f32::total_cmp)
+            .unwrap_or(f32::INFINITY);
+        let mut ids: Vec<u32> = foes.iter().map(|&ei| self.enemies[ei].id).collect();
+        ids.dedup();
+        let p = &mut self.rivals.parties[pi];
+        p.fight_for += DT;
+        if health < p.fight_mark - 1e-3 || nearest < p.fight_best - HEADWAY {
+            p.fight_for = 0.0;
+        }
+        p.fight_mark = health;
+        p.fight_best = p.fight_best.min(nearest);
+        if p.fight_for >= give_up {
+            p.shunned.extend(ids);
+            p.fight_for = 0.0;
+            p.fight_mark = f32::INFINITY;
+            p.fight_best = f32::INFINITY;
+        }
     }
 
     /// The route party `pi`'s leader walks for `goal`: to a point not yet reached, or out by an
@@ -427,7 +472,6 @@ impl World {
             };
             v.health = v.health.min(h.hp / h.max_hp.max(1.0));
             v.full |= self.pack_full(m);
-            v.monsters |= self.enemy_after(m).is_some();
             let Some(b) = self.rivals.body(m) else {
                 continue;
             };
@@ -453,9 +497,7 @@ impl World {
                 }
             }
         }
-        if let Some(poi) = p.looting {
-            v.monsters |= self.guard_of(poi).is_some();
-        }
+        v.monsters = !self.party_foes(pi, living).is_empty();
         v.lead = lead
             .map(|(_, at)| at)
             .or(self.rivals.rumour.map(|(at, _, _)| at));
@@ -472,11 +514,23 @@ impl World {
             || load >= full_at
     }
 
+    /// The monsters party `pi` fights or waits on: those alerted to one of `members`, and the
+    /// guard of the point it loots, bar those it gave up on.
+    fn party_foes(&self, pi: usize, members: &[PlayerId]) -> Vec<usize> {
+        let p = &self.rivals.parties[pi];
+        let guard = p.looting.and_then(|poi| self.guard_of(poi, &p.shunned));
+        members
+            .iter()
+            .filter_map(|&m| self.enemy_after(m, &p.shunned))
+            .chain(guard)
+            .collect()
+    }
+
     /// The nearest enemy alive alerted to `player` (after it), by index.
-    fn enemy_after(&self, player: PlayerId) -> Option<usize> {
+    fn enemy_after(&self, player: PlayerId, shunned: &[u32]) -> Option<usize> {
         let at = self.hero(player)?.pos;
         (0..self.enemies.len())
-            .filter(|&ei| self.enemies[ei].hp > 0.0)
+            .filter(|&ei| self.enemies[ei].hp > 0.0 && !shunned.contains(&self.enemies[ei].id))
             .filter(|&ei| self.senses.target_of(ei).is_some_and(|(p, _)| p == player))
             .min_by(|&a, &b| {
                 at.distance(self.enemies[a].pos)
@@ -485,11 +539,13 @@ impl World {
     }
 
     /// An enemy alive guarding point `poi` (within its radius and [`GUARD`] yards more), by index.
-    fn guard_of(&self, poi: usize) -> Option<usize> {
+    fn guard_of(&self, poi: usize, shunned: &[u32]) -> Option<usize> {
         let p = &self.content().rivals.pois[poi];
         let at = V2::new(p.at.0, p.at.1);
         (0..self.enemies.len()).find(|&ei| {
-            self.enemies[ei].hp > 0.0 && self.enemies[ei].pos.distance(at) <= p.radius + GUARD
+            self.enemies[ei].hp > 0.0
+                && !shunned.contains(&self.enemies[ei].id)
+                && self.enemies[ei].pos.distance(at) <= p.radius + GUARD
         })
     }
 
@@ -558,17 +614,19 @@ impl World {
             b.dodged.retain(|id| ids.contains(id));
         }
         let goal = self.rivals.parties[pi].goal;
-        let held = self.combat.hero(player).is_some_and(|c| c.held.is_some());
+        let held = self.combat.hero(player).and_then(|c| c.held);
+        // A stun takes a rival out of the fight; a root only pins its feet.
+        let out = held.is_some_and(|k| k.kind.out());
         let busy = self.heroes[hi].fight.casting.is_some();
         let mut plan = Plan::default();
-        if !held && !busy {
+        if held.is_none() && !busy {
             if let Some(spot) = self.dodge_spot(pi, player, hi) {
                 plan.to = Some(spot);
                 plan.gait = Gait::Run;
                 plan.dodge = true;
             }
         }
-        if !plan.dodge && !held {
+        if !plan.dodge && !out {
             match goal {
                 Goal::Fight => self.fight_plan(pi, player, hi, &mut plan),
                 Goal::Loot { poi } => self.loot_plan(pi, player, hi, poi, &mut plan),
@@ -584,7 +642,7 @@ impl World {
                 Goal::Wait => {}
             }
         }
-        if busy || held {
+        if busy || held.is_some() {
             plan.to = None;
             plan.gait = Gait::Still;
             plan.blocked = false;
@@ -873,13 +931,19 @@ impl World {
             .filter(|&id| self.lootable(id, player));
         let target = mine.or_else(|| self.pick_container(pi, player, hi, poi));
         // A clock on the container it is after: a search the host keeps refusing (a container on
-        // another floor, out of reach) is given up on past `give_up`, as a point is.
+        // another floor, out of reach) is given up on past `give_up`, as a point is. It runs only
+        // while the rival is at the container, never during the walk to it.
         let give_up = content.rules.rivals.give_up;
+        let at_it = target
+            .and_then(|id| self.raid.containers.iter().find(|c| c.id == id))
+            .is_some_and(|c| {
+                self.heroes[hi].pos.distance(c.at) <= content.rules.rivals.loot_reach
+            });
         let mut gave_up = None;
         if let Some(b) = self.rivals.body_mut(player) {
             if b.loot != target {
                 b.loot_for = 0.0;
-            } else if target.is_some() {
+            } else if target.is_some() && at_it {
                 b.loot_for += DT;
             }
             b.loot = target;
@@ -972,12 +1036,9 @@ impl World {
             return Some((UnitRef::Hero(t.player), t.pos, t.z, t.facing));
         }
         let at = self.hero(player)?.pos;
-        let guard = party.looting.and_then(|poi| self.guard_of(poi));
-        let ei = party
-            .members
-            .iter()
-            .filter_map(|&m| self.enemy_after(m))
-            .chain(guard)
+        let ei = self
+            .party_foes(pi, &party.members)
+            .into_iter()
             .min_by(|&a, &b| {
                 at.distance(self.enemies[a].pos)
                     .total_cmp(&at.distance(self.enemies[b].pos))

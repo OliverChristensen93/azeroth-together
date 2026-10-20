@@ -166,10 +166,17 @@ impl World {
             } else {
                 content.rules.run.death_loss
             };
-            let death = self
+            let mut death = self
                 .raid
                 .pack_mut(player, &content)
                 .split_for_death(mode, &content);
+            // A rival's kit is the night's, not the looter's own: on its body it is found, so a
+            // `found_only` death takes it from whoever carries it out.
+            if rival {
+                for s in &mut death.lost {
+                    s.found = true;
+                }
+            }
             // What was brought stays the hero's even when it no longer fits their backpack: it
             // goes to their outcome, never onto the body.
             if !death.spill.is_empty() {

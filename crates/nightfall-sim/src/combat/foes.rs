@@ -486,7 +486,7 @@ impl World {
             if self.combat.hero(p).is_some_and(|c| c.immune > 1e-4) {
                 self.events.push(Event::Evaded {
                     player: p,
-                    enemy: 0,
+                    from: UnitRef::Hero(by),
                 });
                 continue;
             }

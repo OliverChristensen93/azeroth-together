@@ -234,7 +234,8 @@ pub enum Event {
     /// A telegraphed blow missed a hero who dodged.
     Evaded {
         player: PlayerId,
-        enemy: u32,
+        /// What the blow came from: an enemy, or a rival hero.
+        from: UnitRef,
     },
     /// A press the host turned down: shown to its player.
     Refused {

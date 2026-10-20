@@ -355,7 +355,7 @@ impl World {
             if self.combat.heroes[ci].immune > 1e-4 {
                 self.events.push(Event::Evaded {
                     player: p,
-                    enemy: t.enemy,
+                    from: UnitRef::Enemy(t.enemy),
                 });
                 continue;
             }
@@ -386,6 +386,18 @@ impl World {
             self.events.push(Event::Refused {
                 player,
                 why: Refusal::Down,
+            });
+            return false;
+        }
+        // A hero held out of the fight cannot hop away: a stun is not escaped by a dodge.
+        if self
+            .combat
+            .hero(player)
+            .is_some_and(|hc| hc.held.is_some_and(|h| h.kind.out()))
+        {
+            self.events.push(Event::Refused {
+                player,
+                why: Refusal::Held,
             });
             return false;
         }

@@ -200,6 +200,14 @@ pub(crate) struct Party {
     pub(crate) leaving: bool,
     /// The leader it was planned for last step.
     pub(crate) leader: Option<PlayerId>,
+    /// Seconds it has fought monsters with no blow dealt or taken (a foe it cannot reach).
+    pub(crate) fight_for: f32,
+    /// The health of its fighters and their monsters at the last step, to see a blow land.
+    pub(crate) fight_mark: f32,
+    /// The nearest a member has come to its monsters since the clock was last reset.
+    pub(crate) fight_best: f32,
+    /// Monsters (by enemy id) it gave up on: it neither fights nor guards-waits on them again.
+    pub(crate) shunned: Vec<u32>,
 }
 
 /// A leader's walk to a place of the content's routes.
@@ -467,6 +475,10 @@ impl World {
             progress: Progress::default(),
             leaving: false,
             leader: None,
+            fight_for: 0.0,
+            fight_mark: f32::INFINITY,
+            fight_best: f32::INFINITY,
+            shunned: Vec::new(),
         });
         members
     }

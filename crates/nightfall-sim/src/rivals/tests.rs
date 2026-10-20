@@ -1377,9 +1377,11 @@ fn a_hero_who_dodges_sees_the_big_move_miss() {
         damage_to(&events, UnitRef::Hero(0)).is_empty(),
         "{events:?}"
     );
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, Event::Evaded { player: 0, .. })));
+    // The miss is told against the rival that threw the blow, not an enemy of id 0.
+    assert!(events.contains(&Event::Evaded {
+        player: 0,
+        from: UnitRef::Hero(a)
+    }));
 }
 
 #[test]
@@ -2680,6 +2682,12 @@ fn a_client_is_sent_only_the_rivals_within_its_heros_reach() {
     assert!(ids(&snap).contains(&0), "its own hero");
     assert!(ids(&snap).contains(&near));
     assert!(!ids(&snap).contains(&far), "{:?}", ids(&snap));
+    // Both are alerted to the hero, but only the near one's "!" is sent: the far one's is cut to
+    // the reach as the body is.
+    w.alert_rival(near, 0);
+    w.alert_rival(far, 0);
+    let marked: Vec<PlayerId> = w.rival_view(0).marks.iter().map(|m| m.rival).collect();
+    assert_eq!(marked, vec![near]);
     // The party is sent whole: a friend far off is still in it, and a rival beside the friend is
     // not, being out of the first hero's reach.
     w.add_hero(1, "rogue", "Friend", 1, 0).unwrap();
@@ -2699,6 +2707,10 @@ fn a_client_is_sent_only_the_rivals_within_its_heros_reach() {
         "{:?}",
         ids(&snap)
     );
+    // Nor are they told of one's events: every rival is out of their reach, and their friends not.
+    assert!(w.is_parted(1));
+    assert!(!w.in_reach(1, UnitRef::Hero(near)) && !w.in_reach(1, UnitRef::Hero(far)));
+    assert!(w.in_reach(1, UnitRef::Hero(0)));
 }
 
 #[test]
@@ -3390,4 +3402,253 @@ fn a_rival_does_not_dodge_into_another_blow_about_to_land() {
             .any(|e| matches!(e, Event::Dodged { player } if members.contains(player)));
     }
     assert!(!dodged, "it dodged into the second blow");
+}
+
+/// A party of the watch (a shooter and a digger) 18 yards from a brute that is after its
+/// shooter, and the shooter held by `kind` from then on. Its blows at the brute over 6 s, and
+/// how far it moved.
+fn held_shooter(kind: ControlKind) -> (usize, f32) {
+    let mut w = world(
+        "pois: (1, 1)",
+        r#"(place: "Post", kind: "brute", behaviour: Sentry(at: (32.0, 60.0), facing: 180.0)),"#,
+    );
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "watch", 0.9, 50.0, 60.0, 7);
+    let shooter = members[0];
+    let id = w.enemies[0].id;
+    w.alert(id, shooter);
+    hold_hero(&mut w, shooter, kind);
+    let start = w.hero(shooter).unwrap().pos;
+    w.drain_events();
+    steps(&mut w, secs(6.0));
+    let moved = w.hero(shooter).unwrap().pos.distance(start);
+    let blows = w
+        .drain_events()
+        .iter()
+        .filter(|e| {
+            matches!(e, Event::Damage { to: UnitRef::Enemy(_), by: Some(UnitRef::Hero(p)), .. } if *p == shooter)
+        })
+        .count();
+    (blows, moved)
+}
+
+#[test]
+fn a_rooted_rival_still_shoots_but_stays_put_and_a_stunned_one_does_neither() {
+    let (blows, moved) = held_shooter(ControlKind::Root);
+    assert!(blows >= 1, "a root does not stop its presses: {blows}");
+    assert!(moved < 0.3, "but it cannot move: {moved}");
+    let (blows, moved) = held_shooter(ControlKind::Stun);
+    assert_eq!((blows, moved < 0.3), (0, true), "a stun takes it out");
+}
+
+/// [`world`] with `found_only` deaths, hero 0 at (110, 110).
+fn found_only_world() -> World {
+    let rules = rules("").replace("combat:", "run: (death_loss: found_only), combat:");
+    let c = Content::from_ron(ContentSources {
+        classes: CLASSES,
+        map: MAP,
+        rules: &rules,
+        enemies: ENEMIES,
+        spawns: "[]",
+        abilities: ABILITIES,
+        items: ITEMS,
+        loot: LOOT,
+        monsters: "[]",
+        rivals: RIVALS,
+    })
+    .unwrap();
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 110.0, 110.0);
+    w
+}
+
+#[test]
+fn a_rivals_gear_looted_from_its_body_counts_as_found_and_is_lost_in_a_found_only_death() {
+    let mut w = found_only_world();
+    let a = rival(&mut w, 0, "digger", 0, 105.0, 110.0);
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    w.step();
+    let body = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Hero(a))
+        .expect("a body");
+    assert!(
+        body.stacks.iter().flatten().all(|s| s.found),
+        "everything on a rival's body is the night's: {:?}",
+        body.stacks
+    );
+    let body = body.id;
+    put(&mut w, 0, 106.0, 110.0, V2::new(-1.0, 0.0), Gait::Still);
+    w.step();
+    let act = |w: &mut World, seq: u8, act: Act| {
+        let h = w.hero(0).unwrap();
+        let pose = HeroPose {
+            pos: h.pos,
+            facing: h.facing,
+            z: h.z,
+        };
+        w.set_input(
+            0,
+            PlayerInput {
+                pose: Some(pose),
+                act: Some(ActPress { seq, act }),
+                ..Default::default()
+            },
+        );
+        w.step();
+    };
+    act(&mut w, 1, Act::Open(body));
+    steps(&mut w, secs(10.0));
+    act(&mut w, 2, Act::TakeAll);
+    let shovel = w.content().item("shovel").unwrap();
+    assert!(
+        w.raid.pack(0).unwrap().count_of(shovel) >= 1,
+        "the hero has the rival's shovel"
+    );
+    // The hero dies: all they carried was found, so all of it is lost to their body.
+    w.heroes[0].fight.life = Life::Dead;
+    w.step();
+    let mine = w
+        .raid
+        .containers
+        .iter()
+        .find(|c| c.holder == Holder::Hero(0))
+        .expect("the hero's body");
+    assert!(mine
+        .stacks
+        .iter()
+        .flatten()
+        .any(|s| usize::from(s.item) == shovel));
+    assert_eq!(
+        w.raid.pack(0).map_or(0, |p| p.count_of(shovel)),
+        0,
+        "and none of it is kept"
+    );
+}
+
+#[test]
+fn a_party_fighting_a_guard_it_cannot_reach_gives_the_fight_up_after_give_up_seconds() {
+    // The guard stands inside a sealed house beside the yard: within the point's guard ring, but
+    // nothing sees or strikes it, so no blow is dealt or taken. Only the fight clock lets the
+    // party go on (the other backstop is put out of the way).
+    let mut b = flat(120.0);
+    house(&mut b, V2::new(63.0, 52.0), V2::new(75.0, 68.0), None, false);
+    let mut w = world_on(
+        b.finish(),
+        "pois: (1, 1), give_up: 8.0, stuck_for: 100000.0",
+        &format!("{}\n", sentry_line(68.0, 60.0)),
+        |c| RaidRoll::standard(c, 1),
+    );
+    join(&mut w, 0, 110.0, 110.0);
+    let members = party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    let guard = w.enemies[0].id;
+    steps(&mut w, secs(150.0));
+    let p = &w.rivals.parties[0];
+    assert_eq!(p.visited, vec![0], "the point is done: {:?}", p.goal);
+    assert_eq!(p.shunned, vec![guard], "and the guard given up on");
+    let e = w.enemy(guard).unwrap();
+    assert_eq!(e.hp, e.max_hp, "no blow was dealt");
+    assert!(members
+        .iter()
+        .all(|&m| w.hero(m).is_none_or(|h| h.hp == h.max_hp)));
+    assert!(w.rivals.out.len() == members.len(), "{:?}", w.rival_debug());
+}
+
+
+#[test]
+fn a_fight_that_goes_on_is_never_given_up() {
+    // A guard in the open is fought and killed well past `give_up`: blows keep the clock reset.
+    let mut w = world(
+        "pois: (1, 1), give_up: 6.0",
+        &format!("{}\n", sentry_line(62.0, 60.0)),
+    );
+    join(&mut w, 0, 110.0, 110.0);
+    party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    steps(&mut w, secs(240.0));
+    assert!(w.rivals.parties[0].shunned.is_empty());
+    assert!(w.enemies[0].hp <= 0.0, "it fell to them");
+}
+
+#[test]
+fn the_loot_clock_counts_the_search_not_the_long_walk_to_the_container() {
+    // The yard is 25 yards wide and its crate takes 3 s to search; the party meets the ring 25
+    // yards from it, a 10 s walk, well past `give_up` (5 s) but for the walk not counting.
+    let rivals = RIVALS.replace(
+        r#"at: (60.0, 60.0), radius: 6.0"#,
+        r#"at: (60.0, 60.0), radius: 25.0"#,
+    );
+    let loot = LOOT.replace("search: 1.0", "search: 3.0");
+    let c = Content::from_ron(ContentSources {
+        classes: CLASSES,
+        map: MAP,
+        rules: &rules("pois: (1, 1), give_up: 5.0"),
+        enemies: ENEMIES,
+        spawns: "[]",
+        abilities: ABILITIES,
+        items: ITEMS,
+        loot: &loot,
+        monsters: "[]",
+        rivals: &rivals,
+    })
+    .unwrap_or_else(|e| panic!("{e}"));
+    let roll = RaidRoll::standard(&c, 1);
+    let mut w = World::new(Arc::new(c));
+    w.begin_raid(roll).unwrap();
+    w.attach_map(Arc::new(open()));
+    join(&mut w, 0, 110.0, 110.0);
+    party(&mut w, "diggers", 0.1, 10.0, 60.0, 7);
+    steps(&mut w, secs(90.0));
+    assert_eq!(w.rivals.parties[0].visited, vec![0]);
+    assert!(
+        emptied(&w, V2::new(60.0, 60.0)),
+        "it walked all the way and searched the crate"
+    );
+}
+
+/// Hero 0's next input is `presses` dodge presses in all, standing where they are.
+fn dodge_press(w: &mut World, presses: u8) {
+    w.set_input(
+        0,
+        PlayerInput {
+            dodge_presses: presses,
+            ..Default::default()
+        },
+    );
+    w.step();
+}
+
+#[test]
+fn a_hero_held_out_of_the_fight_cannot_dodge_but_a_rooted_one_can() {
+    let mut w = world("", "");
+    join(&mut w, 0, 37.0, 60.0);
+    hold_hero(&mut w, 0, ControlKind::Incapacitate);
+    w.drain_events();
+    dodge_press(&mut w, 1);
+    let events = w.drain_events();
+    assert!(
+        events.contains(&Event::Refused {
+            player: 0,
+            why: Refusal::Held
+        }),
+        "{events:?}"
+    );
+    let ci = w.combat.hero_index(0);
+    assert!(w.combat.heroes[ci].immune <= 0.0, "no dodge window opened");
+    assert!(!events.iter().any(|e| matches!(e, Event::Dodged { .. })));
+
+    // A root holds their feet, not their hand: they dodge.
+    let mut w = world("", "");
+    join(&mut w, 0, 37.0, 60.0);
+    hold_hero(&mut w, 0, ControlKind::Root);
+    w.drain_events();
+    dodge_press(&mut w, 1);
+    assert!(w
+        .drain_events()
+        .iter()
+        .any(|e| matches!(e, Event::Dodged { player: 0 })));
 }

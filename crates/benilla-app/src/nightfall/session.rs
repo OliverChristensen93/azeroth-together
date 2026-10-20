@@ -1025,7 +1025,7 @@ pub(super) fn event_for(event: &Event, me: PlayerId, near: impl Fn(UnitRef) -> b
         Event::CastStop { by, .. } => involves(*by),
         Event::Damage { to, by, .. } => involves(*to) || by.is_some_and(involves),
         Event::Swing { by, to } => involves(*by) || involves(*to),
-        Event::Evaded { player, enemy } => hero(*player) || involves(UnitRef::Enemy(*enemy)),
+        Event::Evaded { player, from } => hero(*player) || involves(*from),
         Event::Dodged { player }
         | Event::Blinked { player, .. }
         | Event::Downed { player }
@@ -1831,7 +1831,7 @@ mod tests {
             Event::Revived { player: 1, by: 0 },
             Event::Evaded {
                 player: 0,
-                enemy: 9,
+                from: UnitRef::Enemy(9),
             },
         ];
         for e in &events {
@@ -1839,6 +1839,19 @@ mod tests {
             // And the same of a hero who is not us and far away is not.
             assert!(!event_for(e, 2, |_| false), "{e:?} for a stranger");
         }
+    }
+
+    #[test]
+    fn a_dodge_of_a_rivals_blow_is_routed_by_the_rival_not_by_an_enemy_of_the_same_number() {
+        let rival = nightfall_sim::RIVAL_BASE;
+        let miss = |from| Event::Evaded { player: 1, from };
+        // Heard by those near the rival that threw it.
+        assert!(event_for(&miss(UnitRef::Hero(rival)), 0, |u| u == UnitRef::Hero(rival)));
+        assert!(!event_for(&miss(UnitRef::Hero(rival)), 0, |_| false));
+        // Enemy 0 stands beside someone else: that is no reason to tell them of a rival's miss.
+        assert!(!event_for(&miss(UnitRef::Hero(rival)), 0, |u| u == UnitRef::Enemy(0)));
+        // And an enemy's blow is still routed by the enemy.
+        assert!(event_for(&miss(UnitRef::Enemy(3)), 0, |u| u == UnitRef::Enemy(3)));
     }
 
     #[test]

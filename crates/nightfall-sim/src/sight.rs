@@ -61,7 +61,11 @@ impl World {
     pub fn in_reach(&self, player: PlayerId, unit: UnitRef) -> bool {
         let Some(me) = self.hero(player) else {
             return match unit {
-                UnitRef::Hero(p) => !self.is_parted(player) || self.hero(p).is_some(),
+                // A parted player is sent the heroes of their side, no rival (their snapshot holds
+                // none).
+                UnitRef::Hero(p) => {
+                    !self.is_parted(player) || self.hero(p).is_some_and(|h| !h.side.is_rival())
+                }
                 UnitRef::Enemy(_) => !self.is_parted(player),
             };
         };

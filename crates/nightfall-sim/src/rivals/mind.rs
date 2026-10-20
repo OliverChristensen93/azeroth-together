@@ -11,7 +11,7 @@
 
 use super::{RivalMark, RivalView, Side};
 use crate::senses::{notice_range, sense, Mind, Sensed};
-use crate::{Hero, PlayerId, SenseRules, World, CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3};
+use crate::{Hero, PlayerId, UnitRef, SenseRules, World, CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3};
 
 impl World {
     /// Every rival up and in the fight senses the party's heroes and thinks (spec §5.3); one that
@@ -172,6 +172,7 @@ impl World {
                 .bodies
                 .iter()
                 .filter(|b| self.hero(b.player).is_some_and(|h| h.fight.up()))
+                .filter(|b| self.in_reach(player, UnitRef::Hero(b.player)))
                 .filter_map(|b| {
                     b.mind.mark(player, r).map(|alert| RivalMark {
                         rival: b.player,

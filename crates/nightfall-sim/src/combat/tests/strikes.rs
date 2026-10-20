@@ -110,7 +110,7 @@ fn a_dodge_makes_a_telegraph_miss_only_inside_its_window() {
     let inside = stomped_after_a_dodge(9);
     assert!(inside.contains(&Event::Evaded {
         player: 0,
-        enemy: 1
+        from: UnitRef::Enemy(1)
     }));
     assert!(damage_to(&inside, UnitRef::Hero(0)).is_empty());
     // One step later: a hit.
@@ -259,7 +259,7 @@ fn a_dodge_breaks_a_rooted_channel_and_the_hero_is_free_to_evade_a_stomp() {
     let events = w.drain_events();
     assert!(events.contains(&Event::Evaded {
         player: 0,
-        enemy: 1
+        from: UnitRef::Enemy(1)
     }));
     assert!(damage_to(&events, UnitRef::Hero(0)).is_empty());
 }

@@ -519,7 +519,7 @@ mod tests {
                 },
                 Event::Evaded {
                     player: 3,
-                    enemy: n + 5,
+                    from: UnitRef::Enemy(n + 5),
                 },
                 Event::Dodged { player: 3 },
             ]);
