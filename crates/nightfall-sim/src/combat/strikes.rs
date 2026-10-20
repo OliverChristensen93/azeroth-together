@@ -210,6 +210,7 @@ impl World {
             self.telegraphs.push(Telegraph {
                 id: tid,
                 enemy: id,
+                by: None,
                 ability: a as u16,
                 shape: t.shape,
                 at,
@@ -322,6 +323,9 @@ impl World {
     /// covers it, who see it miss. A caster that is gone leaves nothing to land: a dead enemy's
     /// telegraphs are taken down with it.
     fn telegraph_lands(&mut self, t: Telegraph) {
+        if let Some(by) = t.by {
+            return self.foe_telegraph_lands(by, t);
+        }
         let Some(ei) = self.enemies.iter().position(|e| e.id == t.enemy) else {
             return;
         };

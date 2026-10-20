@@ -469,6 +469,7 @@ mod tests {
             .map(|id| Telegraph {
                 id,
                 enemy: id,
+                by: None,
                 ability: 2,
                 shape: Shape::Cone {
                     length: 8.0,

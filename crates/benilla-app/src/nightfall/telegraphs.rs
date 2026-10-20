@@ -360,6 +360,7 @@ mod tests {
         Telegraph {
             id,
             enemy: 1,
+            by: None,
             ability: 0,
             shape: Shape::Circle { radius: 5.0 },
             at: V3::new(10.0, 20.0, 0.0),

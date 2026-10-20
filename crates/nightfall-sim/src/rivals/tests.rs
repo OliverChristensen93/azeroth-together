@@ -1280,3 +1280,135 @@ fn a_wall_between_a_hero_and_a_rival_hides_it_from_the_hero() {
     let a = rival(&mut w, 0, "digger", 0, 70.0, 60.0);
     assert!(!w.rival_leaves_unseen(a));
 }
+
+#[test]
+fn a_rivals_big_move_shows_first_then_lands_on_its_foes_inside() {
+    let mut w = world("", &format!("{}\n", sentry_line(43.0, 60.0)));
+    join(&mut w, 0, 37.0, 60.0);
+    join(&mut w, 1, 30.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    let friend = rival(&mut w, 1, "digger", 0, 41.0, 61.0);
+    w.drain_events();
+    let sentry_hp = w.enemies[0].hp;
+    // The shovel smash (action 4): a 6-yard circle around the digger, 1.2 s to land.
+    press(&mut w, a, 1, 4, None);
+    w.step();
+    let t = *w
+        .telegraphs
+        .iter()
+        .find(|t| t.by == Some(a))
+        .expect("shown on the ground");
+    assert!((t.total - 1.2).abs() < 1e-4);
+    assert_eq!(t.enemy, 0);
+    assert!(
+        w.drain_events()
+            .iter()
+            .all(|e| !matches!(e, Event::Damage { .. })),
+        "nothing lands while it shows"
+    );
+    steps(&mut w, secs(1.3));
+    let events = w.drain_events();
+    assert_eq!(damage_to(&events, UnitRef::Hero(0)).len(), 1, "inside: {events:?}");
+    assert!(damage_to(&events, UnitRef::Hero(1)).is_empty(), "10 yards off: outside");
+    assert!(
+        damage_to(&events, UnitRef::Hero(friend)).is_empty(),
+        "its friend is spared"
+    );
+    assert!(w.enemies[0].hp < sentry_hp, "a monster inside is struck too");
+    assert!(w.telegraphs.iter().all(|t| t.by != Some(a)));
+}
+
+#[test]
+fn a_hero_who_dodges_sees_the_big_move_miss() {
+    let mut w = world("", "");
+    join(&mut w, 0, 37.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    w.drain_events();
+    press(&mut w, a, 1, 4, None);
+    w.step();
+    steps(&mut w, secs(1.0));
+    // The dodge, as a client counts it, just before the blow lands.
+    w.set_input(
+        0,
+        PlayerInput {
+            dodge_presses: 1,
+            ..Default::default()
+        },
+    );
+    steps(&mut w, secs(0.4));
+    let events = w.drain_events();
+    assert!(damage_to(&events, UnitRef::Hero(0)).is_empty(), "{events:?}");
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::Evaded { player: 0, .. })));
+}
+
+#[test]
+fn a_big_move_cut_short_takes_its_telegraph_with_it() {
+    let mut w = world("", "");
+    join(&mut w, 0, 37.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 40.0, 60.0);
+    w.drain_events();
+    press(&mut w, a, 1, 4, None);
+    w.step();
+    assert!(w.telegraphs.iter().any(|t| t.by == Some(a)));
+    w.wound(a, 5000.0, Some(UnitRef::Hero(0)));
+    assert!(w.telegraphs.iter().all(|t| t.by != Some(a)));
+    steps(&mut w, secs(1.5));
+    assert!(damage_to(&w.drain_events(), UnitRef::Hero(0)).is_empty());
+}
+
+#[test]
+fn a_wall_shields_a_hero_from_a_rivals_big_move() {
+    let mut b = flat(120.0);
+    crate::heightmap::testmap::house(&mut b, V2::new(60.0, 50.0), V2::new(80.0, 70.0), None, true);
+    let mut w = world_on(b.finish(), "", "", |c| RaidRoll::standard(c, 1));
+    // The hero stands inside the house, 4 yards from the digger outside its west wall.
+    join(&mut w, 0, 63.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 59.0, 60.0);
+    w.drain_events();
+    press(&mut w, a, 1, 4, None);
+    w.step();
+    steps(&mut w, secs(1.4));
+    let events = w.drain_events();
+    assert!(damage_to(&events, UnitRef::Hero(0)).is_empty(), "{events:?}");
+    // The same two in the open: struck.
+    let mut w = world("", "");
+    join(&mut w, 0, 63.0, 60.0);
+    let a = rival(&mut w, 0, "digger", 0, 59.0, 60.0);
+    w.drain_events();
+    press(&mut w, a, 1, 4, None);
+    w.step();
+    steps(&mut w, secs(1.4));
+    assert_eq!(damage_to(&w.drain_events(), UnitRef::Hero(0)).len(), 1);
+}
+
+#[test]
+fn a_big_move_is_lost_when_its_caster_steps_away_or_dodges() {
+    for dodge in [false, true] {
+        let (mut w, a) = duel();
+        press(&mut w, a, 1, 4, None);
+        w.step();
+        assert!(w.telegraphs.iter().any(|t| t.by == Some(a)));
+        if dodge {
+            w.set_input(
+                a,
+                PlayerInput {
+                    dodge_presses: 1,
+                    ..Default::default()
+                },
+            );
+        } else {
+            // Far past what a rooted cast allows.
+            put(&mut w, a, 28.0, 60.0, V2::new(-1.0, 0.0), Gait::Run);
+        }
+        w.step();
+        assert!(
+            w.telegraphs.iter().all(|t| t.by != Some(a)),
+            "dodge {dodge}: its telegraph goes with the cast"
+        );
+        w.drain_events();
+        steps(&mut w, secs(1.5));
+        assert!(damage_to(&w.drain_events(), UnitRef::Hero(0)).is_empty());
+    }
+}

@@ -91,6 +91,7 @@ fn stomped_after_a_dodge(steps_to_land: usize) -> Vec<Event> {
     w.telegraphs.push(Telegraph {
         id: 99,
         enemy: w.enemies[0].id,
+        by: None,
         ability: ability(&w, "stomp") as u16,
         shape: Shape::Circle { radius: 8.0 },
         at: V3::new(20.0, 30.0, 0.0),
@@ -232,6 +233,7 @@ fn a_dodge_breaks_a_rooted_channel_and_the_hero_is_free_to_evade_a_stomp() {
     w.telegraphs.push(Telegraph {
         id: 99,
         enemy: w.enemies[0].id,
+        by: None,
         ability: ability(&w, "stomp") as u16,
         shape: Shape::Circle { radius: 8.0 },
         at: V3::new(20.0, 30.0, 0.0),
@@ -307,6 +309,7 @@ fn a_telegraph_does_not_reach_through_a_wall() {
         w.telegraphs.push(Telegraph {
             id: 99,
             enemy: w.enemies[0].id,
+            by: None,
             ability: ability(&w, "stomp") as u16,
             shape: Shape::Circle { radius: 8.0 },
             at: V3::new(30.0, 30.0, 0.0),
@@ -420,6 +423,7 @@ fn a_telegraphed_blow_makes_its_own_noise_as_it_lands() {
     w.telegraphs.push(Telegraph {
         id: 99,
         enemy: w.enemies[0].id,
+        by: None,
         ability: ability(&w, "cleave") as u16,
         shape: Shape::Cone {
             length: 8.0,

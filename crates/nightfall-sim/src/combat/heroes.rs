@@ -278,12 +278,12 @@ impl World {
         }
         self.stop_eating(hi);
         let channel = a.channel > 0.0;
-        if a.cast <= 0.0 && !channel {
+        if a.windup() <= 0.0 && !channel {
             self.pay(hi, aimed);
             self.go(hi, aimed);
             return;
         }
-        let total = if channel { a.channel } else { a.cast };
+        let total = if channel { a.channel } else { a.windup() };
         let from = self.heroes[hi].pos;
         self.heroes[hi].fight.casting = Some(Casting {
             ability,
@@ -302,6 +302,9 @@ impl World {
             elapsed: 0.0,
             ticks: 0,
         });
+        if let Some(t) = a.telegraph {
+            self.put_telegraph(hi, &aimed, t, total);
+        }
         let by = UnitRef::Hero(player);
         self.events.push(if channel {
             Event::ChannelStart {
@@ -372,6 +375,10 @@ impl World {
         };
         let ci = self.combat.hero_index(player);
         self.combat.heroes[ci].cast = None;
+        // A big move cut short does not land.
+        if why != Stop::Finished {
+            self.telegraphs.retain(|t| t.by != Some(player));
+        }
         self.events.push(Event::CastStop {
             by: UnitRef::Hero(player),
             ability: c.ability,
@@ -537,7 +544,7 @@ impl World {
             if cs.ticks >= a.ticks {
                 self.stop_cast(hi, Stop::Finished);
             }
-        } else if cs.elapsed + 1e-4 >= a.cast {
+        } else if cs.elapsed + 1e-4 >= a.windup() {
             // WoW checks range only as a cast begins; at its end the target must still be seen.
             if !(self.in_sight_of(hi, aimed.enemy) && self.foe_in_sight(hi, aimed.foe)) {
                 return self.stop_cast(hi, Stop::TargetLost);
@@ -545,7 +552,11 @@ impl World {
             self.heroes[hi].fight.casting = None;
             self.combat.heroes[ci].cast = None;
             self.pay(hi, aimed);
-            self.go(hi, aimed);
+            // A telegraphed blow lands as its telegraph does
+            // ([`World::foe_telegraph_lands`]): the cast only pays.
+            if a.telegraph.is_none() {
+                self.go(hi, aimed);
+            }
         } else {
             self.combat.heroes[ci].cast = Some(cs);
         }

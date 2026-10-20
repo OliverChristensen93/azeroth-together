@@ -12,10 +12,10 @@
 
 use super::effects::{boost, span};
 use super::heroes::{Aimed, MELEE};
-use super::{in_range, stands_right, Burn, Event, Held, Slowed, Stop, UnitRef};
+use super::{in_range, stands_right, Burn, Event, Held, Slowed, Stop, Telegraph, UnitRef};
 use crate::{
-    Creature, Effect, Facing, Loudness, PlayerId, Refusal, Sound, World, CHEST_HEIGHT, DT,
-    EYE_HEIGHT, V2, V3,
+    Creature, Effect, Facing, Loudness, PlayerId, Refusal, Shape, Sound, TelegraphDef, World,
+    CHEST_HEIGHT, DT, EYE_HEIGHT, V2, V3,
 };
 
 impl World {
@@ -416,5 +416,93 @@ impl World {
             to: UnitRef::Hero(foe),
         });
         self.strike_foe(player, foe, amount, false, false, true);
+    }
+
+    /// Hero `hi`'s telegraph for `aimed`, landing in `windup` seconds: around them for one on
+    /// themselves or a cone, else under their target as it stands now; turned toward the target.
+    pub(crate) fn put_telegraph(&mut self, hi: usize, aimed: &Aimed, t: TelegraphDef, windup: f32) {
+        let h = &self.heroes[hi];
+        let (player, from) = (h.player, V3::at(h.pos, h.z));
+        let target = aimed
+            .foe
+            .and_then(|p| self.hero(p))
+            .map(|t| V3::at(t.pos, t.z))
+            .or(aimed
+                .enemy
+                .map(|ei| V3::at(self.enemies[ei].pos, self.enemies[ei].z)))
+            .or(aimed.at);
+        let at = if t.on_self || matches!(t.shape, Shape::Cone { .. }) {
+            from
+        } else {
+            target.unwrap_or(from)
+        };
+        let facing = target
+            .map(|p| (p.ground() - h.pos).normalize_or_zero())
+            .filter(|f| *f != V2::ZERO)
+            .unwrap_or(h.facing);
+        let id = self.combat.next_telegraph;
+        self.combat.next_telegraph += 1;
+        self.telegraphs.push(Telegraph {
+            id,
+            enemy: 0,
+            by: Some(player),
+            ability: aimed.ability as u16,
+            shape: t.shape,
+            at,
+            facing,
+            left: windup,
+            total: windup,
+        });
+    }
+
+    /// Hero `by`'s telegraph `t` lands: on every hostile hero up inside it that the caster has a
+    /// clear line to (a wall shields what is behind it, as it does from an enemy's blow; those
+    /// whose dodge's moment covers it see it miss) and on every enemy alive inside it in the same
+    /// way, with the ability's own effects. Nothing lands from a caster no longer up.
+    pub(crate) fn foe_telegraph_lands(&mut self, by: PlayerId, t: Telegraph) {
+        let Some(caster) = self.hero(by).filter(|h| h.fight.up()) else {
+            return;
+        };
+        let eye = V3::at(caster.pos, caster.z + EYE_HEIGHT);
+        let ability = usize::from(t.ability);
+        let at = t.at.ground();
+        let inside: Vec<PlayerId> = self
+            .heroes
+            .iter()
+            .filter(|h| h.fight.up() && t.shape.contains(at, t.facing, h.pos))
+            .filter(|h| self.hostile(by, h.player))
+            .filter(|h| self.clear_line(eye, V3::at(h.pos, h.z + CHEST_HEIGHT)))
+            .map(|h| h.player)
+            .collect();
+        let mut hits = Vec::new();
+        for p in inside {
+            if self.combat.hero(p).is_some_and(|c| c.immune > 1e-4) {
+                self.events.push(Event::Evaded {
+                    player: p,
+                    enemy: 0,
+                });
+                continue;
+            }
+            self.land_foe(by, ability, p, 0);
+            hits.push(UnitRef::Hero(p));
+        }
+        let struck: Vec<usize> = (0..self.enemies.len())
+            .filter(|&ei| {
+                let e = &self.enemies[ei];
+                e.hp > 0.0
+                    && t.shape.contains(at, t.facing, e.pos)
+                    && self.clear_line(eye, V3::at(e.pos, e.z + CHEST_HEIGHT))
+            })
+            .collect();
+        for ei in struck {
+            self.land_on(by, ability, ei, 0);
+            hits.push(UnitRef::Enemy(self.enemies[ei].id));
+        }
+        self.events.push(Event::CastGo {
+            by: UnitRef::Hero(by),
+            ability: t.ability,
+            hits,
+            at: Some(t.at),
+        });
     }
 }

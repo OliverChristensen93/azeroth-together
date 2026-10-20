@@ -128,6 +128,8 @@ pub struct EnemyFight {
 pub struct Telegraph {
     pub id: u32,
     pub enemy: u32,
+    /// A hero's big move (a rival's, spec §7.4): its caster. `enemy` is 0 then.
+    pub by: Option<PlayerId>,
     pub ability: u16,
     pub shape: Shape,
     pub at: V3,
@@ -588,6 +590,7 @@ mod state_tests {
         host.telegraphs.push(Telegraph {
             id: 1,
             enemy: 9,
+            by: None,
             ability: 0,
             shape: Shape::Circle { radius: 8.0 },
             at: V3::new(10.0, 10.0, 0.0),

@@ -332,7 +332,7 @@ impl World {
         ec.cast = None;
         ec.distracted = None;
         ec.wander = None;
-        self.telegraphs.retain(|t| t.enemy != id);
+        self.telegraphs.retain(|t| t.by.is_some() || t.enemy != id);
         for h in &mut self.heroes {
             if h.fight.attacking == Some(id) {
                 h.fight.attacking = None;
