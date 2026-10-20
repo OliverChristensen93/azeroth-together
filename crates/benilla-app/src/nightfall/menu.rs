@@ -365,6 +365,7 @@ pub(super) fn refresh_menu(
     mut lines: Query<&mut Text, (With<ClassLine>, Without<StatusText>)>,
     mut status: Query<&mut Text, (With<StatusText>, Without<ClassLine>)>,
     mut buttons: Query<(&MenuAction, &mut Node)>,
+    mut refused: Local<Option<(nightfall_sim::Playtest, Option<String>)>>,
 ) {
     let content = content();
     let class = &content.classes[selection.class];
@@ -383,7 +384,16 @@ pub(super) fn refresh_menu(
     // Settings left on are said, so a raid without rivals is never a mystery. A joined player's
     // own settings do not apply, so they are not said.
     let body = if !net.playtest.is_default() && !net.is_client() {
-        match super::night::refusal(&super::content(), &net.playtest) {
+        // Worked out when the settings change: it copies the content, which is not for every frame.
+        let why = match &*refused {
+            Some((p, why)) if *p == net.playtest => why.clone(),
+            _ => {
+                let why = super::night::refusal(&super::content(), &net.playtest);
+                *refused = Some((net.playtest.clone(), why.clone()));
+                why
+            }
+        };
+        match why {
             Some(why) => {
                 format!("{body}\nPlaytest settings cannot be used; the plain rules stand: {why}")
             }

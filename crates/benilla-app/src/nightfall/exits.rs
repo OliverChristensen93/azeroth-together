@@ -244,15 +244,28 @@ pub(super) fn autoexit(
     sim: Res<Sim>,
     plan: Res<super::auto_brain::AutoPlan>,
     mut auto: ResMut<Autoplay>,
+    mut mine: Local<Option<V2>>,
 ) {
     // The setting always walks out; without it the hero does once it has had enough.
     if !autoextract() {
         if !super::run::autoplay() {
             return;
         }
-        if let Some(exit) = plan.0.leave {
-            if auto.goal != Some(exit) {
-                auto.goal = Some(exit);
+        match plan.0.leave {
+            Some(exit) => {
+                if auto.goal != Some(exit) {
+                    auto.goal = Some(exit);
+                }
+                *mine = Some(exit);
+            }
+            // The exit shut, or the bags emptied: a goal this set is taken down, one the
+            // looting set for a container is not.
+            None => {
+                if let Some(g) = mine.take() {
+                    if auto.goal == Some(g) {
+                        auto.goal = None;
+                    }
+                }
             }
         }
         return;

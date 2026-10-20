@@ -581,8 +581,10 @@ fn settle_mine(sim: &mut Sim, stash: &mut Stash, content: &Content, inn: &InnCon
 /// late. A hero who drops a stack and is cut off inside that window settles with the stack
 /// still in hand, which is the one gap left; closing it would take the host's word.
 pub(super) fn note_carry(sim: Res<Sim>, mut stash: ResMut<Stash>) {
-    // The run's own rules: a hosted raid under the playtest settings settles by them (a joined
-    // run's world holds the plain content, as its host's settings are not known here).
+    // The run's own rules: a hosted raid under the playtest settings settles by them, and a joined
+    // run's world holds the shipped content with its host's death rule (sent with Start), so what
+    // is noted follows the host. Until the first snapshot nothing is noted, and a crash before it
+    // settles by our own rule: the one small window left.
     note_pack(&mut stash, sim.world.pack(sim.me), sim.world.content());
 }
 

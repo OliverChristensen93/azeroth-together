@@ -136,8 +136,17 @@ pub(super) fn plan(sim: Res<Sim>, mut out: ResMut<AutoPlan>) {
     if !autoplay() {
         return;
     }
+    gather(&sim, &mut out);
+}
+
+/// [`plan`]'s work: a hero that is not up (down, dead, gone, or its pack gone) has no plan, so
+/// nothing walks it to an exit or presses Stealth for it. (Held by a stun or a root it still
+/// plans: the client has no accessor for a hold, and the walk and presses are refused by the
+/// host anyway.)
+fn gather(sim: &Sim, out: &mut AutoPlan) {
     let content = super::content();
-    let (Some(hero), Some(inv)) = (sim.world.hero(sim.me), sim.world.pack(sim.me)) else {
+    let hero = sim.world.hero(sim.me).filter(|h| h.fight.up());
+    let (Some(hero), Some(inv)) = (hero, sim.world.pack(sim.me)) else {
         if out.0 != Plan::default() {
             out.0 = Plan::default();
         }
@@ -149,7 +158,7 @@ pub(super) fn plan(sim: Res<Sim>, mut out: ResMut<AutoPlan>) {
         rogue: content
             .classes
             .get(hero.class)
-            .is_some_and(|c| c.key == "rogue"),
+            .is_some_and(|c| c.stealth),
         at: hero.pos,
         pack_used: inv.pack.iter().filter(|s| s.is_some()).count(),
         pack_size: inv.pack.len(),
@@ -167,6 +176,8 @@ pub(super) fn plan(sim: Res<Sim>, mut out: ResMut<AutoPlan>) {
             .world
             .enemies
             .iter()
+            // Only those the hero sees: a player does not know of the ones behind walls.
+            .filter(|e| sim.seen.contains(&e.id))
             .map(|e| Foe {
                 at: e.pos,
                 aware: sim.marks.iter().any(|m| m.enemy == e.id),
@@ -280,5 +291,29 @@ mod tests {
         // A full pack takes nothing, a pack with one slot free takes the first that fits.
         assert!(takes(&stacks, 5.0, 60.0, 0, weight).is_empty());
         assert_eq!(takes(&stacks, 5.0, 60.0, 1, weight), vec![0]);
+    }
+
+    /// A hero in a late night with an exit open has had enough, and walks out; the same hero
+    /// downed has no plan at all.
+    #[test]
+    fn a_hero_that_is_down_has_no_plan() {
+        use nightfall_sim::{RaidRoll, World};
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let content = super::super::content();
+        let mut world = World::new(content.clone());
+        world.begin_raid(RaidRoll::standard(&content, 1)).unwrap();
+        world.add_hero(0, "rogue", "Us", 1, 0).unwrap();
+        world.give_loadout(0, &nightfall_sim::Loadout::default());
+        world.elapsed = 100_000.0;
+        world.step();
+        let mut sim = Sim::for_test(world);
+        let mut out = AutoPlan::default();
+        gather(&sim, &mut out);
+        assert!(out.0.leave.is_some(), "late and an exit open: {:?}", out.0);
+        sim.world.hurt_hero(0, 1.0e9);
+        sim.world.step();
+        assert!(!sim.world.hero(0).unwrap().fight.up());
+        gather(&sim, &mut out);
+        assert_eq!(out.0, Plan::default());
     }
 }

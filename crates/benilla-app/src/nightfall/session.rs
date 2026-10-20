@@ -282,6 +282,16 @@ pub(super) struct ClientSide {
     last_pose: Option<Instant>,
 }
 
+impl ClientSide {
+    /// The host started run `raid` under death rule `loss`: [`super::run::start_run`] begins ours
+    /// on that rule.
+    fn note_start(&mut self, raid: u32, loss: nightfall_sim::DeathLoss) {
+        self.raid = raid;
+        self.death_loss = loss;
+        self.start = true;
+    }
+}
+
 /// Why a host turns a hello away, if it does.
 fn refusal(protocol: u32, content: u64, ours: u64, peers: usize) -> Option<String> {
     if protocol != PROTOCOL {
@@ -946,9 +956,7 @@ pub(super) fn lobby(
                         c.poses = sane_poses(poses, |p| inn().place.bounds.clamp(p));
                     }
                     ClientEvent::Message(ServerMsg::Start { raid, death_loss }) => {
-                        c.raid = raid;
-                        c.death_loss = death_loss;
-                        c.start = true;
+                        c.note_start(raid, death_loss);
                     }
                     ClientEvent::Message(
                         ServerMsg::State { .. }
@@ -1274,9 +1282,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                         c.planned = Some(raid);
                     }
                     if let Some((raid, loss)) = start {
-                        c.raid = raid;
-                        c.death_loss = loss;
-                        c.start = true;
+                        c.note_start(raid, loss);
                     }
                 }
                 return true;
@@ -1537,6 +1543,26 @@ mod tests {
             Heard::Ended,
         ];
         assert_eq!(start_of(&heard), None);
+    }
+
+    #[test]
+    fn the_hosts_death_rule_reaches_a_client_with_its_start_however_it_comes() {
+        use nightfall_sim::DeathLoss;
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let _ = super::super::INN.set(super::super::shipped_inn());
+        let mut net = Net::default();
+        net.join("127.0.0.1:9");
+        // The host ended the run and started the next in one poll (the usual way).
+        let heard = [Heard::Ended, Heard::Start(2, DeathLoss::FoundOnly)];
+        assert!(client_left_run(&mut net, &heard));
+        let Role::Client(c) = &mut net.role else {
+            panic!("joined")
+        };
+        assert_eq!((c.start, c.raid, c.death_loss), (true, 2, DeathLoss::FoundOnly));
+        // A start heard in the lobby (the other way in) is noted the same way.
+        c.start = false;
+        c.note_start(3, DeathLoss::Everything);
+        assert_eq!((c.start, c.raid, c.death_loss), (true, 3, DeathLoss::Everything));
     }
 
     #[test]
