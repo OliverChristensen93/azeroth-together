@@ -165,6 +165,22 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
   `NIGHTFALL_MONSTERS=<key>,...` (the planned raid's), `NIGHTFALL_NIGHT_AT=<seconds>` (a hosted
   raid's clock starts there). Positions, displays and sounds marked `measure:` are stand-ins until
   checked in the game.
+- Nightfall's playtest kit (sub-project 8, plan `docs/superpowers/plans/2026-10-20-nightfall-playtest-kit.md`):
+  the inn bar's **Playtest** button opens a panel (`nightfall/playtest.rs`, pure rules in
+  `nightfall-sim/src/playtest.rs`) of cycling buttons: the death rule, rival kits (simplified | full),
+  rivals (rolled | none | one party), signature monsters (rolled | all | only the always ones), night
+  clock (x1 | x2 | x4) and weather. They are the host's: saved in `benilla-config/nightfall-playtest.txt`
+  (non-default keys only), a change re-rolls the planned raid from the same seed, env switches
+  (`NIGHTFALL_WEATHER`, `NIGHTFALL_MONSTERS`, `NIGHTFALL_RIVALS`) beat the panel, and defaults change
+  nothing. A joiner's panel only says the host's settings apply (the host's death rule rides in
+  `ServerMsg::Start`; protocol still 8). `NIGHTFALL_SHOWCASE=1` (host only, `nightfall-sim/src/showcase.rs`)
+  stands one sentry of every enemy kind round the entry at three radii (about 58 yd out), a rival
+  party at the nearest point of interest and settles the ravens near the entry. `NIGHTFALL_AUTOPLAY`
+  now also sneaks (a rogue, an unaware enemy within 35 yd), takes loot stack by stack with `Act::Take`
+  (never copying items), and walks to the nearest open exit once the bags are half full, the load
+  is at `weight_full` or the night is past its middle (`nightfall/auto_brain.rs`). Selling a rare or
+  better stack at the trader asks first ("Sure?"). The night clock speeds the whole raid clock
+  (cooldowns and rival clocks too): a test tool.
 - The launcher's first screen (`benilla-app/src/game_pick.rs`) picks Survivors or Nightfall; every
   Survivors system is in `together::SurvivorsSet`, gated on `GameMode::Survivors`.
 - `together-net` is generic over each game's messages (`Host<Up, Down>`, `Client<Up, Down>`) and

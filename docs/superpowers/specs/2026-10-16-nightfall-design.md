@@ -1,7 +1,7 @@
 # Nightfall: design
 
 Date: 2026-10-16. Status: approved; revised the same day after research into single-player and co-op
-extraction games (§1.1). Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md). Sub-project 2 built (plan docs/superpowers/plans/2026-10-17-nightfall-world-knowledge.md). Sub-project 3 built (plan docs/superpowers/plans/2026-10-17-nightfall-senses.md). Sub-project 4 built (plan docs/superpowers/plans/2026-10-17-nightfall-combat.md). Sub-project 5a built (plan docs/superpowers/plans/2026-10-17-nightfall-run-loop.md); Sub-project 5b built (plan docs/superpowers/plans/2026-10-17-nightfall-inn.md). Sub-project 6 built (plan docs/superpowers/plans/2026-10-17-nightfall-night-threats.md).  Sub-project 7 built (plan docs/superpowers/plans/2026-10-17-nightfall-rivals.md). Branch: `stealth-extraction`.
+extraction games (§1.1). Sub-project 1 built (plan docs/superpowers/plans/2026-10-16-nightfall-foundation.md). Sub-project 2 built (plan docs/superpowers/plans/2026-10-17-nightfall-world-knowledge.md). Sub-project 3 built (plan docs/superpowers/plans/2026-10-17-nightfall-senses.md). Sub-project 4 built (plan docs/superpowers/plans/2026-10-17-nightfall-combat.md). Sub-project 5a built (plan docs/superpowers/plans/2026-10-17-nightfall-run-loop.md); Sub-project 5b built (plan docs/superpowers/plans/2026-10-17-nightfall-inn.md). Sub-project 6 built (plan docs/superpowers/plans/2026-10-17-nightfall-night-threats.md).  Sub-project 7 built (plan docs/superpowers/plans/2026-10-17-nightfall-rivals.md). Sub-project 8 built, the playtest kit (plan docs/superpowers/plans/2026-10-20-nightfall-playtest-kit.md). Branch: `stealth-extraction`.
 
 *Nightfall* (working title) is a second game inside Azeroth Together: a co-op stealth extraction game
 in Duskwood at night. It shares the engine, the netcode and the launcher with the survivors games and
@@ -57,7 +57,7 @@ Deep Rock Galactic) keep the loot-and-get-out stakes and get the rest elsewhere:
 
 ## 2. Sub-projects
 
-The game is built in seven sub-projects, each with its own implementation plan, in this order. Each
+The game is built in eight sub-projects, each with its own implementation plan, in this order. Each
 one ends in something playable.
 
 | # | Sub-project | Playable result |
@@ -69,6 +69,7 @@ one ends in something playable.
 | 5 | Run loop and the inn: loot, bags, weight, exits, death loss, the companion, Goldshire's inn with its stash, trader, contracts and stations | A whole extraction run with a reason to go back in |
 | 6 | The night's threats: the night clock, signature monsters, risk zones, every raid a little different | Raids that stay uncertain |
 | 7 | Rivals: bot adventurer parties | Others out there with goals of their own |
+| 8 | The playtest kit: the inn's Playtest settings, a showcase, autoplay that sneaks and loots | Trying the open design choices and the whole loop without hand-playing |
 
 The run loop and the inn come before rivals: a single-player extraction game rests on the reason to
 go back in (§1.1); rivals add to it.
@@ -521,16 +522,16 @@ All in `content/nightfall/rules.ron`, read at startup:
 - A bake test over a corner of Duskwood, skipped without WoW data.
 - `together-net` and `together-sim` tests still pass after the netcode change; the survivors co-op
   test on one PC still works.
-- Client hooks: `NIGHTFALL=1`, `NIGHTFALL_CLASS`, `NIGHTFALL_AUTOPLAY` (walks the map, later sneaks
-  and loots), `NIGHTFALL_SHOWCASE` (later: one of each enemy kind near the start). The engine's
+- Client hooks: `NIGHTFALL=1`, `NIGHTFALL_CLASS`, `NIGHTFALL_AUTOPLAY` (walks the map, sneaks, loots and extracts: built in sub-project 8),
+  `NIGHTFALL_SHOWCASE` (built in sub-project 8: one of each enemy kind near the start, a rival party and the ravens). The engine's
   `WOW_BG`, `WOW_WIN` and `WOW_LIVE_SHOT*` work as for survivors.
 - Co-op on one PC: `NIGHTFALL_HOST=1` and `NIGHTFALL_JOIN=127.0.0.1` (or an invite code).
 
 ## 13. Open questions
 
-- **Rival kits:** simplified or full class kits; both possible through content (§7.4). Decide after
+- **Rival kits:** simplified or full class kits; both possible through content (§7.4). Now a Playtest setting (the inn's Playtest button, sub-project 8): try both. Decide after
   playtests.
-- **Death loss:** which of the three `death_loss` modes is the default (§8.2). Decide after playtests.
+- **Death loss:** which of the three `death_loss` modes is the default (§8.2). Now a Playtest setting (sub-project 8): try all three, then set the default in rules.ron.
 - **WoW's own windows in the inn:** spiked in sub-project 5b (docs/superpowers/notes/2026-10-17-nightfall-wow-windows-spike.md); the inn uses our own panels until a later plan says otherwise.
 - **Dodge key:** decided in sub-project 4: a WoW key binding (NIGHTFALL_DODGE), Caps Lock and the mouse's back button by default, both free in 1.12's default bindings; rebound in WoW's own Key Bindings window.
 - **The name:** *Nightfall* is a working title.
