@@ -86,9 +86,11 @@ fn entry_of(roll: Option<&RaidRoll>) -> [f32; 3] {
 impl Sim {
     /// A run for everyone in `roster` (just us, alone), stepped here: the raid as the host (or we,
     /// alone) planned it in the inn.
-    fn hosted(roster: &[LobbyPlayer], roll: RaidRoll) -> Self {
-        let content = content();
-        let mut world = World::new(content.clone());
+    fn hosted(roster: &[LobbyPlayer], roll: RaidRoll, playtest: &nightfall_sim::Playtest) -> Self {
+        // The rules and speed of the playtest settings (the plain ones with the defaults).
+        let (rules, playtest) = super::night::effective(&content(), playtest);
+        let mut world = World::new(rules);
+        world.set_night_speed(playtest.night_factor());
         let entry = entry_of(Some(&roll));
         // The raid first, so the heroes start at its entry.
         // A rolled raid fits the map the content shipped (the content tests check it); a
@@ -485,12 +487,12 @@ pub(super) fn start_run(
     }
     net.broadcast_start();
     // The raid the host (or we, alone) planned in the inn; one planned now if none was.
-    let roll = net
-        .planned_raid()
-        .unwrap_or_else(|| super::night::plan_from_env(&content(), raid_seed(&time)));
+    let roll = net.planned_raid().unwrap_or_else(|| {
+        super::night::plan_from_env(&content(), raid_seed(&time), &net.playtest)
+    });
     net.solo_raid = None;
     info!("nightfall: a raid begins ({} heroes)", roster.len());
-    commands.insert_resource(Sim::hosted(&roster, roll));
+    commands.insert_resource(Sim::hosted(&roster, roll, &net.playtest));
     player.active = false;
     input.new_run();
     inn_state.reset();

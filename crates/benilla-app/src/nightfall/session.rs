@@ -13,8 +13,8 @@ use std::sync::Mutex;
 use bevy::prelude::*;
 use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
 use nightfall_sim::{
-    Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, RaidRoll, Snapshot,
-    UnitRef, World, DT,
+    Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, Playtest, RaidRoll,
+    Snapshot, UnitRef, World, DT,
 };
 use together_net::{content_hash, new_host_key, ConnId, GameTag, Invite, DEFAULT_PORT};
 use web_time::Instant;
@@ -162,8 +162,9 @@ fn moved(last: Option<HeroPose>, now: HeroPose) -> bool {
 }
 
 /// The next raid as the night rolls it from a fresh seed (`NIGHTFALL_SEED` for a test run;
-/// `NIGHTFALL_WEATHER` and `NIGHTFALL_MONSTERS` for its weather and monsters).
-pub(super) fn plan_raid() -> RaidRoll {
+/// `NIGHTFALL_WEATHER` and `NIGHTFALL_MONSTERS` for its weather and monsters), under the
+/// playtest settings of whoever plans it (the host's, or ours alone).
+pub(super) fn plan_raid(playtest: &Playtest) -> RaidRoll {
     let seed = std::env::var("NIGHTFALL_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -172,7 +173,14 @@ pub(super) fn plan_raid() -> RaidRoll {
                 .duration_since(web_time::UNIX_EPOCH)
                 .map_or(1, |d| d.as_nanos() as u64)
         });
-    super::night::plan_from_env(&content(), seed)
+    super::night::plan_from_env(&content(), seed, playtest)
+}
+
+/// The raid of `roll`'s seed planned again under `playtest`: the settings changed in the inn, so
+/// the same night is rolled afresh under them (the same entry and exits, the weather, monsters
+/// and rivals as the settings say).
+pub(super) fn replan(roll: &RaidRoll, playtest: &Playtest) -> RaidRoll {
+    super::night::plan_from_env(&content(), roll.seed, playtest)
 }
 
 #[derive(Resource, Default)]
@@ -182,6 +190,9 @@ pub(super) struct Net {
     pub status: String,
     /// Alone: the next raid, planned as the inn is entered.
     pub solo_raid: Option<RaidRoll>,
+    /// The playtest settings of the Playtest panel, which raids this player hosts or plays alone
+    /// follow. A joined player's are not used: the host's apply.
+    pub playtest: Playtest,
 }
 
 /// A friend in the inn, as [`Net::friends`] lends them.
@@ -388,7 +399,7 @@ impl Net {
                     sent: None,
                     steps: 0,
                     raid: 0,
-                    planned: plan_raid(),
+                    planned: plan_raid(&self.playtest),
                     sent_at: None,
                     sent_poses: None,
                     sent_poses_at: None,
@@ -628,17 +639,33 @@ impl Net {
             h.sent = None;
             h.sent_poses = None;
             // The next raid is planned for the lobby this ends in, and nobody is ready for it yet.
-            h.planned = plan_raid();
+            h.planned = plan_raid(&self.playtest);
             for p in &mut h.peers {
                 p.ready = false;
             }
         }
     }
 
+    /// The playtest settings changed in the inn: the raid planned for the lobby is rolled again
+    /// under them from its own seed, so the map table and the lobby show what will be played.
+    /// A joined player's settings are not used (the host's apply), so nothing is planned.
+    pub fn set_playtest(&mut self, playtest: Playtest) {
+        self.playtest = playtest;
+        match &mut self.role {
+            Role::Solo => {
+                if let Some(roll) = &self.solo_raid {
+                    self.solo_raid = Some(replan(roll, &self.playtest));
+                }
+            }
+            Role::Host(h) => h.planned = replan(&h.planned, &self.playtest),
+            Role::Client(_) => {}
+        }
+    }
+
     /// Back in the inn alone: the next raid planned anew.
     pub fn replan_alone(&mut self) {
         if matches!(self.role, Role::Solo) {
-            self.solo_raid = Some(plan_raid());
+            self.solo_raid = Some(plan_raid(&self.playtest));
         }
     }
 }
@@ -745,7 +772,7 @@ pub(super) fn lobby(
     match &mut net.role {
         Role::Solo => {
             if net.solo_raid.is_none() {
-                net.solo_raid = Some(plan_raid());
+                net.solo_raid = Some(plan_raid(&net.playtest));
             }
         }
         Role::Host(h) => {

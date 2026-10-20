@@ -699,3 +699,24 @@ impl Content {
         self.rivals.parties.iter().position(|p| p.key == key)
     }
 }
+
+impl Content {
+    /// This content with every kind of rival that has a simplified kit (`KitDef::Abilities`)
+    /// given the whole bar of its base hero class instead, as the cutthroats have in
+    /// `rivals.ron`: the playtest panel's "full kits" (spec §13). The big move is kept. Each
+    /// kind's class is built again from its base, so nothing else about it changes.
+    pub fn with_full_rival_kits(&self) -> Result<Content, String> {
+        let mut out = self.clone();
+        for i in 0..out.rivals.kinds.len() {
+            let mut k = out.rivals.kinds[i].clone();
+            if matches!(k.kit, KitDef::Class(_)) {
+                continue;
+            }
+            k.kit = KitDef::Class(k.base.clone());
+            let class = class_of(&mut k, &out)?;
+            out.classes[k.class] = class;
+            out.rivals.kinds[i] = k;
+        }
+        Ok(out)
+    }
+}

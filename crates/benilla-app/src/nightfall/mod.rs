@@ -33,6 +33,7 @@ mod marks;
 mod menu;
 mod night;
 mod npcs;
+mod playtest;
 mod ravens;
 mod rivals_view;
 mod run;
@@ -329,7 +330,11 @@ impl Plugin for NightfallPlugin {
             .insert_resource(menu::Selection::new(&content(), &stash))
             .insert_resource(stash)
             .init_resource::<menu::StartRequest>()
-            .init_resource::<session::Net>()
+            .insert_resource(session::Net {
+                playtest: playtest::load(),
+                ..default()
+            })
+            .init_resource::<playtest::PlaytestOpen>()
             .init_resource::<session::InnState>()
             .init_resource::<inn::InnViews>()
             .init_resource::<npcs::NpcViews>()
@@ -365,6 +370,7 @@ impl Plugin for NightfallPlugin {
                     stash_panel::spawn_root,
                     trader::spawn_root,
                     inn_panels::spawn_root,
+                    playtest::spawn_root,
                     board::spawn_root,
                     backpack::spawn_root,
                     gear::spawn_line,
@@ -412,6 +418,8 @@ impl Plugin for NightfallPlugin {
             .add_systems(Update, trader::show)
             // Ungated: hides the givers' and keepers' panel whenever another game is up.
             .add_systems(Update, inn_panels::show)
+            // Ungated: hides the Playtest panel whenever another game is up.
+            .add_systems(Update, playtest::show)
             // Ungated: hides the raid board whenever another game is up.
             .add_systems(Update, board::show)
             .add_systems(Update, inn_panels::scroll.in_set(NightfallSet))
@@ -466,6 +474,19 @@ impl Plugin for NightfallPlugin {
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Inn)),
             )
+            .add_systems(
+                Update,
+                // The Playtest panel: after the inn bar's click opens it and the NPCs' systems have
+                // opened theirs (one gives way to the other), and before the run can start, so a
+                // start the same frame is planned under the settings pressed.
+                (playtest::exclusive, playtest::clicks, playtest::rebuild)
+                    .chain()
+                    .after(menu::menu_clicks)
+                    .after(inn_panels::clicks)
+                    .before(run::start_run)
+                    .in_set(NightfallSet)
+                    .run_if(in_state(Phase::Inn)),
+            )
             // Ungated: hides the bake's line whenever another game is up.
             .add_systems(Update, terrain::show_line)
             .add_systems(
@@ -490,11 +511,11 @@ impl Plugin for NightfallPlugin {
             .add_systems(OnEnter(Phase::Inn), stash::after_raid)
             .add_systems(
                 OnExit(Phase::Inn),
-                (inn::leave, npcs::forget, board::forget),
+                (inn::leave, npcs::forget, board::forget, playtest::forget),
             )
             .add_systems(
                 OnExit(GameMode::Nightfall),
-                (inn::leave, npcs::forget, board::forget),
+                (inn::leave, npcs::forget, board::forget, playtest::forget),
             )
             .add_systems(Update, session::close_on_exit.in_set(NightfallSet))
             .add_systems(Update, ui::tune_ui.in_set(NightfallSet))

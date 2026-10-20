@@ -581,7 +581,9 @@ fn settle_mine(sim: &mut Sim, stash: &mut Stash, content: &Content, inn: &InnCon
 /// late. A hero who drops a stack and is cut off inside that window settles with the stack
 /// still in hand, which is the one gap left; closing it would take the host's word.
 pub(super) fn note_carry(sim: Res<Sim>, mut stash: ResMut<Stash>) {
-    note_pack(&mut stash, sim.world.pack(sim.me), &content());
+    // The run's own rules: a hosted raid under the playtest settings settles by them (a joined
+    // run's world holds the plain content, as its host's settings are not known here).
+    note_pack(&mut stash, sim.world.pack(sim.me), sim.world.content());
 }
 
 /// [`note_carry`] with its pack and content in hand. The stash is written only when the kept part

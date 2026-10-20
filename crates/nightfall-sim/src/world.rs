@@ -169,6 +169,9 @@ pub struct World {
     pub(crate) night: Night,
     /// The rivals' host-only state (spec §7.4).
     pub(crate) rivals: Rivals,
+    /// Seconds of night a second of play: 1 normally, more in a playtest ([`World::set_night_speed`]).
+    /// Host-only; a client mirrors the clock from its host's snapshots.
+    night_speed: f32,
 }
 
 impl World {
@@ -193,11 +196,23 @@ impl World {
             raid,
             night,
             rivals: Rivals::default(),
+            night_speed: 1.0,
         }
     }
 
     pub fn content(&self) -> &Arc<Content> {
         &self.content
+    }
+
+    /// The night's clock runs `factor` seconds a second of play (a playtest setting): a factor
+    /// that is not a number above 0 is 1. Everything timed on the clock goes with it (stages,
+    /// exits opening, rivals arriving, the cooldown of a potion).
+    pub fn set_night_speed(&mut self, factor: f32) {
+        self.night_speed = if factor.is_finite() && factor > 0.0 {
+            factor
+        } else {
+            1.0
+        };
     }
 
     /// `player`'s hero, of the class with `class_key`, at the first entry; each later hero stands
@@ -477,7 +492,7 @@ impl World {
         self.step_rivals();
         // Noises are heard the step they are made, or the next; none waits longer.
         self.senses.noises.clear();
-        self.elapsed += DT;
+        self.elapsed += DT * self.night_speed;
     }
 
     /// The whole world, as the host has it.

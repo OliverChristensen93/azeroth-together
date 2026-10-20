@@ -21,6 +21,7 @@ mod items;
 mod math;
 pub mod messages;
 mod night;
+mod playtest;
 mod profile;
 mod raid;
 mod rivals;
@@ -64,6 +65,9 @@ pub use night::{
     fog_of, CueSound, ExitRoll, Fog, HuntRules, MonsterDef, NightRules, NightView, RavenRules,
     RoadDef, ScentRules, StageDef, StepSound, WeatherDef, ZoneDef, FLOCK_FLOWN, FLOCK_GONE,
     FLOCK_SETTLED,
+};
+pub use playtest::{
+    death_loss_key, next_of, MonstersOut, NightSpeed, Playtest, RivalKits, RivalsOut, DEATH_LOSSES,
 };
 pub use profile::{
     free_kit, inventory_of, saved_inventory, ContractState, InnProgress, Profile, ProfileError,

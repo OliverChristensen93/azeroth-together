@@ -55,6 +55,7 @@ pub(super) enum MenuAction {
     Host,
     Join,
     CopyCode,
+    Playtest,
     Leave,
     Back,
 }
@@ -217,6 +218,7 @@ pub(super) fn build_menu(
                         (MenuAction::Join, "Join (paste code)"),
                         (MenuAction::CopyCode, "Copy Invite Code"),
                         (MenuAction::Leave, "Leave"),
+                        (MenuAction::Playtest, "Playtest"),
                     ] {
                         glue_button(
                             row,
@@ -224,7 +226,11 @@ pub(super) fn build_menu(
                             &font,
                             action,
                             caption,
-                            170.0,
+                            if action == MenuAction::Playtest {
+                                130.0
+                            } else {
+                                170.0
+                            },
                             38.0,
                             GlueBtnKind::Small,
                             1.0,
@@ -278,6 +284,7 @@ pub(super) fn menu_clicks(
     mut inn_state: ResMut<InnState>,
     mut stash: ResMut<super::stash::Stash>,
     mut next_mode: ResMut<NextState<GameMode>>,
+    mut playtest: ResMut<super::playtest::PlaytestOpen>,
     mut clipboard: NonSendMut<HostClipboard>,
     window: Query<&RawHandleWrapper, With<PrimaryWindow>>,
 ) {
@@ -322,6 +329,7 @@ pub(super) fn menu_clicks(
                 net.status = "Invite code copied: paste it to your friends".into();
             }
         }
+        MenuAction::Playtest => playtest.0 = !playtest.0,
         MenuAction::Leave => {
             net.leave("");
             inn_state.reset();
@@ -337,9 +345,13 @@ pub(super) fn menu_clicks(
 /// Which actions show for the session's role: alone, hosting or joined.
 fn shown(role: &Role) -> &'static [MenuAction] {
     match role {
-        Role::Solo => &[MenuAction::Host, MenuAction::Join],
-        Role::Host(_) => &[MenuAction::CopyCode, MenuAction::Leave],
-        Role::Client(_) => &[MenuAction::Leave],
+        Role::Solo => &[MenuAction::Host, MenuAction::Join, MenuAction::Playtest],
+        Role::Host(_) => &[
+            MenuAction::CopyCode,
+            MenuAction::Leave,
+            MenuAction::Playtest,
+        ],
+        Role::Client(_) => &[MenuAction::Leave, MenuAction::Playtest],
     }
 }
 
@@ -366,6 +378,13 @@ pub(super) fn refresh_menu(
     let body = match (&stash.note, panel.0) {
         (Some(n), None) => format!("{}\n{n}", net.lobby_text()),
         _ => net.lobby_text(),
+    };
+    // Settings left on are said, so a raid without rivals is never a mystery. A joined player's
+    // own settings do not apply, so they are not said.
+    let body = if !net.playtest.is_default() && !net.is_client() {
+        format!("{body}\nPlaytest settings are on (the Playtest button).")
+    } else {
+        body
     };
     for mut t in &mut status {
         if t.0 != body {

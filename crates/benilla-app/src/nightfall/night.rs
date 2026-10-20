@@ -9,12 +9,13 @@
 //! [`super::session::event_for`]), so a host and a joined player see and hear the same night.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use benilla_ui::script::UiScript;
 use benilla_world::lighting::FogOverride;
 use benilla_world::weather::WeatherMessage;
 use bevy::prelude::*;
-use nightfall_sim::{Content, CueSound, Event, RaidRoll, WeatherDef};
+use nightfall_sim::{Content, CueSound, Event, Playtest, RaidRoll, WeatherDef};
 
 use super::content;
 use super::enemies::EnemyViews;
@@ -26,16 +27,19 @@ const FOG_EASE: f32 = 4.0;
 /// The chat line's colour, WoW's emote orange.
 const LINE_COLOR: (f32, f32, f32) = (1.0, 0.5, 0.25);
 
-/// The next raid: [`RaidRoll::roll`] from `seed`, with the test hooks' weather (a key) and
-/// monsters (keys, comma-separated, beside the ones that always come) when given. A key the
-/// content lacks is left out with a warning; a list of only such keys leaves the roll as rolled.
+/// The next raid: the playtest settings' roll from `seed` (the plain [`RaidRoll::roll`] with the
+/// default settings; `content` is [`effective`]'s), with the test hooks' weather (a key) and
+/// monsters (keys, comma-separated, beside the ones that always come) when given: a hook wins over
+/// the settings. A key the content lacks is left out with a warning; a list of only such keys
+/// leaves the roll as rolled.
 pub(super) fn plan(
     content: &Content,
     seed: u64,
+    playtest: &Playtest,
     weather: Option<&str>,
     monsters: Option<&str>,
 ) -> RaidRoll {
-    let mut roll = RaidRoll::roll(content, seed);
+    let mut roll = playtest.roll(content, seed);
     if let Some(key) = weather {
         match content
             .rules
@@ -79,15 +83,32 @@ pub(super) fn plan(
     roll
 }
 
-/// [`plan`] with the hooks from the environment: `NIGHTFALL_WEATHER`, `NIGHTFALL_MONSTERS`.
-pub(super) fn plan_from_env(content: &Content, seed: u64) -> RaidRoll {
+/// The rules and settings a raid is planned and played under: `playtest`'s content for `content`
+/// (see [`Playtest::content_for`]), or, if that cannot be made (a kit the content cannot give),
+/// the plain content and default settings, with a warning. Planning and the run both ask this,
+/// so they agree.
+pub(super) fn effective(content: &Arc<Content>, playtest: &Playtest) -> (Arc<Content>, Playtest) {
+    match playtest.content_for(content) {
+        Ok(c) => (c, playtest.clone()),
+        Err(why) => {
+            warn!("nightfall: the playtest settings could not be applied ({why}); the plain rules stand");
+            (content.clone(), Playtest::default())
+        }
+    }
+}
+
+/// [`plan`] under the playtest settings, with the hooks from the environment, which win over
+/// them: `NIGHTFALL_WEATHER`, `NIGHTFALL_MONSTERS`, `NIGHTFALL_RIVALS`.
+pub(super) fn plan_from_env(content: &Arc<Content>, seed: u64, playtest: &Playtest) -> RaidRoll {
+    let (content, playtest) = effective(content, playtest);
     let mut roll = plan(
-        content,
+        &content,
         seed,
+        &playtest,
         std::env::var("NIGHTFALL_WEATHER").ok().as_deref(),
         std::env::var("NIGHTFALL_MONSTERS").ok().as_deref(),
     );
-    super::rivals_view::force_from_env(&mut roll, content);
+    super::rivals_view::force_from_env(&mut roll, &content);
     roll
 }
 
@@ -323,7 +344,13 @@ mod tests {
             .iter()
             .position(|w| w.key == "rain")
             .unwrap();
-        let r = plan(&c, 3, Some("rain"), Some("morladim, banshee"));
+        let r = plan(
+            &c,
+            3,
+            &Playtest::default(),
+            Some("rain"),
+            Some("morladim, banshee"),
+        );
         assert_eq!(usize::from(r.weather), rain);
         let mut want = vec![
             c.monster("morladim").unwrap() as u8,
@@ -333,7 +360,7 @@ mod tests {
         want.sort_unstable();
         assert_eq!(r.monsters, want);
         let rolled = RaidRoll::roll(&c, 3);
-        let unknown = plan(&c, 3, Some("snow"), Some("dragon"));
+        let unknown = plan(&c, 3, &Playtest::default(), Some("snow"), Some("dragon"));
         assert_eq!(unknown.weather, rolled.weather);
         // Only unknown keys: the rolled monsters stay (a test switch never empties the night).
         assert_ne!(
@@ -343,14 +370,45 @@ mod tests {
         );
         assert_eq!(unknown.monsters, rolled.monsters);
         // One known key among unknown ones is still taken.
-        let mixed = plan(&c, 3, None, Some("dragon, banshee"));
+        let mixed = plan(&c, 3, &Playtest::default(), None, Some("dragon, banshee"));
         let mut want = vec![
             c.monster("banshee").unwrap() as u8,
             c.monster("stitches").unwrap() as u8,
         ];
         want.sort_unstable();
         assert_eq!(mixed.monsters, want);
-        assert_eq!(plan(&c, 3, None, None), rolled);
+        assert_eq!(plan(&c, 3, &Playtest::default(), None, None), rolled);
+    }
+
+    #[test]
+    fn the_environment_switches_win_over_the_playtest_settings() {
+        let c = shipped();
+        let key = |i: u8| c.rules.night.weather[usize::from(i)].key.clone();
+        let mist = Playtest {
+            weather: Some("mist".into()),
+            monsters: nightfall_sim::MonstersOut::None,
+            ..Default::default()
+        };
+        let content = std::sync::Arc::new(c.clone());
+        let (rules, mist) = effective(&content, &mist);
+        // The settings alone.
+        let by_settings = plan(&rules, 3, &mist, None, None);
+        assert_eq!(key(by_settings.weather), "mist");
+        assert_eq!(
+            by_settings.monsters,
+            vec![c.monster("stitches").unwrap() as u8]
+        );
+        // A switch beside them wins for what it names; the rest stays the settings'.
+        let both = plan(&rules, 3, &mist, Some("rain"), Some("banshee"));
+        assert_eq!(key(both.weather), "rain");
+        assert!(both
+            .monsters
+            .contains(&(c.monster("banshee").unwrap() as u8)));
+        let weather_only = plan(&rules, 3, &mist, Some("rain"), None);
+        assert_eq!(weather_only.monsters, by_settings.monsters);
+        // The default settings leave the content itself.
+        let (same, def) = effective(&content, &Playtest::default());
+        assert!(std::sync::Arc::ptr_eq(&same, &content) && def.is_default());
     }
 
     #[test]
@@ -500,7 +558,7 @@ mod tests {
             .position(|w| w.key == "rain")
             .unwrap();
         let mut host = nightfall_sim::World::new(c.clone());
-        host.begin_raid(plan(&c, 5, Some("rain"), None)).unwrap();
+        host.begin_raid(plan(&c, 5, &Playtest::default(), Some("rain"), None)).unwrap();
         host.add_hero(0, "rogue", "Host", 1, 0).unwrap();
         let mut mirror = nightfall_sim::World::new(c.clone());
         mirror.begin_mirror();
