@@ -16,11 +16,8 @@
     // hero who keeps moving. 1.0 and a cap of 99 give the old, slower horde.
     enemy_speed: 1.35,
     enemy_speed_cap: 6.65,
-    // The horde comes from behind the way a hero runs, never straight ahead. From
-    // `surround_from` seconds in, every `surround_every` seconds, it comes from every side for
-    // `surround_secs`.
-    surround_from: 150.0,
-    surround_every: 150.0,
+    // The horde comes from behind the way a hero runs, never straight ahead. Halfway to each
+    // boss a swarm sends it from every side, for `surround_secs`.
     surround_secs: 12.0,
     // Health in ordinary enemies. A rare (now and then in the horde, and a Challenge Idol's)
     // has `rare_health` of its own kind's; an elite (a camp's guard) `elite_health`; a boss

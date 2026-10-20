@@ -121,6 +121,24 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
   The menu lists your race's racials under the class text.
 - **Tome text:** "Raises your armor for the run." is now "Raises your armor."
 
+## Round 5
+
+- **Healing by spell.** The meter's Healing & Absorbed view now has a row per spell, plus
+  "Regeneration & other" (regen, shards, level-up heals) and "Absorbed".
+  - Each spell cast, triggered cast and landing missile counts the health it gave any hero as
+    that caster's spell's healing, a heal on a friend included. It does this by reading health
+    before and after, so every heal path counts without touching each one.
+  - A heal over time remembers whose spell laid it.
+- **Co-op credit for late missiles.** A heal from a missile that lands later now counts for its
+  caster, not the hero who received it.
+- **Swarms halfway to each boss.** The repeating 2:30 surround timer is gone. One swarm comes
+  halfway to each boss: at 2:00 before the first, and 2:00 after each boss falls. None comes
+  while a boss is up.
+  - The run panel shows one timer, "Swarm in 1:33", then "Hogger in 2:00".
+  - The warning says "Swarm!".
+  - `surround_secs` (12 s) is still in `rules.ron`; `surround_from` and `surround_every` are gone.
+- **Weather and graphics:** moved to its own session and branch (`weather-graphics`).
+
 ## Round 4: four enemy ranks
 
 Champions are gone. The enemies are now:

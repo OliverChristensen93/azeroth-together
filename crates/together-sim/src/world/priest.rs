@@ -72,16 +72,10 @@ impl World {
 
     /// Heal every living hero within `reach` of `pos` by `amount`.
     fn heal_around(&mut self, pos: V2, reach: f32, amount: f32) {
-        let mut healed = Vec::new();
         for hero in &mut self.heroes {
             if hero.alive && hero.pos.distance(pos) <= reach {
-                let before = hero.hp;
                 hero.hp = (hero.hp + amount).min(hero.max_hp);
-                healed.push((hero.player, hero.hp - before));
             }
-        }
-        for (target, amount) in healed {
-            self.credit_heal(target, amount);
         }
     }
 

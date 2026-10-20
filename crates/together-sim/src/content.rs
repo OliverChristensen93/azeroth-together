@@ -439,12 +439,8 @@ pub struct Rules {
     /// so a hero at the base 7 can still pull away from the horde without help.
     #[serde(default = "enemy_speed_cap")]
     pub enemy_speed_cap: f32,
-    /// The horde comes from behind the way a hero runs. From `surround_from` seconds in, every
-    /// `surround_every` seconds it comes from every side instead, for `surround_secs`.
-    #[serde(default = "surround_from")]
-    pub surround_from: f32,
-    #[serde(default = "surround_every")]
-    pub surround_every: f32,
+    /// The horde comes from behind the way a hero runs. Halfway to each boss a swarm sends it
+    /// from every side instead, for `surround_secs`.
     #[serde(default = "surround_secs")]
     pub surround_secs: f32,
     /// Health, in ordinary enemies: a rare and an elite of their own kind's; a boss of the
@@ -485,12 +481,6 @@ fn enemy_speed() -> f32 {
 fn enemy_speed_cap() -> f32 {
     6.65
 }
-fn surround_from() -> f32 {
-    150.0
-}
-fn surround_every() -> f32 {
-    150.0
-}
 fn surround_secs() -> f32 {
     12.0
 }
@@ -505,8 +495,6 @@ impl Default for Rules {
             elite_respawn: one_eighty(),
             enemy_speed: enemy_speed(),
             enemy_speed_cap: enemy_speed_cap(),
-            surround_from: surround_from(),
-            surround_every: surround_every(),
             surround_secs: surround_secs(),
             rare_health: rare_health(),
             elite_health: elite_health(),

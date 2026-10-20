@@ -22,7 +22,8 @@ mod horde;
 mod pause;
 pub(crate) mod ranks;
 pub use ranks::CAMP_SCALE;
-mod meter;
+pub(crate) mod meter;
+pub use meter::OTHER_HEALING;
 mod hunter;
 mod paladin;
 mod priest;
@@ -506,6 +507,9 @@ pub struct Hero {
     pub healed: f64,
     #[serde(default)]
     pub absorbed: f64,
+    /// The same healing by ability; [`meter::OTHER_HEALING`] for what came from no spell.
+    #[serde(default)]
+    pub healed_by: Vec<(usize, f64)>,
     /// This step's bookkeeping for [`World::tally_healing`]: health at its start, and what blows
     /// took since.
     #[serde(skip)]
@@ -610,6 +614,8 @@ pub struct Snapshot {
     pub pause_ready: Vec<PlayerId>,
     #[serde(default)]
     pub surround: f32,
+    #[serde(default)]
+    pub next_surround: f32,
     pub buffs: Vec<(PowerUp, f32)>,
     pub heroes: Vec<Hero>,
     pub enemies: Vec<EnemyState>,
@@ -728,10 +734,10 @@ pub struct World {
     delayed: Vec<(f32, combat::Trigger)>,
     /// The first target of the last missile cast, for an augment's second missile elsewhere.
     last_target: Option<u32>,
-    /// The hero whose spells are being cast, while [`World::cast_abilities`] casts them: a heal
-    /// it lands on a friend is its own on the meter. And those heals, this step.
-    casting: Option<PlayerId>,
-    heal_credit: Vec<(PlayerId, PlayerId, f32)>,
+    /// The spell whose healing context is open ([`meter`]), and this step's heals by spell:
+    /// target, healer, ability, amount.
+    heal_source: Option<(PlayerId, usize)>,
+    heal_credit: Vec<(PlayerId, PlayerId, usize, f32)>,
     inputs: HashMap<PlayerId, PlayerInput>,
     events: Vec<Event>,
     next_id: u32,
@@ -760,10 +766,12 @@ pub struct World {
     /// come.
     pub guards: Vec<u32>,
     pub bosses_come: u32,
-    /// Seconds left of a surround, when the horde comes from every side; and seconds into the
-    /// run the next one starts.
+    /// Seconds left of a swarm, when the horde comes from every side; seconds into the run the
+    /// next one starts (infinite once this boss's has come, or while a boss is up); and the
+    /// boss time it came for.
     pub surround: f32,
     pub next_surround: f32,
+    swarm_for: Option<f32>,
     /// Experience earned per experience picked up: 1 in a normal run.
     pub xp_rate: f32,
     /// The rank a newly learned spell starts at: 1 in a normal run.
@@ -801,7 +809,7 @@ impl World {
             triggers: Vec::new(),
             delayed: Vec::new(),
             last_target: None,
-            casting: None,
+            heal_source: None,
             heal_credit: Vec::new(),
             inputs: HashMap::new(),
             events: Vec::new(),
@@ -822,10 +830,11 @@ impl World {
             bosses_come: 0,
             surround: 0.0,
             next_surround: f32::INFINITY,
+            swarm_for: None,
             xp_rate: 1.0,
             learn_rank: 1,
         };
-        world.next_surround = world.content.rules.surround_from;
+        world.next_surround = BOSS_EVERY * 0.5;
         let content = world.content.clone();
         for (kind, pos) in scatter(&content.zones[zone], &mut world.rng) {
             world.place(kind, pos);
@@ -926,6 +935,7 @@ impl World {
             boss_by: Vec::new(),
             healed: 0.0,
             absorbed: 0.0,
+            healed_by: Vec::new(),
             hp_mark: None,
             taken: 0.0,
             spell: HeroSpells::default(),
@@ -1079,6 +1089,7 @@ impl World {
             menu_pause: self.menu_pause,
             pause_ready: self.pause_ready.clone(),
             surround: self.surround,
+            next_surround: self.next_surround,
             buffs: self.buffs.clone(),
             heroes: self.heroes.clone(),
             enemies: self
@@ -1120,6 +1131,7 @@ impl World {
         self.menu_pause = snapshot.menu_pause;
         self.pause_ready = snapshot.pause_ready;
         self.surround = snapshot.surround;
+        self.next_surround = snapshot.next_surround;
         self.buffs = snapshot.buffs;
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;

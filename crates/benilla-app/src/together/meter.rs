@@ -113,8 +113,9 @@ pub(super) struct MeterState {
     base: Vec<(together_sim::PlayerId, [Tally; 3])>,
 }
 
-/// The healing view's two rows, in place of abilities.
-const HEALED: usize = usize::MAX;
+/// The healing view's rows that are no spell: healing from none (regeneration, shards), and
+/// what shields soaked up.
+const HEALED: usize = together_sim::OTHER_HEALING;
 const ABSORBED: usize = usize::MAX - 1;
 
 /// Hero `h`'s numbers for each view: damage, boss damage, and healing with what its shields
@@ -131,7 +132,12 @@ fn tallies(h: &together_sim::Hero) -> [Tally; 3] {
         },
         Tally {
             total: h.healed + h.absorbed,
-            by: vec![(HEALED, h.healed), (ABSORBED, h.absorbed)],
+            by: h
+                .healed_by
+                .iter()
+                .copied()
+                .chain(std::iter::once((ABSORBED, h.absorbed)))
+                .collect(),
         },
     ]
 }
@@ -365,7 +371,7 @@ pub(super) fn refresh(
         }
         for (i, &(ability, dealt)) in by.iter().enumerate() {
             let (visual, name) = match ability {
-                HEALED => (None, "Healing".to_string()),
+                HEALED => (None, "Regeneration & other".to_string()),
                 ABSORBED => (None, "Absorbed".to_string()),
                 a => {
                     let def = &content.abilities[a];

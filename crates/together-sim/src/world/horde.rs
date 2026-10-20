@@ -1,6 +1,6 @@
 //! Where the horde comes from. Around a hero on the move it comes mostly from behind and from the
 //! flanks, never straight ahead, so there is always a way forward to run; a hero who has not yet
-//! moved is beset from anywhere. Now and then a surround ([`Event::Surrounded`]) sends it from
+//! moved is beset from anywhere. Halfway to each boss a swarm ([`Event::Surrounded`]) sends it from
 //! every side for a few seconds, and thicker.
 
 use super::*;
@@ -52,18 +52,26 @@ impl World {
         back + off * side
     }
 
-    /// Each step: a surround starts when due, and runs out.
+    /// Each step: a swarm runs out, and the next is due halfway to the next boss, once for each
+    /// boss to come (none while a boss is up). [`World::next_surround`] says when: the run
+    /// panel's one timer counts down to it, then to the boss.
     pub(super) fn tend_surround(&mut self) {
         if self.surround > 0.0 {
             self.surround = (self.surround - DT).max(0.0);
-            return;
         }
+        let boss_up = self.enemies.iter().any(|e| e.boss);
+        let done = self.swarm_for == Some(self.next_boss);
+        self.next_surround = if boss_up || done {
+            f32::INFINITY
+        } else {
+            self.next_boss - BOSS_EVERY * 0.5
+        };
         if self.elapsed < self.next_surround {
             return;
         }
-        let rules = &self.content.rules;
-        let secs = rules.surround_secs;
-        self.next_surround = self.elapsed + rules.surround_every.max(secs + 1.0);
+        let secs = self.content.rules.surround_secs;
+        self.swarm_for = Some(self.next_boss);
+        self.next_surround = f32::INFINITY;
         self.surround = secs;
         self.events.push(Event::Surrounded { secs });
     }
@@ -126,9 +134,11 @@ mod tests {
     }
 
     #[test]
-    fn a_surround_comes_from_every_side_then_ends() {
+    fn a_swarm_comes_halfway_to_the_boss_from_every_side_then_ends() {
         let mut w = world();
-        w.elapsed = w.content.rules.surround_from;
+        w.tend_surround();
+        assert_eq!(w.next_surround, BOSS_EVERY * 0.5);
+        w.elapsed = BOSS_EVERY * 0.5;
         w.tend_surround();
         assert!(w.surround > 0.0);
         assert!(w
@@ -144,7 +154,8 @@ mod tests {
             w.tend_surround();
         }
         assert_eq!(w.surround, 0.0);
-        assert!(w.next_surround > w.elapsed);
+        // One swarm for this boss: the timer now waits for the boss.
+        assert!(w.next_surround.is_infinite());
     }
 
     #[test]

@@ -61,6 +61,6 @@ pub use talents::{
 pub use world::{
     shield_size, status_bits, xp_to_next, ActiveBuff, Bank, Boon, Enemy, EnemyState, Event, Gem,
     Hero, HeroFx, HeroPose, HeroSpells, Offer, Owned, PlayerId, PlayerInput, Snapshot, Source,
-    Status, StatusFx, Target, World, WorldError, BOSS_EVERY, CAMP_LEASH, CAMP_SCALE, DT, ELITE_SCALE,
+    Status, StatusFx, Target, World, WorldError, BOSS_EVERY, CAMP_LEASH, CAMP_SCALE, OTHER_HEALING, DT, ELITE_SCALE,
     MAX_ABILITIES, REVIVE_RANGE, REVIVE_SECS, TICK_HZ,
 };

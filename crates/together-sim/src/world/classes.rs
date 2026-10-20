@@ -118,8 +118,9 @@ pub struct HeroFx {
     pub hidden: f32,
     /// Rogue combo points.
     pub combo: u8,
-    /// Heals over time (Renewing): health a second and seconds left.
-    pub hots: Vec<(f32, f32)>,
+    /// Heals over time (Renewing): health a second, seconds left, and whose spell laid it (for
+    /// the meter).
+    pub hots: Vec<(f32, f32, PlayerId, usize)>,
     pub boons: Vec<Boon>,
     /// The enemy a focusing capstone last hit (Searing Light).
     pub focus: Option<u32>,
@@ -488,15 +489,14 @@ impl World {
         let before = hero.hp;
         hero.hp = (hero.hp + amount).min(hero.max_hp);
         let healed = hero.hp - before;
-        let target = hero.player;
-        self.credit_heal(target, healed);
         self.paladin_healed(t, amount);
         let Some(spec) = spec else {
             return healed;
         };
         if spec.fx.renewing > 0.0 {
             let per = amount * spec.fx.renewing / RENEW_SECS;
-            self.heroes[t].spell.fx.hots.push((per, RENEW_SECS));
+            let (by, ability) = self.heal_owner(self.heroes[t].player);
+            self.heroes[t].spell.fx.hots.push((per, RENEW_SECS, by, ability));
         }
         if spec.fx.mending > 0.0 {
             let at = self.heroes[t].pos;
@@ -868,14 +868,25 @@ impl World {
                 b.left = (b.left - DT).max(0.0);
             }
             let mut heal = 0.0;
-            for (per, left) in &mut fx.hots {
+            let mut ticks = Vec::new();
+            for (per, left, by, ability) in &mut fx.hots {
                 heal += *per * DT;
+                ticks.push((*by, *ability, *per * DT));
                 *left -= DT;
             }
-            fx.hots.retain(|&(_, left)| left > 0.0);
+            fx.hots.retain(|&(_, left, _, _)| left > 0.0);
             let changed = haste != fx.haste();
             let hero = &mut self.heroes[h];
+            let before = hero.hp;
             hero.hp = (hero.hp + heal).min(hero.max_hp);
+            // On the meter, each tick is its caster's spell's, as far as it healed.
+            let mut healed = hero.hp - before;
+            let target = hero.player;
+            for (by, ability, amount) in ticks {
+                let share = amount.min(healed);
+                healed -= share;
+                self.credit_heal(target, by, ability, share);
+            }
             if changed {
                 self.refresh(h);
             }

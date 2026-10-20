@@ -419,7 +419,6 @@ impl World {
             if !self.heroes[h].alive {
                 continue;
             }
-            self.casting = Some(self.heroes[h].player);
             let floes = self.heroes[h].spell.shield > 0.0 && self.knows(h, Augment::IceFloes);
             for a in 0..self.heroes[h].abilities.len() {
                 let owned = self.heroes[h].abilities[a].clone();
@@ -444,14 +443,19 @@ impl World {
                     spec.freeze = spec.freeze.max(FREEZE_SECS);
                 }
                 self.before_cast(h, &owned, &mut spec);
+                // Whatever this cast heals is its own on the meter.
+                let mark = self.heal_begin(self.heroes[h].player, owned.ability);
                 let fired = self.fire(h, &spec, Shot::plain());
+                if fired {
+                    self.after_cast(h, &owned, &spec);
+                }
+                self.heal_end(mark);
                 let o = &mut self.heroes[h].abilities[a];
                 if !fired {
                     // No target in reach: try again next step rather than waste the cooldown.
                     o.cd = 0.0;
                     continue;
                 }
-                self.after_cast(h, &owned, &spec);
                 let o = &mut self.heroes[h].abilities[a];
                 o.casts += 1;
                 o.burst += 1;
@@ -479,7 +483,6 @@ impl World {
                 }
             }
         }
-        self.casting = None;
         self.run_triggers();
     }
 
@@ -689,9 +692,19 @@ impl World {
             .partition(|p| p.lands_at <= now);
         self.pending = flying;
         for hit in due {
+            // A missile's healing (leech, a heal on hit) is its caster's spell's, landing later.
+            let mark = self.heal_begin(hit.caster, hit.spec.ability);
+            self.land_hit(hit);
+            self.heal_end(mark);
+        }
+    }
+
+    /// One missile landing.
+    fn land_hit(&mut self, hit: PendingHit) {
+        {
             let Some(at) = self.enemy(hit.target).map(|e| e.pos) else {
                 // Its target died while the missile flew.
-                continue;
+                return;
             };
             let crit = self
                 .strike(hit.caster, &hit.spec, hit.target, 1.0, hit.from, Crit::Roll)
@@ -1320,7 +1333,9 @@ impl World {
                 .cloned()
                 .unwrap_or_else(|| Owned::new(t.ability, 0.0));
             let spec = self.spell_spec(h, &owned);
+            let mark = self.heal_begin(t.player, t.ability);
             self.fire(h, &spec, t.shot);
+            self.heal_end(mark);
         }
         self.triggers.clear();
     }
