@@ -25,6 +25,9 @@ mod area_poi;
 mod area_trigger;
 #[cfg(feature = "dev")]
 mod asset_churn;
+/// Weather, lightning, sun shafts and the hour for a game that is its own server (Together,
+/// Nightfall): one plugin steered by a `SkyRequest`.
+mod atmosphere;
 mod aura_visual;
 mod bindings;
 mod blob_shadow;

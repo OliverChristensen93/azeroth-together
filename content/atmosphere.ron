@@ -1,0 +1,40 @@
+// Each zone's sky over a run: its weather and its hour. Read by the client only (it never
+// changes the game), through the shared atmosphere plugin. Every player of a co-op run sees the
+// same weather: it is scheduled from the run's seed and clock.
+//
+// precip:    what falls in a wet spell: Rain, Snow or Sand.
+// wet:       the share of the run with something falling, 0..1.
+// storms:    the chance a rainy spell is a thunderstorm (lightning and thunder), 0..1.
+// spell:     seconds one spell of weather (wet or dry) lasts.
+// intensity: how hard a wet spell falls, rolled between the two (0..1).
+// dry_start: seconds before the first wet spell may come.
+// minute:    the minute of the day the run starts at (0..1440; 1020 is 17:00).
+// day_speed: game minutes the clock moves per second of run (0.075: 90 minutes in a 20-minute run).
+// A zone left out is fine weather at 13:00. `TOGETHER_WEATHER` and `TOGETHER_HOUR` override.
+{
+    // Late afternoon into sunset: low sun for the shafts, now and then a shower.
+    "elwynn": (
+        precip: Rain, wet: 0.25, storms: 0.15, spell: 150.0, intensity: (0.3, 0.7),
+        dry_start: 60.0, minute: 1020.0, day_speed: 0.075,
+    ),
+    // Dry farmland: rare showers, an afternoon sun.
+    "westfall": (
+        precip: Rain, wet: 0.15, storms: 0.1, spell: 150.0, intensity: (0.25, 0.6),
+        dry_start: 90.0, minute: 960.0, day_speed: 0.075,
+    ),
+    // Gloomy and wet, often stormy, toward dusk.
+    "duskwood": (
+        precip: Rain, wet: 0.55, storms: 0.4, spell: 120.0, intensity: (0.4, 0.9),
+        dry_start: 30.0, minute: 1080.0, day_speed: 0.05,
+    ),
+    // Stranglethorn's tropical downpours.
+    "gurubashi_arena": (
+        precip: Rain, wet: 0.3, storms: 0.3, spell: 120.0, intensity: (0.5, 1.0),
+        dry_start: 60.0, minute: 840.0, day_speed: 0.05,
+    ),
+    // Silithus: sandstorms.
+    "gates_of_ahnqiraj": (
+        precip: Sand, wet: 0.35, storms: 0.0, spell: 150.0, intensity: (0.4, 0.9),
+        dry_start: 60.0, minute: 900.0, day_speed: 0.05,
+    ),
+}
