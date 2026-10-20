@@ -57,6 +57,14 @@ Test switches: `TOGETHER_WEATHER=fine|rain|snow|sand|storm`, `TOGETHER_HOUR=<0..
    plugin never writes fog. Its grade and this pass share the post slot and both run.
 5. Check `nightfall_grade` and `AtmosPost` order if the vignette should sit on top (add an edge).
 
+## Testing
+
+`WOW_ATMOS_DUMP=1` logs, once a second, the sun's direction (yaw and height), the camera's, the
+shafts' screen position and strength, the rain and storm densities and the flash. To aim a test
+camera at the sun, `WOW_PROBE_CAM=<yaw>,<pitch>,<dist>@<s>`: its yaw is the dump's with the sign
+flipped (at 18:30 the sun is at dump yaw -45, so `WOW_PROBE_CAM=45,15,12@12`). Westfall shows the
+shafts best (open sky); Elwynn's start is under a canopy that hides the sun.
+
 ## Cost
 
 Weather: the engine's pooled particle quads (as on a real server). Lightning and clock: nothing.

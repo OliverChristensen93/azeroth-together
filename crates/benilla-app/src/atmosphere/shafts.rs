@@ -53,15 +53,15 @@ impl FullscreenMaterial for AtmosPost {
 }
 
 /// The base strength of the shafts at `WOW_RAYS=1`.
-const SHAFTS: f32 = 0.55;
+const SHAFTS: f32 = 0.7;
 /// The moon's shafts against the sun's.
 const MOON_SHAFTS: f32 = 0.35;
 /// How much of the way to the light a pixel's taps reach, and each tap's decay.
 const REACH: f32 = 0.85;
 const DECAY: f32 = 0.965;
 /// The luminance (gamma) that counts as bright sky: by day, and for the moon by night.
-const SUN_THRESHOLD: f32 = 0.72;
-const MOON_THRESHOLD: f32 = 0.5;
+const SUN_THRESHOLD: f32 = 0.5;
+const MOON_THRESHOLD: f32 = 0.35;
 const MOON_COLOR: [f32; 3] = [0.62, 0.72, 0.92];
 
 /// The light the shafts come from, as the frame sees it.
@@ -149,7 +149,18 @@ fn drive(
     lighting: Res<WowLighting>,
     weather: Option<Res<WeatherState>>,
     mut cams: Query<(&Camera, &GlobalTransform, &mut AtmosPost), With<WorldCamera>>,
+    time: Res<Time<Real>>,
+    mut next_dump: Local<f64>,
 ) {
+    // `WOW_ATMOS_DUMP=1`: the pass's inputs once a second, to aim a test camera at the sun.
+    let dump = {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("WOW_ATMOS_DUMP").is_some())
+            && time.elapsed_secs_f64() >= *next_dump
+    };
+    if dump {
+        *next_dump = time.elapsed_secs_f64() + 1.0;
+    }
     let (wet, storm) = weather
         .map(|w| (w.effect_density, storm_blend(w.sky_density)))
         .unwrap_or((0.0, 0.0));
@@ -186,6 +197,18 @@ fn drive(
         }
         if settings.lightning {
             next.mood.x = flash.0;
+        }
+        if dump {
+            let sun = lighting.celestial_dir();
+            let fwd = cam_gt.forward();
+            info!(
+                "atmos: sun dir {:.2},{:.2},{:.2} (yaw {:.0} deg, up {:.0} deg) day {:.2} | cam fwd yaw {:.0} pitch {:.0} | shafts uv {:.2},{:.2} strength {:.3} | wet {:.2} storm {:.2} flash {:.2}",
+                sun.x, sun.y, sun.z,
+                sun.x.atan2(-sun.z).to_degrees(), sun.y.asin().to_degrees(),
+                lighting.sun_day(),
+                fwd.x.atan2(-fwd.z).to_degrees(), fwd.y.asin().to_degrees(),
+                next.light.x, next.light.y, next.light.z, wet, storm, next.mood.x,
+            );
         }
         if *post != next {
             *post = next;

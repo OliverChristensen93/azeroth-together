@@ -24,6 +24,8 @@ struct Params {
 @group(0) @binding(2) var<uniform> params: Params;
 
 const TAPS: i32 = 40;
+// How fast the emitting halo around the light falls off, per screen height.
+const HALO: f32 = 2.2;
 const LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 const FLASH_TINT: vec3<f32> = vec3<f32>(0.80, 0.86, 1.0);
 const STORM_TINT: vec3<f32> = vec3<f32>(0.93, 0.97, 1.04);
@@ -31,7 +33,7 @@ const STORM_TINT: vec3<f32> = vec3<f32>(0.93, 0.97, 1.04);
 // How much of a sample is bright sky, 0..1.
 fn bright(c: vec3<f32>, threshold: f32) -> f32 {
     let l = dot(c, LUMA);
-    return smoothstep(threshold, min(threshold + 0.18, 1.0), l);
+    return smoothstep(threshold, min(threshold + 0.25, 1.0), l);
 }
 
 @fragment
@@ -52,7 +54,10 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         for (var i = 0; i < TAPS; i++) {
             let inside = all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0));
             let s = textureSampleLevel(screen_texture, screen_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb;
-            sum += select(0.0, bright(s, params.light.w), inside) * weight;
+            // Sky near the light shines most: a halo weight, so open sky far off adds little.
+            let off = (uv - params.light.xy) * vec2<f32>(params.color.w, 1.0);
+            let near = exp(-length(off) * HALO);
+            sum += select(0.0, bright(s, params.light.w) * near, inside) * weight;
             norm += weight;
             weight *= params.mood.w;
             uv += stride;
