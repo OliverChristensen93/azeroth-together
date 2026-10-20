@@ -20,6 +20,8 @@ pub(super) const COLOR_HIT: u32 = 0xFFFF_FFFF;
 pub(super) const COLOR_HURT: u32 = 0xFFFF_3030;
 /// A telegraphed blow that missed: pale blue.
 pub(super) const COLOR_EVADE: u32 = 0xFF9F_D0FF;
+/// A heal's number: green.
+pub(super) const COLOR_HEAL: u32 = 0xFF40_FF40;
 
 #[derive(SystemParam)]
 pub(super) struct Fx<'w> {

@@ -174,6 +174,9 @@ fn run_speeds(run: f32) -> benilla_protocol::MoveSpeeds {
     }
 }
 
+/// Yards a second under which another hero is drawn walking, not running.
+const WALK_UNDER: f32 = 4.0;
+
 /// Every other hero between its last two states, on the ground, turned the way it goes, running
 /// when it moves.
 pub(super) fn place(
@@ -197,10 +200,11 @@ pub(super) fn place(
             let target = Quat::from_rotation_y(units::yaw_of(p.facing));
             tf.rotation = tf.rotation.slerp(target, turn);
         }
-        let flags = if p.speed > 0.1 {
-            move_flags::FORWARD
-        } else {
-            0
+        // Under WoW's walk-to-run line a hero (or a rival) is drawn walking.
+        let flags = match p.speed {
+            s if s <= 0.1 => 0,
+            s if s < WALK_UNDER => move_flags::FORWARD | move_flags::WALK_MODE,
+            _ => move_flags::FORWARD,
         };
         if mv.speed != p.speed || mv.flags != flags {
             mv.speed = p.speed;

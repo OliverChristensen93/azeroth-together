@@ -34,6 +34,7 @@ mod menu;
 mod night;
 mod npcs;
 mod ravens;
+mod rivals_view;
 mod run;
 mod senses_hud;
 mod session;
@@ -338,6 +339,7 @@ impl Plugin for NightfallPlugin {
             .init_resource::<view::Views>()
             .init_resource::<enemies::EnemyViews>()
             .init_resource::<marks::MarkViews>()
+            .init_resource::<rivals_view::RivalMarkViews>()
             .init_resource::<telegraphs::TelegraphViews>()
             .init_resource::<terrain::Terrain>()
             .init_resource::<ui::UiShown>()
@@ -686,6 +688,10 @@ impl Plugin for NightfallPlugin {
                     auras::enemies,
                     stance::trace,
                     marks::draw,
+                    rivals_view::hostile,
+                    rivals_view::conceal,
+                    rivals_view::marks,
+                    rivals_view::trace,
                     senses_hud::spawn_eye,
                     senses_hud::drive_eye,
                     senses_hud::heartbeat,

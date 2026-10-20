@@ -1507,7 +1507,7 @@ mod tests {
                 ..SavedInventory::default()
             },
         ] {
-            for class in 0..content.classes.len() {
+            for (class, _) in content.playable() {
                 let mut stash = Stash::open_at(None, &content);
                 stash.profile.loadout = loadout.clone();
                 let brought = told(&stash, class, &content);

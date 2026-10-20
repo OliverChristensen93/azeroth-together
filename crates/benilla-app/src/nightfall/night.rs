@@ -81,12 +81,14 @@ pub(super) fn plan(
 
 /// [`plan`] with the hooks from the environment: `NIGHTFALL_WEATHER`, `NIGHTFALL_MONSTERS`.
 pub(super) fn plan_from_env(content: &Content, seed: u64) -> RaidRoll {
-    plan(
+    let mut roll = plan(
         content,
         seed,
         std::env::var("NIGHTFALL_WEATHER").ok().as_deref(),
         std::env::var("NIGHTFALL_MONSTERS").ok().as_deref(),
-    )
+    );
+    super::rivals_view::force_from_env(&mut roll, content);
+    roll
 }
 
 /// `NIGHTFALL_NIGHT_AT=<seconds>`: a hosted raid's clock starts there, to see the late stages.
@@ -153,6 +155,7 @@ pub(super) fn intel_lines(roll: &RaidRoll, content: &Content) -> Vec<String> {
     } else {
         format!("Abroad: {}", out.join(", "))
     });
+    lines.extend(super::rivals_view::intel_lines(roll, content));
     lines
 }
 
@@ -401,7 +404,8 @@ mod tests {
             intel_lines(&roll, &c),
             vec![
                 "Weather: Mist".to_string(),
-                "Abroad: Mor'Ladim, Stitches".to_string()
+                "Abroad: Mor'Ladim, Stitches".to_string(),
+                "Rivals: none heard of".to_string()
             ]
         );
     }

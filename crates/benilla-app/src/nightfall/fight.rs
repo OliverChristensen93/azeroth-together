@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use nightfall_sim::{Event, PlayerId, Refusal, Stop, UnitRef, V2, V3};
 
 use super::enemies::{enemy_guid, EnemyViews};
-use super::fx::{Fx, COLOR_EVADE, COLOR_HIT, COLOR_HURT, COLOR_SPELL};
+use super::fx::{Fx, COLOR_EVADE, COLOR_HEAL, COLOR_HIT, COLOR_HURT, COLOR_SPELL};
 use super::run::Sim;
 use super::units;
 use super::view::Views;
@@ -422,6 +422,11 @@ pub(super) fn show_events(
             Event::Revived { player, .. } => {
                 if let Some(e) = body(UnitRef::Hero(*player)) {
                     fx.text(e, "Revived".into(), COLOR_EVADE);
+                }
+            }
+            Event::Healed { player, amount } => {
+                if let Some(e) = body(UnitRef::Hero(*player)) {
+                    fx.number(e, *amount, false, COLOR_HEAL);
                 }
             }
             _ => {}
