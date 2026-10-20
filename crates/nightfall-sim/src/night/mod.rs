@@ -35,6 +35,10 @@ pub const FLOCK_SETTLED: u8 = 1;
 /// A flock that has taken off and not settled again.
 pub const FLOCK_FLOWN: u8 = 2;
 
+/// The weather a mirror shows before its host's first snapshot: past the list, so none (fine
+/// skies, the atmosphere's own fog) and never the first weather's.
+pub const NO_WEATHER: u8 = u8::MAX;
+
 /// The night as every client sees it, in each snapshot.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NightView {

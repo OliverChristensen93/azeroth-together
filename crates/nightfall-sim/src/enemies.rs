@@ -31,15 +31,21 @@ pub const WANDER_BUDGET: usize = 4_000;
 pub const ERRAND_BUDGET: usize = 32_000;
 /// Floors all of a step's searches may look at together: an errand's, one patrol's and two
 /// wanderers'. A search starts only while what is left covers its whole budget, so no step
-/// spends more on paths than this (about 19 ms at worst on the real map, when a hunter's errand
-/// finds no way; it is then refused and not tried again) however many enemies are lost. An
-/// errand's whole budget is kept apart, so a hunter sent where no way leads can never keep the
-/// patrols from planning that step.
+/// spends more on paths than this however many enemies are lost. Measured on the real Duskwood bake
+/// in release (`the_worst_step_of_path_planning_fits_its_time`, cold navigator): the worst step
+/// the night's errands, patrol legs and wanderers can make takes 13 to 15 ms (a hunter's
+/// errand that finds no way is 32 000 floors, about 12 ms; it is then refused and not tried
+/// again), and the bound with a patrol search spending its whole budget as well, which no real
+/// leg does (the costliest needs 8 400 floors), 22 to 27 ms, under the 33 ms tick. An errand's whole
+/// budget is kept apart, so a hunter sent where no way leads can never keep the patrols from
+/// planning that step.
 pub const STEP_FLOORS: usize = ERRAND_BUDGET + PATROL_BUDGET + 2 * WANDER_BUDGET;
 /// Within this many yards of a point, an enemy is there.
 pub(crate) const ARRIVE: f32 = 0.6;
 /// A hunt goal this near one that had no way there is refused too (yards).
 const REFUSED_NEAR: f32 = 8.0;
+/// How many refused hunt goals the planner keeps (the oldest goes first).
+const MAX_REFUSED: usize = 16;
 /// A hunt goal this near the errand it is on is the same errand (yards).
 const SAME_ERRAND: f32 = 4.0;
 /// How far apart a group of sentries stands around its post.
@@ -409,10 +415,12 @@ pub(crate) fn wanted(content: &Content, si: usize, out: &[u8]) -> bool {
         .is_none_or(|m| out.contains(&(m as u8)))
 }
 
-/// Whether spawn line `si` is placed as the raid begins: wanted, and not waiting for a later
-/// stage (the raid starts in the first, so a line of the first stage is there from the start).
-pub(crate) fn from_start(content: &Content, si: usize, out: &[u8]) -> bool {
-    content.spawns[si].stage_at.is_none_or(|s| s == 0) && wanted(content, si, out)
+/// Whether spawn line `si` is placed when the map attaches in stage `stage`: wanted, and not
+/// waiting for a later stage. The raid starts in the first, so a line of the first stage is there
+/// from the start; a stage that landed before the map was there (a first bake still running) has
+/// its newcomers placed now, since nothing else would bring them.
+pub(crate) fn from_start(content: &Content, si: usize, out: &[u8], stage: usize) -> bool {
+    content.spawns[si].stage_at.is_none_or(|s| s <= stage) && wanted(content, si, out)
 }
 
 /// Where a spawn line's enemies come: a post, a route's first point, an area's centre.
@@ -510,9 +518,35 @@ pub(crate) struct Planner {
     failed_searches: u64,
     /// Paths asked of the [`Navigator`] so far, kept ones included.
     asked: u64,
+    /// Hunt goals a search found no way to, shared by every hunter: one failed search per noise,
+    /// not one per hunter (the [`Navigator`] remembers a failure only per 8-yard cell pair, and
+    /// for a moment). Forgotten with the noise (`World::night_listen`).
+    refused_goals: Vec<V3>,
 }
 
 impl Planner {
+    /// Note that no way leads to the hunt goal `goal`.
+    fn refuse(&mut self, goal: V3) {
+        if !self.refuses(goal) {
+            if self.refused_goals.len() >= MAX_REFUSED {
+                self.refused_goals.remove(0);
+            }
+            self.refused_goals.push(goal);
+        }
+    }
+
+    /// Whether a search found no way to `goal`, or to within [`REFUSED_NEAR`] of it.
+    pub(crate) fn refuses(&self, goal: V3) -> bool {
+        self.refused_goals
+            .iter()
+            .any(|r| r.ground().distance(goal.ground()) <= REFUSED_NEAR)
+    }
+
+    /// The noises that were refused are forgotten.
+    pub(crate) fn forget_refused(&mut self) {
+        self.refused_goals.clear();
+    }
+
     /// How many path searches have found nothing so far.
     pub(crate) fn failed_searches(&self) -> u64 {
         self.failed_searches
@@ -593,6 +627,12 @@ fn plan(
             b.wait = content.rules.night.hunt.rest;
             return;
         }
+        // Another hunter already found no way to this noise: no second search for it.
+        if planner.refuses(goal) {
+            b.errand = None;
+            b.refused = Some(goal);
+            return;
+        }
         planner.asked += 1;
         match nav.plan_path(here, goal, false, ERRAND_BUDGET) {
             PathPlan::Found(path) => {
@@ -606,6 +646,7 @@ fn plan(
             PathPlan::NoPath => {
                 *budget -= 1;
                 planner.failed_searches += 1;
+                planner.refuse(goal);
                 b.errand = None;
                 b.refused = Some(goal);
             }

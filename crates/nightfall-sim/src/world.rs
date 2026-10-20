@@ -148,7 +148,7 @@ pub struct World {
     /// What the content asked that the map could not give (a patrol point no path reaches).
     pub(crate) warnings: Vec<String>,
     /// What the enemies share in choosing their ways (the path budget, the points found sealed).
-    planner: Planner,
+    pub(crate) planner: Planner,
     /// Each hero's senses and each enemy's mind: the host's alone, never sent.
     pub(crate) senses: Senses,
     /// The telegraphed blows about to land (spec §6.1), as every client draws them.
@@ -479,6 +479,12 @@ impl World {
     /// own content rolls (every placed container), until the first snapshot corrects it.
     pub fn begin_mirror(&mut self) {
         self.raid.mirror.get_or_insert_with(Default::default);
+        // Nor the night this world rolled (weather 0, flocks from seed 0): none until told.
+        self.night.mirror.get_or_insert_with(|| crate::NightView {
+            stage: 0,
+            weather: crate::night::NO_WEATHER,
+            flocks: Vec::new(),
+        });
     }
 
     /// A client's mirror takes the host's world. A mirror must not have a map attached: the

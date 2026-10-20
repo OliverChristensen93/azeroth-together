@@ -28,7 +28,7 @@ const LINE_COLOR: (f32, f32, f32) = (1.0, 0.5, 0.25);
 
 /// The next raid: [`RaidRoll::roll`] from `seed`, with the test hooks' weather (a key) and
 /// monsters (keys, comma-separated, beside the ones that always come) when given. A key the
-/// content lacks is left as rolled, with a warning.
+/// content lacks is left out with a warning; a list of only such keys leaves the roll as rolled.
 pub(super) fn plan(
     content: &Content,
     seed: u64,
@@ -56,15 +56,25 @@ pub(super) fn plan(
             .filter(|(_, m)| m.always)
             .map(|(i, _)| i as u8)
             .collect();
+        let mut named = false;
         for key in list.split(',').map(str::trim).filter(|k| !k.is_empty()) {
             match content.monster(key) {
-                Some(i) if !out.contains(&(i as u8)) => out.push(i as u8),
-                Some(_) => {}
+                Some(i) => {
+                    named = true;
+                    if !out.contains(&(i as u8)) {
+                        out.push(i as u8);
+                    }
+                }
                 None => warn!("NIGHTFALL_MONSTERS: no monster \"{key}\" in monsters.ron"),
             }
         }
-        out.sort_unstable();
-        roll.monsters = out;
+        // A test switch must never empty the night: with no key found, the roll stands.
+        if named {
+            out.sort_unstable();
+            roll.monsters = out;
+        } else {
+            warn!("NIGHTFALL_MONSTERS names no monster of monsters.ron; the rolled ones stay");
+        }
     }
     roll
 }
@@ -321,7 +331,21 @@ mod tests {
         let rolled = RaidRoll::roll(&c, 3);
         let unknown = plan(&c, 3, Some("snow"), Some("dragon"));
         assert_eq!(unknown.weather, rolled.weather);
-        assert_eq!(unknown.monsters, vec![c.monster("stitches").unwrap() as u8]);
+        // Only unknown keys: the rolled monsters stay (a test switch never empties the night).
+        assert_ne!(
+            rolled.monsters,
+            vec![c.monster("stitches").unwrap() as u8],
+            "the seed rolls more than the always-out ones, or this pins nothing"
+        );
+        assert_eq!(unknown.monsters, rolled.monsters);
+        // One known key among unknown ones is still taken.
+        let mixed = plan(&c, 3, None, Some("dragon, banshee"));
+        let mut want = vec![
+            c.monster("banshee").unwrap() as u8,
+            c.monster("stitches").unwrap() as u8,
+        ];
+        want.sort_unstable();
+        assert_eq!(mixed.monsters, want);
         assert_eq!(plan(&c, 3, None, None), rolled);
     }
 

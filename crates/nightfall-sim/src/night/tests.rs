@@ -36,6 +36,9 @@ const ENEMIES: &str = r#"[
      run_speed: 8.5, tracker: true),
     (key: "morladim", name: "Mor'Ladim", display: 200, level: 35, hp: 4000.0, walk_speed: 2.5,
      run_speed: 6.5, watched: Some(90.0), swing: Some((min: 100.0, max: 100.0, every: 2.0))),
+    (key: "cleaver", name: "Cleaver", display: 200, level: 35, hp: 4000.0, walk_speed: 2.5,
+     run_speed: 6.5, watched: Some(90.0), elite: true, reach: 4.0,
+     moves: [(ability: "smash", every: 6.0, first: Some(0.0))]),
     (key: "banshee", name: "Banshee", display: 203, level: 30, hp: 700.0, walk_speed: 2.2,
      run_speed: 6.0, moves: [(ability: "wail", every: 40.0, first: Some(0.0))]),
     (key: "rider", name: "Rider", display: 200, level: 31, hp: 1400.0, walk_speed: 10.0,
@@ -1065,6 +1068,7 @@ fn mor_ladim_moves_only_while_no_hero_looks_at_him() {
     let at = w.enemies[0].pos;
     face(&mut w, 0, 30.0, 30.0, TOWARD, 2.0);
     assert!(w.enemies[0].pos.distance(at) < 0.3, "looked at again, he stops");
+    assert_eq!(w.enemies[0].speed, 0.0, "looked at, he is drawn standing");
 }
 
 #[test]
@@ -1120,6 +1124,37 @@ fn watched_he_never_strikes() {
     assert_eq!(hits(&mut w), 0, "watched from a step away, he never swings");
     face(&mut w, 0, 58.5, 30.0, AWAY, 3.0);
     assert!(hits(&mut w) >= 1, "the moment nobody looks, he does");
+}
+
+#[test]
+fn watched_he_stands_still_and_a_begun_blow_is_taken_down() {
+    let mut w = world("", &sentry("cleaver", 60.0, 30.0, 180.0));
+    join(&mut w, 0, 58.5, 30.0);
+    // Unwatched until his blow is begun.
+    let mut begun = false;
+    for _ in 0..secs(8.0) {
+        put(&mut w, 0, 58.5, 30.0, AWAY, Gait::Still);
+        w.step();
+        if w.combat.enemies[0].cast.is_some() {
+            begun = true;
+            break;
+        }
+    }
+    assert!(begun, "unwatched beside a hero, he begins a blow");
+    assert!(!w.telegraphs.is_empty(), "and it is telegraphed");
+    w.drain_events();
+    // The hero turns to face him before it lands.
+    face(&mut w, 0, 58.5, 30.0, TOWARD, 2.0);
+    let hits = events_of(&mut w, |e| match e {
+        Event::Damage {
+            to: crate::UnitRef::Hero(0),
+            ..
+        } => Some(()),
+        _ => None,
+    });
+    assert!(hits.is_empty(), "looked at, the blow he began does not land");
+    assert!(w.combat.enemies[0].cast.is_none() && w.telegraphs.is_empty());
+    assert_eq!(w.enemies[0].speed, 0.0, "and he is drawn standing, not running");
 }
 
 /// A banshee at (30, 30), a brute 50 yards from her and another 70, all facing away from a hero
@@ -1375,4 +1410,109 @@ fn each_raid_rolls_which_flocks_are_out() {
     assert!(all.iter().any(|f| f.contains(&crate::FLOCK_SETTLED)));
     // The seed is hashed: seeds one bit apart do not roll alike.
     assert!((0..40u64).any(|s| flocks(s) != flocks(s ^ 1)));
+}
+
+#[test]
+fn a_mirror_shows_no_weather_and_no_flocks_until_its_hosts_first_snapshot() {
+    let night = r#"weather: [(key: "clear", name: "Clear", weight: 1.0, fog_start: 10.0, fog_end: 40.0),
+        (key: "mist", name: "Mist", weight: 1.0, fog_start: 4.0, fog_end: 28.0)]"#;
+    let c = Arc::new(content(night, "", ""));
+    let mut roll = RaidRoll::standard(&c, 1);
+    roll.weather = 1;
+    let mut host = World::new(c.clone());
+    host.begin_raid(roll).unwrap();
+    let mut mirror = World::new(c.clone());
+    mirror.begin_mirror();
+    let before = mirror.night_view();
+    assert!(
+        c.rules.night.weather.get(usize::from(before.weather)).is_none(),
+        "no weather of the list, least of all the first: {before:?}"
+    );
+    assert!(before.flocks.is_empty(), "no flocks rolled from its own seed");
+    assert_eq!(mirror.fog().end, c.rules.atmosphere.fog_end);
+    mirror.apply_snapshot(host.snapshot_for(0));
+    assert_eq!(mirror.night_view().weather, 1);
+    assert_eq!(mirror.fog(), host.fog());
+    // Asking again does not undo what the host sent.
+    mirror.begin_mirror();
+    assert_eq!(mirror.night_view().weather, 1);
+}
+
+#[test]
+fn a_stage_that_landed_before_the_map_attached_still_brings_its_newcomers() {
+    let spawns = format!(
+        r#"{}(place: "Late", kind: "brute", stage: Some("late"), behaviour: Sentry(at: (60.0, 30.0), facing: 0.0)),"#,
+        sentry("brute", 10.0, 100.0, 0.0)
+    );
+    let c = Arc::new(content(NIGHT_WITH_LATE, &spawns, ""));
+    let mut w = World::new(c.clone());
+    w.begin_raid(RaidRoll::standard(&c, 1)).unwrap();
+    // The first bake is still running: the world steps, and the second stage lands, mapless.
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.night_view().stage, 1, "the late stage landed before the map");
+    w.attach_map(Arc::new(open()));
+    assert_eq!(w.enemies.len(), 2, "the newcomer is placed with the first enemy");
+    lists_in_step(&w);
+    // And it is not brought a second time.
+    steps(&mut w, secs(3.0));
+    assert_eq!(w.enemies.len(), 2);
+}
+
+/// Hunters standing in different 8-yard cells, all called to a noise sealed in a room: one search
+/// finds no way, and the others take its word for it (the navigator's own cache is per cell pair).
+fn sealed_noise_world(hunters: &[(f32, f32)]) -> World {
+    let mut m = flat(120.0);
+    m.add_box(V2::new(90.0, 90.0), V2::new(110.0, 92.0), 0.0, 4.0);
+    m.add_box(V2::new(90.0, 108.0), V2::new(110.0, 110.0), 0.0, 4.0);
+    m.add_box(V2::new(90.0, 90.0), V2::new(92.0, 110.0), 0.0, 4.0);
+    m.add_box(V2::new(108.0, 90.0), V2::new(110.0, 110.0), 0.0, 4.0);
+    let spawns: String = hunters
+        .iter()
+        .map(|&(x, y)| sentry("worgen", x, y, 0.0))
+        .collect();
+    let mut w = world_on(m.finish(), HUNT_NIGHT, &spawns, "", standard);
+    join(&mut w, 0, 10.0, 10.0);
+    w.make_noise(0, V3::new(100.0, 100.0, 0.0), crate::Loudness::Loud);
+    w
+}
+
+#[test]
+fn hunters_share_a_sealed_noises_refusal_one_failed_search_not_one_each() {
+    let mut w = sealed_noise_world(&[(20.0, 100.0), (20.0, 60.0), (60.0, 20.0), (60.0, 60.0)]);
+    steps(&mut w, secs(10.0));
+    assert_eq!(w.failed_searches(), 1, "the first hunter's search was the only one");
+    assert!(
+        w.brains.iter().all(|b| !b.on_errand()),
+        "none of them is still running to the sealed room"
+    );
+    // The planner remembers it while the noise is remembered, and forgets it with the noise.
+    let sealed = V3::new(100.0, 100.0, 0.0);
+    assert!(w.planner.refuses(sealed));
+    steps(&mut w, secs(35.0));
+    assert!(!w.planner.refuses(sealed), "forgotten with the noise");
+}
+
+#[test]
+fn a_hero_who_crawls_after_a_fall_still_leaves_a_trail_and_a_body_none() {
+    let mut w = world("", "");
+    join(&mut w, 0, 10.0, 10.0);
+    walk_path(&mut w, 0, &[V2::new(10.0, 10.0), V2::new(10.0, 20.0)], 4.0, false);
+    let before = crumbs(&w, 0).len();
+    w.hurt_hero(0, 1.0e6);
+    assert!(matches!(w.hero(0).unwrap().fight.life, crate::combat::Life::Downed { .. }));
+    // The crawl: ten yards on, slowly.
+    walk_path(&mut w, 0, &[V2::new(10.0, 20.0), V2::new(10.0, 30.0)], 1.5, false);
+    let c = crumbs(&w, 0);
+    assert!(c.len() > before + 3, "the crawl left crumbs: {} -> {}", before, c.len());
+    assert!(c.last().unwrap().at.y > 25.0, "up to where the hero is now");
+    assert!(
+        c.iter().all(|k| k.stretch == 0),
+        "no break across the crawl: one stretch, so a tracker follows it whole"
+    );
+    // A body is not a trail.
+    w.hurt_hero(0, 1.0e6);
+    w.heroes[0].fight.life = crate::combat::Life::Dead;
+    let n = crumbs(&w, 0).len();
+    walk_path(&mut w, 0, &[V2::new(10.0, 30.0), V2::new(10.0, 40.0)], 4.0, false);
+    assert_eq!(crumbs(&w, 0).len(), n, "the dead lay nothing");
 }

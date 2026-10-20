@@ -22,10 +22,11 @@ impl World {
         };
         let content = self.content().clone();
         let out = self.raid.roll.monsters.clone();
+        let stage = self.night.stage;
         let (enemies, brains, warnings) = enemies::spawn_all(
             &content,
             &map,
-            |si| enemies::from_start(&content, si, &out),
+            |si| enemies::from_start(&content, si, &out, stage),
             1,
         );
         self.enemies = enemies;

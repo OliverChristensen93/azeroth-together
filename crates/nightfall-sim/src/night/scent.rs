@@ -1,4 +1,4 @@
-//! Scent (spec §7.1, §7.3): every hero who is up leaves a trail, a crumb every `scent.every`
+//! Scent (spec §7.1, §7.3): every hero who lives leaves a trail, one who crawls after a fall too, a crumb every `scent.every`
 //! yards walked, each fading after `scent.lasts` seconds; none in water or on a road, where the
 //! trail breaks into a new stretch. A tracker that crosses a fresh crumb grows suspicious of its
 //! maker; one suspicious of a hero follows their trail crumb by crumb toward newer ones. At a
@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use crate::combat::Hold;
+use crate::combat::{Hold, Life};
 use crate::senses::State;
 use crate::{PlayerId, World, V2, V3};
 
@@ -50,7 +50,7 @@ impl Trail {
 }
 
 impl World {
-    /// Every hero up leaves their scent; old crumbs fade.
+    /// Every hero who lives leaves their scent, a crawling one too; old crumbs fade.
     pub(crate) fn lay_scent(&mut self) {
         let content = self.content().clone();
         let s = content.rules.night.scent;
@@ -68,7 +68,9 @@ impl World {
                 }
             };
             let t = &mut self.night.trails[i];
-            if !h.fight.up() {
+            // A hero crawling after a fall still leaves a trail (a tracker may follow it to them); a
+            // body leaves none.
+            if matches!(h.fight.life, Life::Dead) {
                 continue;
             }
             let wet = map.as_ref().is_some_and(|m| m.is_water(h.pos));

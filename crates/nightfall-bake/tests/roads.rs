@@ -373,3 +373,180 @@ fn a_hunters_errand_across_duskwood_fits_its_budget() {
         refused.len()
     );
 }
+
+/// A cold search from `a` to `b` on `budget` floors the way the world asks (`plan_path`, kept
+/// apart in a navigator of its own so no earlier search's tiles or failures help): the floors it
+/// looked at, and how long it took.
+fn cold_search(map: &Arc<HeightMap>, a: V3, b: V3, budget: usize) -> (u64, std::time::Duration) {
+    let mut nav = Navigator::new(map.clone());
+    nav.begin_step(budget);
+    let before = nav.floors_looked_at();
+    let t = std::time::Instant::now();
+    let _ = nav.plan_path(a, b, false, budget);
+    (nav.floors_looked_at() - before, t.elapsed())
+}
+
+/// The `n` costliest (floors, then time) of `pairs` on `budget`.
+fn costliest(
+    map: &Arc<HeightMap>,
+    pairs: &[(V3, V3)],
+    budget: usize,
+    n: usize,
+) -> Vec<(V3, V3, u64, std::time::Duration)> {
+    let mut all: Vec<_> = pairs
+        .iter()
+        .map(|&(a, b)| {
+            let (floors, took) = cold_search(map, a, b, budget);
+            (a, b, floors, took)
+        })
+        .collect();
+    all.sort_by(|x, y| y.2.cmp(&x.2).then(y.3.cmp(&x.3)));
+    all.truncate(n);
+    all
+}
+
+/// How long the worst step of enemy path planning takes on the real bake (the sim steps on the
+/// host's render thread, 30 times a second): one hunter's errand that spends its whole budget,
+/// the costliest patrol leg on its budget and two wanderers' on theirs, all in one step on a cold
+/// navigator (no tile built yet, the worst a step can meet). Release builds assert the target;
+/// debug builds only print.
+#[test]
+#[ignore = "times the worst step on the real bake; needs WOW_DATA; run with --release --nocapture"]
+fn the_worst_step_of_path_planning_fits_its_time() {
+    /// Milliseconds a worst step may take in release (a 60 fps frame is 16.7, the tick 33.3).
+    const TARGET_MS: f64 = 20.0;
+    /// Milliseconds the ceiling step (every budget spent at once, which no real patrol needs) may
+    /// take: under the 30 Hz tick, so a step never makes the host fall behind.
+    const CEILING_MS: f64 = 30.0;
+    let data = benilla_formats::wow_data_or_skip!();
+    let content = shipped();
+    let map = Arc::new(baked(&content, &data));
+    let at = |p: V2| {
+        if bad_spot(&map, p).is_some() {
+            None
+        } else {
+            stand(&map, p)
+        }
+    };
+    // Errands: from where the night puts things, 100 and 150 yards off, eight ways round.
+    let mut starts: Vec<V2> = content
+        .map
+        .roads
+        .iter()
+        .flat_map(|r| r.points.iter().copied())
+        .collect();
+    let mut legs: Vec<(V3, V3)> = Vec::new();
+    let mut rings: Vec<(V3, V3)> = Vec::new();
+    for s in &content.spawns {
+        match &s.behaviour {
+            Behaviour::Sentry { at, .. } | Behaviour::Sleeper { at, .. } => {
+                starts.push(V2::new(at.0, at.1))
+            }
+            Behaviour::Wander { center, .. } => {
+                let c = V2::new(center.0, center.1);
+                starts.push(c);
+                for radius in [25.0, 40.0] {
+                    for k in 0..8 {
+                        let spot = c + V2::from_angle(k as f32 * std::f32::consts::TAU / 8.0, radius);
+                        if let (Some(a), Some(b)) = (at(c), at(spot)) {
+                            rings.push((a, b));
+                        }
+                    }
+                }
+            }
+            Behaviour::Patrol { route, .. } => {
+                starts.extend(route.iter().map(|&(x, y)| V2::new(x, y)));
+                let pts: Vec<V2> = route.iter().map(|&(x, y)| V2::new(x, y)).collect();
+                for i in 0..pts.len() {
+                    if let (Some(a), Some(b)) = (at(pts[i]), at(pts[(i + 1) % pts.len()])) {
+                        legs.push((a, b));
+                    }
+                }
+            }
+            Behaviour::Road { .. } => {}
+        }
+    }
+    for r in &content.map.roads {
+        for w in r.points.windows(2) {
+            if let (Some(a), Some(b)) = (at(w[0]), at(w[1])) {
+                legs.push((a, b));
+            }
+        }
+    }
+    let mut errands: Vec<(V3, V3)> = Vec::new();
+    for from in starts.iter().step_by(6) {
+        let Some(a) = at(*from) else { continue };
+        for dist in [100.0, 150.0] {
+            for k in 0..8 {
+                let goal = *from + V2::from_angle(k as f32 * std::f32::consts::TAU / 8.0, dist);
+                if let Some(b) = at(goal) {
+                    errands.push((a, b));
+                }
+            }
+        }
+    }
+    println!(
+        "candidates: {} errands, {} patrol legs, {} wander walks",
+        errands.len(),
+        legs.len(),
+        rings.len()
+    );
+    let errand = costliest(&map, &errands, ERRAND_BUDGET, 1);
+    let patrol = costliest(&map, &legs, PATROL_BUDGET, 1);
+    let wander = costliest(&map, &rings, nightfall_sim::WANDER_BUDGET, 2);
+    for (name, v) in [("errand", &errand), ("patrol", &patrol), ("wander", &wander)] {
+        for (a, b, floors, took) in v {
+            println!("{name}: {floors} floors, {took:?}, {a:?} -> {b:?}");
+        }
+    }
+    // The step: all four searches, on one navigator that has built nothing yet.
+    let mut worst = std::time::Duration::ZERO;
+    for _ in 0..5 {
+        let mut nav = Navigator::new(map.clone());
+        nav.begin_step(nightfall_sim::STEP_FLOORS);
+        let t = std::time::Instant::now();
+        for (v, budget) in [
+            (&errand, ERRAND_BUDGET),
+            (&patrol, PATROL_BUDGET),
+            (&wander, nightfall_sim::WANDER_BUDGET),
+        ] {
+            for &(a, b, _, _) in v.iter() {
+                let _ = nav.plan_path(a, b, false, budget);
+            }
+        }
+        worst = worst.max(t.elapsed());
+    }
+    // The ceiling: the same step with the patrol's search spending its whole budget too (no real
+    // leg needs more than a third of it, so this is a step no patrol can make, only bound).
+    let heavy = costliest(&map, &errands, PATROL_BUDGET, 2);
+    let mut ceiling = std::time::Duration::ZERO;
+    for _ in 0..5 {
+        let mut nav = Navigator::new(map.clone());
+        nav.begin_step(nightfall_sim::STEP_FLOORS);
+        let t = std::time::Instant::now();
+        for (v, budget) in [
+            (&errand, ERRAND_BUDGET),
+            (&heavy[1..].to_vec(), PATROL_BUDGET),
+            (&wander, nightfall_sim::WANDER_BUDGET),
+        ] {
+            for &(a, b, _, _) in v.iter() {
+                let _ = nav.plan_path(a, b, false, budget);
+            }
+        }
+        ceiling = ceiling.max(t.elapsed());
+    }
+    let ceiling_ms = ceiling.as_secs_f64() * 1000.0;
+    println!("ceiling step (a patrol search spending {PATROL_BUDGET} floors too): {ceiling_ms:.1} ms");
+    let ms = worst.as_secs_f64() * 1000.0;
+    println!(
+        "worst step: {ms:.1} ms for up to {} floors (target {TARGET_MS} ms in release)",
+        nightfall_sim::STEP_FLOORS
+    );
+    if !cfg!(debug_assertions) {
+        assert!(ms <= TARGET_MS, "the worst step takes {ms:.1} ms, over {TARGET_MS} ms: lower the budgets");
+        assert!(
+            ceiling_ms <= CEILING_MS,
+            "the ceiling step takes {ceiling_ms:.1} ms, over {CEILING_MS} ms: lower the budgets"
+        );
+    }
+}

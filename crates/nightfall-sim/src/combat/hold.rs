@@ -47,7 +47,6 @@ impl World {
     /// land on the ground.
     fn tick_holds(&mut self, ei: usize) {
         let alerted = self.senses.alerted(ei);
-        let id = self.enemies[ei].id;
         let ec = &mut self.combat.enemies[ei];
         // A time that is not a number never runs out by itself, so it is dropped at once.
         if let Some(h) = &mut ec.held {
@@ -70,16 +69,23 @@ impl World {
             }
         }
         if ec.held.is_some_and(|h| h.kind.out()) {
-            if let Some(c) = ec.cast.take() {
-                if let Some(t) = c.telegraph {
-                    self.telegraphs.retain(|x| x.id != t);
-                }
-                self.events.push(Event::CastStop {
-                    by: UnitRef::Enemy(id),
-                    ability: c.ability as u16,
-                    why: Stop::Interrupted,
-                });
+            self.stop_enemy_cast(ei);
+        }
+    }
+
+    /// Enemy `ei` stops casting: the cast is dropped, and the blow it was about to land (its
+    /// telegraph) with it. A stun, a sap and the night's own hold on a watched Mor'Ladim all do this.
+    pub(crate) fn stop_enemy_cast(&mut self, ei: usize) {
+        let id = self.enemies[ei].id;
+        if let Some(c) = self.combat.enemies[ei].cast.take() {
+            if let Some(t) = c.telegraph {
+                self.telegraphs.retain(|x| x.id != t);
             }
+            self.events.push(Event::CastStop {
+                by: UnitRef::Enemy(id),
+                ability: c.ability as u16,
+                why: Stop::Interrupted,
+            });
         }
     }
 

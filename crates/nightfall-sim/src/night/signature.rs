@@ -47,6 +47,10 @@ impl World {
                 .any(|h| self.looks_at(h, at, z, fog, cone))
             {
                 self.combat.enemies[i].engage.hold = Hold::Out;
+                // Out of the fight, he stands: no run animation, and a blow begun before he was
+                // looked at is taken down, as a stun would.
+                self.enemies[i].speed = 0.0;
+                self.stop_enemy_cast(i);
                 continue;
             }
             if self.combat.enemies[i].engage.hold == Hold::Out {

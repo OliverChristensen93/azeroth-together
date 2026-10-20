@@ -27,6 +27,8 @@ impl World {
         let now = self.elapsed;
         if self.night.loudest.is_some_and(|l| now - l.t > memory) {
             self.night.loudest = None;
+            // The noise that no way led to goes with it.
+            self.planner.forget_refused();
         }
         for n in &self.senses.noises {
             if self.night.loudest.is_none_or(|l| n.radius >= l.radius) {
@@ -57,6 +59,10 @@ impl World {
             return;
         };
         if self.elapsed - loud.t > n.hunt.memory {
+            return;
+        }
+        // A noise a search found no way to calls nobody: not one hunter more pays for it.
+        if self.planner.refuses(loud.at) {
             return;
         }
         for i in 0..self.enemies.len().min(self.brains.len()) {
