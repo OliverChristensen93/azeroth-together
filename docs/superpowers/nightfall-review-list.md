@@ -143,3 +143,18 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 42. **Ready is pressed at the raid board by the door**, which shows the map, the contracts taken, the party and
     who is ready. If the stash can't be saved when a raid starts (another window holds it), Ready is taken
     back instead of retrying.
+43. **The Westfall road is never shut or late** (the inn's road home; Mor'Ladim's tome contract needs it).
+    The other gates roll open, late or shut, and the hunt may close one. A `pinned` flag on the exit in
+    `content/nightfall/map.ron`; take it off to let it roll too.
+44. **The night's sounds are stand-ins from the trimmed data.** No bell exists, so Moonrise is silent (its chat
+    line still shows); the worgen cue is a worgen attack, the abomination's a flesh golem's, Stitches' tread a
+    giant's footstep, the ravens a bat's cry. Any sound you add to the data can replace them (`monsters.ron`).
+45. **Looks from the data:** the banshee is WoW's banshee (display 915), Stitches a bone golem (12073), the
+    Dark Riders ride the undead warhorse (10718); the trackers are ordinary-looking worgen.
+46. **The roads were re-walked on the real ground** so Stitches and the riders can follow them: they are
+    walkable routes, not exactly the drawn roads. Worth a look.
+47. **A hunter skips a noise it can't find a way to within its search budget** (about 1–2% of long winding
+    routes): it stays at its post rather than stall the game. Measured worst step: ~15 ms of a 33 ms tick.
+48. **A downed hero's crawl keeps laying scent**, so a tracker can follow you across the crawl; only the dead
+    lay none.
+49. **Mor'Ladim gets a telegraphed cleave** (every elite telegraphs); being watched stops it mid-swing.
