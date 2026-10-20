@@ -329,13 +329,11 @@ Also:
 
 ## Playing this branch
 
-Run **`D:\Games\azeroth-together-pointers\target\release\azeroth-together.exe`**. This branch
-eleasezeroth-together.exe`**. This branch
-has its own build folder now. The main checkout's `target\` is shared with other branches (the
-weather session builds there), and two checkouts in one build folder overwrite each other's
-compiled code and exe.
+Run **`D:\Games\azeroth-together-pointers\target\release\azeroth-together.exe`**. This branch has its own build folder now. The main checkout's `target\`
+is shared with other branches (the weather session builds there), and two checkouts in one
+build folder overwrite each other's compiled code and exe.
 - The exe reads this worktree's `content\` and borrows the main checkout's `WoW\Data`.
-- It uses your usual saves in `D:\Gameszeroth-togetherenilla-config`. My test runs used a
-  scratch folder (`BENILLA_HOME`) and left your saves alone.
+- It uses your usual saves in `D:\Games\azeroth-together\benilla-config`. My test runs used a scratch folder (`BENILLA_HOME`)
+  and left your saves alone.
 - To rebuild, run `cargo build --release -p azeroth-together` from the worktree, with no
   `CARGO_TARGET_DIR` set.
