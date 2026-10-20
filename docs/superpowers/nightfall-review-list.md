@@ -158,3 +158,16 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 48. **A downed hero's crawl keeps laying scent**, so a tracker can follow you across the crawl; only the dead
     lay none.
 49. **Mor'Ladim gets a telegraphed cleave** (every elite telegraphs); being watched stops it mid-swing.
+50. **Rivals travel by measured routes**: from their entry to a point of interest (now only Vul'Gol and
+    Brightwood, where real chests stand) and on to an exit. The other places the plan named were too far or
+    unreachable on the trimmed map. A party that can't get anywhere for a minute slips away while none of you
+    sees it, taking its packs. Routes and places are in `content/nightfall/rivals.ron` (`measure:`).
+51. **Every rival looks like a human in starting clothes** with the rogue's daggers; per-kind looks (a
+    shortsword, a gravedigger's boots) are a later choice. The deserter's shot uses WoW's "Shoot (TEST)" spell.
+52. **You only get the rivals near your hero over the network** (as with monsters); they're hidden until you
+    see them, including their damage numbers and marks.
+53. **Rivals count as bodies in the night:** their gaze holds Mor'Ladim, they scare ravens, the hunt hears
+    their fights, and monsters arrive unseen by them too.
+54. **A rival that hit you is in your fight:** no regeneration and no stealth while one is after you. Kill
+    credit goes to whoever struck last.
+55. **A looted rival's gear counts as found**, so it's lost on a death that loses finds.
