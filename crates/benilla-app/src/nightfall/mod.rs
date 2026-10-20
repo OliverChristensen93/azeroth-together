@@ -605,6 +605,8 @@ impl Plugin for NightfallPlugin {
                 )
                     .after(run::take_events)
                     .after(enemies::place)
+                    // Its commands land before the run can end and remove the Sim they read.
+                    .before(run::leave_run)
                     .in_set(NightfallSet)
                     .run_if(in_state(Phase::Playing).and(resource_exists::<run::Sim>)),
             )

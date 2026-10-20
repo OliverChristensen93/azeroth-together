@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
-use nightfall_sim::{CombatRules, Hero, Life, PlayerId, DT};
+use nightfall_sim::{CombatRules, Hero, Life, PlayerId};
 
 use super::run::Sim;
 use super::NightfallEntity;
@@ -161,7 +161,7 @@ pub(super) fn death_popup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nightfall_sim::{HeroFight, Stance, V2};
+    use nightfall_sim::{HeroFight, Stance, DT, V2};
 
     fn hero(player: PlayerId, x: f32, life: Life) -> Hero {
         Hero {
