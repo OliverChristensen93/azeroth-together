@@ -545,9 +545,13 @@ pub(super) fn show_tip(
     slots: Query<(&SpellSlot, &Interaction)>,
     cards: Query<(&TipAbility, &Interaction)>,
     things: Query<(&TipThing, &Interaction)>,
-    keys: Res<ButtonInput<KeyCode>>,
+    menu: (
+        Query<(&super::menu::SpellSlot, &Interaction)>,
+        Option<Res<super::menu::Selection>>,
+    ),
+    (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
     windows: Query<&Window, With<PrimaryWindow>>,
-    scale: Res<UiScale>,
+    mut menu_world: Local<Option<(usize, World)>>,
     font: Option<Res<TipFont>>,
     mut root: Query<(&mut Node, &mut Visibility), With<TipRoot>>,
     body: Query<Entity, With<TipBody>>,
@@ -556,16 +560,34 @@ pub(super) fn show_tip(
     let Ok((mut node, mut vis)) = root.single_mut() else {
         return;
     };
-    let tip = (*phase.get() == Phase::Playing)
+    // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
+    let extended = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
+        || std::env::var_os("TOGETHER_TIP_SHIFT").is_some();
+    // On the menu, a class's spell as a new hero of that class would cast it: the same tooltip
+    // as in a run, from a world made for the purpose.
+    let menu_tip = (*phase.get() == Phase::Menu)
+        .then(|| menu.0.iter().find(|(_, i)| **i != Interaction::None))
+        .flatten()
+        .and_then(|(slot, _)| {
+            let class = menu.1.as_ref()?.class;
+            if menu_world.as_ref().is_none_or(|(c, _)| *c != class) {
+                let content = super::content();
+                let key = content.classes.get(class)?.key.clone();
+                let zone = content.zones.first()?.key.clone();
+                let mut world = World::new(content, &zone, 1).ok()?;
+                world.add_hero(0, &key).ok()?;
+                *menu_world = Some((class, world));
+            }
+            let (_, world) = menu_world.as_ref()?;
+            Some(lines(world, 0, &Owned::new(slot.0, 0.0), extended))
+        });
+    let tip = menu_tip.or_else(|| (*phase.get() == Phase::Playing)
         .then_some(())
         .and(sim.as_ref())
         .and_then(|sim| {
             let hover = hovered(&slots, &cards, &things, script.as_deref())?;
             let h = sim.world.heroes.iter().position(|x| x.player == sim.me)?;
             let known = &sim.world.heroes[h].abilities;
-            // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
-            let extended = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
-                || std::env::var_os("TOGETHER_TIP_SHIFT").is_some();
             let owned = match hover {
                 Hover::Slot(i) => known.get(i)?.clone(),
                 Hover::Ability(a) => known
@@ -576,7 +598,7 @@ pub(super) fn show_tip(
                 Hover::Thing(thing) => return Some(thing_lines(&sim.world, h, thing)),
             };
             Some(lines(&sim.world, h, &owned, extended))
-        });
+        }));
     let Some(tip) = tip else {
         if *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;

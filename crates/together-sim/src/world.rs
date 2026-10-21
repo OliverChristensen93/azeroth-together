@@ -2190,6 +2190,10 @@ impl World {
             }
             let guard = self.guards.contains(&id);
             self.guards.retain(|&g| g != id);
+            // A camp's rare leaves a Champion's Cache (a free choice of treasure) where it fell.
+            if guard {
+                self.place(InteractableKind::Cache, pos);
+            }
             if elite {
                 self.drop_gear(boss);
             }
@@ -2207,7 +2211,13 @@ impl World {
             } else {
                 0
             };
-            self.drop_gem(pos, worth * reward, gold);
+            // A rare's experience is about one level, whatever its kind is worth.
+            let xp = if guard {
+                xp_to_next(self.level).ceil() as u32
+            } else {
+                worth * reward
+            };
+            self.drop_gem(pos, xp, gold);
             if let Some(by) = killer {
                 self.on_kill(by, pos, max_hp, worth);
             }

@@ -19,8 +19,8 @@ pub const CAMP_SCALE: f32 = 1.25;
 pub(super) const BOSS_MIN_SCALE: f32 = 2.0;
 /// A camp's rare is as tough as a kind this many tiers above the strongest the horde fields now.
 pub(super) const CAMP_TIERS_AHEAD: usize = 2;
-/// A camp rare's experience and gold, in ordinary enemies of its kind (an elite's is
-/// `ELITE_REWARD`).
+/// A camp rare's gold, in ordinary enemies of its kind (an elite's is `ELITE_REWARD`); its
+/// experience is one level's and it leaves a Champion's Cache.
 pub(super) const CAMP_REWARD: u32 = 10;
 
 impl World {
@@ -117,6 +117,22 @@ mod tests {
             assert!((boss.max_hp - want).abs() < 1.0, "boss {n}: {} vs {want}", boss.max_hp);
             assert!(boss.radius >= w.content.enemies[boss.def].radius * BOSS_MIN_SCALE - 1e-4);
         }
+    }
+
+    #[test]
+    fn a_rare_gives_one_level_and_leaves_a_cache() {
+        let mut w = world();
+        let at = w.center() + V2::new(15.0, 0.0);
+        let id = w.spawn_camp_rare(at, 0);
+        w.enemies.iter_mut().find(|e| e.id == id).unwrap().hp = 0.0;
+        w.reap_enemies();
+        let gem = w.gems.last().expect("a gem");
+        assert_eq!(gem.xp, xp_to_next(w.level).ceil() as u32);
+        assert!(gem.gold > 0);
+        assert!(w
+            .interactables
+            .iter()
+            .any(|i| i.kind == InteractableKind::Cache && i.pos.distance(at) < 15.0));
     }
 
     #[test]

@@ -137,6 +137,13 @@ meter's Reset and views. The first minutes aren't too hard, so enemy speed stays
 - **The right debuffs on enemies.** Their debuffs showed stand-ins: any shadow damage over time
   was Corruption, any fire was Immolate. Now each one shows the spell that put it there (Holy
   Fire, Shadow Word: Pain, Devouring Plague). The host sends the list to co-op players too.
+- **A rare's reward: one level and a Champion's Cache.** Mother Fang gave 4 levels: her
+  experience was 10 of her own kind's, a lot at level 3. Now a rare gives about one level's
+  experience (whatever your level), its gold as before, and leaves a Champion's Cache where it
+  fell, the same free pick of an item a boss leaves.
+- **Spell tooltips on the menu.** Pointing at a class's spell on the main menu shows its full
+  tooltip by the cursor, as in a run (Shift for the longer one), instead of a line under the
+  icons. Its numbers are a new hero's: no talents or gear.
 - Engine touches for the targeting (each one line): `SelectCommit` and its `commit` are visible
   to the client, and `arbitrate_pointer_over_ui` can be ordered after.
 

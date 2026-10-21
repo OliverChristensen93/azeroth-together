@@ -128,7 +128,7 @@ pub(super) struct IconRow;
 
 /// One icon in [`IconRow`]: an ability of the picked class, by index into the content.
 #[derive(Component)]
-pub(super) struct SpellSlot(usize);
+pub(super) struct SpellSlot(pub(super) usize);
 
 /// An icon slot filled from the spell's `SpellIcon.dbc` icon once the client data is up.
 #[derive(Component)]
@@ -1188,20 +1188,12 @@ pub(super) fn refresh_menu_ui(
             t.0 = zone_line;
         }
     }
-    let hover = slots
-        .iter()
-        .find(|(_, i)| **i != Interaction::None)
-        .map(|(s, _)| {
-            let a = &content.abilities[s.0];
-            if a.description.is_empty() {
-                a.name.clone()
-            } else {
-                let spec = together_sim::CastSpec::base(s.0, a);
-                let text = together_sim::describe(a, &spec, class.base_hp);
-                format!("{}: {text}", a.name)
-            }
-        })
-        .unwrap_or_else(|| "Spells: point at one to read it".into());
+    // A pointed-at spell shows its full tooltip by the cursor ([`super::tooltip`]).
+    let hover = if slots.iter().any(|(_, i)| *i != Interaction::None) {
+        String::new()
+    } else {
+        "Spells: point at one to read it".to_string()
+    };
     if let Ok(mut t) = texts.p4().single_mut() {
         if t.0 != hover {
             t.0 = hover;
