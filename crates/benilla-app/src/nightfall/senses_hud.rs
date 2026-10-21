@@ -69,9 +69,11 @@ pub(super) fn ring_count(radius: f32) -> usize {
 }
 
 /// Seconds between heartbeats with an enemy alerted to us `distance` yards off: from 0.9 at
-/// `within` down to 0.45 on top of us; none past `within`.
+/// `within` down to 0.45 on top of us; none past `within`, and none at all when `within` is 0
+/// (the heartbeat turned off in `rules.ron`).
 pub(super) fn beat_interval(distance: f32, within: f32) -> Option<f32> {
-    (distance <= within).then(|| 0.45 + 0.45 * (distance / within.max(1e-3)).clamp(0.0, 1.0))
+    (within > 0.0 && distance <= within)
+        .then(|| 0.45 + 0.45 * (distance / within.max(1e-3)).clamp(0.0, 1.0))
 }
 
 /// The eye and its rings, once per run (they go with the run's other entities).
@@ -340,5 +342,7 @@ mod tests {
         assert!((beat_interval(20.0, 20.0).unwrap() - 0.9).abs() < 1e-6);
         assert_eq!(beat_interval(0.0, 20.0), Some(0.45));
         assert!(beat_interval(5.0, 20.0) < beat_interval(15.0, 20.0));
+        // Turned off: silent even with the hunter on top of us.
+        assert_eq!(beat_interval(0.0, 0.0), None);
     }
 }

@@ -65,8 +65,9 @@
         ambush: 1.5,
         // A stealthed hero moves at this share of their speed.
         stealth_speed: 0.7,
-        // The heartbeat plays while an enemy alerted to you is this near, yards.
-        heartbeat_within: 20.0,
+        // The heartbeat plays while an enemy alerted to you is this near, yards. Off (0) for now: the
+        // stand-in thump sounded bad (user, 2026-10-21); 20 turns it back on.
+        heartbeat_within: 0.0,
         // The night grade's vignette (strength, inner edge from the centre; 0..1) at visibility
         // 100 and at 0: it tightens as the hero hides.
         vignette_seen: (0.45, 0.35),
