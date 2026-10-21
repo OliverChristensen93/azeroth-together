@@ -100,7 +100,7 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   opens the screen, `TOGETHER_GEAR_ON=1` switches all brought gear on at the start.
   Weather, lightning, sun shafts and the hour: the shared `atmosphere/` plugin (docs/ATMOSPHERE.md),
   each zone's sky in `content/atmosphere.ron`; `TOGETHER_WEATHER=rain|snow|sand|storm|fine`,
-  `TOGETHER_HOUR=<0..24>`, `WOW_ATMOS=off` (or `-rays,-lightning,-grade,-weather,-clock,-mist,-beams,-lens,-wind`), `WOW_RAYS=<n>`, `WOW_MIST=<n>`, `WOW_BEAMS=<n>`,
+  `TOGETHER_HOUR=<0..24>`, `WOW_ATMOS=off` (or `-rays,-lightning,-grade,-weather,-clock,-mist,-ao,-polish,-wind`; `+lens` for raindrops on the camera), `WOW_RAYS=<n>`, `WOW_MIST=<n>`, `WOW_AO=<n>`,
   `WOW_ATMOS_DUMP=1`.
   `TOGETHER_AFFIXES=sanguine,volcanic` starts a run with those affixes (`world/affixes.rs`);
   `TOGETHER_STAND=1` keeps an autoplay hero standing, so elites and bosses come to it.

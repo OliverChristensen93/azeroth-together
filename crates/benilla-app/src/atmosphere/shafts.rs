@@ -1,28 +1,24 @@
-//! The atmosphere's post pass (`atmos_post.wgsl`) on the world camera: sun shafts, the storm
-//! grade and the lightning flash. Bevy's [`FullscreenMaterial`], in the slot the survivors grade
-//! uses, between FFXGlow's filter passes and the end of the world's post-processing; the camera
-//! carries it only while one of its effects is on.
+//! The atmosphere's post pass (`atmos_post.wgsl`, run by [`super::post_node`]) on the world
+//! camera: polish, ambient occlusion, height fog and ground mist, sun shafts, the storm grade,
+//! the lightning flash and the lens drops. This fills its uniform each frame; the camera carries
+//! it only while one of its effects is on, and then keeps a depth buffer the pass can read.
 //!
 //! Screen-space shafts need the sun on or near the screen: they come when the camera looks
 //! toward a low sun, which the hour of a zone's sky decides. The moon gives fainter ones.
 
-use bevy::core_pipeline::core_3d::graph::{Core3d, Node3d};
-use bevy::core_pipeline::fullscreen_material::{FullscreenMaterial, FullscreenMaterialPlugin};
+use bevy::camera::Camera3dDepthTextureUsage;
 use bevy::prelude::*;
 use bevy::render::extract_component::ExtractComponent;
-use bevy::render::render_graph::{
-    InternedRenderLabel, InternedRenderSubGraph, RenderLabel, RenderSubGraph,
-};
-use bevy::render::render_resource::ShaderType;
-use bevy::shader::ShaderRef;
+use bevy::render::render_resource::{ShaderType, TextureUsages};
 
 use benilla_world::lighting::{LightingConsumeSet, WowLighting};
 use benilla_world::view::WorldCamera;
-use benilla_world::weather::{storm_blend, WeatherKind, WeatherState};
+use benilla_world::weather::{storm_blend, WeatherGust, WeatherKind, WeatherState};
+use benilla_world::world_unit::ViewerUnit;
 
 use super::{AtmosphereSettings, Flash, SkyRequest};
 
-/// The pass's uniform: the shader's three `vec4`s.
+/// The pass's uniform: the shader's `Params`, nine `vec4`s.
 #[derive(Component, Clone, Copy, ExtractComponent, ShaderType, Default, Debug, PartialEq)]
 pub(super) struct AtmosPost {
     /// xy the light in uv, z the shafts' strength, w the bright-sky threshold.
@@ -33,26 +29,33 @@ pub(super) struct AtmosPost {
     mood: Vec4,
     /// x rain on the lens, y seconds.
     lens: Vec4,
+    /// rgb the fog's colour, w the ground mist's density at its floor.
+    fog_color: Vec4,
+    /// x the mist's floor, y its falloff, z the haze's density, w seconds.
+    fog: Vec4,
+    /// x occlusion strength, y its radius, zw the mist's drift.
+    ao: Vec4,
+    /// xyz camera to sun, w the fog's glow toward it.
+    sun: Vec4,
+    /// x polish amount, y sharpness, z vibrance, w contrast.
+    polish: Vec4,
 }
 
-impl FullscreenMaterial for AtmosPost {
-    fn fragment_shader() -> ShaderRef {
-        "embedded://benilla_app/atmosphere/atmos_post.wgsl".into()
-    }
-
-    fn sub_graph() -> Option<InternedRenderSubGraph> {
-        Some(Core3d.intern())
-    }
-
-    /// After the glow's filter passes, before the world's post-processing ends.
-    fn node_edges() -> Vec<InternedRenderLabel> {
-        vec![
-            Node3d::Tonemapping.intern(),
-            Self::node_label().intern(),
-            Node3d::EndMainPassPostProcessing.intern(),
-        ]
-    }
-}
+/// The ground mist's density per yard at its floor at full mist, and how fast it thins upward.
+const MIST_DENSITY: f32 = 0.05;
+const MIST_FALLOFF: f32 = 0.45;
+/// The aerial haze's density per yard, clear and in full rain.
+const HAZE: f32 = 0.0008;
+const RAIN_HAZE: f32 = 0.004;
+/// How much rain adds to the ground mist.
+const RAIN_MIST: f32 = 0.35;
+/// Occlusion strength and radius (yards) at `WOW_AO=1`.
+const AO_STRENGTH: f32 = 0.55;
+const AO_RADIUS: f32 = 1.6;
+/// The polish: sharpness, vibrance, S-curve.
+const SHARPNESS: f32 = 0.4;
+const VIBRANCE: f32 = 0.15;
+const CONTRAST: f32 = 0.1;
 
 /// The base strength of the shafts at `WOW_RAYS=1`.
 const SHAFTS: f32 = 0.7;
@@ -62,8 +65,8 @@ const MOON_SHAFTS: f32 = 0.35;
 const REACH: f32 = 0.85;
 const DECAY: f32 = 0.965;
 /// The luminance (gamma) that counts as bright sky: by day, and for the moon by night.
-const SUN_THRESHOLD: f32 = 0.5;
-const MOON_THRESHOLD: f32 = 0.35;
+const SUN_THRESHOLD: f32 = 0.35;
+const MOON_THRESHOLD: f32 = 0.25;
 const MOON_COLOR: [f32; 3] = [0.62, 0.72, 0.92];
 
 /// The light the shafts come from, as the frame sees it.
@@ -124,17 +127,26 @@ fn screen_fade(ndc: Vec2, facing: f32) -> f32 {
 
 /// Whether any of the pass's effects is on.
 fn wanted(s: &AtmosphereSettings) -> bool {
-    s.rays || s.grade || s.lightning || s.lens
+    s.rays || s.grade || s.lightning || s.lens || s.mist || s.ao || s.polish
+}
+
+/// The depth usages the pass needs: drawn into, and sampled.
+fn sampled_depth() -> TextureUsages {
+    TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING
 }
 
 fn attach(
     mut commands: Commands,
     settings: Res<AtmosphereSettings>,
     with: Query<Entity, (With<WorldCamera>, With<Camera3d>, With<AtmosPost>)>,
-    without: Query<Entity, (With<WorldCamera>, With<Camera3d>, Without<AtmosPost>)>,
+    mut without: Query<(Entity, &mut Camera3d), (With<WorldCamera>, Without<AtmosPost>)>,
 ) {
     if wanted(&settings) {
-        for e in &without {
+        for (e, mut cam) in &mut without {
+            let usage = TextureUsages::from_bits_truncate(cam.depth_texture_usages.0);
+            if !usage.contains(TextureUsages::TEXTURE_BINDING) {
+                cam.depth_texture_usages = Camera3dDepthTextureUsage::from(usage | sampled_depth());
+            }
             commands.entity(e).insert(AtmosPost::default());
         }
     } else {
@@ -150,6 +162,8 @@ fn drive(
     flash: Res<Flash>,
     lighting: Res<WowLighting>,
     weather: Option<Res<WeatherState>>,
+    gust: Option<Res<WeatherGust>>,
+    focus: Query<&GlobalTransform, (With<ViewerUnit>, Without<WorldCamera>)>,
     mut cams: Query<(&Camera, &GlobalTransform, &mut AtmosPost), With<WorldCamera>>,
     time: Res<Time<Real>>,
     mut next_dump: Local<f64>,
@@ -179,9 +193,48 @@ fn drive(
             color: Vec4::new(1.0, 1.0, 1.0, aspect),
             mood: Vec4::new(0.0, 0.0, REACH, DECAY),
             lens: Vec4::ZERO,
+            ..default()
         };
+        let secs = (time.elapsed_secs_f64() % 1000.0) as f32;
+        // The light the shafts and the fog's glow take.
+        let light = light_of(&lighting);
+        if let Some(l) = light {
+            let [r, g, b] = l.color;
+            next.color = Vec4::new(r, g, b, aspect);
+        }
+        if settings.polish {
+            next.polish = Vec4::new(1.0, SHARPNESS, VIBRANCE, CONTRAST);
+        }
+        if settings.ao {
+            next.ao.x = (AO_STRENGTH * settings.ao_strength).min(1.0);
+            next.ao.y = AO_RADIUS;
+        }
+        if settings.mist && req.active {
+            // The mist lies on the ground the player stands on.
+            let floor = focus
+                .iter()
+                .next()
+                .map_or(cam_gt.translation().y - 2.0, |t| t.translation().y);
+            let thick = (req.mist + RAIN_MIST * rain).clamp(0.0, 1.0);
+            let fog = Vec3::from_array(lighting.fog_color).lerp(Vec3::new(0.78, 0.8, 0.84), 0.3);
+            next.fog_color = fog.extend(MIST_DENSITY * thick * settings.mist_strength);
+            next.fog = Vec4::new(
+                floor - 0.5,
+                MIST_FALLOFF,
+                (HAZE + RAIN_HAZE * wet) * settings.mist_strength,
+                secs,
+            );
+            let drift = gust.as_ref().map_or(Vec3::ZERO, |g| g.wind) * 0.01
+                + Vec3::new(0.02, 0.0, 0.01);
+            next.ao.z = drift.x;
+            next.ao.w = drift.z;
+            let sun = lighting.celestial_dir().normalize_or_zero();
+            let glow =
+                lighting.sun_day() * (1.0 - storm) * ((sun.y + 0.1) * 5.0).clamp(0.0, 1.0);
+            next.sun = sun.extend(glow);
+        }
         if settings.rays {
-            if let Some(light) = light_of(&lighting) {
+            if let Some(light) = light {
                 let eye = cam_gt.translation();
                 let facing = cam_gt.forward().dot(light.dir);
                 if let Some(ndc) = camera.world_to_ndc(cam_gt, eye + light.dir * 500.0) {
@@ -205,7 +258,7 @@ fn drive(
             next.mood.x = flash.0;
         }
         if settings.lens && req.active && rain > 0.0 {
-            next.lens = Vec4::new(rain, (time.elapsed_secs_f64() % 1000.0) as f32, 0.0, 0.0);
+            next.lens = Vec4::new(rain, secs, 0.0, 0.0);
         }
         if dump {
             let sun = lighting.celestial_dir();
@@ -227,8 +280,8 @@ fn drive(
 
 pub(super) fn plugin(app: &mut App) {
     bevy::asset::embedded_asset!(app, "atmos_post.wgsl");
-    app.add_plugins(FullscreenMaterialPlugin::<AtmosPost>::default())
-        .add_systems(Update, (attach, drive.in_set(LightingConsumeSet)).chain());
+    super::post_node::plugin(app);
+    app.add_systems(Update, (attach, drive.in_set(LightingConsumeSet)).chain());
 }
 
 #[cfg(test)]
