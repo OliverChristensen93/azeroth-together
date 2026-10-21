@@ -560,27 +560,37 @@ impl World {
         true
     }
 
-    /// The `count` enemies nearest `from` within `range`, elites and bosses first when
-    /// `elites_first`, never `exclude`; nearest first. A camp's elite at rest (whole, guarding)
-    /// comes last of all, so aimed spells never pull a camp on their own.
+    /// The `count` enemies nearest `from` within `range`, never `exclude`: bosses, elites and
+    /// rares first, then the rest, nearest first. (`_elites_first` is every aimed spell's way now.)
+    /// A camp's elite out of the fight (whole with no hero near, or running home) comes last of
+    /// all, so aimed spells never pull a camp on their own.
     pub(super) fn pick_targets(
         &self,
         from: V2,
         range: f32,
         count: usize,
-        elites_first: bool,
+        _elites_first: bool,
         exclude: Option<u32>,
     ) -> Vec<(u32, f32)> {
-        // 0 an elite or boss the spell seeks out, 1 anything else, 2 a camp's elite at rest.
+        let heroes: Vec<V2> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| h.pos)
+            .collect();
+        // 0 a boss, elite or rare, 1 anything else, 2 a camp's elite out of the fight.
         let mut near: Vec<(u32, f32, u8)> = self
             .enemies
             .iter()
             .filter(|e| e.hp > 0.0 && Some(e.id) != exclude)
             .map(|e| {
-                let resting = self.guards.contains(&e.id) && e.hp >= e.max_hp;
+                let guard = self.guards.contains(&e.id);
+                let alone = !heroes.iter().any(|h| h.distance(e.pos) <= ELITE_AGGRO);
+                let resting = guard
+                    && (self.evading.contains(&e.id) || (e.hp >= e.max_hp && alone));
                 let rank = if resting {
                     2
-                } else if elites_first && (e.elite || e.boss) {
+                } else if e.elite || e.boss {
                     0
                 } else {
                     1
@@ -2204,7 +2214,7 @@ mod tests {
     }
 
     #[test]
-    fn frostbolt_seeks_the_elite_and_fire_blast_the_closest_enemy() {
+    fn every_aimed_spell_seeks_the_elite_over_the_closest_enemy() {
         let mut w = mage();
         spells(&mut w, &[("frostbolt", 1, &[]), ("fire_blast", 1, &[])]);
         let close = foe(&mut w, 4.0, 0.0, 1e6);
@@ -2227,8 +2237,9 @@ mod tests {
         );
         assert_eq!(
             target_of(ability(&w, "fire_blast")),
-            Some(Target::Enemy(close))
+            Some(Target::Enemy(elite))
         );
+        assert!(w.enemy(close).is_some());
     }
 
     #[test]

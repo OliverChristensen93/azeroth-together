@@ -134,7 +134,7 @@ impl World {
             }
             // A few tiers above the horde: a camp is worth the detour from the first minute.
             let pos = self.camps[c].pos;
-            let id = self.spawn_camp_elite(pos);
+            let id = self.spawn_camp_rare(pos, c);
             self.camps[c].elite = Some(id);
         }
     }

@@ -92,8 +92,8 @@ const GOLD_CHANCE: f32 = 0.3;
 const GOLD_PER_XP: f32 = 1.5;
 /// Random tomes mixed into the options a level-up deals from.
 const LEVEL_UP_TOMES: usize = 2;
-/// A rare's health (in tests; the rules' `rare_health` in play), experience and gold, in ordinary
-/// enemies of its kind...
+/// An elite's health (in tests; the rules' `elite_health` in play), experience and gold, in
+/// ordinary enemies of its kind...
 #[cfg(test)]
 pub(crate) const ELITE_HEALTH: f32 = 15.0;
 const ELITE_REWARD: u32 = 5;
@@ -120,9 +120,11 @@ const SPAWN_RING: (f32, f32) = (34.0, 42.0);
 const SPAWN_EVERY: f32 = 0.12;
 /// The share of its health a living hero gets back at each level-up.
 const LEVEL_UP_HEAL: f32 = 0.1;
-/// How far a camp's elite follows a hero from its camp before it gives up the
-/// chase, runs home out of reach (at this times its speed) and heals, as WoW's mobs evade.
-pub const CAMP_LEASH: f32 = 35.0;
+/// How far a camp's elite follows a hero from its camp. Past it for [`LEASH_GRACE`] seconds, it
+/// gives up the chase, runs home out of reach (at this times its speed) and heals, as WoW's mobs
+/// evade. Clients draw the leash as a ring round the camp.
+pub const CAMP_LEASH: f32 = 50.0;
+pub const LEASH_GRACE: f32 = 3.0;
 const EVADE_SPEED: f32 = 1.6;
 /// Seconds between workings-out of the horde's way around obstacles.
 const FLOW_EVERY: f32 = 0.4;
@@ -616,6 +618,9 @@ pub struct Snapshot {
     pub surround: f32,
     #[serde(default)]
     pub next_surround: f32,
+    /// Where the elite camps are, for their leash rings.
+    #[serde(default)]
+    pub camps: Vec<V2>,
     pub buffs: Vec<(PowerUp, f32)>,
     pub heroes: Vec<Hero>,
     pub enemies: Vec<EnemyState>,
@@ -756,8 +761,10 @@ pub struct World {
     pub pause_ready: Vec<PlayerId>,
     /// Players who gave up: their heroes cannot be raised.
     pub quit: Vec<PlayerId>,
-    /// Elites running home to their camp, out of reach until they get there ([`CAMP_LEASH`]).
+    /// Elites running home to their camp, out of reach until they get there ([`CAMP_LEASH`]);
+    /// and those past their leash, with the seconds they have been.
     pub evading: Vec<u32>,
+    leash_out: Vec<(u32, f32)>,
     /// What stands in the horde's way, once the host's client has filled it in; and seconds
     /// until its flow field is worked out again.
     pub obstacles: Option<crate::obstacles::Obstacles>,
@@ -824,6 +831,7 @@ impl World {
             pause_ready: Vec::new(),
             quit: Vec::new(),
             evading: Vec::new(),
+            leash_out: Vec::new(),
             obstacles: None,
             flow_timer: 0.0,
             guards: Vec::new(),
@@ -1090,6 +1098,7 @@ impl World {
             pause_ready: self.pause_ready.clone(),
             surround: self.surround,
             next_surround: self.next_surround,
+            camps: self.camps.iter().map(|c| c.pos).collect(),
             buffs: self.buffs.clone(),
             heroes: self.heroes.clone(),
             enemies: self
@@ -1132,6 +1141,16 @@ impl World {
         self.pause_ready = snapshot.pause_ready;
         self.surround = snapshot.surround;
         self.next_surround = snapshot.next_surround;
+        // A mirror knows where the camps are, never steps them.
+        self.camps = snapshot
+            .camps
+            .into_iter()
+            .map(|pos| Camp {
+                pos,
+                elite: None,
+                respawn: f32::INFINITY,
+            })
+            .collect();
         self.buffs = snapshot.buffs;
         self.heroes = snapshot.heroes;
         self.interactables = snapshot.interactables;
@@ -1735,7 +1754,7 @@ impl World {
         let progress = (self.elapsed / RUN_SECS).min(1.0);
         let d = self.difficulty;
         let (health, hits, size) = if elite {
-            (self.content.rules.rare_health, ELITE_DAMAGE, ELITE_SCALE)
+            (self.content.rules.elite_health, ELITE_DAMAGE, ELITE_SCALE)
         } else {
             (1.0, 1.0, 1.0)
         };
@@ -1821,8 +1840,20 @@ impl World {
             // heals, as WoW's mobs evade. With no fight on, it waits at home.
             if let Some(home) = e.home {
                 let evading = self.evading.contains(&e.id);
+                let out = self.leash_out.iter().position(|&(id, _)| id == e.id);
                 if !evading && e.pos.distance(home) > CAMP_LEASH {
-                    self.evading.push(e.id);
+                    // Past the leash: a few seconds' grace, then home.
+                    let k = out.unwrap_or_else(|| {
+                        self.leash_out.push((e.id, 0.0));
+                        self.leash_out.len() - 1
+                    });
+                    self.leash_out[k].1 += DT;
+                    if self.leash_out[k].1 >= LEASH_GRACE {
+                        self.leash_out.remove(k);
+                        self.evading.push(e.id);
+                    }
+                } else if let Some(k) = out {
+                    self.leash_out.remove(k);
                 }
                 let evading = self.evading.contains(&e.id);
                 let fighting = dist <= ELITE_AGGRO || e.hp < e.max_hp;

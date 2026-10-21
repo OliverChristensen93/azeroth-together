@@ -2,23 +2,24 @@
 //! rules):
 //!
 //! - **Normal**: the horde.
-//! - **Rare** ([`Enemy::elite`] set): a horde spawn now and then, and what a Challenge Idol
-//!   raises. `rare_health` of its own kind, a little bigger, uses its kind's mechanics.
-//! - **Elite** (also [`Enemy::elite`], and one of [`World::guards`]): a camp's guard. A kind two
-//!   tiers above the horde, `elite_health` of it, bigger still. It keeps to its camp: it fights
-//!   a hero who comes near or hurts it, and past its leash ([`CAMP_LEASH`]) runs home out of reach
-//!   and heals, as WoW's mobs evade. Clients know one by [`EnemyState::guard`].
+//! - **Elite** ([`Enemy::elite`] set): a horde spawn now and then, and what a Challenge Idol
+//!   raises. `elite_health` of its own kind, a little bigger, uses its kind's mechanics.
+//! - **Rare** (also [`Enemy::elite`], and one of [`World::guards`]): a camp's guard, a named rare
+//!   of the zone's own (its `rares`) with its own model and mechanics, as tough as `rare_health`
+//!   of the kind two tiers above the horde, and bigger still. It keeps to its camp: it fights a
+//!   hero who comes near or hurts it, and past its leash ([`CAMP_LEASH`]) for a few seconds runs
+//!   home out of reach and heals, as WoW's mobs evade. Clients know one by [`EnemyState::guard`].
 //! - **Boss** ([`Enemy::boss`]): the zone's boss, `boss_health` of the horde's strongest kind,
 //!   `final_boss_health` for the run's last one, and at least twice an ordinary enemy's size.
 
 use super::*;
 
-/// An elite's size on top of a rare's, and a boss's least size against its kind's own.
+/// A rare's size on top of an elite's, and a boss's least size against its kind's own.
 pub const CAMP_SCALE: f32 = 1.25;
 pub(super) const BOSS_MIN_SCALE: f32 = 2.0;
-/// A camp's elite is of a kind this many tiers above the strongest the horde fields now.
+/// A camp's rare is as tough as a kind this many tiers above the strongest the horde fields now.
 pub(super) const CAMP_TIERS_AHEAD: usize = 2;
-/// A camp elite's experience and gold, in ordinary enemies of its kind (a rare's is
+/// A camp rare's experience and gold, in ordinary enemies of its kind (an elite's is
 /// `ELITE_REWARD`).
 pub(super) const CAMP_REWARD: u32 = 10;
 
@@ -39,18 +40,29 @@ impl World {
         roster[(top + ahead).min(roster.len() - 1)]
     }
 
-    /// A camp's elite at `pos`: a rare of a kind above the horde, made an elite (tougher and
-    /// bigger) that guards the spot. Its id.
-    pub(super) fn spawn_camp_elite(&mut self, pos: V2) -> u32 {
-        let def = self.tier_ahead(CAMP_TIERS_AHEAD);
-        let id = self.spawn_enemy(def, pos, pos + V2::new(1.0, 0.0), true);
-        let rules = &self.content.rules;
-        let tougher = rules.elite_health / rules.rare_health.max(0.01);
+    /// Camp `camp`'s rare at `pos`: as tough as an elite of a kind above the horde, and
+    /// `rare_health / elite_health` times more, wearing the zone's rare for that camp (its name,
+    /// model, size, pace and mechanics), guarding the spot. Its id.
+    pub(super) fn spawn_camp_rare(&mut self, pos: V2, camp: usize) -> u32 {
+        let kind = self.tier_ahead(CAMP_TIERS_AHEAD);
+        let id = self.spawn_enemy(kind, pos, pos + V2::new(1.0, 0.0), true);
+        let rules = self.content.rules.clone();
+        let rares = &self.zone().rare_ix;
+        let rare = (!rares.is_empty()).then(|| rares[camp % rares.len()]);
+        let content = self.content.clone();
+        let tougher = rules.rare_health / rules.elite_health.max(0.01);
         if let Some(e) = self.enemies.last_mut() {
             e.hp *= tougher;
             e.max_hp *= tougher;
             e.radius *= CAMP_SCALE;
             e.home = Some(pos);
+            if let Some(r) = rare {
+                let def = &content.enemies[r];
+                e.def = r;
+                e.radius = def.radius * def.scale * ELITE_SCALE * CAMP_SCALE;
+                let base = (def.speed * rules.enemy_speed).min(rules.enemy_speed_cap.max(def.speed));
+                e.speed = base * (1.0 + self.difficulty.enemy_speed);
+            }
         }
         self.guards.push(id);
         id
@@ -72,19 +84,20 @@ mod tests {
     }
 
     #[test]
-    fn rares_elites_and_bosses_have_their_ranks_health() {
+    fn elites_rares_and_bosses_have_their_ranks_health() {
         let mut w = world();
         let rules = w.content.rules.clone();
         let def = w.tier_ahead(CAMP_TIERS_AHEAD);
         let kind_hp = w.content.enemies[def].hp;
-        let rare = w.spawn_enemy(def, w.center(), w.center(), true);
-        let rare_hp = w.enemy(rare).unwrap().max_hp;
-        assert!((rare_hp - kind_hp * rules.rare_health).abs() < 0.5, "{rare_hp}");
-        let elite = w.spawn_camp_elite(w.center() + V2::new(10.0, 0.0));
+        let elite = w.spawn_enemy(def, w.center(), w.center(), true);
         let elite_hp = w.enemy(elite).unwrap().max_hp;
         assert!((elite_hp - kind_hp * rules.elite_health).abs() < 0.5, "{elite_hp}");
-        assert!(w.snapshot().enemies.iter().any(|s| s.id == elite && s.guard));
-        assert!(!w.snapshot().enemies.iter().any(|s| s.id == rare && s.guard));
+        let rare = w.spawn_camp_rare(w.center() + V2::new(10.0, 0.0), 0);
+        let rare_hp = w.enemy(rare).unwrap().max_hp;
+        assert!((rare_hp - kind_hp * rules.rare_health).abs() < 0.5, "{rare_hp}");
+        assert!(rules.rare_health > rules.elite_health);
+        assert!(w.snapshot().enemies.iter().any(|s| s.id == rare && s.guard));
+        assert!(!w.snapshot().enemies.iter().any(|s| s.id == elite && s.guard));
     }
 
     #[test]
@@ -107,10 +120,10 @@ mod tests {
     }
 
     #[test]
-    fn an_elite_dragged_past_its_leash_runs_home_and_heals() {
+    fn a_rare_dragged_past_its_leash_runs_home_and_heals() {
         let mut w = world();
         let home = w.center() + V2::new(10.0, 0.0);
-        let id = w.spawn_camp_elite(home);
+        let id = w.spawn_camp_rare(home, 0);
         // Hurt, and pulled far from home by a hero standing well away.
         {
             let e = w.enemies.iter_mut().find(|e| e.id == id).unwrap();
@@ -118,7 +131,13 @@ mod tests {
             e.pos = home + V2::new(CAMP_LEASH + 2.0, 0.0);
         }
         w.heroes[0].pos = home + V2::new(CAMP_LEASH + 6.0, 0.0);
+        // A moment past the leash is forgiven...
         w.move_enemies();
+        assert!(!w.evading.contains(&id));
+        // ...a few seconds are not.
+        for _ in 0..(LEASH_GRACE / DT) as usize + 2 {
+            w.move_enemies();
+        }
         assert!(w.evading.contains(&id));
         // Out of reach on the way home.
         let hp = w.enemy(id).unwrap().hp;

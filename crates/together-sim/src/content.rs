@@ -322,6 +322,12 @@ pub struct ZoneDef {
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
+    /// The rares that guard the zone's camps, camp by camp (enemy keys); none, and a camp's
+    /// guard is a rare of the horde's own kind.
+    #[serde(default)]
+    pub rares: Vec<String>,
+    #[serde(skip)]
+    pub rare_ix: Vec<usize>,
 }
 
 fn ten_levels() -> u16 {
@@ -443,8 +449,9 @@ pub struct Rules {
     /// from every side instead, for `surround_secs`.
     #[serde(default = "surround_secs")]
     pub surround_secs: f32,
-    /// Health, in ordinary enemies: a rare and an elite of their own kind's; a boss of the
-    /// horde's strongest kind at the time, and the run's last boss (the `final_boss`th) more.
+    /// Health, in ordinary enemies: a rare (a camp's guard) and an elite (the horde's and an
+    /// idol's) of their own kind's; a boss of the horde's strongest kind at the time, and the
+    /// run's last boss (the `final_boss`th) more.
     #[serde(default = "rare_health")]
     pub rare_health: f32,
     #[serde(default = "elite_health")]
@@ -458,7 +465,7 @@ pub struct Rules {
 }
 
 fn rare_health() -> f32 {
-    15.0
+    30.0
 }
 fn final_boss_health() -> f32 {
     75.0
@@ -468,7 +475,7 @@ fn final_boss() -> u32 {
 }
 
 fn elite_health() -> f32 {
-    30.0
+    15.0
 }
 fn boss_health() -> f32 {
     50.0
@@ -673,6 +680,11 @@ impl Content {
         for zone in &mut zones {
             zone.enemy_ix = zone
                 .enemies
+                .iter()
+                .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
+                .collect::<Result<_, _>>()?;
+            zone.rare_ix = zone
+                .rares
                 .iter()
                 .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
                 .collect::<Result<_, _>>()?;

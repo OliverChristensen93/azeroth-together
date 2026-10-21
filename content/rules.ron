@@ -19,12 +19,12 @@
     // The horde comes from behind the way a hero runs, never straight ahead. Halfway to each
     // boss a swarm sends it from every side, for `surround_secs`.
     surround_secs: 12.0,
-    // Health in ordinary enemies. A rare (now and then in the horde, and a Challenge Idol's)
-    // has `rare_health` of its own kind's; an elite (a camp's guard) `elite_health`; a boss
-    // `boss_health` of the horde's strongest kind at the time, and the run's last boss (the
-    // `final_boss`th) `final_boss_health`.
-    rare_health: 15.0,
-    elite_health: 30.0,
+    // Health in ordinary enemies. A rare (a camp's guard) has `rare_health` of the kind two tiers
+    // above the horde; an elite (now and then in the horde, and a Challenge Idol's)
+    // `elite_health` of its own kind's; a boss `boss_health` of the horde's strongest kind at
+    // the time, and the run's last boss (the `final_boss`th) `final_boss_health`.
+    rare_health: 30.0,
+    elite_health: 15.0,
     boss_health: 50.0,
     final_boss_health: 75.0,
     final_boss: 3,
