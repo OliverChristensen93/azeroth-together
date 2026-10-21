@@ -39,7 +39,9 @@ always uses the main checkout's `WoW` folder; `TOGETHER_PORT_ROOT` names another
 | `race 10` / `race 11` | The Blood Elf and Draenei heroes (below). |
 | `wotlk <Data folder>` | Which WotLK client to read; once per machine (or set `WOTLK_DATA`). |
 
-Find a path with `together-port vlist WoW\Data <text>` (what 1.12 has). Pull one WotLK file out to
+Find a path with `together-port vlist WoW\Data <text>` (what 1.12 has). `together-port spot <Map> <x>
+<y>` says what the game data has at a world point (tile, area, ground height, water); adding an
+arena zone step by step is [ADDING-ZONES.md](ADDING-ZONES.md). Pull one WotLK file out to
 look at with `together-port extract <wotlk Data> <path> <out>`. Look at WotLK or 1.12 DBC rows with
 `together-port dbc`. Paths are the client's own, backslashes, any case.
 
@@ -59,6 +61,11 @@ client's terrain mesher.
 After a build, run the game as it is; data needs no rebuild of the game.
 
 ## What can be ported, and what not yet
+
+- **Sounds the trimmed data cut.** The trimmed 1.12 data has no `Sound\Ambience\Water`, so every
+  lake and river was silent; the five loops its `SoundWaterType` names are `file` lines on the
+  machine's list (`River_LakeStillA`, `RiverSlowA`, `RiverFastA`, `OceanA`, `GreenSlimeLoop1`).
+  Other gaps show up as `reading Sound\...` warnings in the game's log and take a `file` line each.
 
 - **Areas whose 1.12 tiles exist.** Any map in the trimmed data (Elwynn, Stormwind, Westfall,
   Duskwood, Gurubashi Arena, Gates of Ahn'Qiraj) can be completed with `fill <Map>`.

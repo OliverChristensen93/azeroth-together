@@ -8725,6 +8725,7 @@ dependencies = [
  "benilla-formats",
  "benilla-m2",
  "benilla-mpq",
+ "benilla-wdt",
  "benilla-wmo",
  "flate2",
  "wow-mpq",

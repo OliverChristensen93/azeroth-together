@@ -119,7 +119,8 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `WoW/Data/patch-W.MPQ`, built from the machine's shared wish list `WoW/wotlk-port.txt`. Add to it with
   `together-port add <fill|wmo|model|creature|file|race|zone|tiles> <arg>`; never write the archive another way.
   `zone`/`tiles` (terrain, `together-port/src/adt.rs`) are rejected by builds older than them: put
-  them on the shared list only once merged.
+  them on the shared list only once merged. Adding an arena zone (terrain, centre, entry):
+  [docs/ADDING-ZONES.md](docs/ADDING-ZONES.md); `together-port spot <Map> <x> <y>` shows what the data has there.
   [docs/WOTLK-PORT.md](docs/WOTLK-PORT.md). The engine never reads WotLK formats; races 10 and 11 exist only
   where that archive is installed.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns

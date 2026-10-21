@@ -18,3 +18,4 @@ flate2 = "1.1"
 benilla-blp = { path = "../benilla-blp" }
 benilla-wmo = { path = "../benilla-wmo" }
 benilla-adt = { path = "../benilla-adt" }
+benilla-wdt = { path = "../benilla-wdt" }
