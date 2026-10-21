@@ -171,3 +171,12 @@ may not be what you pictured. Each line says what was decided, why, and how to c
 54. **A rival that hit you is in your fight:** no regeneration and no stealth while one is after you. Kill
     credit goes to whoever struck last.
 55. **A looted rival's gear counts as found**, so it's lost on a death that loses finds.
+56. **Sub-project 8, the playtest kit, was added by me** after the spec's seven were done (you asked me to keep
+    going): no new design, only what makes playtesting easier. Plan: `docs/superpowers/plans/2026-10-20-nightfall-playtest-kit.md`.
+57. **The Playtest panel (inn bar) sets the spec's open questions per raid**: the death rule, rival kits (simple or
+    full), rivals on/off/always one, which signature monsters, the night clock ×1/×2/×4, the weather. Host-side;
+    a joiner's panel says the host's apply. The ×2/×4 clock speeds every timer tied to the night (cooldowns, the
+    hunt's memory), not movement. Saved in `benilla-config/nightfall-playtest.txt`.
+58. **Selling a rare-or-better stack asks "Sure?"**; common stacks still sell in one click.
+59. **Autoplay now sneaks, loots and leaves**: it heads for an exit once the area is looted out (about 30 s in)
+    or its bags are half full, at full speed, turning aside when stuck. A test tool, not a bot to play with.
