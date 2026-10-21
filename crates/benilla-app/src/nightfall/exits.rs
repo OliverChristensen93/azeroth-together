@@ -237,6 +237,33 @@ fn nearest_open_exit(exits: &[ExitMark], content: &Content, from: V2) -> Option<
     super::auto_brain::nearest_exit(&open, from)
 }
 
+/// The plan's way out as the walk's orders: head for `leave` at full speed, or, with none (the exit
+/// shut, or the bags emptied), take down the goal this set; one the looting set for a container
+/// is not touched. `mine` is the goal this last set.
+fn follow_plan(leave: Option<V2>, auto: &mut Autoplay, mine: &mut Option<V2>) {
+    match leave {
+        Some(exit) => {
+            if auto.goal != Some(exit) {
+                auto.goal = Some(exit);
+            }
+            if !auto.hurry {
+                auto.hurry = true;
+            }
+            *mine = Some(exit);
+        }
+        None => {
+            if auto.hurry {
+                auto.hurry = false;
+            }
+            if let Some(g) = mine.take() {
+                if auto.goal == Some(g) {
+                    auto.goal = None;
+                }
+            }
+        }
+    }
+}
+
 /// `NIGHTFALL_AUTOPLAY_EXTRACT`: the autoplay walks to the nearest open exit (without it, once the
 /// plan says it has had enough, [`super::auto_brain`]). It runs just before
 /// [`super::loot_view::autoloot`], which takes the goal over for a detour to a container and
@@ -252,23 +279,7 @@ pub(super) fn autoexit(
         if !super::run::autoplay() {
             return;
         }
-        match plan.0.leave {
-            Some(exit) => {
-                if auto.goal != Some(exit) {
-                    auto.goal = Some(exit);
-                }
-                *mine = Some(exit);
-            }
-            // The exit shut, or the bags emptied: a goal this set is taken down, one the
-            // looting set for a container is not.
-            None => {
-                if let Some(g) = mine.take() {
-                    if auto.goal == Some(g) {
-                        auto.goal = None;
-                    }
-                }
-            }
-        }
+        follow_plan(plan.0.leave, &mut auto, &mut mine);
         return;
     }
     let content = content();
@@ -278,6 +289,9 @@ pub(super) fn autoexit(
     let goal = nearest_open_exit(&sim.world.loot_view(Some(sim.me)).exits, &content, hero.pos);
     if auto.goal != goal {
         auto.goal = goal;
+    }
+    if auto.hurry != goal.is_some() {
+        auto.hurry = goal.is_some();
     }
 }
 
@@ -297,6 +311,21 @@ pub(super) fn forget(
 mod tests {
     use super::*;
     use nightfall_sim::ContentSources;
+
+    #[test]
+    fn the_way_out_is_walked_at_full_speed_and_taken_down_with_the_plan() {
+        let (mut auto, mut mine) = (Autoplay::default(), None);
+        let exit = V2::new(30.0, 40.0);
+        follow_plan(Some(exit), &mut auto, &mut mine);
+        assert_eq!((auto.goal, auto.hurry), (Some(exit), true));
+        follow_plan(None, &mut auto, &mut mine);
+        assert_eq!((auto.goal, auto.hurry), (None, false));
+        // A container detour the looting set is not this one's to take down.
+        let detour = V2::new(1.0, 2.0);
+        auto.goal = Some(detour);
+        follow_plan(None, &mut auto, &mut mine);
+        assert_eq!(auto.goal, Some(detour));
+    }
 
     /// A map with three exits: the bridge and the road (up from the start), the cart (late).
     fn three_exits() -> Content {

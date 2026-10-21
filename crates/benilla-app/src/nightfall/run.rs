@@ -83,17 +83,35 @@ fn entry_of(roll: Option<&RaidRoll>) -> [f32; 3] {
         .to_owned()
 }
 
-/// The content a joined player's mirror world is built on: the shipped rules with the host's rule for
-/// what a death takes, so the client notes and settles a raid as the host does. The shared content
-/// itself when the rule is the same.
-fn mirror_content(death_loss: nightfall_sim::DeathLoss) -> std::sync::Arc<nightfall_sim::Content> {
-    let base = content();
-    if base.rules.run.death_loss == death_loss {
-        return base;
-    }
-    let mut c = (*base).clone();
-    c.rules.run.death_loss = death_loss;
-    std::sync::Arc::new(c)
+/// The content a joined player's mirror world is built on: the shipped rules with the host's death
+/// rule and rival kits, so the client notes and settles a raid as the host does and reads a rival
+/// as the host plays it (its Stealth aura, its creep form). The shared content itself when the
+/// host's rules are the shipped ones.
+fn mirror_content(
+    rules: nightfall_sim::messages::HostRules,
+) -> std::sync::Arc<nightfall_sim::Content> {
+    mirror_content_on(content(), rules)
+}
+
+/// [`mirror_content`] on the content `base`.
+fn mirror_content_on(
+    base: std::sync::Arc<nightfall_sim::Content>,
+    rules: nightfall_sim::messages::HostRules,
+) -> std::sync::Arc<nightfall_sim::Content> {
+    let kits = if rules.full_kits {
+        nightfall_sim::RivalKits::Full
+    } else {
+        nightfall_sim::RivalKits::Simplified
+    };
+    let settings = nightfall_sim::Playtest {
+        death_loss: (base.rules.run.death_loss != rules.death_loss).then_some(rules.death_loss),
+        rival_kits: kits,
+        ..Default::default()
+    };
+    settings.content_for(&base).unwrap_or_else(|why| {
+        warn!("nightfall: the host's rival kits could not be built here ({why}); the plain rivals stand");
+        base
+    })
 }
 
 impl Sim {
@@ -163,10 +181,10 @@ impl Sim {
     fn mirror(
         me: PlayerId,
         planned: Option<&RaidRoll>,
-        death_loss: nightfall_sim::DeathLoss,
+        rules: nightfall_sim::messages::HostRules,
     ) -> Self {
-        // The host's rule for what a death takes, so what we note and settle follows it.
-        let mut world = World::new(mirror_content(death_loss));
+        // The host's rules, so what we note and settle follows them and rivals look as it plays them.
+        let mut world = World::new(mirror_content(rules));
         // Until the host's first snapshot there is no loot to show: not the raid this world rolls.
         world.begin_mirror();
         Self {
@@ -187,16 +205,23 @@ impl Sim {
         }
     }
 
-    /// A joined run: the world the host planned for us in the lobby, on the death rule of the
+    /// A joined run: the world the host planned for us in the lobby, on the rules of the
     /// Start we were sent (not our own settings).
     pub(super) fn joined(c: &session::ClientSide, me: PlayerId) -> Self {
-        Self::mirror(me, c.planned.as_ref(), c.death_loss)
+        Self::mirror(me, c.planned.as_ref(), c.rules)
     }
 
     /// A joined run under the host's death rule, for tests.
     #[cfg(test)]
     pub(super) fn mirror_for_test(death_loss: nightfall_sim::DeathLoss) -> Self {
-        Self::mirror(1, None, death_loss)
+        Self::mirror(
+            1,
+            None,
+            nightfall_sim::messages::HostRules {
+                death_loss,
+                full_kits: false,
+            },
+        )
     }
 
     /// A hosted run around `world`, for tests of the systems that read it: nothing seen, no marks.
@@ -392,9 +417,18 @@ fn bevy_to_ground(p: Vec3) -> V2 {
     V2::new(-p.z, -p.x)
 }
 
-/// `NIGHTFALL_AUTOPLAY`: a point on a slow 15-yard circle around the first entry, walked toward.
-fn autowalk(entry: V2, from: V2, elapsed: f32, speed: f32, dt: f32) -> V2 {
-    let goal = entry + V2::from_angle(elapsed * 0.15, 15.0);
+/// Where hero `me` stands on `NIGHTFALL_AUTOPLAY`'s slow 15-yard circle around the first entry. Each
+/// hero has a spot of their own a third of the way round from the last, so a pair does not contend
+/// for every container. The circle turns with the world clock, so the night clock at x2 or x4
+/// turns it that much faster (a test tool; autoplay then trails its goal).
+fn circle_goal(entry: V2, elapsed: f32, me: PlayerId) -> V2 {
+    let spot = f32::from(me) * std::f32::consts::TAU / 3.0;
+    entry + V2::from_angle(elapsed * 0.15 + spot, 15.0)
+}
+
+/// `NIGHTFALL_AUTOPLAY`: a step toward hero `me`'s point on the circle.
+fn autowalk(entry: V2, from: V2, elapsed: f32, me: PlayerId, speed: f32, dt: f32) -> V2 {
+    let goal = circle_goal(entry, elapsed, me);
     let to = goal - from;
     let dist = to.length();
     from + to.normalize_or_zero() * (speed * 0.5 * dt).min(dist)
@@ -409,12 +443,91 @@ pub(super) struct Autoplay {
     /// Walk to this spot instead of the circle. The loot's detour to a container sets it first
     /// ([`super::loot_view::autoloot`]); with no such detour it is left to whoever else wants it.
     pub goal: Option<V2>,
+    /// Walk to the goal at the hero's full speed rather than a stroll: the way out, which can be
+    /// a mile off. Set by [`super::exits::autoexit`].
+    pub hurry: bool,
 }
 
-/// `NIGHTFALL_AUTOPLAY`: a step from `from` toward `goal`, at half speed, never past it.
-pub(super) fn autowalk_to(goal: V2, from: V2, speed: f32, dt: f32) -> V2 {
+/// The share of its speed the autoplay walks at: a stroll round the circle and to containers, the
+/// full speed to the way out.
+pub(super) fn pace(hurry: bool) -> f32 {
+    if hurry {
+        1.0
+    } else {
+        0.5
+    }
+}
+
+/// How far (yards) the autoplay must have got in [`STUCK_SECS`] to not be taken for stuck: a hero
+/// pushing up a slope too steep for the controller slides back and gets nowhere.
+const STUCK_MOVE: f32 = 3.0;
+/// How long (seconds) of getting nowhere makes the autoplay turn aside.
+const STUCK_SECS: f32 = 3.0;
+/// How far (radians) a stuck autoplay turns from its heading, and for how long it holds that.
+const STUCK_TURN: f32 = 1.2;
+const STUCK_DETOUR_SECS: f32 = 5.0;
+
+/// The autoplay walks straight at its goal with no path finding. When that gets nowhere (a cliff, a
+/// steep slope, a fence), it turns aside for a while, the other way each time, and tries the
+/// straight way again.
+#[derive(Default)]
+pub(super) struct Stuck {
+    anchor: Option<V2>,
+    since: f32,
+    turn_until: f32,
+    /// Which way the last turn went.
+    left: bool,
+}
+
+impl Stuck {
+    /// The angle (radians) to turn the step from its straight heading, at real time `now` with the
+    /// hero at `pos`.
+    pub(super) fn turn(&mut self, now: f32, pos: V2) -> f32 {
+        let sign = if self.left { 1.0 } else { -1.0 };
+        if self.turn_until > 0.0 {
+            if now < self.turn_until {
+                return sign * STUCK_TURN;
+            }
+            // The turn is over: the straight way gets a fresh look.
+            self.turn_until = 0.0;
+            self.anchor = None;
+        }
+        match self.anchor {
+            Some(a) if pos.distance(a) < STUCK_MOVE => {
+                if now - self.since >= STUCK_SECS {
+                    self.left = !self.left;
+                    self.turn_until = now + STUCK_DETOUR_SECS;
+                    self.anchor = Some(pos);
+                    self.since = now;
+                    return (if self.left { 1.0 } else { -1.0 }) * STUCK_TURN;
+                }
+            }
+            _ => {
+                self.anchor = Some(pos);
+                self.since = now;
+            }
+        }
+        0.0
+    }
+
+    /// Forgets the walk so far (the goal changed, or the hero stood still on purpose).
+    pub(super) fn reset(&mut self) {
+        self.anchor = None;
+        self.turn_until = 0.0;
+    }
+}
+
+/// `step` turned by `angle` radians.
+fn turned(step: V2, angle: f32) -> V2 {
+    let (s, c) = angle.sin_cos();
+    V2::new(step.x * c - step.y * s, step.x * s + step.y * c)
+}
+
+/// `NIGHTFALL_AUTOPLAY`: a step from `from` toward `goal` at `pace` of `speed` ([`pace`]), never
+/// past it.
+pub(super) fn autowalk_to(goal: V2, from: V2, speed: f32, pace: f32, dt: f32) -> V2 {
     let to = goal - from;
-    from + to.normalize_or_zero() * (speed * 0.5 * dt).min(to.length())
+    from + to.normalize_or_zero() * (speed * pace * dt).min(to.length())
 }
 
 /// The raid's seed: `NIGHTFALL_SEED` when set (a test run rolls the same loot every time), else
@@ -602,6 +715,7 @@ pub(super) fn feed_pose(
     mut input: ResMut<LocalInput>,
     mut bodies: Query<&mut Transform>,
     mut last_trace: Local<f32>,
+    mut stuck: Local<Stuck>,
 ) {
     let content = content();
     let map = &content.map;
@@ -623,14 +737,22 @@ pub(super) fn feed_pose(
     if autoplay() && !auto.hold {
         let speed = sim.world.hero(sim.me).map_or(7.0, |h| h.speed);
         pos = match auto.goal {
-            Some(goal) => autowalk_to(goal, pos, speed, time.delta_secs()),
-            None => autowalk(
-                V2::new(entry[0], entry[1]),
-                pos,
-                sim.world.elapsed,
-                speed,
-                time.delta_secs(),
-            ),
+            Some(goal) => {
+                let next = autowalk_to(goal, pos, speed, pace(auto.hurry), time.delta_secs());
+                let turn = stuck.turn(real.elapsed_secs(), pos);
+                pos + turned(next - pos, turn)
+            }
+            None => {
+                stuck.reset();
+                autowalk(
+                    V2::new(entry[0], entry[1]),
+                    pos,
+                    sim.world.elapsed,
+                    sim.me,
+                    speed,
+                    time.delta_secs(),
+                )
+            }
         };
     }
     pos = map.bounds.clamp(pos);
@@ -945,18 +1067,84 @@ mod tests {
     fn autowalk_heads_for_the_circle_without_overshooting() {
         let entry = V2::new(0.0, 0.0);
         let goal = entry + V2::from_angle(0.0, 15.0);
-        let next = autowalk(entry, entry, 0.0, 7.0, 1.0);
+        let next = autowalk(entry, entry, 0.0, 0, 7.0, 1.0);
         assert!((next.distance(entry) - 3.5).abs() < 1e-4);
-        let near = autowalk(entry, goal - V2::new(0.1, 0.0), 0.0, 7.0, 1.0);
+        let near = autowalk(entry, goal - V2::new(0.1, 0.0), 0.0, 0, 7.0, 1.0);
         assert!(near.distance(goal) < 1e-4);
+    }
+
+    #[test]
+    fn a_mirror_plays_the_rival_kits_of_the_host() {
+        use nightfall_sim::messages::HostRules;
+        let base = super::super::shipped_content_with_rivals();
+        let kits = |c: &nightfall_sim::Content| {
+            c.classes.iter().map(|k| k.kit.clone()).collect::<Vec<_>>()
+        };
+        let plain = kits(&base);
+        let full = kits(&base.with_full_rival_kits().unwrap());
+        assert_ne!(
+            plain, full,
+            "the shipped rivals have simplified kits to fill out"
+        );
+        let rules = |full_kits| HostRules {
+            death_loss: base.rules.run.death_loss,
+            full_kits,
+        };
+        assert_eq!(kits(&mirror_content_on(base.clone(), rules(true))), full);
+        assert_eq!(kits(&mirror_content_on(base.clone(), rules(false))), plain);
+        // The death rule rides along with the kits.
+        let both = HostRules {
+            death_loss: nightfall_sim::DeathLoss::FoundOnly,
+            full_kits: true,
+        };
+        let c = mirror_content_on(base.clone(), both);
+        assert_eq!(c.rules.run.death_loss, nightfall_sim::DeathLoss::FoundOnly);
+        assert_eq!(kits(&c), full);
+    }
+
+    #[test]
+    fn each_autoplay_hero_has_a_spot_of_their_own_on_the_circle() {
+        let entry = V2::new(5.0, -3.0);
+        let spots: Vec<V2> = (0..3).map(|me| circle_goal(entry, 7.0, me)).collect();
+        for (i, a) in spots.iter().enumerate() {
+            assert!((a.distance(entry) - 15.0).abs() < 1e-3, "on the circle");
+            for b in &spots[i + 1..] {
+                assert!(a.distance(*b) > 20.0, "a pair is far apart: {a:?} {b:?}");
+            }
+        }
+        assert_eq!(circle_goal(entry, 7.0, 0), circle_goal(entry, 7.0, 0));
+    }
+
+    #[test]
+    fn a_walk_that_gets_nowhere_turns_aside_and_then_tries_again() {
+        let mut s = Stuck::default();
+        let at = V2::new(5.0, 5.0);
+        assert_eq!(s.turn(0.0, at), 0.0, "the first look sets the mark");
+        assert_eq!(s.turn(STUCK_SECS - 0.1, at), 0.0, "not yet");
+        let first = s.turn(STUCK_SECS, at);
+        assert_eq!(first.abs(), STUCK_TURN, "stuck: it turns aside");
+        assert_eq!(s.turn(STUCK_SECS + 1.0, at), first, "and holds the turn");
+        let t = STUCK_SECS + STUCK_DETOUR_SECS;
+        assert_eq!(s.turn(t, at), 0.0, "then goes straight again");
+        let second = s.turn(t + STUCK_SECS, at);
+        assert_eq!(second, -first, "still stuck: the other way this time");
+        // Getting somewhere is not being stuck.
+        let mut s = Stuck::default();
+        s.turn(0.0, at);
+        assert_eq!(s.turn(STUCK_SECS, at + V2::new(STUCK_MOVE + 1.0, 0.0)), 0.0);
+        // A step turned a quarter round points at right angles.
+        let q = turned(V2::new(1.0, 0.0), std::f32::consts::FRAC_PI_2);
+        assert!(q.x.abs() < 1e-5 && (q.y - 1.0).abs() < 1e-5);
     }
 
     #[test]
     fn autowalk_to_a_goal_stops_on_it() {
         let goal = V2::new(10.0, 0.0);
-        let next = autowalk_to(goal, V2::ZERO, 7.0, 1.0);
+        let next = autowalk_to(goal, V2::ZERO, 7.0, pace(false), 1.0);
         assert!((next.x - 3.5).abs() < 1e-4);
-        assert_eq!(autowalk_to(goal, V2::new(9.9, 0.0), 7.0, 1.0), goal);
+        let run = autowalk_to(goal, V2::ZERO, 7.0, pace(true), 1.0);
+        assert!((run.x - 7.0).abs() < 1e-4, "on the way out it goes at full speed");
+        assert_eq!(autowalk_to(goal, V2::new(9.9, 0.0), 7.0, 0.5, 1.0), goal);
     }
 
     #[test]

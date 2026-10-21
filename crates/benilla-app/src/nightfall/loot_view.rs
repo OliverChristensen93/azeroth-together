@@ -30,7 +30,7 @@ pub(super) const CONTAINER_SERIAL_BASE: u64 = 0x20_0000;
 
 /// How far out of its way (yards) `NIGHTFALL_AUTOPLAY` goes to a container: a detour off its
 /// circle, never a trek across the map.
-const AUTO_DETOUR: f32 = 14.0;
+pub(super) const AUTO_DETOUR: f32 = 14.0;
 /// Seconds `NIGHTFALL_AUTOPLAY` heads for one container before giving it up.
 const AUTO_HEAD_FOR: f32 = 20.0;
 /// How often `NIGHTFALL_AUTOPLAY` asks to open one that will not open, before giving it up.
@@ -321,6 +321,11 @@ pub(super) fn autoloot(
                     open.stacks.iter().flatten().count(),
                     open.id
                 );
+            } else if open.stacks.iter().all(Option::is_none) {
+                info!(
+                    "nightfall: autoplay finds container {} already emptied",
+                    open.id
+                );
             }
             for slot in slots {
                 input.queue(Act::Take(slot));
@@ -531,6 +536,7 @@ mod tests {
         world.insert_resource(Autoplay {
             hold: true,
             goal: Some(V2::new(1.0, 1.0)),
+            hurry: false,
         });
         world.run_system_once(forget).unwrap();
         assert!(world.resource::<ContainerViews>().drawn.is_empty());

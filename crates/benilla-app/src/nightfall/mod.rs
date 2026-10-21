@@ -10,8 +10,8 @@
 //! the repository's `content/nightfall/`, then the copies compiled in).
 
 mod atmosphere;
-mod auto_brain;
 mod auras;
+mod auto_brain;
 mod backpack;
 mod bar;
 mod board;
@@ -282,6 +282,26 @@ pub(super) fn shipped_content() -> Arc<Content> {
             rivals: "",
         })
         .expect("the shipped content parses"),
+    )
+}
+
+/// The shipped content with its rivals (`shipped_content` has none), for tests of what rival kits do.
+#[cfg(test)]
+pub(super) fn shipped_content_with_rivals() -> Arc<Content> {
+    Arc::new(
+        Content::from_ron(ContentSources {
+            classes: include_str!("../../../../content/nightfall/classes.ron"),
+            map: include_str!("../../../../content/nightfall/map.ron"),
+            rules: include_str!("../../../../content/nightfall/rules.ron"),
+            enemies: include_str!("../../../../content/nightfall/enemies.ron"),
+            spawns: include_str!("../../../../content/nightfall/spawns.ron"),
+            abilities: include_str!("../../../../content/nightfall/abilities.ron"),
+            items: include_str!("../../../../content/nightfall/items.ron"),
+            loot: include_str!("../../../../content/nightfall/loot.ron"),
+            monsters: include_str!("../../../../content/nightfall/monsters.ron"),
+            rivals: include_str!("../../../../content/nightfall/rivals.ron"),
+        })
+        .expect("the shipped content with rivals parses"),
     )
 }
 

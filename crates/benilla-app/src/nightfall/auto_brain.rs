@@ -9,12 +9,16 @@
 //! player makes.
 
 use bevy::prelude::*;
-use nightfall_sim::{Content, Stack, V2};
+use nightfall_sim::{Content, Holder, Stack, V2};
 
 use super::run::{autoplay, Sim};
 
 /// How near (yards) an enemy that has not noticed the hero makes a rogue sneak.
 pub(super) const SNEAK_NEAR: f32 = 35.0;
+
+/// How long into the raid (seconds) the hero looks for containers before a bare neighbourhood
+/// sends it out.
+pub(super) const SETTLE_SECS: f32 = 30.0;
 
 /// An enemy the hero can see, and whether it has noticed the hero at all (a mark "?" or "!").
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -40,6 +44,10 @@ pub(super) struct Known {
     /// The middle of every open exit.
     pub exits: Vec<V2>,
     pub foes: Vec<Foe>,
+    /// Seconds into the raid.
+    pub into_raid: f32,
+    /// Some container within a detour is still worth searching.
+    pub loot_left: bool,
 }
 
 /// What the hero does about it.
@@ -81,9 +89,15 @@ pub(super) fn nearest_exit(exits: &[V2], from: V2) -> Option<V2> {
         .min_by(|a, b| a.distance(from).total_cmp(&b.distance(from)))
 }
 
-/// Whether the hero has had enough: bags half full, the burden whole, or the night late.
+/// Whether the hero has had enough: bags half full, the burden whole, the night late, or nothing
+/// worth searching left near it once it has had [`SETTLE_SECS`] to find the first containers (a
+/// player who has emptied what is around them heads out rather than circling until the night
+/// takes them).
 pub(super) fn has_had_enough(k: &Known) -> bool {
-    bags_half_full(k.pack_used, k.pack_size) || k.load >= k.weight_cap || k.late
+    bags_half_full(k.pack_used, k.pack_size)
+        || k.load >= k.weight_cap
+        || k.late
+        || (k.into_raid >= SETTLE_SECS && !k.loot_left)
 }
 
 /// The decision, from what the hero knows.
@@ -155,10 +169,7 @@ fn gather(sim: &Sim, out: &mut AutoPlan) {
     let loot = sim.world.loot_view(Some(sim.me));
     let stages = content.rules.night.stages.len();
     let known = Known {
-        rogue: content
-            .classes
-            .get(hero.class)
-            .is_some_and(|c| c.stealth),
+        rogue: content.classes.get(hero.class).is_some_and(|c| c.stealth),
         at: hero.pos,
         pack_used: inv.pack.iter().filter(|s| s.is_some()).count(),
         pack_size: inv.pack.len(),
@@ -172,6 +183,13 @@ fn gather(sim: &Sim, out: &mut AutoPlan) {
             .filter_map(|e| content.map.exits.get(usize::from(e.exit)))
             .map(|d| d.at)
             .collect(),
+        into_raid: sim.world.elapsed,
+        loot_left: loot.marks.iter().any(|m| {
+            !(m.empty
+                || m.locked
+                || matches!(m.holder, Holder::Remains(_) | Holder::Hero(_)))
+                && m.at.distance(hero.pos) <= super::loot_view::AUTO_DETOUR
+        }),
         foes: sim
             .world
             .enemies
@@ -186,6 +204,19 @@ fn gather(sim: &Sim, out: &mut AutoPlan) {
     };
     let decided = decide(&known);
     if out.0 != decided {
+        // Said once per change, so a log shows whether the hero ever sets out for a way out.
+        if decided.leave != out.0.leave {
+            match decided.leave {
+                Some(at) => info!(
+                    "nightfall: autoplay has had enough ({} of {} pack slots, load {:.1}, night late: {}), heads for the exit at ({:.0}, {:.0})",
+                    known.pack_used, known.pack_size, known.load, known.late, at.x, at.y
+                ),
+                None => info!("nightfall: autoplay no longer heads for an exit"),
+            }
+        }
+        if decided.sneak != out.0.sneak {
+            info!("nightfall: autoplay sneak: {}", decided.sneak);
+        }
         out.0 = decided;
     }
 }
@@ -205,6 +236,8 @@ mod tests {
             late: false,
             exits: vec![V2::new(100.0, 0.0), V2::new(30.0, 40.0)],
             foes: vec![],
+            into_raid: 10.0,
+            loot_left: true,
         }
     }
 
@@ -241,6 +274,18 @@ mod tests {
         k.late = false;
         k.load = 60.0;
         assert_eq!(decide(&k).leave, Some(V2::new(30.0, 40.0)));
+    }
+
+    #[test]
+    fn a_bare_neighbourhood_sends_it_out_once_it_has_had_time_to_look() {
+        let mut k = known();
+        k.loot_left = false;
+        k.into_raid = SETTLE_SECS - 1.0;
+        assert_eq!(decide(&k).leave, None, "too soon to say nothing is near");
+        k.into_raid = SETTLE_SECS;
+        assert_eq!(decide(&k).leave, Some(V2::new(30.0, 40.0)));
+        k.loot_left = true;
+        assert_eq!(decide(&k).leave, None, "a container still to search");
     }
 
     #[test]
@@ -291,6 +336,72 @@ mod tests {
         // A full pack takes nothing, a pack with one slot free takes the first that fits.
         assert!(takes(&stacks, 5.0, 60.0, 0, weight).is_empty());
         assert_eq!(takes(&stacks, 5.0, 60.0, 1, weight), vec![0]);
+    }
+
+    /// A hero with a world around it for `gather`: `class`, the first `fill` pack slots holding
+    /// something, the night at `elapsed`.
+    fn sim_of(class: &str, fill: usize, elapsed: f32) -> Sim {
+        use nightfall_sim::{Inventory, Loadout, RaidRoll, World};
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        let content = super::super::content();
+        let mut world = World::new(content.clone());
+        world.begin_raid(RaidRoll::standard(&content, 1)).unwrap();
+        world.add_hero(0, class, "Us", 1, 0).unwrap();
+        let mut inventory = Inventory::default();
+        inventory.pack = vec![None; content.rules.run.backpack_slots as usize];
+        for slot in inventory.pack.iter_mut().take(fill) {
+            *slot = Some(stack(0));
+        }
+        world.give_loadout(
+            0,
+            &Loadout {
+                inventory,
+                ..Default::default()
+            },
+        );
+        world.elapsed = elapsed;
+        world.step();
+        Sim::for_test(world)
+    }
+
+    #[test]
+    fn gathering_with_the_bags_half_full_and_an_exit_open_leaves_early() {
+        let mut out = AutoPlan::default();
+        let sim = sim_of("mage", 0, 1.0);
+        gather(&sim, &mut out);
+        assert_eq!(out.0.leave, None, "empty bags, early night: more to do");
+        let size = sim.world.pack(0).unwrap().pack.len();
+        let sim = sim_of("mage", size.div_ceil(2), 1.0);
+        gather(&sim, &mut out);
+        assert!(
+            out.0.leave.is_some(),
+            "half full and an exit open: {:?}",
+            out.0
+        );
+    }
+
+    #[test]
+    fn gathering_a_rogue_near_an_unnoticed_enemy_sneaks_and_a_warrior_does_not() {
+        for (class, sneaks) in [("rogue", true), ("mage", false)] {
+            let mut sim = sim_of(class, 0, 1.0);
+            let at = sim.world.hero(0).unwrap().pos;
+            sim.world.enemies.push(nightfall_sim::Enemy {
+                id: 5,
+                kind: 0,
+                pos: at + V2::new(10.0, 0.0),
+                z: 0.0,
+                facing: V2::new(-1.0, 0.0),
+                hp: 10.0,
+                max_hp: 10.0,
+                speed: 0.0,
+                asleep: false,
+                fight: Default::default(),
+            });
+            sim.seen = vec![5];
+            let mut out = AutoPlan::default();
+            gather(&sim, &mut out);
+            assert_eq!(out.0.sneak, sneaks, "{class}");
+        }
     }
 
     /// A hero in a late night with an exit open has had enough, and walks out; the same hero

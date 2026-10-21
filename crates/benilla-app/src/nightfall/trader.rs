@@ -33,10 +33,13 @@ pub(super) enum TraderButton {
 #[derive(Resource)]
 pub(super) struct TraderFont(Handle<Font>);
 
-/// The sale the trader waits to have confirmed: the stash slot and the item in it (so a slot that
-/// shifted under a changed stash is not taken for the one asked about).
+/// A sale asked about: the stash slot, the item in it and how many (so a slot that shifted under a
+/// changed stash, or a stack that grew by a merge, is not taken for the one asked about).
+type Asked = (usize, String, u16);
+
+/// The sale the trader waits to have confirmed.
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
-pub(super) struct PendingSale(pub Option<(usize, String)>);
+pub(super) struct PendingSale(pub Option<Asked>);
 
 /// The first quality that asks before it is sold: rare (WoW's 3) and better.
 const CONFIRM_FROM_QUALITY: u8 = 3;
@@ -50,21 +53,30 @@ enum SalePress {
     Ask,
 }
 
-/// A press on Sell for slot `n` holding `key` of `quality`, given the sale already asked about:
-/// common stacks sell at once, a rare-or-better one asks and is sold by a second press on the
-/// same row. The sale asked about after the press is returned beside it.
+/// A press on Sell for slot `n` holding `count` of `key`, of `quality`, given the sale already
+/// asked about: common stacks sell at once, a rare-or-better one asks and is sold by a second press
+/// on the same row while it holds the same item and count. The sale asked about after the press is
+/// returned beside it.
 fn sale_press(
-    pending: &Option<(usize, String)>,
+    pending: &Option<Asked>,
     n: usize,
     key: &str,
+    count: u16,
     quality: u8,
-) -> (SalePress, Option<(usize, String)>) {
+) -> (SalePress, Option<Asked>) {
     if quality < CONFIRM_FROM_QUALITY {
         return (SalePress::Sell, None);
     }
     match pending {
-        Some((m, k)) if *m == n && k == key => (SalePress::Sell, None),
-        _ => (SalePress::Ask, Some((n, key.to_owned()))),
+        Some((m, k, c)) if *m == n && k == key && *c == count => (SalePress::Sell, None),
+        _ => (SalePress::Ask, Some((n, key.to_owned(), count))),
+    }
+}
+
+/// Takes back the sale waiting for its confirmation unless the trader's panel is open.
+fn forget_if_closed(pending: &mut Option<Asked>, open: bool) {
+    if !open && pending.is_some() {
+        *pending = None;
     }
 }
 
@@ -108,9 +120,8 @@ pub(super) fn show(
     panel: Res<InnPanel>,
     mut roots: Query<&mut Visibility, With<TraderRoot>>,
 ) {
-    let on = *mode.get() == GameMode::Nightfall
-        && *phase.get() == Phase::Inn
-        && trading(&panel, &inn());
+    let on =
+        *mode.get() == GameMode::Nightfall && *phase.get() == Phase::Inn && trading(&panel, &inn());
     let want = if on {
         Visibility::Inherited
     } else {
@@ -140,10 +151,7 @@ pub(super) fn rebuild(
     body: Query<Entity, With<TraderBody>>,
 ) {
     let inn = inn();
-    if !(stash.is_changed()
-        || lock.is_changed()
-        || panel.is_changed()
-        || pending.is_changed())
+    if !(stash.is_changed() || lock.is_changed() || panel.is_changed() || pending.is_changed())
         || !trading(&panel, &inn)
     {
         return;
@@ -168,7 +176,12 @@ pub(super) fn rebuild(
     };
     commands.entity(body).with_children(|b| {
         b.spawn(column()).with_children(|col| {
-            col.spawn(text(font, format!("{}: {}", npc.name, npc.title), 14.0, GOLD));
+            col.spawn(text(
+                font,
+                format!("{}: {}", npc.name, npc.title),
+                14.0,
+                GOLD,
+            ));
             col.spawn(text(
                 font,
                 format!("You have {} gold.", stash.profile.gold),
@@ -238,7 +251,10 @@ pub(super) fn rebuild(
                             12.0,
                             Color::WHITE,
                         ));
-                        let asked = pending.0.as_ref().is_some_and(|(m, k)| *m == n && *k == s.item);
+                        let asked = pending
+                            .0
+                            .as_ref()
+                            .is_some_and(|(m, k, c)| *m == n && *k == s.item && *c == s.count);
                         widgets::text_button(
                             r,
                             font,
@@ -284,6 +300,11 @@ pub(super) fn clicks(
 ) {
     let content = content();
     let inn = inn();
+    // A sale waits for its confirmation only while the trader's panel is open: walking away or
+    // opening another keeper's panel takes it back.
+    if pending.0.is_some() {
+        forget_if_closed(&mut pending.0, trading(&panel, &inn));
+    }
     // Only the trader's own panel trades: the frame `walk_away` closes it, its buttons may still
     // report a press.
     if !trading(&panel, &inn) {
@@ -300,8 +321,10 @@ pub(super) fn clicks(
             }
             TraderButton::Sell(n) => {
                 let asked = stash.profile.stash.get(*n).map(|s| {
-                    let quality = content.item(&s.item).map_or(0, |k| content.items[k].quality);
-                    sale_press(&pending.0, *n, &s.item, quality)
+                    let quality = content
+                        .item(&s.item)
+                        .map_or(0, |k| content.items[k].quality);
+                    sale_press(&pending.0, *n, &s.item, s.count, quality)
                 });
                 let Some((press, next)) = asked else {
                     // No such stack: the trade says so.
@@ -335,7 +358,8 @@ mod tests {
     use super::*;
 
     fn dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("nightfall-trader-{name}-{}", std::process::id()));
+        let d =
+            std::env::temp_dir().join(format!("nightfall-trader-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -372,7 +396,10 @@ mod tests {
         let blocker = dir(name).join("not-a-folder");
         std::fs::write(&blocker, "x").unwrap();
         let mut stash = Stash::open_at(Some(blocker.join("stash.ron")), content);
-        assert!(!stash.read_only(), "a missing file is a fresh stash that may save");
+        assert!(
+            !stash.read_only(),
+            "a missing file is a fresh stash that may save"
+        );
         stash.profile.gold = 40;
         stash.profile.stash_add(saved("ruby_shard", 3), content);
         assert!(stash.try_save().is_err());
@@ -385,7 +412,13 @@ mod tests {
         let (mut stash, path) = stash_with_shards("saved", &content);
         // Sell the shards: the gold, said and on disk.
         let before = stash.profile.gold;
-        assert!(trade(&mut stash, TraderButton::Sell(0), None, &inn, &content));
+        assert!(trade(
+            &mut stash,
+            TraderButton::Sell(0),
+            None,
+            &inn,
+            &content
+        ));
         assert!(stash.profile.gold > before, "the shards fetch gold");
         assert!(stash.note.as_deref().unwrap().starts_with("Sold for"));
         assert!(stash.profile.stash.is_empty());
@@ -396,7 +429,13 @@ mod tests {
         let bread = stock_of(&inn, &content, "tough_bread");
         let price = inn.trader.stock[bread].1;
         let gold = stash.profile.gold;
-        assert!(trade(&mut stash, TraderButton::Buy(bread), None, &inn, &content));
+        assert!(trade(
+            &mut stash,
+            TraderButton::Buy(bread),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.profile.gold, gold - price);
         assert_eq!(stash.profile.stashed("tough_bread"), 1);
         assert_eq!(stash.note, None);
@@ -413,10 +452,22 @@ mod tests {
         let bread = stock_of(&inn, &content, "tough_bread");
         let before = stash.profile.clone();
         // Nothing to pay with, and no such stack.
-        assert!(!trade(&mut stash, TraderButton::Buy(bread), None, &inn, &content));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Buy(bread),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.note.as_deref(), Some(StationError::NoGold.message()));
         assert_eq!(stash.profile, before);
-        assert!(!trade(&mut stash, TraderButton::Sell(9), None, &inn, &content));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Sell(9),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.note.as_deref(), Some(StationError::Unknown.message()));
         assert_eq!(stash.profile, before);
         // In a raid the profile itself refuses both.
@@ -427,9 +478,21 @@ mod tests {
             kept: None,
         });
         let before = stash.profile.clone();
-        assert!(!trade(&mut stash, TraderButton::Sell(0), None, &inn, &content));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Sell(0),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.note.as_deref(), Some(StationError::InRaid.message()));
-        assert!(!trade(&mut stash, TraderButton::Buy(bread), None, &inn, &content));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Buy(bread),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.profile, before);
         assert_eq!(super::super::stash::load(&path).profile.stash, before.stash);
     }
@@ -443,12 +506,23 @@ mod tests {
         let mut n = 0;
         while stash.profile.stash.len() < stash.profile.stash_capacity(&content) {
             n += 1;
-            stash.profile.stash_add(saved("night_watch_blade", 1), &content);
+            stash
+                .profile
+                .stash_add(saved("night_watch_blade", 1), &content);
             assert!(n < 1000, "the stash fills");
         }
         let before = stash.profile.clone();
-        assert!(!trade(&mut stash, TraderButton::Buy(bread), None, &inn, &content));
-        assert_eq!(stash.note.as_deref(), Some(StationError::StashFull.message()));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Buy(bread),
+            None,
+            &inn,
+            &content
+        ));
+        assert_eq!(
+            stash.note.as_deref(),
+            Some(StationError::StashFull.message())
+        );
         assert_eq!(stash.profile, before, "no gold taken for what did not fit");
     }
 
@@ -461,16 +535,34 @@ mod tests {
         let bread = stock_of(&inn, &content, "tough_bread");
         // A read-only stash trades nothing.
         for button in [TraderButton::Sell(0), TraderButton::Buy(bread)] {
-            assert!(!trade(&mut stash, button, Some(Lock::ReadOnly), &inn, &content));
+            assert!(!trade(
+                &mut stash,
+                button,
+                Some(Lock::ReadOnly),
+                &inn,
+                &content
+            ));
         }
         assert_eq!(stash.profile, before);
-        assert_eq!(stash.note, None, "the panel's red line says why, not the note");
+        assert_eq!(
+            stash.note, None,
+            "the panel's red line says why, not the note"
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), file);
         // A ready joined player's loadout is out of their hands; the stash and purse are not,
         // so the trader still trades (and saves).
-        assert!(trade(&mut stash, TraderButton::Sell(0), Some(Lock::Lobby), &inn, &content));
+        assert!(trade(
+            &mut stash,
+            TraderButton::Sell(0),
+            Some(Lock::Lobby),
+            &inn,
+            &content
+        ));
         assert!(stash.profile.gold > before.gold);
-        assert_eq!(super::super::stash::load(&path).profile.gold, stash.profile.gold);
+        assert_eq!(
+            super::super::stash::load(&path).profile.gold,
+            stash.profile.gold
+        );
     }
 
     #[test]
@@ -479,7 +571,13 @@ mod tests {
         let mut stash = stash_that_cannot_write("unwritable", &content);
         let before = stash.profile.clone();
         // A sale (gold from nothing, if it stuck).
-        assert!(!trade(&mut stash, TraderButton::Sell(0), None, &inn, &content));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Sell(0),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.profile, before);
         assert_eq!(stash.profile.gold, 40);
         let note = stash.note.clone().unwrap();
@@ -487,7 +585,13 @@ mod tests {
         // A purchase (goods for nothing, if it stuck).
         stash.note = None;
         let bread = stock_of(&inn, &content, "tough_bread");
-        assert!(!trade(&mut stash, TraderButton::Buy(bread), None, &inn, &content));
+        assert!(!trade(
+            &mut stash,
+            TraderButton::Buy(bread),
+            None,
+            &inn,
+            &content
+        ));
         assert_eq!(stash.profile, before);
         let note = stash.note.unwrap();
         assert!(note.contains("could not be saved"), "{note}");
@@ -506,22 +610,45 @@ mod tests {
     #[test]
     fn a_rare_stack_asks_before_it_sells_and_a_common_one_does_not() {
         // Common and uncommon sell at once and leave nothing pending.
-        assert_eq!(sale_press(&None, 2, "ruby_shard", 1), (SalePress::Sell, None));
-        assert_eq!(sale_press(&None, 2, "ruby_shard", 2), (SalePress::Sell, None));
+        assert_eq!(
+            sale_press(&None, 2, "ruby_shard", 1, 1),
+            (SalePress::Sell, None)
+        );
+        assert_eq!(
+            sale_press(&None, 2, "ruby_shard", 1, 2),
+            (SalePress::Sell, None)
+        );
         // A rare one asks, then sells on a second press of the same row.
-        let (press, pending) = sale_press(&None, 2, "gem", 3);
+        let (press, pending) = sale_press(&None, 2, "gem", 1, 3);
         assert_eq!(press, SalePress::Ask);
-        assert_eq!(pending, Some((2, "gem".to_owned())));
-        assert_eq!(sale_press(&pending, 2, "gem", 3), (SalePress::Sell, None));
+        assert_eq!(pending, Some((2, "gem".to_owned(), 1)));
+        assert_eq!(
+            sale_press(&pending, 2, "gem", 1, 3),
+            (SalePress::Sell, None)
+        );
         // A press on another row, or another item in the same slot, asks afresh.
         assert_eq!(
-            sale_press(&pending, 3, "gem", 4),
-            (SalePress::Ask, Some((3, "gem".to_owned())))
+            sale_press(&pending, 3, "gem", 1, 4),
+            (SalePress::Ask, Some((3, "gem".to_owned(), 1)))
         );
         assert_eq!(
-            sale_press(&pending, 2, "other", 3),
-            (SalePress::Ask, Some((2, "other".to_owned())))
+            sale_press(&pending, 2, "other", 1, 3),
+            (SalePress::Ask, Some((2, "other".to_owned(), 1)))
         );
+        // The same item grown by a merge is a stack nobody confirmed: it asks afresh.
+        assert_eq!(
+            sale_press(&pending, 2, "gem", 6, 3),
+            (SalePress::Ask, Some((2, "gem".to_owned(), 6)))
+        );
+    }
+
+    #[test]
+    fn a_sale_waiting_for_its_confirmation_is_forgotten_when_the_panel_is_not_open() {
+        let mut pending = Some((2, "gem".to_owned(), 1));
+        forget_if_closed(&mut pending, true);
+        assert!(pending.is_some(), "an open panel keeps it");
+        forget_if_closed(&mut pending, false);
+        assert_eq!(pending, None);
     }
 
     #[test]
@@ -535,7 +662,17 @@ mod tests {
         );
         assert!(shown > 0);
         let before = stash.profile.gold;
-        assert!(trade(&mut stash, TraderButton::Sell(0), None, &inn, &content));
-        assert_eq!(stash.profile.gold - before, shown, "the panel quotes what is paid");
+        assert!(trade(
+            &mut stash,
+            TraderButton::Sell(0),
+            None,
+            &inn,
+            &content
+        ));
+        assert_eq!(
+            stash.profile.gold - before,
+            shown,
+            "the panel quotes what is paid"
+        );
     }
 }

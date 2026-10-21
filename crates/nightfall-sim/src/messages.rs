@@ -11,6 +11,15 @@ use crate::{
 /// Bumped whenever a message changes shape: a client and host must agree.
 pub const PROTOCOL: u32 = 8;
 
+/// The parts of the host's playtest settings a joined player's mirror world needs to read the
+/// raid as the host does: what a death takes (so the player settles by it too) and whether the
+/// rivals play full kits (so their stealth and forms show right).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostRules {
+    pub death_loss: DeathLoss,
+    pub full_kits: bool,
+}
+
 /// The hero a player brings: their name and pick.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HeroPick {
@@ -109,9 +118,8 @@ pub enum ServerMsg {
         raid: RaidRoll,
     },
     /// The run begins. `raid` numbers it (each start is the next number), and a client tags its
-    /// inputs with it. `death_loss` is the host's rule for what a death takes (the playtest settings
-    /// may change it), which a joined player settles by too.
-    Start { raid: u32, death_loss: DeathLoss },
+    /// inputs with it. `rules` are the host's playtest rules a joined player's mirror must share.
+    Start { raid: u32, rules: HostRules },
     /// The world after a step, as this player gets it: the enemies and telegraphs near their
     /// hero, which enemies their hero sees (spec §4.3), what each thinks of their hero (§5.5), and
     /// what happened since the last state this player got (§6).
@@ -273,7 +281,10 @@ mod tests {
         assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), msg);
         let start = ServerMsg::Start {
             raid: 3,
-            death_loss: DeathLoss::FoundOnly,
+            rules: HostRules {
+                death_loss: DeathLoss::FoundOnly,
+                full_kits: true,
+            },
         };
         let bytes = postcard::to_stdvec(&start).unwrap();
         assert_eq!(postcard::from_bytes::<ServerMsg>(&bytes).unwrap(), start);

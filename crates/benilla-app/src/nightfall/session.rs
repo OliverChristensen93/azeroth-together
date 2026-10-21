@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use bevy::prelude::*;
-use nightfall_sim::messages::{ClientMsg, HeroPick, LobbyPlayer, ServerMsg, PROTOCOL};
+use nightfall_sim::messages::{ClientMsg, HeroPick, HostRules, LobbyPlayer, ServerMsg, PROTOCOL};
 use nightfall_sim::{
     Event, HeroOutcome, HeroPose, Loadout, Mark, PlayerId, PlayerInput, Playtest, RaidRoll,
     Snapshot, UnitRef, World, DT,
@@ -267,9 +267,9 @@ pub(super) struct ClientSide {
     pub start: bool,
     /// The number of the run the host started last, which our inputs are tagged with.
     raid: u32,
-    /// The host's rule for what a death takes, from its last Start: the mirror world and the
+    /// The host's playtest rules, from its last Start: the mirror world and the
     /// settling of a raid that never ended follow it, not our own settings.
-    pub death_loss: nightfall_sim::DeathLoss,
+    pub rules: HostRules,
     /// The next raid as the host planned it, from its last lobby.
     pub planned: Option<RaidRoll>,
     /// The pick we last told the host.
@@ -283,12 +283,21 @@ pub(super) struct ClientSide {
 }
 
 impl ClientSide {
-    /// The host started run `raid` under death rule `loss`: [`super::run::start_run`] begins ours
-    /// on that rule.
-    fn note_start(&mut self, raid: u32, loss: nightfall_sim::DeathLoss) {
+    /// The host started run `raid` under `rules`: [`super::run::start_run`] begins ours on them.
+    fn note_start(&mut self, raid: u32, rules: HostRules) {
         self.raid = raid;
-        self.death_loss = loss;
+        self.rules = rules;
         self.start = true;
+    }
+}
+
+/// The rules a joined player's mirror shares with the host's world: what that world is actually
+/// built on (the same fallback when the settings are refused).
+fn host_rules(playtest: &nightfall_sim::Playtest) -> HostRules {
+    let (effective, played) = super::night::effective(&content(), playtest);
+    HostRules {
+        death_loss: effective.rules.run.death_loss,
+        full_kits: played.rival_kits == nightfall_sim::RivalKits::Full,
     }
 }
 
@@ -437,7 +446,7 @@ impl Net {
             poses: HashMap::new(),
             start: false,
             raid: 0,
-            death_loss: Default::default(),
+            rules: Default::default(),
             planned: None,
             sent_pick: None,
             sent_pose: None,
@@ -642,15 +651,11 @@ impl Net {
             // The next Start waits for each joiner's pick after this raid, not the one before it.
             clear_picks(h.peers.iter_mut().map(|p| &mut p.picked));
             let raid = h.raid;
-            let death_loss = super::night::effective(&content(), &self.playtest)
-                .0
-                .rules
-                .run
-                .death_loss;
+            let rules = host_rules(&self.playtest);
             h.host
                 .lock()
                 .unwrap()
-                .broadcast(&ServerMsg::Start { raid, death_loss });
+                .broadcast(&ServerMsg::Start { raid, rules });
         }
     }
 
@@ -955,8 +960,8 @@ pub(super) fn lobby(
                     ClientEvent::Message(ServerMsg::InnPoses(poses)) => {
                         c.poses = sane_poses(poses, |p| inn().place.bounds.clamp(p));
                     }
-                    ClientEvent::Message(ServerMsg::Start { raid, death_loss }) => {
-                        c.note_start(raid, death_loss);
+                    ClientEvent::Message(ServerMsg::Start { raid, rules }) => {
+                        c.note_start(raid, rules);
                     }
                     ClientEvent::Message(
                         ServerMsg::State { .. }
@@ -1188,7 +1193,7 @@ pub(super) enum Heard {
     /// `Ended` is kept like the lobby.
     InnPoses(Vec<(PlayerId, HeroPose)>),
     /// The host started the next run (number `raid`), possibly in the same poll as `Ended`.
-    Start(u32, nightfall_sim::DeathLoss),
+    Start(u32, HostRules),
     Lost(String),
 }
 
@@ -1223,8 +1228,8 @@ pub(super) fn client_exchange(net: &mut Net, input: PlayerInput) -> Vec<Heard> {
                 heard.push(Heard::Lobby(players, raid));
             }
             ClientEvent::Message(ServerMsg::InnPoses(poses)) => heard.push(Heard::InnPoses(poses)),
-            ClientEvent::Message(ServerMsg::Start { raid, death_loss }) => {
-                heard.push(Heard::Start(raid, death_loss));
+            ClientEvent::Message(ServerMsg::Start { raid, rules }) => {
+                heard.push(Heard::Start(raid, rules));
             }
             ClientEvent::Message(ServerMsg::Outcome(o)) => heard.push(Heard::Outcome(o)),
             ClientEvent::Message(ServerMsg::RunOver { outcomes }) => {
@@ -1258,7 +1263,7 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                     _ => None,
                 });
                 let start = after_ended(heard, |h| match h {
-                    Heard::Start(raid, loss) => Some((*raid, *loss)),
+                    Heard::Start(raid, rules) => Some((*raid, *rules)),
                     _ => None,
                 });
                 let poses = after_ended(heard, |h| match h {
@@ -1281,8 +1286,8 @@ pub(super) fn client_left_run(net: &mut Net, heard: &[Heard]) -> bool {
                         c.lobby = players;
                         c.planned = Some(raid);
                     }
-                    if let Some((raid, loss)) = start {
-                        c.note_start(raid, loss);
+                    if let Some((raid, rules)) = start {
+                        c.note_start(raid, rules);
                     }
                 }
                 return true;
@@ -1553,16 +1558,36 @@ mod tests {
         let mut net = Net::default();
         net.join("127.0.0.1:9");
         // The host ended the run and started the next in one poll (the usual way).
-        let heard = [Heard::Ended, Heard::Start(2, DeathLoss::FoundOnly)];
+        let heard = [
+            Heard::Ended,
+            Heard::Start(
+                2,
+                HostRules {
+                    death_loss: DeathLoss::FoundOnly,
+                    full_kits: true,
+                },
+            ),
+        ];
         assert!(client_left_run(&mut net, &heard));
         let Role::Client(c) = &mut net.role else {
             panic!("joined")
         };
-        assert_eq!((c.start, c.raid, c.death_loss), (true, 2, DeathLoss::FoundOnly));
+        assert_eq!((c.start, c.raid), (true, 2));
+        assert_eq!(
+            c.rules,
+            HostRules {
+                death_loss: DeathLoss::FoundOnly,
+                full_kits: true
+            }
+        );
         // A start heard in the lobby (the other way in) is noted the same way.
         c.start = false;
-        c.note_start(3, DeathLoss::Everything);
-        assert_eq!((c.start, c.raid, c.death_loss), (true, 3, DeathLoss::Everything));
+        let late = HostRules {
+            death_loss: DeathLoss::Everything,
+            full_kits: false,
+        };
+        c.note_start(3, late);
+        assert_eq!((c.start, c.raid, c.rules), (true, 3, late));
     }
 
     #[test]
@@ -1576,10 +1601,35 @@ mod tests {
             panic!("joined")
         };
         for loss in [DeathLoss::FoundOnly, DeathLoss::Everything] {
-            c.note_start(1, loss);
+            c.note_start(
+                1,
+                HostRules {
+                    death_loss: loss,
+                    full_kits: false,
+                },
+            );
             let sim = super::super::run::Sim::joined(c, 1);
             assert_eq!(sim.world.content().rules.run.death_loss, loss);
         }
+    }
+
+    #[test]
+    fn the_host_sends_the_rules_its_world_is_built_on() {
+        use nightfall_sim::{DeathLoss, Playtest, RivalKits};
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
+        assert!(!host_rules(&Playtest::default()).full_kits);
+        let set = Playtest {
+            death_loss: Some(DeathLoss::FoundOnly),
+            rival_kits: RivalKits::Full,
+            ..Default::default()
+        };
+        assert_eq!(
+            host_rules(&set),
+            HostRules {
+                death_loss: DeathLoss::FoundOnly,
+                full_kits: true
+            }
+        );
     }
 
     #[test]
