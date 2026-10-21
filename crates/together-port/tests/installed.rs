@@ -6,8 +6,10 @@ use std::path::PathBuf;
 
 use benilla_formats::{CharCreateCatalog, Chain};
 
+/// The main checkout's `WoW/Data`, or `$TOGETHER_PORT_ROOT`'s, as the tool's.
 fn data() -> Option<PathBuf> {
-    let data = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../WoW/Data");
+    let root = std::env::var_os("TOGETHER_PORT_ROOT").map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."), PathBuf::from);
+    let data = root.join("WoW/Data");
     data.join("patch-W.MPQ").exists().then_some(data)
 }
 
@@ -73,4 +75,31 @@ fn ported_skin_layers_are_at_the_1_12_sizes_the_compositor_paints() {
         let d = benilla_blp::decode(&chain.read(path).unwrap_or_else(|e| panic!("{path}: {e}"))).expect(path);
         assert_eq!((d.width, d.height), size, "{path}");
     }
+}
+/// Every ported terrain tile is on its map (the WDT marks it) and meshes through the chain.
+#[test]
+fn ported_terrain_tiles_are_on_their_maps_and_mesh() {
+    let Some(data) = data() else {
+        eprintln!("skipped: no WoW/Data/patch-W.MPQ");
+        return;
+    };
+    let archive = benilla_mpq::Archive::open(data.join("patch-W.MPQ")).expect("open the archive");
+    let list = String::from_utf8(archive.read_file("(listfile)").expect("listfile")).expect("utf-8");
+    let mut chain = Chain::open(&data).expect("open chain");
+    let mut seen = 0;
+    for name in list.lines().filter(|l| l.to_ascii_lowercase().ends_with(".adt")) {
+        let file = name.rsplit('\\').next().unwrap();
+        let mut parts = file[..file.len() - 4].rsplitn(3, '_');
+        let (y, x, map): (u32, u32, &str) =
+            (parts.next().unwrap().parse().unwrap(), parts.next().unwrap().parse().unwrap(), parts.next().unwrap());
+        let tiles = benilla_formats::MapTiles::load(&mut chain, map).unwrap_or_else(|e| panic!("{map}: {e}"));
+        const TILE: f32 = 1600.0 / 3.0;
+        let (wx, wy) = ((31.5 - y as f32) * TILE, (31.5 - x as f32) * TILE);
+        assert_eq!(tiles.tile_at(wx, wy), (x, y), "{name}");
+        assert!(tiles.existing_in_radius(wx, wy, 0).contains(&(x, y)), "{name}: the WDT does not mark it");
+        let mesh = benilla_formats::load_tile_mesh(&mut chain, map, x, y).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(mesh.chunks.len(), 256, "{name}");
+        seen += 1;
+    }
+    eprintln!("{seen} ported tiles");
 }

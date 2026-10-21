@@ -13,7 +13,12 @@
 //! model Creature\Foo\Foo                 one M2 (no extension)
 //! creature 12345                         a WotLK CreatureDisplayInfo row and what it names
 //! file Sound\Music\...\Foo.mp3           any file, copied as is
+//! tiles Azeroth 31-35 38-42              WotLK terrain tiles the 1.12 data lacks (x range, y range)
+//! zone Azeroth Dun Morogh                every tile a WotLK zone (and its subzones) covers
 //! ```
+//!
+//! `tiles` and `zone` are newer than the other kinds: a together-port built before them rejects
+//! the whole list, so they are usable on the shared list once every branch has merged them.
 
 use std::path::{Path, PathBuf};
 
@@ -28,6 +33,20 @@ pub enum Entry {
     Model(String),
     Creature(u32),
     File(String),
+    /// A map's tiles `x0..=x1` by `y0..=y1`.
+    Tiles { map: String, x: (u32, u32), y: (u32, u32) },
+    /// A map's tiles that a WotLK AreaTable zone covers, by its name.
+    Zone { map: String, name: String },
+}
+
+/// `a-b` or `a`, each 0..64.
+fn range(s: &str) -> Result<(u32, u32)> {
+    let (a, b) = s.split_once('-').unwrap_or((s, s));
+    let (a, b): (u32, u32) = (a.trim().parse()?, b.trim().parse()?);
+    if a > b || b > 63 {
+        bail!("tile range `{s}`: want a-b with a <= b <= 63");
+    }
+    Ok((a, b))
 }
 
 impl Entry {
@@ -46,7 +65,17 @@ impl Entry {
             "model" => Entry::Model(strip_m2(arg).to_owned()),
             "creature" => Entry::Creature(arg.parse()?),
             "file" => Entry::File(arg.to_owned()),
-            other => bail!("unknown kind `{other}`: race, fill, wmo, model, creature or file"),
+            "tiles" => match arg.split_whitespace().collect::<Vec<_>>()[..] {
+                [map, x, y] => Entry::Tiles { map: map.to_owned(), x: range(x)?, y: range(y)? },
+                _ => bail!("`tiles <Map> <x0-x1> <y0-y1>`"),
+            },
+            "zone" => match arg.split_once(char::is_whitespace) {
+                Some((map, name)) if !name.trim().is_empty() => {
+                    Entry::Zone { map: map.to_owned(), name: name.split_whitespace().collect::<Vec<_>>().join(" ") }
+                }
+                _ => bail!("`zone <Map> <AreaTable name>`"),
+            },
+            other => bail!("unknown kind `{other}`: race, fill, wmo, model, creature, file, tiles or zone"),
         })
     }
 
@@ -58,6 +87,8 @@ impl Entry {
             Entry::Model(p) => format!("model {p}"),
             Entry::Creature(id) => format!("creature {id}"),
             Entry::File(p) => format!("file {p}"),
+            Entry::Tiles { map, x, y } => format!("tiles {map} {}-{} {}-{}", x.0, x.1, y.0, y.1),
+            Entry::Zone { map, name } => format!("zone {map} {name}"),
         }
     }
 }
@@ -208,5 +239,13 @@ mod tests {
         assert_eq!(m.entries().unwrap(), vec![Entry::Race(10), Entry::Model("Creature\\Foo\\Foo".into())]);
         assert!(Entry::parse("race", "4").is_err());
         assert!(Entry::parse("castle", "x").is_err());
+        let t = Entry::parse("tiles", "Azeroth 31-35 40").unwrap();
+        assert_eq!(t, Entry::Tiles { map: "Azeroth".into(), x: (31, 35), y: (40, 40) });
+        assert_eq!(t.line(), "tiles Azeroth 31-35 40-40");
+        assert!(Entry::parse("tiles", "Azeroth 35-31 40").is_err());
+        assert!(Entry::parse("tiles", "Azeroth 31-64 40").is_err());
+        let z = Entry::parse("zone", "Azeroth  Dun   Morogh").unwrap();
+        assert_eq!(z.line(), "zone Azeroth Dun Morogh");
+        assert!(Entry::parse("zone", "Azeroth").is_err());
     }
 }
