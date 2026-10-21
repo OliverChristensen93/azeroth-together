@@ -37,13 +37,18 @@ always uses the main checkout's `WoW` folder; `TOGETHER_PORT_ROOT` names another
 
 Find a path with `together-port vlist WoW\Data <text>` (what 1.12 has). Pull one WotLK file out to
 look at with `together-port extract <wotlk Data> <path> <out>`. Look at WotLK or 1.12 DBC rows with
-`together-port dbc`. Paths are the client's own, backslashes, any case.
+`together-port dbc`. Show a model's particle emitters, ribbons and lights as the client reads them
+with `together-port effects <file.m2>` (a converted one from `together-port model`, a 1.12 one
+from `together-port vextract <vanilla Data> <path> <out>`). Paths are the client's own,
+backslashes, any case.
 
 A build takes a lock (`WoW\wotlk-port.lock`), so two sessions never write the archive at once.
 If a build was killed, delete the lock by hand. The archive in place is moved aside while a
 build reads the 1.12 data, so a build always starts from vanilla, and is put back if the build
 fails. Before it is written, every file is read back with `benilla-mpq`, every model with
-`benilla-m2` and every WMO with `benilla-wmo`.
+`benilla-m2` and the client's particle, ribbon and light readers, and every WMO with
+`benilla-wmo`. `build` prints how many emitters, ribbons and lights the converted models carry
+(`TOGETHER_PORT_EFFECTS=1` lists the models, as `[emitters, ribbons, lights]`).
 
 After a build, run the game as it is; data needs no rebuild of the game.
 
@@ -54,8 +59,11 @@ After a build, run the game as it is; data needs no rebuild of the game.
 - **Areas whose tiles do not exist** (Ironforge, Redridge, Outland, Northrend…). This needs WotLK's
   ADT terrain converted (its `MH2O` water to 1.12's `MCLQ`, compressed alpha maps unpacked). For
   new maps, also `Map.dbc`, `AreaTable` and `Light` rows. Not done yet.
-- **Particle emitters, ribbons and lights** on converted models are dropped: ported torches and
-  braziers have no flames yet. `build` prints how many.
+- **Particle emitters, ribbons and lights** carry over, so ported torches and braziers burn.
+  What 1.12's emitter has no slot for is left out: WotLK's lifespan, rate and size variations,
+  the random starting spin, and the `ParticleColor.dbc` tint index (creatures' tinted spell
+  effects). An over-life curve 1.12's three keys cannot hold is sampled at them; `build` says
+  how many emitters lost a tint or had a curve sampled (none in `fill Azeroth`).
 - **NPC humanoids** (a `CreatureDisplayInfoExtra` row: dressed NPC bodies) are not ported;
   creatures with their own model are.
 
@@ -67,7 +75,12 @@ After a build, run the game as it is; data needs no rebuild of the game.
   - compressed quaternions are expanded;
   - 1.12's PlayableAnimationLookup is rebuilt from HumanMale's;
   - the Death Knight eye glow (1703) and belt geosets (18xx) are hidden;
-  - lights, ribbons and particles are dropped.
+  - lights and ribbons convert record by record, their tracks as the rest;
+  - particle emitters (476 to 504 bytes) convert their eleven tracks the same way. WotLK's
+    over-life curves (`M2PartTrack`: colour, alpha, size, head and tail cells over a particle's
+    life) become 1.12's midpoint and three fixed keys, which is how WotLK authors them: three
+    keys, or a cell ramp as four keys jumping at the midpoint. WotLK-only flag bits (0x10000 up)
+    are cleared, and models an emitter spawns are ported too.
 - **DBC** rows are remapped column by column (`port.rs`). A WotLK id 1.12 already uses for
   something else gets a fresh id.
 - **Textures** are copied as is (both are BLP2), except character skin layers, which are halved

@@ -3,9 +3,10 @@
 //! profiles embedded, one key array per track on a shared timeline that each sequence owns a
 //! window of, `ranges` bracketing each sequence's keys).
 //!
-//! What 1.12 has no use for on a character is dropped: lights, ribbons, particle emitters and the
-//! texture-combiner combos. 1.12's PlayableAnimationLookup, which WotLK dropped, is rebuilt from a
-//! 1.12 model's own table (see [`playable_lookup`]).
+//! Lights, ribbons and particle emitters carry over (see [`convert_particles`] for the
+//! over-life curves 1.12 holds as three fixed keys); the texture-combiner combos, which 1.12 has
+//! no slot for, are dropped. 1.12's PlayableAnimationLookup, which WotLK dropped, is rebuilt from
+//! a 1.12 model's own table (see [`playable_lookup`]).
 
 use std::collections::HashMap;
 
@@ -289,14 +290,17 @@ impl<'a> Writer<'a> {
     }
 
     /// Convert an array of records with tracks from source header slot `src_at` to destination
-    /// slot `dst_at`: each `(src, dst, len)` of `fixed` copied, then each track converted.
+    /// slot `dst_at`: each `(src, dst, len)` of `fixed` copied, each `(src, dst, element size)`
+    /// of `arrays` copied out and re-pointed, then each track converted. Returns where the
+    /// records start.
     fn records(
         &mut self,
         (src_at, src_size): (usize, usize),
         (dst_at, dst_size): (usize, usize),
         fixed: &[(usize, usize, usize)],
+        arrays: &[(usize, usize, usize)],
         tracks: &[Track],
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let m2 = self.src.m2;
         let (n, o) = arr(m2, src_at)?;
         let base = self.reserve(n * dst_size);
@@ -307,11 +311,17 @@ impl<'a> Writer<'a> {
                 let b = bytes(m2, s + so, len)?.to_vec();
                 self.put(d + dofs, &b);
             }
+            for &(so, dofs, size) in arrays {
+                let (an, ao) = arr(m2, s + so)?;
+                let data = bytes(m2, ao, an * size)?.to_vec();
+                let at = self.push(&data);
+                self.put_arr(d + dofs, an, at);
+            }
             for t in tracks {
                 self.track(s + t.src, d + t.dst, t.value, t.default)?;
             }
         }
-        Ok(())
+        Ok(base)
     }
 }
 
@@ -364,11 +374,6 @@ pub fn anim_files(m2: &[u8]) -> Result<Vec<(u16, u16)>> {
 /// How many `.skin` files the model has.
 pub fn skin_count(m2: &[u8]) -> Result<usize> {
     Ok(u32_at(m2, 0x44)? as usize)
-}
-
-/// What [`convert`] leaves out of a model: `(lights, ribbons, particle emitters)`.
-pub fn dropped(m2: &[u8]) -> Result<(usize, usize, usize)> {
-    Ok((arr(m2, 0x108)?.0, arr(m2, 0x120)?.0, arr(m2, 0x128)?.0))
 }
 
 /// Read the v264 sequences and lay their windows out on one timeline; an alias takes its
@@ -470,6 +475,7 @@ pub fn convert(src: &Wotlk, template: &[Playable]) -> Result<Vec<u8>> {
         (0x2c, 88),
         (0x34, 108),
         &[(0, 0, 12), (76, 96, 12)],
+        &[],
         &[
             Track { src: 16, dst: 12, value: Value::Same(12), default: Some(&zero3) },
             Track { src: 36, dst: 40, value: Value::CompressedQuat, default: Some(&ident_rot) },
@@ -514,6 +520,7 @@ pub fn convert(src: &Wotlk, template: &[Playable]) -> Result<Vec<u8>> {
         (0x48, 40),
         (0x54, 56),
         &[],
+        &[],
         &[
             Track { src: 0, dst: 0, value: Value::Same(12), default: Some(&one3) },
             Track { src: 20, dst: 28, value: Value::Same(2), default: Some(&opaque) },
@@ -539,11 +546,13 @@ pub fn convert(src: &Wotlk, template: &[Playable]) -> Result<Vec<u8>> {
         (0x58, 20),
         (0x64, 28),
         &[],
+        &[],
         &[Track { src: 0, dst: 0, value: Value::Same(2), default: Some(&opaque) }],
     )?;
     w.records(
         (0x60, 60),
         (0x74, 84),
+        &[],
         &[],
         &[
             Track { src: 0, dst: 0, value: Value::Same(12), default: Some(&zero3) },
@@ -569,6 +578,7 @@ pub fn convert(src: &Wotlk, template: &[Playable]) -> Result<Vec<u8>> {
         (0xf0, 40),
         (0x104, 48),
         &[(0, 0, 20)],
+        &[],
         &[Track { src: 20, dst: 20, value: Value::Same(1), default: Some(&on) }],
     )?;
     w.copy_array(0xf8, 0x10c, 2)?; // attachment lookup
@@ -576,13 +586,31 @@ pub fn convert(src: &Wotlk, template: &[Playable]) -> Result<Vec<u8>> {
         (0x100, 36),
         (0x114, 44),
         &[(0, 0, 24)],
+        &[],
         &[Track { src: 24, dst: 24, value: Value::None, default: None }],
     )?;
-    // 0x11c lights: none. Cameras, 100 to 124 (spline keys are the same in both).
+    // Lights, 156 to 212: type and bone, position, then seven tracks.
+    w.records(
+        (0x108, 0x9c),
+        (0x11c, 0xd4),
+        &[(0, 0, 0x10)],
+        &[],
+        &[
+            Track { src: 0x10, dst: 0x10, value: Value::Same(12), default: None }, // ambient colour
+            Track { src: 0x24, dst: 0x2c, value: Value::Same(4), default: None },  // ambient intensity
+            Track { src: 0x38, dst: 0x48, value: Value::Same(12), default: None }, // diffuse colour
+            Track { src: 0x4c, dst: 0x64, value: Value::Same(4), default: None },  // diffuse intensity
+            Track { src: 0x60, dst: 0x80, value: Value::Same(4), default: None },  // attenuation start
+            Track { src: 0x74, dst: 0x9c, value: Value::Same(4), default: None },  // attenuation end
+            Track { src: 0x88, dst: 0xb8, value: Value::Same(1), default: Some(&on) }, // visibility
+        ],
+    )?;
+    // Cameras, 100 to 124 (spline keys are the same in both).
     w.records(
         (0x110, 100),
         (0x124, 124),
         &[(0, 0, 16), (36, 44, 12), (68, 84, 12)],
+        &[],
         &[
             Track { src: 16, dst: 16, value: Value::Same(36), default: None },
             Track { src: 48, dst: 56, value: Value::Same(36), default: None },
@@ -590,9 +618,253 @@ pub fn convert(src: &Wotlk, template: &[Playable]) -> Result<Vec<u8>> {
         ],
     )?;
     w.copy_array(0x118, 0x12c, 2)?; // camera lookup
-    // 0x134 ribbons, 0x13c particles: none.
+    // Ribbons, 176 to 220: WotLK's priority plane (the last 4 bytes) has no 1.12 slot.
+    w.records(
+        (0x120, 0xb0),
+        (0x134, 0xdc),
+        &[(0, 0, 0x14), (0x74, 0x94, 0x10)], // id, bone, position; edge rate .. tile counts
+        &[(0x14, 0x14, 2), (0x1c, 0x1c, 2)], // textures, materials
+        &[
+            Track { src: 0x24, dst: 0x24, value: Value::Same(12), default: Some(&one3) }, // colour
+            Track { src: 0x38, dst: 0x40, value: Value::Same(2), default: Some(&opaque) }, // alpha
+            Track { src: 0x4c, dst: 0x5c, value: Value::Same(4), default: None }, // height above
+            Track { src: 0x60, dst: 0x78, value: Value::Same(4), default: None }, // height below
+            Track { src: 0x84, dst: 0xa4, value: Value::Same(2), default: None }, // texture slot
+            Track { src: 0x98, dst: 0xc0, value: Value::Same(1), default: Some(&on) }, // visibility
+        ],
+    )?;
+    convert_particles(&mut w, &on)?;
     Ok(w.out)
 }
+/// The v264 particle emitter's size.
+const V264_PARTICLE: usize = 0x1dc;
+/// The v256 particle emitter's size.
+const V256_PARTICLE: usize = 0x1f8;
+
+/// One key of an over-life curve: its time as a fraction of the particle's life, and up to
+/// three components.
+type LifeKey = (f32, [f32; 3]);
+
+/// A WotLK `M2PartTrack` at `at` (timestamps as fixed16 fractions of the particle's life, 32768
+/// the whole of it, then `size`-byte values `decode` reads).
+fn life_keys(m2: &[u8], at: usize, size: usize, decode: impl Fn(&[u8]) -> [f32; 3]) -> Result<Vec<LifeKey>> {
+    let (tn, to) = arr(m2, at)?;
+    let (vn, vo) = arr(m2, at + 8)?;
+    (0..tn.min(vn))
+        .map(|k| {
+            let t = f32::from(u16_at(m2, to + k * 2)?) / 32768.0;
+            Ok((t, decode(bytes(m2, vo + k * size, size)?)))
+        })
+        .collect()
+}
+
+/// An over-life curve's value just after life fraction `t`: where two keys share the time `t`
+/// (a jump), the later one's value; otherwise [`life_at`].
+fn life_after(keys: &[LifeKey], t: f32, default: [f32; 3]) -> [f32; 3] {
+    keys.iter().rev().find(|k| k.0 == t).map_or_else(|| life_at(keys, t, default), |k| k.1)
+}
+
+/// Whether 1.12's start, midpoint and end keys express a curve exactly: up to three keys, or
+/// four whose middle two share a time (a jump at the midpoint, as WotLK writes 1.12's two cell
+/// ramps).
+fn life_fits(keys: &[LifeKey]) -> bool {
+    keys.len() <= 3 || (keys.len() == 4 && keys[1].0 == keys[2].0)
+}
+
+/// The midpoint a curve authors: its middle key, or the time of its jump.
+fn life_mid(keys: &[LifeKey]) -> Option<f32> {
+    (keys.len() == 3 || (keys.len() == 4 && life_fits(keys))).then(|| keys[1].0)
+}
+
+/// An over-life curve's value at life fraction `t`, linear between keys (at a jump, the earlier
+/// key's value); `default` without keys.
+fn life_at(keys: &[LifeKey], t: f32, default: [f32; 3]) -> [f32; 3] {
+    let (Some(first), Some(last)) = (keys.first(), keys.last()) else {
+        return default;
+    };
+    if t <= first.0 {
+        return first.1;
+    }
+    if t >= last.0 {
+        return last.1;
+    }
+    let i = keys.iter().position(|k| k.0 >= t).unwrap_or(keys.len() - 1);
+    let ((t0, a), (t1, b)) = (keys[i - 1], keys[i]);
+    let f = if t1 > t0 { (t - t0) / (t1 - t0) } else { 0.0 };
+    std::array::from_fn(|c| a[c] + (b[c] - a[c]) * f)
+}
+
+/// The over-life curves of one WotLK emitter: colour (RGB, 0..255), alpha (0..1), size (x, y),
+/// head cell and tail cell.
+struct LifeCurves {
+    colour: Vec<LifeKey>,
+    alpha: Vec<LifeKey>,
+    scale: Vec<LifeKey>,
+    head: Vec<LifeKey>,
+    tail: Vec<LifeKey>,
+}
+
+impl LifeCurves {
+    /// Read the five `M2PartTrack`s of the v264 emitter at `e`.
+    fn read(m2: &[u8], e: usize) -> Result<Self> {
+        let f = |b: &[u8], i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        let fixed16 = |b: &[u8]| f32::from(i16::from_le_bytes([b[0], b[1]])) / 32767.0;
+        let cell = |b: &[u8]| [f32::from(u16::from_le_bytes([b[0], b[1]])), 0.0, 0.0];
+        Ok(LifeCurves {
+            colour: life_keys(m2, e + 0x104, 12, |b| [f(b, 0), f(b, 4), f(b, 8)])?,
+            alpha: life_keys(m2, e + 0x114, 2, |b| [fixed16(b), 0.0, 0.0])?,
+            scale: life_keys(m2, e + 0x124, 8, |b| [f(b, 0), f(b, 4), 0.0])?,
+            head: life_keys(m2, e + 0x13c, 2, cell)?,
+            tail: life_keys(m2, e + 0x14c, 2, cell)?,
+        })
+    }
+
+    fn all(&self) -> [&[LifeKey]; 5] {
+        [&self.colour, &self.alpha, &self.scale, &self.head, &self.tail]
+    }
+
+    /// 1.12's over-life block (emitter +0x14c..+0x17c): a midpoint, three colours (packed
+    /// BGRA, alpha in the top byte), three sizes and the head and tail cell ramps either side of
+    /// the midpoint. WotLK authors its curves as 1.12's keys (start, middle, end; a cell ramp
+    /// as four keys jumping at the middle); the midpoint is the first such curve's (else half
+    /// the life), and a curve that does not fit ([`life_fits`]) is sampled at those points.
+    fn v256(&self) -> [u8; 0x30] {
+        let mid = self.all().into_iter().find_map(life_mid).unwrap_or(0.5).clamp(0.01, 0.99);
+        let mut out = [0u8; 0x30];
+        out[0..4].copy_from_slice(&mid.to_le_bytes());
+        let byte = |v: f32| v.round().clamp(0.0, 255.0) as u32;
+        for (k, t) in [0.0, mid, 1.0].into_iter().enumerate() {
+            let rgb = life_at(&self.colour, t, [255.0; 3]);
+            let a = life_at(&self.alpha, t, [1.0; 3])[0];
+            let packed = (byte(a * 255.0) << 24) | (byte(rgb[0]) << 16) | (byte(rgb[1]) << 8) | byte(rgb[2]);
+            out[4 + k * 4..8 + k * 4].copy_from_slice(&packed.to_le_bytes());
+            let size = life_at(&self.scale, t, [1.0; 3])[0];
+            out[0x10 + k * 4..0x14 + k * 4].copy_from_slice(&size.to_le_bytes());
+        }
+        let cell = |v: [f32; 3]| v[0].round().clamp(0.0, 65535.0) as u16;
+        let ramps = |keys: &[LifeKey]| {
+            let at = |t| cell(life_at(keys, t, [0.0; 3]));
+            [at(0.0), at(mid), cell(life_after(keys, mid, [0.0; 3])), at(1.0)]
+        };
+        let ([h0, h1, h2, h3], [t0, t1, t2, t3]) = (ramps(&self.head), ramps(&self.tail));
+        // Head: A from, A to, A repeat, B from, B to, B repeat; tail: A from, A to, B from, B to.
+        let words = [h0, h1, 1, h2, h3, 1, t0, t1, t2, t3];
+        for (i, w) in words.iter().enumerate() {
+            out[0x1c + i * 2..0x1e + i * 2].copy_from_slice(&w.to_le_bytes());
+        }
+        out
+    }
+}
+
+/// Particle emitters, 476 to 504 bytes. The ten emission tracks and the on/off track convert
+/// like any track, the over-life curves become 1.12's fixed keys ([`LifeCurves::v256`]), the
+/// scalars after them move up. What 1.12 has no slot for is left out: the ParticleColor.dbc
+/// tint index (creatures' tinted spell effects), the lifespan, rate and size variations, and
+/// the random starting spin (the spin rate carries).
+fn convert_particles(w: &mut Writer, on: &[u8]) -> Result<()> {
+    let m2 = w.src.m2;
+    let f32_track = |src: usize, dst: usize| Track { src, dst, value: Value::Same(4), default: None };
+    let base = w.records(
+        (0x128, V264_PARTICLE),
+        (0x13c, V256_PARTICLE),
+        &[
+            (0, 0, 0x18),       // id, flags, position, bone, texture
+            (0x2c, 0x2c, 8),    // particle type, head or tail, tile rotation, rows, columns
+            (0x15c, 0x17c, 4),  // tail length
+            (0x160, 0x180, 24), // twinkle speed, percent, scale range; burst multiplier; drag
+            (0x180, 0x198, 4),  // spin
+            (0x188, 0x19c, 56), // tumble box, wind vector and time, follow speeds and scales
+        ],
+        &[(0x18, 0x18, 1), (0x20, 0x20, 1), (0x1c0, 0x1d4, 12)], // geometry, recursion, spline
+        &[
+            f32_track(0x34, 0x34),  // speed
+            f32_track(0x48, 0x50),  // speed variation
+            f32_track(0x5c, 0x6c),  // vertical range
+            f32_track(0x70, 0x88),  // horizontal range
+            f32_track(0x84, 0xa4),  // gravity
+            f32_track(0x98, 0xc0),  // lifespan
+            f32_track(0xb0, 0xdc),  // emission rate
+            f32_track(0xc8, 0xf8),  // area length
+            f32_track(0xdc, 0x114), // area width
+            f32_track(0xf0, 0x130), // z source
+            Track { src: 0x1c8, dst: 0x1dc, value: Value::Same(1), default: Some(on) }, // enabled
+        ],
+    )?;
+    let (n, o) = arr(m2, 0x128)?;
+    for i in 0..n {
+        let (e, d) = (o + i * V264_PARTICLE, base + i * V256_PARTICLE);
+        // The flags 1.12 knows (WotLK's from 0x10000 up mean nothing to it); blend and emitter
+        // type, a byte each in WotLK, a u16 each in 1.12.
+        w.put_u32(d + 4, u32_at(m2, e + 4)? & 0xffff);
+        let head = bytes(m2, e + 0x28, 2)?.to_vec();
+        w.put(d + 0x28, &u16::from(head[0]).to_le_bytes());
+        w.put(d + 0x2a, &u16::from(head[1]).to_le_bytes());
+        let block = LifeCurves::read(m2, e)?.v256();
+        w.put(d + 0x14c, &block);
+    }
+    Ok(())
+}
+
+/// The models a v256 model's particle emitters spawn (geometry and recursion models), as named.
+pub fn emitter_models(v256: &[u8]) -> Result<Vec<String>> {
+    let (n, o) = arr(v256, 0x13c)?;
+    let mut out = Vec::new();
+    for i in 0..n {
+        for slot in [0x18, 0x20] {
+            let (len, at) = arr(v256, o + i * V256_PARTICLE + slot)?;
+            let raw = bytes(v256, at, len)?;
+            let end = raw.iter().position(|&c| c == 0).unwrap_or(raw.len());
+            let name = String::from_utf8_lossy(&raw[..end]).into_owned();
+            if !name.is_empty() && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What [`convert`] carries only in part, counted over a v264 model's emitters: those tinted
+/// from ParticleColor.dbc, and those with an over-life curve of more than three keys (resampled
+/// to three).
+pub fn approximated(m2: &[u8]) -> Result<(usize, usize)> {
+    let (n, o) = arr(m2, 0x128)?;
+    let (mut tinted, mut resampled) = (0, 0);
+    for i in 0..n {
+        let e = o + i * V264_PARTICLE;
+        if u16_at(m2, e + 0x2a)? != 0 {
+            tinted += 1;
+        }
+        if !LifeCurves::read(m2, e)?.all().into_iter().all(life_fits) {
+            resampled += 1;
+        }
+    }
+    Ok((tinted, resampled))
+}
+
+/// Read a v256 model's particle emitters, ribbons and lights back with the client's own readers:
+/// every record the header counts must come back, each emitter with a texture or a model to
+/// draw and sane over-life keys.
+pub fn check_effects(v256: &[u8]) -> Result<()> {
+    let count = |at: usize| -> Result<usize> { Ok(u32_at(v256, at)? as usize) };
+    let emitters = benilla_formats::parse_m2_particle_emitters(v256)?;
+    ensure!(emitters.len() == count(0x13c)?, "{} of {} particle emitters read back", emitters.len(), count(0x13c)?);
+    for (i, e) in emitters.iter().enumerate() {
+        ensure!(
+            e.texture.is_some() || e.geometry_model.is_some(),
+            "particle emitter {i}: no texture and no model"
+        );
+        let life = &e.over_life;
+        ensure!(life.mid > 0.0 && life.mid < 1.0, "particle emitter {i}: midpoint {}", life.mid);
+        ensure!(life.scale.iter().all(|s| s.is_finite()), "particle emitter {i}: sizes {:?}", life.scale);
+        ensure!(e.params.peak_lifespan().is_finite(), "particle emitter {i}: lifespan");
+    }
+    let ribbons = benilla_formats::parse_m2_ribbon_emitters(v256)?;
+    ensure!(ribbons.len() == count(0x134)?, "{} of {} ribbons read back", ribbons.len(), count(0x134)?);
+    let lights = benilla_formats::parse_m2_lights(v256);
+    ensure!(lights.len() == count(0x11c)?, "{} of {} lights read back", lights.len(), count(0x11c)?);
+    Ok(())
+}
+
 /// The file names of a v256 model's hard-coded (type 0) textures.
 pub fn hardcoded_textures(v256: &[u8]) -> Result<Vec<String>> {
     let (n, o) = arr(v256, 0x5c)?;
@@ -654,6 +926,51 @@ mod tests {
         assert_eq!(got[1], Playable { resolved: 1, flags: 0 }, "the model's own clip");
         assert_eq!(got[2], Playable { resolved: 1, flags: 0 }, "the template's answer, which the model has");
         assert_eq!(got[3], Playable { resolved: 0, flags: 0 }, "the template's answer is missing: Stand");
+    }
+
+    fn key(t: f32, v: f32) -> LifeKey {
+        (t, [v, 0.0, 0.0])
+    }
+
+    #[test]
+    fn a_doubled_middle_key_splits_the_cell_ramps_there() {
+        // WotLK writes 1.12's head ramps 0..7 then 8..16 as four keys jumping at the middle.
+        let head = [key(0.0, 0.0), key(0.5, 7.0), key(0.5, 8.0), key(1.0, 16.0)];
+        assert!(life_fits(&head));
+        let c = LifeCurves { colour: vec![], alpha: vec![], scale: vec![], head: head.to_vec(), tail: vec![] };
+        let b = c.v256();
+        let word = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
+        assert_eq!(f32::from_le_bytes(b[0..4].try_into().unwrap()), 0.5);
+        assert_eq!([word(0x1c), word(0x1e), word(0x20)], [0, 7, 1], "head A and its repeat");
+        assert_eq!([word(0x22), word(0x24), word(0x26)], [8, 16, 1], "head B and its repeat");
+        assert_eq!([word(0x28), word(0x2a), word(0x2c), word(0x2e)], [0; 4], "no tail cells");
+    }
+
+    #[test]
+    fn colour_alpha_and_size_curves_become_three_packed_keys() {
+        let c = LifeCurves {
+            colour: vec![(0.0, [255.0, 72.0, 0.0]), (0.25, [0.0, 0.0, 0.0]), (1.0, [255.0, 247.0, 221.0])],
+            alpha: vec![key(0.0, 1.0), key(1.0, 0.0)],
+            scale: vec![key(0.0, 2.0)],
+            head: vec![],
+            tail: vec![],
+        };
+        let b = c.v256();
+        let u = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        let f = |o: usize| f32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        assert_eq!(f(0), 0.25, "the three-key colour curve sets the midpoint");
+        assert_eq!(u(4), 0xffff_4800, "opaque orange: ARGB from the top byte down");
+        assert_eq!(u(8), 0xbf00_0000, "black at the midpoint, alpha 0.75 by then");
+        assert_eq!(u(12), 0x00ff_f7dd);
+        assert_eq!([f(0x10), f(0x14), f(0x18)], [2.0; 3], "one size key holds all life");
+    }
+
+    #[test]
+    fn a_curve_with_inner_keys_does_not_fit_and_is_sampled() {
+        let five = [key(0.0, 0.0), key(0.2, 1.0), key(0.5, 2.0), key(0.8, 3.0), key(1.0, 4.0)];
+        assert!(!life_fits(&five));
+        assert_eq!(life_at(&five, 0.35, [9.0; 3])[0], 1.5);
+        assert_eq!(life_at(&[], 0.35, [9.0; 3])[0], 9.0);
     }
 
     #[test]

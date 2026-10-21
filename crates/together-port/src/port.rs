@@ -41,8 +41,9 @@ pub struct Port<'a> {
     template: Vec<m2::Playable>,
     /// Files the WotLK archives lacked.
     pub missing: Vec<String>,
-    /// Lights, ribbons and particle emitters left out of the converted models.
-    pub dropped: (usize, usize, usize),
+    /// Particle emitters the converted models carry only in part: `(tinted, resampled)`, see
+    /// [`m2::approximated`].
+    pub approximated: (usize, usize),
     /// What a session needs to know about the ids it got (`creature` entries).
     pub ids: Vec<String>,
 }
@@ -83,7 +84,7 @@ impl<'a> Port<'a> {
             sounds: HashMap::new(),
             template,
             missing: Vec::new(),
-            dropped: (0, 0, 0),
+            approximated: (0, 0),
             ids: Vec::new(),
         })
     }
@@ -236,8 +237,8 @@ impl<'a> Port<'a> {
                 anims.insert((id, var), a);
             }
         }
-        let (l, r, p) = m2::dropped(&bytes)?;
-        self.dropped = (self.dropped.0 + l, self.dropped.1 + r, self.dropped.2 + p);
+        let (tinted, resampled) = m2::approximated(&bytes)?;
+        self.approximated = (self.approximated.0 + tinted, self.approximated.1 + resampled);
         let mut out = m2::convert(&m2::Wotlk { m2: &bytes, skins, anims }, &self.template)
             .with_context(|| format!("convert {stem}"))?;
         for name in m2::hardcoded_textures(&out)? {
@@ -250,7 +251,15 @@ impl<'a> Port<'a> {
                 out[at..at + 4].copy_from_slice(&v.to_le_bytes());
             }
         }
+        let spawned = m2::emitter_models(&out)?;
         self.out.add(&path, out);
+        // The models its particle emitters spawn, where 1.12 lacks them.
+        for name in spawned {
+            let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
+            if !self.vanilla.contains(&format!("{stem}.m2")) && !self.model(stem)? {
+                self.missing.push(name.clone());
+            }
+        }
         Ok(true)
     }
 
