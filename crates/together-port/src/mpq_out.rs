@@ -36,6 +36,11 @@ impl MpqOut {
         self.files.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name))
     }
 
+    pub fn get(&self, name: &str) -> Option<&[u8]> {
+        let name = name.replace('/', "\\");
+        self.files.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)).map(|(_, d)| d.as_slice())
+    }
+
     pub fn len(&self) -> usize {
         self.files.len()
     }

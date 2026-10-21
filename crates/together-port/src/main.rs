@@ -8,6 +8,7 @@
 //! together-port list               show the wish list
 //! ```
 
+mod adt;
 mod blp;
 mod dbc;
 mod m2;
@@ -26,9 +27,9 @@ use manifest::{Entry, Manifest, Paths};
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  together-port add <race|fill|wmo|model|creature|file|wotlk> <arg>\n  together-port build\n  together-port list\n\
+        "usage:\n  together-port add <race|fill|wmo|model|creature|file|tiles|zone|wotlk> <arg>\n  together-port build\n  together-port list\n\
          dev:\n  together-port model <wotlk Data> <vanilla Data> <model without .m2> <out.m2>\n  together-port dbc <wotlk Data> <vanilla Data> <wotlk|vanilla> <Name> <column> <value>\n  \
-         together-port extract <wotlk Data> <path> <out>\n  together-port sizes <wotlk Data> <race>\n  together-port vlist <vanilla Data> <substring>"
+         together-port extract <wotlk Data> <path> <out>\n  together-port sizes <wotlk Data> <race>\n  together-port vlist <vanilla Data> <substring>\n  together-port spot <Map> <x> <y>   what the game data has at WoW (x, y): for a zone's centre"
     );
     std::process::exit(2);
 }
@@ -122,6 +123,10 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some("spot") if args.len() == 4 => {
+            let mut chain = benilla_formats::Chain::open(&Paths::find()?.vanilla())?;
+            spot(&mut chain, &args[1], args[2].parse()?, args[3].parse()?)
+        }
         Some("vlist") if args.len() == 3 => {
             let chain = benilla_formats::Chain::open(&PathBuf::from(&args[1]))?;
             let want = args[2].to_ascii_lowercase();
@@ -132,6 +137,38 @@ fn main() -> Result<()> {
         }
         _ => usage(),
     }
+}
+
+/// What the game's data (1.12 and the installed port) has at WoW `(x, y)` on `map`: the tile,
+/// whether it is in the data, the area, the ground height and any water there. For picking a
+/// zone's centre (docs/ADDING-ZONES.md).
+fn spot(chain: &mut benilla_formats::Chain, map: &str, x: f32, y: f32) -> Result<()> {
+    let (tx, ty) = benilla_wdt::world_to_tile(x, y);
+    println!("tile {map}_{tx}_{ty}");
+    let Ok(mesh) = benilla_formats::load_tile_mesh(chain, map, tx, ty) else {
+        println!("  not in the game data: port its terrain with `together-port add zone` or `tiles`");
+        return Ok(());
+    };
+    let wow = [x, y, 0.0];
+    let areas = dbc::Dbc::parse(&chain.read("DBFilesClient\\AreaTable.dbc")?)?;
+    if let Some(id) = benilla_formats::area_id_at(&mesh.chunks, wow) {
+        let name = areas.find(id).map_or("", |r| areas.s(r, 11));
+        println!("  area {id} {name}");
+    }
+    match benilla_formats::terrain_height_at(&mesh.chunks, wow) {
+        Some(z) => println!("  ground z {z:.1}: a zone centred here wants z about {:.0}", z + 2.0),
+        None => println!("  no ground here (a hole in the terrain: a cave mouth or a building's floor)"),
+    }
+    // The chunk's north-west corner is its first vertex; a chunk is 100/3 yd a side.
+    let chunk = mesh.chunks.iter().find(|c| {
+        c.positions.first().is_some_and(|nw| x <= nw[0] && x > nw[0] - 100.0 / 3.0 && y <= nw[1] && y > nw[1] - 100.0 / 3.0)
+    });
+    for l in chunk.map_or(&[][..], |c| &c.liquids[..]) {
+        let top = l.positions.iter().map(|p| p[2]).fold(f32::MIN, f32::max);
+        println!("  {:?} in this chunk, surface at z {top:.1}", l.kind);
+    }
+    println!("  {} doodads and {} buildings on the tile", mesh.doodads.len(), mesh.wmos.len());
+    Ok(())
 }
 
 /// Holds `WoW\wotlk-port.lock` while a build runs, so two sessions never write the archive at
@@ -184,6 +221,8 @@ fn build(paths: &Paths) -> Result<()> {
                 Entry::Model(stem) => p.model_entry(stem),
                 Entry::Creature(id) => p.creature(*id),
                 Entry::File(path) => p.file_entry(path),
+                Entry::Tiles { map, x, y } => p.tiles(map, *x, *y),
+                Entry::Zone { map, name } => p.zone(map, name),
             };
             done.with_context(|| format!("`{}`", e.line()))?;
         }
@@ -230,7 +269,7 @@ fn build(paths: &Paths) -> Result<()> {
 }
 
 /// Read every file of a written archive back with the client's own MPQ reader, every model with
-/// its M2 reader and every WMO with its WMO reader.
+/// its M2 reader, every WMO with its WMO reader and every terrain tile with its ADT reader.
 fn verify(path: &Path) -> Result<()> {
     let a = benilla_mpq::Archive::open(path).context("benilla-mpq rejects the archive")?;
     let list = String::from_utf8(a.read_file("(listfile)")?)?;
@@ -239,6 +278,10 @@ fn verify(path: &Path) -> Result<()> {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".m2") {
             check_model(&bytes).with_context(|| name.to_owned())?;
+        } else if lower.ends_with(".adt") {
+            adt::check(&bytes).with_context(|| format!("benilla-adt rejects {name}"))?;
+        } else if lower.ends_with(".wdt") {
+            anyhow::ensure!(!adt::wdt_tiles(&bytes).is_empty(), "{name} marks no tiles");
         } else if lower.ends_with(".wmo") {
             benilla_wmo::parse_wmo(&mut Cursor::new(bytes.as_slice()))
                 .map_err(|e| anyhow::anyhow!("{e:?}"))

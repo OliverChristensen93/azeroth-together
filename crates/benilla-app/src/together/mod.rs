@@ -21,6 +21,7 @@ mod cooldowns;
 mod dev;
 mod dress;
 mod flair;
+mod floor;
 mod gear_look;
 mod gear_menu;
 mod gear_run;
@@ -358,6 +359,7 @@ impl Plugin for TogetherPlugin {
             .init_resource::<gear_menu::GearScreen>()
             .init_resource::<LocalInput>()
             .init_resource::<view::Views>()
+            .init_resource::<floor::HeroLevel>()
             .add_systems(
                 Startup,
                 (
@@ -760,7 +762,7 @@ fn defend(
     mut player: ResMut<crate::player::Player>,
     mut input: ResMut<LocalInput>,
     mut bodies: Query<&mut Transform>,
-    world_point: benilla_world::world_point::WorldPoint,
+    floor: floor::Floor,
     mut asked_until: Local<f32>,
 ) {
     let Some(hero) = sim.world.hero(sim.me) else {
@@ -794,10 +796,7 @@ fn defend(
     };
     let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
     let to = bevy_to_ground(tf.translation) + V2::new(yaw.cos(), yaw.sin()) * leap;
-    let mut at = units::ground_to_bevy(to, tf.translation.y);
-    if let Some(h) = world_point.terrain_height_under(at) {
-        at.y = h;
-    }
+    let at = floor.under(to, Some(tf.translation.y), tf.translation.y);
     tf.translation = at;
     player.pos = at;
 }
@@ -850,7 +849,8 @@ fn autowalk(world: &World, me: PlayerId, from: V2, dt: f32) -> Option<V2> {
 #[allow(clippy::too_many_arguments)]
 fn feed_pose(
     time: Res<Time>,
-    world_point: benilla_world::world_point::WorldPoint,
+    collision: benilla_world::collision::WorldCollision,
+    mut level: ResMut<floor::HeroLevel>,
     views: Res<view::Views>,
     sim: Res<Sim>,
     mut player: ResMut<crate::player::Player>,
@@ -868,6 +868,7 @@ fn feed_pose(
             player.pos = units::wow_to_bevy(sim.world.zone().center);
         }
         input.pose = None;
+        level.0 = None;
         return;
     };
     let at = bevy_to_ground(tf.translation);
@@ -883,14 +884,14 @@ fn feed_pose(
         pos = center + off.normalize_or_zero() * leash;
     }
     if pos != at {
-        let mut back = units::ground_to_bevy(pos, tf.translation.y);
-        // Onto the ground there, so a hero put up a slope does not end up inside it.
-        if let Some(h) = world_point.terrain_height_under(back) {
-            back.y = back.y.max(h);
-        }
+        // Onto the floor there, cast from the hero's own height: up a slope it does not end up
+        // inside, and inside a building it stays on its floor, not the terrain over the roof.
+        let y = floor::near(&collision, pos, tf.translation.y).unwrap_or(tf.translation.y);
+        let back = units::ground_to_bevy(pos, y);
         tf.translation = back;
         player.pos = back;
     }
+    level.0 = Some(tf.translation.y);
     let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
     input.pose = Some(HeroPose {
         pos,
