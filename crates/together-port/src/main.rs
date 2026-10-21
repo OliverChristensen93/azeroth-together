@@ -161,6 +161,50 @@ fn main() -> Result<()> {
             let mut chain = benilla_formats::Chain::open(&Paths::find()?.vanilla())?;
             spot(&mut chain, &args[1], args[2].parse()?, args[3].parse()?)
         }
+        // `loadcheck <archive> [filter]`: every model in an archive through the parse calls the
+        // engine's M2 loader makes, each caught if it panics and timed, to find one that would
+        // leave its load (and the loading screen) hanging without an error.
+        Some("loadcheck") if args.len() >= 2 => {
+            let a = benilla_mpq::Archive::open(&args[1])?;
+            let list = String::from_utf8(a.read_file("(listfile)")?)?;
+            let want = args.get(2).map(|f| f.to_ascii_lowercase());
+            let (mut n, mut bad) = (0, 0);
+            for name in list.lines().filter(|l| l.to_ascii_lowercase().ends_with(".m2")) {
+                if want.as_ref().is_some_and(|w| !name.to_ascii_lowercase().contains(w.as_str())) {
+                    continue;
+                }
+                let bytes = a.read_file(name)?;
+                let start = std::time::Instant::now();
+                let r = std::panic::catch_unwind(|| {
+                    let subs = benilla_formats::parse_m2_render_submeshes(&bytes, "", &[]).map(|s| s.len());
+                    let _ = benilla_formats::parse_m2_bounds(&bytes);
+                    let _ = benilla_formats::parse_m2_collision_hull(&bytes);
+                    let _ = benilla_formats::parse_m2_lights(&bytes);
+                    let _ = benilla_formats::parse_m2_skeleton(&bytes);
+                    let e = benilla_formats::parse_m2_particle_emitters(&bytes).map(|e| e.len());
+                    let r = benilla_formats::parse_m2_ribbon_emitters(&bytes).map(|r| r.len());
+                    let _ = benilla_formats::parse_m2_attachments(&bytes);
+                    let _ = benilla_formats::parse_m2_event_markers(&bytes);
+                    let _ = benilla_formats::parse_m2_animations(&bytes);
+                    (subs.map_err(|e| e.to_string()), e.map_err(|e| e.to_string()), r.map_err(|e| e.to_string()))
+                });
+                let ms = start.elapsed().as_millis();
+                n += 1;
+                match r {
+                    Err(_) => {
+                        bad += 1;
+                        println!("PANIC {name}");
+                    }
+                    Ok((s, e, r)) if s.is_err() || e.is_err() || r.is_err() || ms > 500 => {
+                        bad += 1;
+                        println!("{name}: submeshes {s:?}, emitters {e:?}, ribbons {r:?}, {ms} ms");
+                    }
+                    Ok(_) => {}
+                }
+            }
+            println!("{n} models, {bad} flagged");
+            Ok(())
+        }
         Some("vlist") if args.len() == 3 => {
             let chain = benilla_formats::Chain::open(&PathBuf::from(&args[1]))?;
             let want = args[2].to_ascii_lowercase();
@@ -257,11 +301,18 @@ fn build(paths: &Paths) -> Result<()> {
                 Entry::File(path) => p.file_entry(path),
                 Entry::Tiles { map, x, y } => p.tiles(map, *x, *y),
                 Entry::Zone { map, name } => p.zone(map, name),
+                Entry::Minimap(_) => Ok(()), // after every other entry, below
             };
             done.with_context(|| format!("`{}`", e.line()))?;
         }
         if races {
             p.race_extras()?;
+        }
+        // Minimaps last, so they see every tile and WMO the other entries ported.
+        for e in &entries {
+            if let Entry::Minimap(map) = e {
+                p.minimap(map).with_context(|| format!("`{}`", e.line()))?;
+            }
         }
         let (tinted, resampled) = p.approximated;
         let ids = std::mem::take(&mut p.ids);

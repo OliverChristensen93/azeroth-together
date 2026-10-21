@@ -34,12 +34,13 @@ always uses the main checkout's `WoW` folder; `TOGETHER_PORT_ROOT` names another
 | `model <path>` | One M2 (no extension), converted, with its hard-coded textures and event sounds. It replaces 1.12's own model if 1.12 has one. |
 | `creature <id>` | A WotLK `CreatureDisplayInfo` row (16 to 12 columns), its `CreatureModelData`, model, skins and `CreatureSoundData` and sounds. A display id 1.12 already uses is 1.12's own creature and is left alone. The ids each entry got are written to `WoW\wotlk-port-ids.txt`. |
 | `file <path>` | Any file, copied as is: BLP textures, WAV and MP3 sounds, anything whose format did not change. |
+| `minimap <Map>` | Run after every other entry. The minimap tiles of the map's terrain (1.12's own tiles and ported ones), and the interior minimap tiles of every ported WMO, wherever the 1.12 data lacks them. A tile 1.12's `md5translate.trs` already names is written under that hashed name; one it does not name gets WotLK's hash and a new line in the table. |
 | `zone <Map> <name>` | WotLK's terrain tiles of a zone that the 1.12 data lacks, converted (below), and everything they name, as `fill` does. A tile is the zone's if one of its chunks is the WotLK `AreaTable` zone of that name on that map, or one of its subzones; only tiles inside the zone's `WorldMapArea` bounds are looked in. `zone Azeroth Dun Morogh` brings Dun Morogh and Ironforge, `zone Azeroth Redridge Mountains` Redridge. |
 | `tiles <Map> <x0-x1> <y0-y1>` | The same for a block of tiles by number (`Azeroth_33_41.adt` is x 33, y 41). A tile 1.12 has is always 1.12's own. |
 | `race 10` / `race 11` | The Blood Elf and Draenei heroes (below). |
 | `wotlk <Data folder>` | Which WotLK client to read; once per machine (or set `WOTLK_DATA`). |
 
-Find a path with `together-port vlist WoW\Data <text>` (what 1.12 has). `together-port spot <Map> <x>
+If the loading screen hangs on a place, `together-port loadcheck WoW\Data\patch-W.MPQ` runs every ported model through the parse calls the engine's model loader makes and flags any that panics or errors. Find a path with `together-port vlist WoW\Data <text>` (what 1.12 has). `together-port spot <Map> <x>
 <y>` says what the game data has at a world point (tile, area, ground height, water); adding an
 arena zone step by step is [ADDING-ZONES.md](ADDING-ZONES.md). Pull one WotLK file out to
 look at with `together-port extract <wotlk Data> <path> <out>`. Look at WotLK or 1.12 DBC rows with

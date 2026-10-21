@@ -828,6 +828,75 @@ impl<'a> Port<'a> {
     }
 
     /// Put every extended 1.12 table into the output.
+    /// A `minimap` entry, run after every other: the minimap tiles of `map` (the 1.12 data's
+    /// own terrain tiles and the ported ones) and the interior tiles of every ported WMO, wherever
+    /// the 1.12 data lacks them. A tile 1.12's `md5translate.trs` already names is written
+    /// under that hashed name; one it does not name gets WotLK's, and a line in the table.
+    pub fn minimap(&mut self, map: &str) -> Result<()> {
+        const TRS: &str = "textures\\Minimap\\md5translate.trs";
+        let parse = |text: &str| -> HashMap<String, String> {
+            text.lines()
+                .filter_map(|l| l.split_once('\t'))
+                .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_owned()))
+                .collect()
+        };
+        let vtext = match self.out.get(TRS) {
+            Some(b) => String::from_utf8_lossy(b).into_owned(),
+            None => String::from_utf8_lossy(&self.vanilla.read(TRS)?).into_owned(),
+        };
+        let vmap = parse(&vtext);
+        let wmap = parse(&String::from_utf8_lossy(&self.wotlk.read(TRS)?));
+
+        // The keys wanted: the map's terrain tiles, then ported WMOs' interior tiles.
+        let prefix = format!("world\\maps\\{}\\{}_", map.to_ascii_lowercase(), map.to_ascii_lowercase());
+        let mut keys: BTreeSet<String> = self
+            .vanilla
+            .list()?
+            .into_iter()
+            .map(|e| e.name.to_ascii_lowercase())
+            .chain(self.out.names().map(str::to_ascii_lowercase))
+            .filter_map(|n| {
+                let (x, y) = n.strip_prefix(&prefix)?.strip_suffix(".adt")?.split_once('_')?;
+                Some(format!("{}\\map{x}_{y}.blp", map.to_ascii_lowercase()))
+            })
+            .collect();
+        let wmos: Vec<String> = self
+            .out
+            .names()
+            .map(str::to_ascii_lowercase)
+            .filter(|n| n.ends_with(".wmo") && !n[..n.len() - 4].rsplit('_').next().is_some_and(|g| g.len() == 3 && g.bytes().all(|c| c.is_ascii_digit())))
+            .filter_map(|n| n.strip_prefix("world\\").map(|s| format!("{}_", &s[..s.len() - 4])))
+            .collect();
+        keys.extend(wmap.keys().filter(|k| wmos.iter().any(|w| k.starts_with(w.as_str()))).cloned());
+
+        let (mut ported, mut added) = (0, Vec::new());
+        for key in &keys {
+            let Some(whash) = wmap.get(key) else { continue };
+            let name = vmap.get(key).unwrap_or(whash);
+            let path = format!("textures\\Minimap\\{name}");
+            if self.vanilla.contains(&path) || self.out.contains(&path) {
+                continue;
+            }
+            let Some(bytes) = self.wotlk.try_read(&format!("textures\\Minimap\\{whash}"))? else { continue };
+            self.out.add(&path, bytes);
+            ported += 1;
+            if !vmap.contains_key(key) {
+                added.push(format!("{key}\t{whash}"));
+            }
+        }
+        if !added.is_empty() {
+            let mut text = vtext.trim_end().to_owned();
+            for line in &added {
+                text.push_str("\r\n");
+                text.push_str(line);
+            }
+            text.push_str("\r\n");
+            self.out.add(TRS, text.into_bytes());
+        }
+        println!("minimap {map}: {ported} tiles ported ({} new in md5translate)", added.len());
+        Ok(())
+    }
+
     pub fn finish(mut self) -> (MpqOut, Vec<String>) {
         // UnitBlood and FootprintTextures are only looked in.
         for (name, t) in self.tables.iter().filter(|(n, _)| !matches!(n.as_str(), "UnitBlood" | "FootprintTextures")) {

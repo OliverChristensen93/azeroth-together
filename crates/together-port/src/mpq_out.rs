@@ -41,6 +41,11 @@ impl MpqOut {
         self.files.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)).map(|(_, d)| d.as_slice())
     }
 
+    /// The internal paths added so far.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.files.iter().map(|(n, _)| n.as_str())
+    }
+
     pub fn len(&self) -> usize {
         self.files.len()
     }

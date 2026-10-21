@@ -15,6 +15,7 @@
 //! file Sound\Music\...\Foo.mp3           any file, copied as is
 //! tiles Azeroth 31-35 38-42              WotLK terrain tiles the 1.12 data lacks (x range, y range)
 //! zone Azeroth Dun Morogh                every tile a WotLK zone (and its subzones) covers
+//! minimap Azeroth                        the map's minimap tiles the 1.12 data lacks (after all else)
 //! ```
 //!
 //! `tiles` and `zone` are newer than the other kinds: a together-port built before them rejects
@@ -37,6 +38,8 @@ pub enum Entry {
     Tiles { map: String, x: (u32, u32), y: (u32, u32) },
     /// A map's tiles that a WotLK AreaTable zone covers, by its name.
     Zone { map: String, name: String },
+    /// A map's minimap tiles, and its ported WMOs' interior ones, that the 1.12 data lacks.
+    Minimap(String),
 }
 
 /// `a-b` or `a`, each 0..64.
@@ -65,6 +68,7 @@ impl Entry {
             "model" => Entry::Model(strip_m2(arg).to_owned()),
             "creature" => Entry::Creature(arg.parse()?),
             "file" => Entry::File(arg.to_owned()),
+            "minimap" => Entry::Minimap(arg.to_owned()),
             "tiles" => match arg.split_whitespace().collect::<Vec<_>>()[..] {
                 [map, x, y] => Entry::Tiles { map: map.to_owned(), x: range(x)?, y: range(y)? },
                 _ => bail!("`tiles <Map> <x0-x1> <y0-y1>`"),
@@ -75,7 +79,7 @@ impl Entry {
                 }
                 _ => bail!("`zone <Map> <AreaTable name>`"),
             },
-            other => bail!("unknown kind `{other}`: race, fill, wmo, model, creature, file, tiles or zone"),
+            other => bail!("unknown kind `{other}`: race, fill, wmo, model, creature, file, tiles, zone or minimap"),
         })
     }
 
@@ -89,6 +93,7 @@ impl Entry {
             Entry::File(p) => format!("file {p}"),
             Entry::Tiles { map, x, y } => format!("tiles {map} {}-{} {}-{}", x.0, x.1, y.0, y.1),
             Entry::Zone { map, name } => format!("zone {map} {name}"),
+            Entry::Minimap(m) => format!("minimap {m}"),
         }
     }
 }
