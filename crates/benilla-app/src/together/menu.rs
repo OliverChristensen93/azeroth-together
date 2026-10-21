@@ -332,6 +332,7 @@ pub(super) fn build_menu(
         lobby_panel(ui, &art, f);
         super::dev::dev_panel(ui, &art, f);
         super::dev::dev_button(ui, &art, f);
+        super::atmos::graphics_button(ui, &art, f);
 
         // The hero's name line, GlueFontNormalHuge at BOTTOM (0,100).
         ui.spawn(Node {

@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use benilla_assets::AssetSet;
 use benilla_formats::{LightCatalog, LiquidKind};
 
+mod atmos; // read and flash doors for a game's atmosphere layer (fork carry)
 mod blob; // off-world light blobs (portrait booths, body panes, glue scene)
 mod daynight; // the sun, moon and day/night curves
 mod global_light; // the shared global-light storage buffer

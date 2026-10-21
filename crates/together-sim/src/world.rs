@@ -605,6 +605,8 @@ pub struct Gem {
 pub struct Snapshot {
     pub tick: u64,
     pub elapsed: f32,
+    #[serde(default)]
+    pub sky_seed: u64,
     pub level: u32,
     pub xp: f32,
     pub kills: u32,
@@ -712,6 +714,9 @@ pub struct World {
     pub tick: u64,
     /// Seconds of play, not counting time spent choosing cards.
     pub elapsed: f32,
+    /// The run's seed for its look (weather), the same for every player: a client's mirror takes
+    /// it from the host's snapshots. Never steers the game.
+    pub sky_seed: u64,
     pub heroes: Vec<Hero>,
     pub enemies: Vec<Enemy>,
     pub gems: Vec<Gem>,
@@ -801,6 +806,7 @@ impl World {
             rng: Rng::new(seed),
             tick: 0,
             elapsed: 0.0,
+            sky_seed: seed.rotate_left(17) ^ 0x5EED_0F_5C1E5,
             heroes: Vec::new(),
             enemies: Vec::new(),
             gems: Vec::new(),
@@ -1092,6 +1098,7 @@ impl World {
         Snapshot {
             tick: self.tick,
             elapsed: self.elapsed,
+            sky_seed: self.sky_seed,
             level: self.level,
             xp: self.xp,
             kills: self.kills,
@@ -1136,6 +1143,7 @@ impl World {
     pub fn apply_snapshot(&mut self, snapshot: Snapshot, events: Vec<Event>) {
         self.tick = snapshot.tick;
         self.elapsed = snapshot.elapsed;
+        self.sky_seed = snapshot.sky_seed;
         self.level = snapshot.level;
         self.xp = snapshot.xp;
         self.kills = snapshot.kills;

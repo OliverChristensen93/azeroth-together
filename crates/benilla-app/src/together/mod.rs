@@ -15,6 +15,7 @@
 //! the repository's `content/`, and the copies compiled in when that is missing).
 
 mod actions;
+mod atmos;
 mod armory;
 mod bossintro;
 mod cooldowns;
@@ -132,6 +133,14 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         include_str!("../../../../content/talents.ron"),
     )?;
     talents::set_web(together_sim::TalentWeb::from_ron(&talent_web)?);
+    // The zones' skies: looks only, so a content folder without the file keeps the built-in one.
+    atmos::load(
+        &read(
+            "atmosphere.ron",
+            include_str!("../../../../content/atmosphere.ron"),
+        )
+        .unwrap_or_else(|_| include_str!("../../../../content/atmosphere.ron").to_owned()),
+    );
     let content = Content::from_ron(ContentSources {
         classes: &classes,
         abilities: &abilities,
@@ -340,6 +349,10 @@ pub(crate) struct TogetherPlugin;
 impl Plugin for TogetherPlugin {
     fn build(&self, app: &mut App) {
         let playing = || in_state(Phase::Playing).and(resource_exists::<Sim>);
+        // The weather, lightning, shafts and hour; shared with any other game that adds it.
+        if !app.is_plugin_added::<crate::atmosphere::AtmospherePlugin>() {
+            app.add_plugins(crate::atmosphere::AtmospherePlugin);
+        }
         app.init_state::<Phase>()
             .insert_resource(menu::Selection::new(&content()))
             .init_resource::<StartRequest>()
@@ -381,7 +394,7 @@ impl Plugin for TogetherPlugin {
             .add_systems(
                 Update,
                 (
-                    daylight,
+                    atmos::drive,
                     follow_map,
                     menu::apply_ui_scale,
                     menu::show_menu,
@@ -432,6 +445,7 @@ impl Plugin for TogetherPlugin {
                     lobby::clicks,
                     lobby::refresh.before(crate::glue::GlueVisuals),
                     dev::clicks,
+                    atmos::graphics_clicks,
                     dev::refresh.before(crate::glue::GlueVisuals),
                     gear_menu::build,
                     gear_menu::clicks,
@@ -624,16 +638,6 @@ fn showcase_for_tests(world: &mut World) {
     for (k, &id) in firsts.iter().enumerate() {
         let angle = k as f32 / firsts.len() as f32 * std::f32::consts::TAU;
         world.move_interactable(id, center + V2::from_angle(angle, 10.0));
-    }
-}
-
-/// Midday, whatever the clock says.
-fn daylight(debug: Option<ResMut<benilla_world::dev_state::DebugState>>) {
-    const MINUTE_OF_DAY: u32 = 780;
-    let Some(mut debug) = debug else { return };
-    if debug.lighting.follow_server_time || debug.lighting.manual_minute != MINUTE_OF_DAY {
-        debug.lighting.follow_server_time = false;
-        debug.lighting.manual_minute = MINUTE_OF_DAY;
     }
 }
 

@@ -239,6 +239,8 @@ fn simulate_precip(
     spatial: SpatialQuery,
     indoors: Res<WeatherIndoors>,
     mut wind: ResMut<WeatherWind>,
+    // A game's wind (fork carry): the player drifts against it, as the reference's wind is motion.
+    gust: Option<ResMut<crate::weather::WeatherGust>>,
     mut heights: ResMut<HeightCache>,
     mut precip: Option<ResMut<Precip>>,
     mut last_cut: Local<u32>,
@@ -266,6 +268,7 @@ fn simulate_precip(
         .map_or((cam_pos, cam_tf.forward().as_vec3()), |t| {
             (t.translation, t.forward().as_vec3())
         });
+    let wind_pos = wind_pos - gust.map_or(Vec3::ZERO, |mut g| g.advance(dt));
     wind.update(wind_pos, facing, viewer.planar_speed, dt);
 
     let filter = crate::collision::WorldCollision::body_filter();
