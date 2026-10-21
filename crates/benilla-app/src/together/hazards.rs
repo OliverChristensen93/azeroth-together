@@ -80,13 +80,9 @@ pub(super) struct BossFill;
 #[derive(Component)]
 pub(super) struct BossHint;
 
-/// The ground under `p`, at the terrain's height where there is terrain.
-fn on_ground(world_point: &benilla_world::world_point::WorldPoint, p: V2, fallback_y: f32) -> Vec3 {
-    let mut at = units::ground_to_bevy(p, fallback_y);
-    if let Some(h) = world_point.terrain_height_under(at) {
-        at.y = h;
-    }
-    at
+/// The ground under `p`: the floor near the local hero's level ([`super::floor`]).
+fn on_ground(floor: &super::floor::Floor, p: V2, fallback_y: f32) -> Vec3 {
+    floor.under(p, None, fallback_y)
 }
 
 /// Telegraphs drawn and cleared, enemies' casts played, and the local hero moved where a
@@ -100,7 +96,7 @@ pub(super) fn show(
     mut shown: ResMut<Telegraphs>,
     mut player: ResMut<crate::player::Player>,
     mut bodies: Query<&mut Transform>,
-    world_point: benilla_world::world_point::WorldPoint,
+    floor: super::floor::Floor,
     mut fx: units::Fx,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -133,7 +129,7 @@ pub(super) fn show(
                 let mut parts = Vec::new();
                 match shape {
                     Shape::Circle { radius } => {
-                        let at = on_ground(&world_point, pos, fallback_y) + Vec3::Y * LIFT;
+                        let at = on_ground(&floor, pos, fallback_y) + Vec3::Y * LIFT;
                         let ring = Annulus::new((radius - EDGE).max(0.05), radius);
                         parts.push(
                             commands
@@ -161,8 +157,8 @@ pub(super) fn show(
                         parts.push(disc.id());
                     }
                     Shape::Line { to, width } => {
-                        let a = on_ground(&world_point, pos, fallback_y) + Vec3::Y * LIFT;
-                        let b = on_ground(&world_point, to, fallback_y) + Vec3::Y * LIFT;
+                        let a = on_ground(&floor, pos, fallback_y) + Vec3::Y * LIFT;
+                        let b = on_ground(&floor, to, fallback_y) + Vec3::Y * LIFT;
                         let d = b - a;
                         let len = Vec2::new(d.x, d.z).length().max(0.1);
                         let yaw = (-d.z).atan2(d.x);
@@ -217,7 +213,7 @@ pub(super) fn show(
                         together_sim::Target::Hero(p) => views.heroes.get(&p).copied(),
                     })
                     .collect();
-                let dest = dest.map(|p| on_ground(&world_point, p, fallback_y));
+                let dest = dest.map(|p| on_ground(&floor, p, fallback_y));
                 fx.cast(from, visual, &hits, dest);
             }
             // Announced by the run panel's warning (`super::runpanel`).
@@ -232,7 +228,7 @@ pub(super) fn show(
                     continue;
                 };
                 if let Ok(mut tf) = bodies.get_mut(body) {
-                    let at = on_ground(&world_point, to, tf.translation.y);
+                    let at = floor.under(to, Some(tf.translation.y), tf.translation.y);
                     tf.translation = at;
                     player.pos = at;
                 }
