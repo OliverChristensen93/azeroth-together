@@ -92,7 +92,10 @@ After a build, run the game as it is; data needs no rebuild of the game.
 - **Textures** are copied as is (both are BLP2), except character skin layers, which are halved
   (`blp.rs`). WotLK's skins are 512×512, while 1.12's compositor paints at fixed pixels for a
   256×256 body.
-- **WMOs** are v17 in both and are copied as is.
+- **WMOs** are v17 in both and are copied as is, but for each group's `groupLiquid`: where the root's
+  `MOHD` flag `0x4` is set, WotLK stores a `LiquidType` id there (0 for none), while 1.12 reads a
+  liquid nibble whose every value but `0xf` fills the whole group with water. It is rewritten to
+  `0xf` or the kind's nibble, or a ported building is a pool to swim through.
 - **ADT** terrain tiles are v18 in both (`adt.rs`); what differs:
   - WotLK's water is one `MH2O` chunk of liquid instances per map chunk. Each instance becomes a
     cell rect in 1.12's per-chunk `MCLQ`: one 0x324-byte block per liquid kind (header bits

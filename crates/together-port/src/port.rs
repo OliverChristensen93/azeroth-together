@@ -69,6 +69,36 @@ fn names(data: &[u8]) -> Vec<String> {
     data.split(|&c| c == 0).filter(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).collect()
 }
 
+/// Rewrite a WotLK WMO group's `MOGP` `groupLiquid` (`+0x34`) for 1.12, where the root's `MOHD`
+/// flag `0x4` makes it a `LiquidType` id and 0 no liquid. 1.12 reads it as a liquid nibble whose
+/// every value but `0xf` fills the whole group (a ported group of 0 is a building full of water
+/// to swim through): no liquid becomes `0xf`, a liquid its kind's WMO nibble (0 water, 1 ocean,
+/// 2 magma, 3 slime). True if it changed.
+fn wmo_group_liquid(group: &mut [u8], kind_of: &dyn Fn(u32) -> Option<Liquid>) -> bool {
+    let mut i = 0;
+    while i + 8 <= group.len() {
+        let n = u32::from_le_bytes(group[i + 4..i + 8].try_into().unwrap()) as usize;
+        if &group[i..i + 4] == b"PGOM" {
+            let at = i + 8 + 0x34;
+            let Some(field) = group.get_mut(at..at + 4) else {
+                return false;
+            };
+            let id = u32::from_le_bytes(field[..].try_into().unwrap());
+            let nibble: u32 = match kind_of(id) {
+                _ if id == 0 => 0xf,
+                Some(Liquid::Ocean) => 1,
+                Some(Liquid::Magma) => 2,
+                Some(Liquid::Slime) => 3,
+                Some(Liquid::Water) | None => 0,
+            };
+            field.copy_from_slice(&nibble.to_le_bytes());
+            return nibble != id;
+        }
+        i += 8 + n;
+    }
+    false
+}
+
 fn wdt_path(map: &str) -> String {
     format!("World\\Maps\\{map}\\{map}.wdt")
 }
@@ -391,8 +421,13 @@ impl<'a> Port<'a> {
             return Ok(false);
         };
         let (mut groups, mut textures, mut doodads, mut sky) = (0usize, Vec::new(), Vec::new(), Vec::new());
+        let mut dbc_liquids = false;
         for (tag, data) in chunks(&root) {
             match tag.as_str() {
+                "MOHD" if data.len() >= 0x3E => {
+                    groups = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+                    dbc_liquids = data[0x3C] & 0x4 != 0;
+                }
                 "MOHD" if data.len() >= 8 => groups = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize,
                 "MOTX" => textures = names(data),
                 "MODN" => doodads = names(data),
@@ -401,8 +436,18 @@ impl<'a> Port<'a> {
             }
         }
         let stem = &path[..path.len().saturating_sub(4)];
+        let kinds = if dbc_liquids { self.liquid_kinds()? } else { HashMap::new() };
         for i in 0..groups {
-            self.copy_over(&format!("{stem}_{i:03}.wmo"))?;
+            let group = format!("{stem}_{i:03}.wmo");
+            match self.wotlk.try_read(&group)? {
+                Some(mut b) => {
+                    if dbc_liquids {
+                        wmo_group_liquid(&mut b, &|id| kinds.get(&(id as u16)).copied());
+                    }
+                    self.out.add(&group, b);
+                }
+                None => self.missing.push(group),
+            }
         }
         for t in &textures {
             self.copy(t)?;
@@ -550,6 +595,11 @@ impl<'a> Port<'a> {
         self.port_tiles(map, &want, &format!("zone {map} {name}"))
     }
 
+    /// Each WotLK `LiquidType` id's 1.12 class (its `Type` column).
+    fn liquid_kinds(&mut self) -> Result<HashMap<u16, Liquid>> {
+        Ok(self.w("LiquidType")?.rows.iter().map(|r| (Dbc::u(r, 0) as u16, Liquid::from_type(Dbc::u(r, 3)))).collect())
+    }
+
     fn wotlk_wdt(&mut self, map: &str) -> Result<Vec<u8>> {
         self.wotlk.try_read(&wdt_path(map))?.with_context(|| format!("WotLK has no map {map}"))
     }
@@ -560,8 +610,7 @@ impl<'a> Port<'a> {
         let wdt = self.wotlk_wdt(map)?;
         let big = adt::big_alpha(&wdt);
         let exists: HashSet<(u32, u32)> = adt::wdt_tiles(&wdt).into_iter().collect();
-        let kinds: HashMap<u16, Liquid> =
-            self.w("LiquidType")?.rows.iter().map(|r| (Dbc::u(r, 0) as u16, Liquid::from_type(Dbc::u(r, 3)))).collect();
+        let kinds = self.liquid_kinds()?;
         let (mut models, mut wmos, mut textures) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
         let (mut tiles, mut own, mut absent, mut liquids) = (Vec::new(), 0, 0, 0);
         for &(x, y) in want {
@@ -776,5 +825,42 @@ impl<'a> Port<'a> {
             self.out.add(&dbc_path(name), t.to_bytes());
         }
         (self.out, self.missing)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn group(liquid: u32) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend(b"REVM");
+        b.extend(4u32.to_le_bytes());
+        b.extend(17u32.to_le_bytes());
+        let mut mogp = vec![0u8; 0x44];
+        mogp[0x34..0x38].copy_from_slice(&liquid.to_le_bytes());
+        b.extend(b"PGOM");
+        b.extend((mogp.len() as u32).to_le_bytes());
+        b.extend(mogp);
+        b
+    }
+
+    fn liquid(b: &[u8]) -> u32 {
+        u32::from_le_bytes(b[20 + 0x34..20 + 0x38].try_into().unwrap())
+    }
+
+    /// WotLK's 0 is no liquid, which 1.12 would read as a group full of water.
+    #[test]
+    fn wmo_group_liquid_ids_become_1_12_nibbles() {
+        let kind = |id: u32| match id {
+            13 => Some(Liquid::Water),
+            14 => Some(Liquid::Ocean),
+            19 => Some(Liquid::Magma),
+            _ => None,
+        };
+        for (id, want) in [(0, 0xf), (13, 0), (14, 1), (19, 2), (99, 0)] {
+            let mut g = group(id);
+            wmo_group_liquid(&mut g, &kind);
+            assert_eq!(liquid(&g), want, "LiquidType {id}");
+        }
     }
 }
