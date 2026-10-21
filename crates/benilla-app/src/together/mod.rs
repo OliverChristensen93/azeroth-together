@@ -437,6 +437,7 @@ impl Plugin for TogetherPlugin {
                     lobby::clicks,
                     lobby::refresh.before(crate::glue::GlueVisuals),
                     dev::clicks,
+                    atmos::graphics_clicks,
                     dev::refresh.before(crate::glue::GlueVisuals),
                     gear_menu::build,
                     gear_menu::clicks,

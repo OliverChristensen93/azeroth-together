@@ -45,7 +45,8 @@ if (GameMenuFrame and GameMenuFrame:IsVisible())
     or (OptionsFrame and OptionsFrame:IsVisible())
     or (SoundOptionsFrame and SoundOptionsFrame:IsVisible())
     or (UIOptionsFrame and UIOptionsFrame:IsVisible())
-    or (KeyBindingFrame and KeyBindingFrame:IsVisible()) then
+    or (KeyBindingFrame and KeyBindingFrame:IsVisible())
+    or (AtmosOptionsFrame and AtmosOptionsFrame:IsVisible()) then
     open = 1
 end
 local leave = BENILLA_TOGETHER_LEAVE or 0

@@ -29,12 +29,14 @@ use benilla_world::weather::WeatherKind;
 mod bolt;
 mod clock;
 mod lightning;
+mod options;
 mod post_node;
 pub(crate) mod schedule;
 mod shafts;
 mod weather;
 mod wind;
 
+pub(crate) use options::toggle_panel;
 pub(crate) use schedule::ZoneSky;
 
 /// Which effects are on. A game may change it at any time; `WOW_ATMOS` sets where it starts:
@@ -47,7 +49,7 @@ pub(crate) struct AtmosphereSettings {
     pub rays: bool,
     /// The storm grade (cooler, a little drained) in the post pass.
     pub grade: bool,
-    /// Whether a game's schedule moves the time of day; off, it keeps its fixed hour.
+    /// Whether a game's schedule gives each zone its own, moving hour; off, it is midday.
     pub clock: bool,
     /// Height fog: low ground mist and aerial haze.
     pub mist: bool,
@@ -182,6 +184,7 @@ impl Plugin for AtmospherePlugin {
         shafts::plugin(app);
         bolt::plugin(app);
         wind::plugin(app);
+        options::plugin(app);
     }
 }
 

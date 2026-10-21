@@ -57,6 +57,9 @@ impl Default for ZoneSky {
     }
 }
 
+/// The hour with the day cycle off: 13:00, the classic look.
+const MIDDAY: f32 = 780.0;
+
 /// A 64-bit mix (splitmix64's finaliser).
 fn mix(mut x: u64) -> u64 {
     x ^= x >> 30;
@@ -73,13 +76,13 @@ fn unit(seed: u64, spell: u64, stream: u64) -> f32 {
 }
 
 /// The sky `t` seconds into a run seeded `seed`, under `settings`. The weather is fine while
-/// `settings.weather` is off, and the hour holds while `settings.clock` is off.
+/// `settings.weather` is off, and it is midday while `settings.clock` is off.
 pub(crate) fn sky_at(sky: &ZoneSky, seed: u64, t: f32, settings: &AtmosphereSettings) -> SkyRequest {
     let t = t.max(0.0);
     let minute = if settings.clock {
         (sky.minute + sky.day_speed * t).rem_euclid(1440.0)
     } else {
-        sky.minute.rem_euclid(1440.0)
+        MIDDAY
     };
     let mut req = SkyRequest {
         minute: Some(minute),
@@ -166,12 +169,12 @@ mod tests {
     }
 
     #[test]
-    fn settings_off_keep_it_fine_and_the_hour_fixed() {
+    fn settings_off_keep_it_fine_and_at_midday() {
         let off = AtmosphereSettings { weather: false, clock: false, ..Default::default() };
         let sky = ZoneSky { minute: 1000.0, day_speed: 0.5, ..wet(1.0) };
         let r = sky_at(&sky, 1, 600.0, &off);
         assert_eq!(r.weather, WeatherKind::Fine);
-        assert_eq!(r.minute, Some(1000.0));
+        assert_eq!(r.minute, Some(MIDDAY));
         let on = sky_at(&sky, 1, 600.0, &AtmosphereSettings::default());
         assert_eq!(on.minute, Some(1300.0));
     }

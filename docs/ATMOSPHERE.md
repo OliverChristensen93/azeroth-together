@@ -17,6 +17,18 @@ that is its own server (Azeroth Together, Nightfall) a "remaster" sky on top of 
 It depends on bevy and benilla-world only (plus `crate::sound::SoundCue`, copied from Nightfall),
 never on together-sim, `together/` or `nightfall/`.
 
+## Players' options
+
+`options.rs` + `options.lua`: an "Azeroth Together Graphics" panel in WoW's own 1.12 style,
+opened from the Game Menu ("Azeroth Graphics", under Video Options), from a button in Video
+Options and from the main menu's Graphics button (`together/atmos.rs`). Nine switches (weather,
+thunderstorms, fog, sun shafts, contact shadows, sharpen and colour, wind, time of day,
+raindrops) and three strength sliders, each a CVar registered by the panel (`atmosWeather`,
+`atmosFogStrength`, ...), saved with the client's settings; "All off (original look)" and
+"Defaults". The Rust side copies the CVars into `AtmosphereSettings` whenever they change,
+unless a test run set `WOW_ATMOS`/`WOW_RAYS`/`WOW_MIST`/`WOW_AO`. Time of day off is midday.
+`TOGETHER_GRAPHICS_PANEL=1` opens it for a test shot.
+
 ## The interface
 
 - `SkyRequest` (resource), written by the game every frame or when it changes:

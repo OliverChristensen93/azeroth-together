@@ -5,7 +5,7 @@
 //!
 //! Test switches: `TOGETHER_WEATHER=fine|rain|snow|sand|storm` forces the weather for the whole
 //! run, `TOGETHER_HOUR=<0..24>` the hour it starts at. `WOW_ATMOS` (`off`, `-rays`, ...) and
-//! `WOW_RAYS=<n>` are the plugin's own.
+//! `WOW_RAYS=<n>` are the plugin's own; `TOGETHER_GRAPHICS_PANEL=1` opens the graphics options.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -14,7 +14,12 @@ use bevy::prelude::*;
 
 use benilla_world::weather::WeatherKind;
 
+use benilla_ui::script::UiScript;
+
 use crate::atmosphere::{schedule::sky_at, AtmosphereSettings, SkyRequest, ZoneSky};
+use crate::glue::art::GlueArt;
+use crate::glue::widgets::{glue_button, GlueBtnKind};
+use crate::glue::GlueClicks;
 
 use super::{Phase, Sim};
 
@@ -110,6 +115,52 @@ pub(super) fn drive(
     next.minute = next.minute.map(|m| (m * 4.0).round() / 4.0);
     if *req != next {
         *req = next;
+    }
+}
+
+/// The main menu's Graphics button, above Dev: opens the graphics options
+/// (`crate::atmosphere`'s panel, also in the Game Menu during a run).
+#[derive(Component, Clone, Copy)]
+pub(super) struct GraphicsButton;
+
+pub(super) fn graphics_button(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>) {
+    ui.spawn(Node {
+        position_type: PositionType::Absolute,
+        right: Val::Px(20.0),
+        bottom: Val::Px(100.0),
+        ..default()
+    })
+    .with_children(|c| {
+        glue_button(
+            c,
+            art,
+            f,
+            GraphicsButton,
+            "Graphics",
+            120.0,
+            32.0,
+            GlueBtnKind::Small,
+            1.0,
+        );
+    });
+}
+
+pub(super) fn graphics_clicks(
+    clicks: Res<GlueClicks>,
+    buttons: Query<Entity, With<GraphicsButton>>,
+    script: Option<NonSend<UiScript>>,
+) {
+    let Some(script) = script else { return };
+    if buttons.iter().any(|e| clicks.hit(e)) {
+        crate::atmosphere::toggle_panel(&script);
+    }
+    // `TOGETHER_GRAPHICS_PANEL=1`: the panel opens by itself once it exists, for a test shot.
+    static OPEN: OnceLock<bool> = OnceLock::new();
+    if *OPEN.get_or_init(|| std::env::var_os("TOGETHER_GRAPHICS_PANEL").is_some()) {
+        let _ = script.run(
+            "if AtmosOptionsFrame and not BENILLA_ATMOS_SHOWN then \
+             BENILLA_ATMOS_SHOWN = 1; AtmosOptionsFrame:Show() end",
+        );
     }
 }
 
