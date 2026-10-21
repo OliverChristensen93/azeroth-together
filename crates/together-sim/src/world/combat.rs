@@ -96,6 +96,8 @@ pub(super) struct Trigger {
 pub struct Status {
     /// On a client: the flags its snapshot carried, shown as they are.
     pub(super) mirrored: u16,
+    /// On a client: the damage over time abilities its snapshot carried.
+    mirrored_dots: Vec<u16>,
     pub chill: f32,
     /// How much the Chill slows (the strongest that hit it).
     pub slow: f32,
@@ -190,6 +192,27 @@ impl Status {
             mirrored: bits,
             ..Status::default()
         }
+    }
+
+    /// A client's status from a snapshot's flags and damage over time abilities.
+    pub fn mirror(bits: u16, dots: &[u16]) -> Status {
+        Status {
+            mirrored_dots: dots.to_vec(),
+            ..Status::from_bits(bits)
+        }
+    }
+
+    /// The abilities whose damage over time is on it, each once, oldest first (a client's
+    /// mirrored ones as they came).
+    pub fn dots(&self) -> Vec<u16> {
+        let mut out = self.mirrored_dots.clone();
+        for b in self.burns.iter().filter(|b| b.left > 0.0) {
+            let a = b.ability as u16;
+            if !out.contains(&a) {
+                out.push(a);
+            }
+        }
+        out
     }
 
     /// Whether one of `by`'s damage over time effects tagged `tag` is on it.

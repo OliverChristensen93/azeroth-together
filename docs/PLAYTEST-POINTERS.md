@@ -121,6 +121,25 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
   The menu lists your race's racials under the class text.
 - **Tome text:** "Raises your armor for the run." is now "Raises your armor."
 
+## Round 7: your second test pass
+
+You confirmed: humanoids dressed, the leash band, the arena fence, the banner camera, and the
+meter's Reset and views. The first minutes aren't too hard, so enemy speed stays.
+
+- **Leash 15% larger: 57.5 yd** (was 50). The band and the minimap ring follow it.
+- **Clicking the boss or rare bar keeps the target.** The click also counted as a click on the
+  empty world behind the bar, which drops your target. Now the pointer over any of our buttons
+  counts as over UI, like WoW's own frames. The bar also picks the unit itself, not the first
+  enemy with that name, so it no longer picks a normal Mangy Wolf over the elite one.
+- **A frenzied elite can't outrun you.** Frenzy (Mangy Wolf, Narg, Lupos...) made an elite below
+  half health 1.5× faster, which skipped the speed cap: about 10 yd/s against your 7. It now
+  still attacks faster, but runs no faster than the cap (6.65).
+- **The right debuffs on enemies.** Their debuffs showed stand-ins: any shadow damage over time
+  was Corruption, any fire was Immolate. Now each one shows the spell that put it there (Holy
+  Fire, Shadow Word: Pain, Devouring Plague). The host sends the list to co-op players too.
+- Engine touches for the targeting (each one line): `SelectCommit` and its `commit` are visible
+  to the client, and `arbitrate_pointer_over_ui` can be ordered after.
+
 ## Round 6: your test pass
 
 You confirmed Escape, Main Menu, the boss bar, the meter, minimap hover, the C and N keys,
@@ -143,7 +162,7 @@ and the leash. The obstacle scan and the arena fence on the minimap also looked 
   stopped it with Defias Thug was my earlier "don't pull a resting camp" rule, which counted a
   camp as resting whenever it was at full health. Now a camp only counts as resting while no
   hero is within 20 yd, or while it runs home.
-- **Leash: 50 yd (was 35), with 3 s of grace.** A rare only gives up after 3 s past it.
+- **Leash: 50 yd (was 35; 57.5 since round 7), with 3 s of grace.** A rare only gives up after 3 s past it.
   - While you're near a camp, or its rare is fighting, a soft silver band of light on the
     ground shows the leash.
   - The minimap shows each camp's leash as a thin silver ring.
@@ -329,10 +348,7 @@ Still open: 1-3, 13-17 and 19.
 18. **Kept "for the rest of the run"** on item cards ("Kept for the rest of the run."). You
     mentioned tomes only.
 
-19. **Early difficulty.** In a test run where the hero stood still (`TOGETHER_STAND=1`), the faster
-    horde overwhelmed a level-3 hunter at 0:21. Wolves, the first enemies in Elwynn, hit the
-    6.65 cap. If the first minute feels too punishing, lower `enemy_speed`, or lower only the
-    weak wolves' speed in `enemies.ron`.
+19. **Early difficulty (decided: fine).** You get past minute 3, so the speed stays as it is.
 
 ## Part 3: Not done, or not verified
 

@@ -120,6 +120,27 @@ mod tests {
     }
 
     #[test]
+    fn a_frenzied_elite_never_outruns_the_speed_cap() {
+        let mut w = world();
+        let kind = w.zone().enemy_ix[0];
+        Arc::make_mut(&mut w.content).enemies[kind]
+            .mechanics
+            .push(crate::mechanics::Mechanic::Frenzy);
+        let cap = w.content.rules.enemy_speed_cap;
+        let id = w.spawn_enemy(kind, w.center(), w.center(), true);
+        let from = w.center() + V2::new(30.0, 0.0);
+        {
+            let e = w.enemies.iter_mut().find(|e| e.id == id).unwrap();
+            e.hp = e.max_hp * 0.3;
+            e.speed = cap;
+            e.pos = from;
+        }
+        w.move_enemies();
+        let moved = w.enemy(id).unwrap().pos.distance(from);
+        assert!(moved > 0.0 && moved <= cap * DT + 1e-3, "{moved}");
+    }
+
+    #[test]
     fn a_rare_dragged_past_its_leash_runs_home_and_heals() {
         let mut w = world();
         let home = w.center() + V2::new(10.0, 0.0);

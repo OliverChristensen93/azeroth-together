@@ -123,7 +123,7 @@ const LEVEL_UP_HEAL: f32 = 0.1;
 /// How far a camp's elite follows a hero from its camp. Past it for [`LEASH_GRACE`] seconds, it
 /// gives up the chase, runs home out of reach (at this times its speed) and heals, as WoW's mobs
 /// evade. Clients draw the leash as a ring round the camp.
-pub const CAMP_LEASH: f32 = 50.0;
+pub const CAMP_LEASH: f32 = 57.5;
 pub const LEASH_GRACE: f32 = 3.0;
 const EVADE_SPEED: f32 = 1.6;
 /// Seconds between workings-out of the horde's way around obstacles.
@@ -650,6 +650,9 @@ pub struct EnemyState {
     pub max_hp: u32,
     /// Frozen, Chilled, Burning, Stunned ([`status_bits`]).
     pub status: u16,
+    /// The abilities whose damage over time is on it, each once ([`Status::dots`]).
+    #[serde(default)]
+    pub dots: Vec<u16>,
 }
 
 /// Yards to sixteenths, held to `i16`.
@@ -1119,6 +1122,7 @@ impl World {
                     hp: e.hp.max(0.0).ceil() as u32,
                     max_hp: e.max_hp.ceil() as u32,
                     status: e.status.bits(),
+                    dots: e.status.dots(),
                 })
                 .collect(),
             interactables: self.interactables.clone(),
@@ -1186,7 +1190,7 @@ impl World {
                     attack_cd: 0.0,
                     last_hit: None,
                     home: None,
-                    status: Status::from_bits(s.status),
+                    status: Status::mirror(s.status, &s.dots),
                     act: Default::default(),
                 })
             })
@@ -1914,7 +1918,13 @@ impl World {
             } else {
                 0.0
             };
-            let speed = e.speed * if frenzied { hazards::FRENZY_SPEED } else { 1.0 };
+            // A frenzy hurries it, but never past the horde's speed cap: a hero must still be
+            // able to run from a frenzied elite.
+            let speed = if frenzied {
+                (e.speed * hazards::FRENZY_SPEED).min(content.rules.enemy_speed_cap.max(e.speed))
+            } else {
+                e.speed
+            };
             // Around a tree or a wall in the way, rather than through it.
             e.facing = obstacles
                 .filter(|_| !contact)

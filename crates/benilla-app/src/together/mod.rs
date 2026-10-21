@@ -399,6 +399,12 @@ impl Plugin for TogetherPlugin {
                     party::feed.before(crate::ui_script::UiFeed),
                 ),
             )
+            .add_systems(
+                Update,
+                hazards::buttons_hold_pointer
+                    .after(crate::ui_script::arbitrate_pointer_over_ui)
+                    .before(WorldStage::Input),
+            )
             .add_systems(Update, cooldowns::refresh)
             .add_systems(Update, pause::ready_panel)
             .add_systems(Update, flair::animate)

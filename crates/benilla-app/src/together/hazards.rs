@@ -362,7 +362,9 @@ const RARE_BAR_NEAR: f32 = 30.0;
 pub(super) fn boss_bar(
     phase: Res<State<Phase>>,
     sim: Option<Res<Sim>>,
-    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    views: Res<Views>,
+    guids: Query<&crate::net::Guid>,
+    mut select: crate::target::SelectCommit,
     mut bar: Query<(&BossBar, &mut Visibility, &Interaction, &ComputedNode, &mut Node)>,
     mut fill: Query<(&BossFill, &mut Node), (Without<BossHint>, Without<BossBar>)>,
     mut name: Query<(&BossName, &mut Text), Without<BossHint>>,
@@ -428,9 +430,11 @@ pub(super) fn boss_bar(
         let i = slot as usize;
         let def = &content().enemies[e.def];
         if clicked[i] {
-            if let Some(script) = script.as_ref() {
-                // WoW's own targeting by name, exact: the TargetFrame takes it as a click would.
-                let _ = script.run(&format!("TargetByName({:?}, 1)", def.name));
+            // This very unit, by its guid, as clicking its body would: a name could pick another
+            // of the same kind.
+            let unit = views.enemies.get(&e.id).copied();
+            if let Some((entity, guid)) = unit.and_then(|u| Some((u, guids.get(u).ok()?.0))) {
+                select.commit(entity, guid);
             }
         }
         let share = (e.hp / e.max_hp.max(1.0)).clamp(0.0, 1.0);
@@ -468,41 +472,47 @@ pub(super) fn boss_bar(
     }
 }
 
-/// The spells whose WoW state kits show an enemy's statuses, as its aura slots carry them:
-/// Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Immolate's flames (Burning), Hammer
-/// of Justice's daze (Stunned), Fear, Entangling Roots, Hunter's Mark, Rend's bleeding, Deadly
-/// Poison and Corruption.
-const STATUS_AURAS: [(u16, u32); 10] = [
+/// The spells whose WoW state kits show an enemy's control statuses, as its aura slots carry
+/// them: Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Hammer of Justice's daze
+/// (Stunned), Fear, Entangling Roots and Hunter's Mark.
+const STATUS_AURAS: [(u16, u32); 6] = [
     (together_sim::status_bits::FROZEN, 122),
     (together_sim::status_bits::CHILLED, 116),
-    (together_sim::status_bits::BURNING, 348),
     (together_sim::status_bits::STUNNED, 853),
     (together_sim::status_bits::FEARED, 5782),
     (together_sim::status_bits::ROOTED, 339),
     (together_sim::status_bits::MARKED, 1130),
+];
+/// Stand-ins for damage over time whose spell is not known (a host without the `dots` list):
+/// Immolate (Burning), Rend (Bleeding), Deadly Poison and Corruption (Afflicted).
+const DOT_AURAS: [(u16, u32); 4] = [
+    (together_sim::status_bits::BURNING, 348),
     (together_sim::status_bits::BLEEDING, 772),
     (together_sim::status_bits::POISONED, 2818),
     (together_sim::status_bits::AFFLICTED, 172),
 ];
-/// `UNIT_FIELD_AURA` and `UNIT_FIELD_AURAFLAGS`, and the first of the harmful auras' slots.
+/// `UNIT_FIELD_AURA` and `UNIT_FIELD_AURAFLAGS`, and the harmful auras' slots.
 const FIELD_AURA: u16 = 47;
 const FIELD_AURAFLAGS: u16 = 95;
 const FIRST_DEBUFF_SLOT: u16 = 32;
+const DEBUFF_SLOTS: usize = 16;
 /// An occupied slot's flags nibble.
 const AURA_ON: u32 = 0x0E;
 
-/// Each enemy's statuses as auras on its unit, so the engine plays their WoW visuals: the ice
-/// block of a Freeze, a Chill's tint, a burn's flames, a stun's daze.
+/// Each enemy's statuses as auras on its unit, so the engine plays their WoW visuals (the ice
+/// block of a Freeze, a Chill's tint, a stun's daze) and its target frame shows them: control
+/// first, then each damage over time as the spell that left it (Shadow Word: Pain, not a
+/// stand-in).
 pub(super) fn status_auras(
     sim: Res<Sim>,
     views: Res<Views>,
     mut stores: Query<&mut crate::net::ObjectStore>,
-    mut shown: Local<std::collections::HashMap<u32, u16>>,
+    mut shown: Local<std::collections::HashMap<u32, (u16, Vec<u16>)>>,
 ) {
     shown.retain(|id, _| views.enemies.contains_key(id));
     for enemy in &sim.world.enemies {
-        let bits = enemy.status.bits();
-        if shown.get(&enemy.id).copied().unwrap_or(0) == bits {
+        let now = (enemy.status.bits(), enemy.status.dots());
+        if shown.get(&enemy.id) == Some(&now) {
             continue;
         }
         let Some(mut store) = views
@@ -512,16 +522,35 @@ pub(super) fn status_auras(
         else {
             continue;
         };
-        let mut pairs = Vec::new();
+        let (bits, dots) = &now;
+        let mut spells: Vec<u32> = STATUS_AURAS
+            .iter()
+            .filter(|(bit, _)| bits & bit != 0)
+            .map(|&(_, spell)| spell)
+            .collect();
+        let abilities = &content().abilities;
+        for &a in dots {
+            match abilities.get(usize::from(a)).map(|d| d.visual) {
+                Some(v) if v != 0 && !spells.contains(&v) => spells.push(v),
+                _ => {}
+            }
+        }
+        if dots.is_empty() {
+            spells.extend(
+                DOT_AURAS
+                    .iter()
+                    .filter(|(bit, _)| bits & bit != 0)
+                    .map(|&(_, spell)| spell),
+            );
+        }
+        spells.truncate(DEBUFF_SLOTS);
         // Each flags field holds eight slots, a nibble each: 32 to 39, then 40 to 47.
+        let mut pairs = Vec::new();
         let mut flags = [0u32; 2];
-        for (k, &(bit, spell)) in STATUS_AURAS.iter().enumerate() {
-            let on = bits & bit != 0;
-            pairs.push((
-                FIELD_AURA + FIRST_DEBUFF_SLOT + k as u16,
-                if on { spell } else { 0 },
-            ));
-            if on {
+        for k in 0..DEBUFF_SLOTS {
+            let spell = spells.get(k).copied().unwrap_or(0);
+            pairs.push((FIELD_AURA + FIRST_DEBUFF_SLOT + k as u16, spell));
+            if spell != 0 {
                 flags[k / 8] |= AURA_ON << (4 * (k % 8));
             }
         }
@@ -531,6 +560,21 @@ pub(super) fn status_auras(
         store
             .0
             .merge(benilla_protocol::messages::ObjectFields::from_pairs(&pairs));
-        shown.insert(enemy.id, bits);
+        shown.insert(enemy.id, now);
+    }
+}
+
+/// While the pointer is on one of our buttons (the boss and rare bars, the meter, the stat
+/// sheet), it is over UI as WoW's own frames are, so a click there is not also a click on the
+/// world behind, which would drop the target the bar just took.
+pub(super) fn buttons_hold_pointer(
+    buttons: Query<(&Interaction, &InheritedVisibility)>,
+    mut over: ResMut<crate::ui_script::PointerOverUi>,
+) {
+    if buttons
+        .iter()
+        .any(|(i, v)| *i != Interaction::None && v.get())
+    {
+        over.0 = true;
     }
 }
