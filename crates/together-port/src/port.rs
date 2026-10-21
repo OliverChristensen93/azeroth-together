@@ -1,17 +1,19 @@
 //! Porting WotLK art into 1.12's formats: what each [`crate::manifest::Entry`] brings. The
 //! Blood Elf (race 10) and Draenei (race 11) heroes (bodies, skins, hair, voices and the rows that
 //! name them), single models, creatures, WMOs, files, and `fill`: every model and WMO a map's
-//! 1.12 tiles name but the trimmed 1.12 data lacks.
+//! 1.12 tiles name but the trimmed 1.12 data lacks, and `tiles`/`zone`: WotLK terrain tiles the
+//! 1.12 data lacks, converted ([`adt`]), with everything they name.
 //!
 //! A 1.12 table is read from the vanilla chain and extended with the ported rows; the whole table
 //! goes into the output archive, which sits above the vanilla archives in the patch chain. A
 //! WotLK id the 1.12 table already uses for something else is given a fresh id.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{bail, Context, Result};
 use benilla_formats::Chain;
 
+use crate::adt::{self, Liquid};
 use crate::blp;
 use crate::dbc::{Dbc, F};
 use crate::m2;
@@ -65,6 +67,14 @@ fn chunks(b: &[u8]) -> Vec<(String, &[u8])> {
 /// The NUL-separated names of an `MMDX`, `MWMO`, `MTEX`, `MOTX` or `MODN` chunk.
 fn names(data: &[u8]) -> Vec<String> {
     data.split(|&c| c == 0).filter(|s| !s.is_empty()).map(|s| String::from_utf8_lossy(s).into_owned()).collect()
+}
+
+fn wdt_path(map: &str) -> String {
+    format!("World\\Maps\\{map}\\{map}.wdt")
+}
+
+fn tile_path(map: &str, x: u32, y: u32) -> String {
+    format!("World\\Maps\\{map}\\{map}_{x}_{y}.adt")
 }
 
 fn dbc_path(name: &str) -> String {
@@ -437,24 +447,173 @@ impl<'a> Port<'a> {
                 into.extend(names(data).into_iter().map(|n| n.to_ascii_lowercase()));
             }
         }
+        let (ported, lacking) = self.port_named(&models, &wmos, &textures)?;
+        println!("fill {map}: {} tiles name {} models and {} WMOs; ported {ported} the 1.12 data lacks, {lacking} WotLK lacks too", tiles.len(), models.len(), wmos.len());
+        Ok(())
+    }
+
+    /// Every model, WMO and texture named (lowercase) that the 1.12 data lacks, from WotLK:
+    /// `(ported, lacking)`, the models and WMOs ported and those WotLK lacks too.
+    fn port_named(&mut self, models: &BTreeSet<String>, wmos: &BTreeSet<String>, textures: &BTreeSet<String>) -> Result<(usize, usize)> {
         let (mut ported, mut lacking) = (0, 0);
-        for m in &models {
+        for m in models {
             let stem = crate::manifest::strip_m2(m);
             if self.vanilla.contains(&format!("{stem}.m2")) {
                 continue;
             }
             if self.model(stem)? { ported += 1 } else { lacking += 1 }
         }
-        for w in &wmos {
+        for w in wmos {
             if self.vanilla.contains(w) {
                 continue;
             }
             if self.wmo(w)? { ported += 1 } else { lacking += 1 }
         }
-        for t in &textures {
+        for t in textures {
             self.copy(t)?;
         }
-        println!("fill {map}: {} tiles name {} models and {} WMOs; ported {ported} the 1.12 data lacks, {lacking} WotLK lacks too", tiles.len(), models.len(), wmos.len());
+        Ok((ported, lacking))
+    }
+
+    /// A `tiles` entry: the map's WotLK tiles in the ranges that the 1.12 data lacks.
+    pub fn tiles(&mut self, map: &str, x: (u32, u32), y: (u32, u32)) -> Result<()> {
+        let want: Vec<(u32, u32)> = (y.0..=y.1).flat_map(|ty| (x.0..=x.1).map(move |tx| (tx, ty))).collect();
+        self.port_tiles(map, &want, &format!("tiles {map} {}-{} {}-{}", x.0, x.1, y.0, y.1))
+    }
+
+    /// A `zone` entry: the map's WotLK tiles the 1.12 data lacks on which a chunk belongs to the
+    /// WotLK AreaTable zone named (any of its rows on the map) or one of its subzones. Only the
+    /// tiles inside the zone's WorldMapArea bounds are looked in, where it has one.
+    pub fn zone(&mut self, map: &str, name: &str) -> Result<()> {
+        let t = self.w("Map")?;
+        let map_id = t
+            .rows
+            .iter()
+            .find(|r| t.s(r, 1).eq_ignore_ascii_case(map))
+            .map(|r| Dbc::u(r, 0))
+            .with_context(|| format!("WotLK has no map {map}"))?;
+        let t = self.w("AreaTable")?;
+        let roots: Vec<u32> = t
+            .rows
+            .iter()
+            .filter(|r| Dbc::u(r, 1) == map_id && t.s(r, 11).eq_ignore_ascii_case(name))
+            .map(|r| Dbc::u(r, 0))
+            .collect();
+        if roots.is_empty() {
+            bail!("WotLK's AreaTable has no zone {name} on map {map}");
+        }
+        let mut areas: HashSet<u32> = roots.iter().copied().collect();
+        loop {
+            let more: Vec<u32> = t
+                .rows
+                .iter()
+                .filter(|r| areas.contains(&Dbc::u(r, 2)) && !areas.contains(&Dbc::u(r, 0)))
+                .map(|r| Dbc::u(r, 0))
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            areas.extend(more);
+        }
+        // WorldMapArea: left and right are world y, top and bottom world x, in yards.
+        const TILE: f32 = 1600.0 / 3.0;
+        let tile = |v: f32| (32.0 - v / TILE).floor().clamp(0.0, 63.0) as u32;
+        let t = self.w("WorldMapArea")?;
+        let bounds: Vec<((u32, u32), (u32, u32))> = t
+            .rows
+            .iter()
+            .filter(|r| Dbc::u(r, 1) == map_id && roots.contains(&Dbc::u(r, 2)))
+            .map(|r| {
+                let f = |i| f32::from_bits(Dbc::u(r, i));
+                ((tile(f(4)), tile(f(5))), (tile(f(6)), tile(f(7))))
+            })
+            .collect();
+        let wdt = self.wotlk_wdt(map)?;
+        let inside = |&(x, y): &(u32, u32)| {
+            bounds.is_empty() || bounds.iter().any(|&(bx, by)| (bx.0..=bx.1).contains(&x) && (by.0..=by.1).contains(&y))
+        };
+        let mut want = Vec::new();
+        for (x, y) in adt::wdt_tiles(&wdt).into_iter().filter(inside) {
+            let path = tile_path(map, x, y);
+            let bytes = match self.out.get(&path) {
+                Some(b) => b.to_vec(),
+                None if self.vanilla.contains(&path) => self.vanilla.read(&path)?,
+                None => self.wotlk.read(&path)?,
+            };
+            if adt::area_ids(&bytes).iter().any(|a| areas.contains(a)) {
+                want.push((x, y));
+            }
+        }
+        if want.is_empty() {
+            bail!("no WotLK tile of map {map} has a chunk of {name}");
+        }
+        self.port_tiles(map, &want, &format!("zone {map} {name}"))
+    }
+
+    fn wotlk_wdt(&mut self, map: &str) -> Result<Vec<u8>> {
+        self.wotlk.try_read(&wdt_path(map))?.with_context(|| format!("WotLK has no map {map}"))
+    }
+
+    /// Convert the WotLK tiles of `want` that the 1.12 data lacks, mark them in the map's WDT
+    /// (WotLK's, cleared, where 1.12 has no such map), and port what they name.
+    fn port_tiles(&mut self, map: &str, want: &[(u32, u32)], what: &str) -> Result<()> {
+        let wdt = self.wotlk_wdt(map)?;
+        let big = adt::big_alpha(&wdt);
+        let exists: HashSet<(u32, u32)> = adt::wdt_tiles(&wdt).into_iter().collect();
+        let kinds: HashMap<u16, Liquid> =
+            self.w("LiquidType")?.rows.iter().map(|r| (Dbc::u(r, 0) as u16, Liquid::from_type(Dbc::u(r, 3)))).collect();
+        let (mut models, mut wmos, mut textures) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        let (mut tiles, mut own, mut absent, mut liquids) = (Vec::new(), 0, 0, 0);
+        for &(x, y) in want {
+            let path = tile_path(map, x, y);
+            if !exists.contains(&(x, y)) {
+                absent += 1;
+            } else if self.vanilla.contains(&path) {
+                own += 1;
+            } else if self.out.contains(&path) {
+                tiles.push((x, y));
+            } else {
+                let bytes = self.wotlk.read(&path)?;
+                let out = adt::convert(&bytes, (x, y), big, &|id| kinds.get(&id).copied().unwrap_or(Liquid::Water))
+                    .with_context(|| format!("convert {path}"))?;
+                liquids += adt::check(&out).with_context(|| format!("benilla-adt rejects converted {path}"))?;
+                let (m, w, t) = adt::named(&out);
+                models.extend(m.into_iter().map(|n| n.to_ascii_lowercase()));
+                wmos.extend(w.into_iter().map(|n| n.to_ascii_lowercase()));
+                textures.extend(t.into_iter().map(|n| n.to_ascii_lowercase()));
+                self.out.add(&path, out);
+                tiles.push((x, y));
+            }
+        }
+        if tiles.is_empty() && own == 0 {
+            bail!("WotLK has none of these tiles of map {map}");
+        }
+        if !tiles.is_empty() {
+            let path = wdt_path(map);
+            let current = match self.out.get(&path) {
+                Some(w) => Some(w.to_vec()),
+                None if self.vanilla.contains(&path) => Some(self.vanilla.read(&path)?),
+                None => None,
+            };
+            match current {
+                Some(mut w) => {
+                    if adt::mark_tiles(&mut w, &tiles)? || self.out.contains(&path) {
+                        self.out.add(&path, w);
+                    }
+                }
+                None => {
+                    self.out.add(&path, adt::new_wdt(&wdt, &tiles)?);
+                    println!("note: 1.12 has no map {map}: its WDT is ported, but not its Map.dbc, AreaTable or Light rows");
+                }
+            }
+        }
+        let (ported, lacking) = self.port_named(&models, &wmos, &textures)?;
+        println!(
+            "{what}: {} tiles converted with {liquids} liquid surfaces ({own} are 1.12's own, {absent} WotLK lacks); they name {} models and {} WMOs: ported {ported} the 1.12 data lacks, {lacking} WotLK lacks too",
+            tiles.len(),
+            models.len(),
+            wmos.len()
+        );
         Ok(())
     }
 

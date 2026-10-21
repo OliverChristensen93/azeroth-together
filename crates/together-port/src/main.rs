@@ -8,6 +8,7 @@
 //! together-port list               show the wish list
 //! ```
 
+mod adt;
 mod blp;
 mod dbc;
 mod m2;
@@ -26,7 +27,7 @@ use manifest::{Entry, Manifest, Paths};
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  together-port add <race|fill|wmo|model|creature|file|wotlk> <arg>\n  together-port build\n  together-port list\n\
+        "usage:\n  together-port add <race|fill|wmo|model|creature|file|tiles|zone|wotlk> <arg>\n  together-port build\n  together-port list\n\
          dev:\n  together-port model <wotlk Data> <vanilla Data> <model without .m2> <out.m2>\n  together-port dbc <wotlk Data> <vanilla Data> <wotlk|vanilla> <Name> <column> <value>\n  \
          together-port extract <wotlk Data> <path> <out>\n  together-port sizes <wotlk Data> <race>\n  together-port vlist <vanilla Data> <substring>"
     );
@@ -184,6 +185,8 @@ fn build(paths: &Paths) -> Result<()> {
                 Entry::Model(stem) => p.model_entry(stem),
                 Entry::Creature(id) => p.creature(*id),
                 Entry::File(path) => p.file_entry(path),
+                Entry::Tiles { map, x, y } => p.tiles(map, *x, *y),
+                Entry::Zone { map, name } => p.zone(map, name),
             };
             done.with_context(|| format!("`{}`", e.line()))?;
         }
@@ -230,7 +233,7 @@ fn build(paths: &Paths) -> Result<()> {
 }
 
 /// Read every file of a written archive back with the client's own MPQ reader, every model with
-/// its M2 reader and every WMO with its WMO reader.
+/// its M2 reader, every WMO with its WMO reader and every terrain tile with its ADT reader.
 fn verify(path: &Path) -> Result<()> {
     let a = benilla_mpq::Archive::open(path).context("benilla-mpq rejects the archive")?;
     let list = String::from_utf8(a.read_file("(listfile)")?)?;
@@ -239,6 +242,10 @@ fn verify(path: &Path) -> Result<()> {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".m2") {
             check_model(&bytes).with_context(|| name.to_owned())?;
+        } else if lower.ends_with(".adt") {
+            adt::check(&bytes).with_context(|| format!("benilla-adt rejects {name}"))?;
+        } else if lower.ends_with(".wdt") {
+            anyhow::ensure!(!adt::wdt_tiles(&bytes).is_empty(), "{name} marks no tiles");
         } else if lower.ends_with(".wmo") {
             benilla_wmo::parse_wmo(&mut Cursor::new(bytes.as_slice()))
                 .map_err(|e| anyhow::anyhow!("{e:?}"))
