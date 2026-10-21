@@ -86,7 +86,7 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   `together/tooltip.rs` (WoW's own action-button tooltip is turned off in `ui.rs`);
   `TOGETHER_TIP_SLOT=<n>` shows button n's for a test shot (`TOGETHER_TIP_SHIFT=1` as if Shift
   were held). The tomes and items carried are a strip of icons under the player frame, and the
-  stat sheet opens with its Stats button or Tab (`together/inventory.rs`; `TOGETHER_STATS=1`
+  stat sheet opens with its Stats button or C, the talent sheet with Talents or N (`together/inventory.rs`; `TOGETHER_STATS=1`
   opens it).
   The talent web between runs ([docs/TALENT-WEB.md](docs/TALENT-WEB.md)): `content/talents.ron`,
   `together-sim/src/talents.rs` (model) and `world/combat/talents.rs` (in-run hooks), the menu's
@@ -111,7 +111,9 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   the `Data` folder from their own AzerothSurvivors install next to the exe.
 - Engine change made for the trimmed data: `benilla-formats/src/creatures.rs` drops a
   CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
-  humanoid NPCs are composited live instead of rendering bodiless.
+  humanoid NPCs are composited live instead of rendering bodiless, and (`dress_bare_npcs`) swaps
+  a worn piece whose body textures are all missing for the same slot's piece of the Rogue
+  starting outfit, so a Defias is not bare.
   Never launch a normal (fullscreen) run without asking the user first.
 - WotLK art (anything the trimmed 1.12 data lacks: Stormwind's city, missing doodads, WotLK models,
   creatures, sounds): `crates/together-port` rewrites WotLK 3.3.5 files in 1.12's formats into

@@ -4,7 +4,8 @@
 // `item_level` is the item level of the equipment its bosses and elites drop (a boss's three
 // higher). `shrines_at_once` is how many shrines, chests and banners stand at once (new ones come
 // as old ones are used); `pots` how many pots stand scattered over the arena; `elite_camps` how
-// many camps an elite guards (a new one comes some minutes after it dies); `interactables` are the
+// many camps a rare guards (a new one comes some minutes after it dies), `rares` the rares that
+// guard them, camp by camp (enemies.ron); `interactables` are the
 // kinds that can come, each with how many may stand at once and how often it comes up (`weight`).
 // Only zones whose terrain is in the game data can be played. The "boss candidates" comments
 // are the original game's bosses (display, level, speed, scale), not all in the data.
@@ -31,6 +32,7 @@
         shrines_at_once: 2,
         pots: 10,
         elite_camps: 3,
+        rares: ["mother_fang", "narg_the_taskmaster", "fedfennel"],
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -63,6 +65,7 @@
         shrines_at_once: 2,
         pots: 10,
         elite_camps: 3,
+        rares: ["lupos", "vultros", "gruff_swiftbite"],
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -94,6 +97,7 @@
         shrines_at_once: 2,
         pots: 10,
         elite_camps: 3,
+        rares: ["naraxis", "nefaru", "lupos"],
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -124,7 +128,8 @@
         item_level: 45,
         shrines_at_once: 2,
         pots: 3,
-        elite_camps: 1,
+        // No camp: the arena is too small to keep out of an elite's reach.
+        elite_camps: 0,
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),
@@ -157,6 +162,7 @@
         shrines_at_once: 2,
         pots: 6,
         elite_camps: 2,
+        rares: ["kurinnaxx", "princess_huhuran"],
         interactables: [
             (kind: TitanShrine, count: 2, weight: 10),
             (kind: GoldenShrine, count: 1, weight: 2),

@@ -322,6 +322,12 @@ pub struct ZoneDef {
     /// [`ZoneDef::enemies`] resolved to indices into [`Content::enemies`].
     #[serde(skip)]
     pub enemy_ix: Vec<usize>,
+    /// The rares that guard the zone's camps, camp by camp (enemy keys); none, and a camp's
+    /// guard is a rare of the horde's own kind.
+    #[serde(default)]
+    pub rares: Vec<String>,
+    #[serde(skip)]
+    pub rare_ix: Vec<usize>,
 }
 
 fn ten_levels() -> u16 {
@@ -364,6 +370,10 @@ pub struct ClassDef {
     #[serde(default = "one_u8")]
     pub sheath: u8,
     pub base_hp: f32,
+    /// Health back every second before any [`crate::Stat::Regen`]: a little for cloth, more for
+    /// the classes who fight in the thick of it.
+    #[serde(default = "half")]
+    pub base_regen: f32,
     /// Yards per second.
     pub speed: f32,
     /// The ability every run starts with.
@@ -384,6 +394,10 @@ pub struct ClassDef {
 
 fn one_u8() -> u8 {
     1
+}
+
+fn half() -> f32 {
+    0.5
 }
 
 fn white() -> u32 {
@@ -424,6 +438,58 @@ pub struct Rules {
     /// Seconds after a camp's elite dies before a new one takes its place.
     #[serde(default = "one_eighty")]
     pub elite_respawn: f32,
+    /// Every enemy's speed from its entry is multiplied by this...
+    #[serde(default = "enemy_speed")]
+    pub enemy_speed: f32,
+    /// ...but held to at most this many yards a second (an entry already faster keeps its own),
+    /// so a hero at the base 7 can still pull away from the horde without help.
+    #[serde(default = "enemy_speed_cap")]
+    pub enemy_speed_cap: f32,
+    /// The horde comes from behind the way a hero runs. Halfway to each boss a swarm sends it
+    /// from every side instead, for `surround_secs`.
+    #[serde(default = "surround_secs")]
+    pub surround_secs: f32,
+    /// Health, in ordinary enemies: a rare (a camp's guard) and an elite (the horde's and an
+    /// idol's) of their own kind's; a boss of the horde's strongest kind at the time, and the
+    /// run's last boss (the `final_boss`th) more.
+    #[serde(default = "rare_health")]
+    pub rare_health: f32,
+    #[serde(default = "elite_health")]
+    pub elite_health: f32,
+    #[serde(default = "boss_health")]
+    pub boss_health: f32,
+    #[serde(default = "final_boss_health")]
+    pub final_boss_health: f32,
+    #[serde(default = "final_boss")]
+    pub final_boss: u32,
+}
+
+fn rare_health() -> f32 {
+    30.0
+}
+fn final_boss_health() -> f32 {
+    75.0
+}
+fn final_boss() -> u32 {
+    3
+}
+
+fn elite_health() -> f32 {
+    15.0
+}
+fn boss_health() -> f32 {
+    50.0
+}
+
+
+fn enemy_speed() -> f32 {
+    1.35
+}
+fn enemy_speed_cap() -> f32 {
+    6.65
+}
+fn surround_secs() -> f32 {
+    12.0
 }
 
 impl Default for Rules {
@@ -434,7 +500,43 @@ impl Default for Rules {
             item_max_copies: five_u8(),
             shrine_every: ninety(),
             elite_respawn: one_eighty(),
+            enemy_speed: enemy_speed(),
+            enemy_speed_cap: enemy_speed_cap(),
+            surround_secs: surround_secs(),
+            rare_health: rare_health(),
+            elite_health: elite_health(),
+            boss_health: boss_health(),
+            final_boss_health: final_boss_health(),
+            final_boss: final_boss(),
         }
+    }
+}
+
+/// A race's passives, from `races.ron`: what every hero of `race` (a `ChrRaces.dbc` id) gets.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct RaceDef {
+    pub race: u8,
+    pub name: String,
+    pub passives: Vec<Racial>,
+}
+
+/// One racial passive: its name and line for the menu, the stats it adds, and whether it shows
+/// treasure on the minimap.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Racial {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub stats: Vec<(crate::stats::Stat, f32)>,
+    #[serde(default)]
+    pub treasure: bool,
+}
+
+impl RaceDef {
+    /// Whether one of its passives shows chests, shrines and pots on the minimap.
+    pub fn treasure(&self) -> bool {
+        self.passives.iter().any(|p| p.treasure)
     }
 }
 
@@ -447,6 +549,8 @@ pub struct Content {
     pub zones: Vec<ZoneDef>,
     /// [`Rules::default`] until [`Content::with_rules`] reads a file.
     pub rules: Rules,
+    /// None until [`Content::with_races`] reads `races.ron`.
+    pub races: Vec<RaceDef>,
 }
 
 #[derive(Debug)]
@@ -579,6 +683,11 @@ impl Content {
                 .iter()
                 .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
                 .collect::<Result<_, _>>()?;
+            zone.rare_ix = zone
+                .rares
+                .iter()
+                .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
+                .collect::<Result<_, _>>()?;
             zone.boss_ix = Some(zone.boss.as_str())
                 .filter(|k| !k.is_empty())
                 .map(|k| resolve(&enemy_keys, "zones.ron", &zone.key, k))
@@ -597,6 +706,7 @@ impl Content {
             enemies,
             zones,
             rules: Rules::default(),
+            races: Vec::new(),
         })
     }
 
@@ -607,6 +717,20 @@ impl Content {
             message: e.to_string(),
         })?;
         Ok(self)
+    }
+
+    /// These contents with the racial passives in `text` (`races.ron`).
+    pub fn with_races(mut self, text: &str) -> Result<Self, ContentError> {
+        self.races = ron::from_str(text).map_err(|e| ContentError::Parse {
+            file: "races.ron",
+            message: e.to_string(),
+        })?;
+        Ok(self)
+    }
+
+    /// The passives of `race` (a `ChrRaces.dbc` id), if it has any.
+    pub fn race(&self, race: u8) -> Option<&RaceDef> {
+        self.races.iter().find(|r| r.race == race)
     }
 
     pub fn ability(&self, key: &str) -> Option<usize> {
@@ -628,7 +752,7 @@ pub(crate) mod tests {
 
     pub(crate) const CLASSES: &str = r#"[
         (key: "mage", name: "Mage", class_id: 8, power: 0, looks: [1294],
-         base_hp: 120.0, speed: 7.5, start: "frostbolt", pool: ["frostbolt", "nova"]),
+         base_hp: 120.0, base_regen: 0.0, speed: 7.5, start: "frostbolt", pool: ["frostbolt", "nova"]),
     ]"#;
     pub(crate) const ABILITIES: &str = r#"[
         (key: "frostbolt", name: "Frostbolt", visual: 116, kind: Bolt, damage: 12.0,

@@ -118,7 +118,7 @@ impl World {
     }
 
     /// Each camp's elite: a camp whose elite died counts down the rules' `elite_respawn`, then
-    /// raises a new one of the run's strongest kind, which guards it.
+    /// raises a new one of a kind a little stronger than the horde's, which guards it.
     fn tend_camps(&mut self) {
         for c in 0..self.camps.len() {
             if let Some(id) = self.camps[c].elite {
@@ -132,13 +132,9 @@ impl World {
             if self.camps[c].respawn > 0.0 {
                 continue;
             }
-            let (_, top) = self.tiers();
-            let def = self.zone().enemy_ix[top];
+            // A few tiers above the horde: a camp is worth the detour from the first minute.
             let pos = self.camps[c].pos;
-            let id = self.spawn_enemy(def, pos, pos + V2::new(1.0, 0.0), true);
-            if let Some(e) = self.enemies.last_mut() {
-                e.home = Some(pos);
-            }
+            let id = self.spawn_camp_rare(pos, c);
             self.camps[c].elite = Some(id);
         }
     }

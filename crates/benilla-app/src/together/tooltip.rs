@@ -497,11 +497,30 @@ fn thing_lines(world: &World, h: usize, thing: TipThing) -> Vec<Line> {
             Line::two("Pick a card", "1, 2, 3 or click", GREY, WHITE),
             Line::two("Reroll / Freeze / Banish", "R / T / G", GREY, WHITE),
             Line::two("Defensive spell", "F", GREY, WHITE),
-            Line::two("Stat sheet", "Tab", GREY, WHITE),
+            Line::two("Stat sheet", "C", GREY, WHITE),
+            Line::two("Talent sheet", "N", GREY, WHITE),
+            Line::two("Pause / Main Menu", "Esc", GREY, WHITE),
             Line::two("Switch on gear", "Y", GREY, WHITE),
             Line::one("Stand in a shrine's circle to use it.", GOLD),
         ],
     }
+}
+
+/// A race's tooltip on the menu: its name and each racial passive.
+fn race_lines(content: &together_sim::Content, race: u8) -> Option<Vec<Line>> {
+    let def = content.race(race)?;
+    let mut out = vec![Line {
+        size: 14.0,
+        ..Line::one(def.name.clone(), WHITE)
+    }];
+    out.push(Line::one("Racial passives", GREY));
+    for p in &def.passives {
+        out.push(Line::one(p.name.clone(), WHITE));
+        if !p.description.is_empty() {
+            out.push(Line::one(p.description.clone(), GOLD));
+        }
+    }
+    Some(out)
 }
 
 /// The spell under the mouse, by its index among the hero's spells: on the level-up screen's
@@ -543,27 +562,60 @@ pub(super) fn show_tip(
     slots: Query<(&SpellSlot, &Interaction)>,
     cards: Query<(&TipAbility, &Interaction)>,
     things: Query<(&TipThing, &Interaction)>,
-    keys: Res<ButtonInput<KeyCode>>,
+    menu: (
+        Query<(&super::menu::SpellSlot, &Interaction)>,
+        Option<Res<super::menu::Selection>>,
+        Query<(&super::menu::MenuAction, &Interaction)>,
+    ),
+    (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
     windows: Query<&Window, With<PrimaryWindow>>,
-    scale: Res<UiScale>,
+    mut menu_world: Local<Option<(usize, World)>>,
     font: Option<Res<TipFont>>,
-    mut root: Query<(&mut Node, &mut Visibility), With<TipRoot>>,
+    mut root: Query<(&mut Node, &mut Visibility, &ComputedNode), With<TipRoot>>,
     body: Query<Entity, With<TipBody>>,
     mut shown: Local<Vec<Line>>,
 ) {
-    let Ok((mut node, mut vis)) = root.single_mut() else {
+    let Ok((mut node, mut vis, computed)) = root.single_mut() else {
         return;
     };
-    let tip = (*phase.get() == Phase::Playing)
+    // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
+    let extended = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
+        || std::env::var_os("TOGETHER_TIP_SHIFT").is_some();
+    // On the menu, a class's spell as a new hero of that class would cast it: the same tooltip
+    // as in a run, from a world made for the purpose.
+    let menu_tip = (*phase.get() == Phase::Menu)
+        .then(|| menu.0.iter().find(|(_, i)| **i != Interaction::None))
+        .flatten()
+        .and_then(|(slot, _)| {
+            let class = menu.1.as_ref()?.class;
+            if menu_world.as_ref().is_none_or(|(c, _)| *c != class) {
+                let content = super::content();
+                let key = content.classes.get(class)?.key.clone();
+                let zone = content.zones.first()?.key.clone();
+                let mut world = World::new(content, &zone, 1).ok()?;
+                world.add_hero(0, &key).ok()?;
+                *menu_world = Some((class, world));
+            }
+            let (_, world) = menu_world.as_ref()?;
+            Some(lines(world, 0, &Owned::new(slot.0, 0.0), extended))
+        });
+    // A race's face: its racial passives.
+    let race_tip = (*phase.get() == Phase::Menu)
+        .then(|| {
+            menu.2.iter().find_map(|(a, i)| match a {
+                super::menu::MenuAction::Race(r) if *i != Interaction::None => Some(*r),
+                _ => None,
+            })
+        })
+        .flatten()
+        .and_then(|r| race_lines(&super::content(), r));
+    let tip = race_tip.or(menu_tip).or_else(|| (*phase.get() == Phase::Playing)
         .then_some(())
         .and(sim.as_ref())
         .and_then(|sim| {
             let hover = hovered(&slots, &cards, &things, script.as_deref())?;
             let h = sim.world.heroes.iter().position(|x| x.player == sim.me)?;
             let known = &sim.world.heroes[h].abilities;
-            // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
-            let extended = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
-                || std::env::var_os("TOGETHER_TIP_SHIFT").is_some();
             let owned = match hover {
                 Hover::Slot(i) => known.get(i)?.clone(),
                 Hover::Ability(a) => known
@@ -574,7 +626,7 @@ pub(super) fn show_tip(
                 Hover::Thing(thing) => return Some(thing_lines(&sim.world, h, thing)),
             };
             Some(lines(&sim.world, h, &owned, extended))
-        });
+        }));
     let Some(tip) = tip else {
         if *vis != Visibility::Hidden {
             *vis = Visibility::Hidden;
@@ -597,7 +649,15 @@ pub(super) fn show_tip(
         cursor.x + 18.0
     };
     node.left = Val::Px(left.max(0.0));
-    node.bottom = Val::Px((h - cursor.y + 14.0).min(h - 40.0));
+    // Above the cursor, or below it where the screen's top would cut it off.
+    let tall = computed.size().y * computed.inverse_scale_factor() / s;
+    if cursor.y - 14.0 - tall < 0.0 {
+        node.bottom = Val::Auto;
+        node.top = Val::Px((cursor.y + 24.0).min((h - tall).max(0.0)));
+    } else {
+        node.top = Val::Auto;
+        node.bottom = Val::Px((h - cursor.y + 14.0).min(h - 40.0));
+    }
     if *vis != Visibility::Inherited {
         *vis = Visibility::Inherited;
     }

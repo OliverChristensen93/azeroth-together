@@ -601,7 +601,7 @@ impl SelectCommit<'_, '_> {
     }
 
     /// Select a resolved guid, `0x489a40`'s arm 1, through [`scan::commit`].
-    pub(super) fn commit(&mut self, entity: Entity, guid: u64) {
+    pub(crate) fn commit(&mut self, entity: Entity, guid: u64) {
         let me = self.me.single().ok();
         // `scan::commit` takes the new target's attackability from its caller: the same
         // `can_attack` the cursor and TAB pass.

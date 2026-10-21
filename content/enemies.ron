@@ -6,7 +6,8 @@
 // `mechanics` are what its elites and bosses do beyond walking up and swinging (Charge, Caster,
 // Slam, Leap, Frenzy, Healer, Summoner, and the bosses' Patches and DeathGrip; see
 // crates/together-sim/src/mechanics.rs); ordinary enemies never use them. A boss's `hint` is the
-// sentence under its bar.
+// sentence under its bar. A boss's own `hp` is not used: bosses, champions and elites take their
+// health from rules.ron (`boss_health`, `champion_health`, `elite_health`).
 [
     // --- Elwynn Forest, weakest first ---
     (key: "young_wolf", mechanics: [Frenzy], name: "Young Wolf", display: 447, level: 1,
@@ -185,4 +186,28 @@
      hint: "Slams the ground, stirs sand around you and pulls you in: leave every purple circle, and stand in the green one to hurt him.",
      name: "Anubisath Guardian", display: 15347, level: 63,
      scale: 1.3, radius: 1.3, hp: 7000.0, speed: 4.0, damage: 70.0, xp: 40),
+    // --- Rares: each guards an elite camp (zones.ron `rares`). Their health, damage and
+    // experience follow the horde (a kind two tiers above it, `rare_health` times as tough);
+    // only their name, model, size and mechanics are their own. All of these ship whole in the
+    // trimmed data (no humanoid whose armour textures are missing).
+    (key: "mother_fang", mechanics: [Leap, Summoner], name: "Mother Fang", display: 2541, level: 10,
+     hp: 400.0, speed: 4.6, damage: 40.0, xp: 12),
+    (key: "narg_the_taskmaster", mechanics: [Slam, Frenzy], name: "Narg the Taskmaster", display: 774, level: 10,
+     hp: 400.0, speed: 4.2, damage: 40.0, xp: 12),
+    (key: "fedfennel", mechanics: [Charge, Frenzy], name: "Fedfennel", display: 175, level: 12,
+     hp: 400.0, speed: 4.2, damage: 40.0, xp: 12),
+    (key: "lupos", mechanics: [Charge, Frenzy], name: "Lupos", display: 11412, level: 23,
+     hp: 400.0, speed: 5.4, damage: 40.0, xp: 12),
+    (key: "vultros", mechanics: [Leap, Summoner], name: "Vultros", display: 507, level: 26, radius: 1.3,
+     hp: 400.0, speed: 5.2, damage: 40.0, xp: 12),
+    (key: "gruff_swiftbite", mechanics: [Charge, Slam], name: "Gruff Swiftbite", display: 175, level: 12,
+     hp: 400.0, speed: 4.2, damage: 40.0, xp: 12),
+    (key: "naraxis", mechanics: [Leap, Summoner], name: "Naraxis", display: 963, level: 27,
+     hp: 400.0, speed: 4.6, damage: 40.0, xp: 12),
+    (key: "nefaru", mechanics: [Charge, Frenzy, Summoner], name: "Nefaru", display: 11181, level: 34,
+     hp: 400.0, speed: 5.4, damage: 40.0, xp: 12),
+    (key: "kurinnaxx", mechanics: [Slam, Charge], name: "Kurinnaxx", display: 15742, level: 62, radius: 1.3,
+     hp: 400.0, speed: 5.0, damage: 40.0, xp: 12),
+    (key: "princess_huhuran", mechanics: [Leap, Frenzy], name: "Princess Huhuran", display: 15739, level: 63, radius: 1.3,
+     hp: 400.0, speed: 5.0, damage: 40.0, xp: 12),
 ]

@@ -13,7 +13,7 @@ use together_sim::{Event, Shape, V2};
 use super::{content, units, view::Views, Phase, Sim};
 
 /// The boss bar's width, in the 768-unit canvas.
-const BAR_W: f32 = 360.0;
+const BAR_W: f32 = 260.0;
 /// How far above the ground a telegraph lies, so it is not lost in the grass, and its edge's
 /// width in yards.
 const LIFT: f32 = 0.12;
@@ -68,17 +68,24 @@ impl Looks {
     }
 }
 
-#[derive(Component)]
-pub(super) struct BossBar;
+/// Which bar at the top: the boss's, or a rare's under it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BarSlot {
+    Boss = 0,
+    Rare = 1,
+}
 
 #[derive(Component)]
-pub(super) struct BossName;
+pub(super) struct BossBar(BarSlot);
 
 #[derive(Component)]
-pub(super) struct BossFill;
+pub(super) struct BossName(BarSlot);
 
 #[derive(Component)]
-pub(super) struct BossHint;
+pub(super) struct BossFill(BarSlot);
+
+#[derive(Component)]
+pub(super) struct BossHint(BarSlot);
 
 /// The ground under `p`, at the terrain's height where there is terrain.
 fn on_ground(world_point: &benilla_world::world_point::WorldPoint, p: V2, fallback_y: f32) -> Vec3 {
@@ -273,151 +280,239 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             TextLayout::new_with_justify(Justify::Center),
         )
     };
-    // Under the run's status line, top centre.
-    commands
-        .spawn((
-            BossBar,
-            // Top centre, in a frame like the run panel's.
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                top: Val::Px(6.0),
-                width: Val::Px(BAR_W + 32.0),
-                margin: UiRect::left(Val::Px(-(BAR_W + 32.0) / 2.0)),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(3.0),
-                padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.88)),
-            BorderColor::all(Color::srgb(0.72, 0.6, 0.32)),
-            Visibility::Hidden,
-        ))
-        .with_children(|b| {
-            b.spawn((text(14.0, Color::srgb(1.0, 0.82, 0.0)), BossName));
-            b.spawn((
+    // Top centre, small: the boss's name and health, and under it a rare's in the fight. Hovered,
+    // what it does drops down under it; clicked, it is our target.
+    for (slot, fill_color, border) in [
+        (
+            BarSlot::Boss,
+            Color::srgb(0.75, 0.08, 0.05),
+            Color::srgb(0.72, 0.6, 0.32),
+        ),
+        (
+            BarSlot::Rare,
+            Color::srgb(0.45, 0.5, 0.8),
+            Color::srgb(0.7, 0.72, 0.85),
+        ),
+    ] {
+        commands
+            .spawn((
+                BossBar(slot),
+                Button,
                 Node {
-                    width: Val::Px(BAR_W),
-                    height: Val::Px(12.0),
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    top: Val::Px(4.0),
+                    width: Val::Px(BAR_W + 16.0),
+                    margin: UiRect::left(Val::Px(-(BAR_W + 16.0) / 2.0)),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(2.0),
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.85)),
-                BorderColor::all(Color::srgb(0.7, 0.6, 0.35)),
+                BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.82)),
+                BorderColor::all(border),
+                Visibility::Hidden,
             ))
-            .with_children(|bar| {
-                bar.spawn((
+            .with_children(|b| {
+                b.spawn((text(12.0, Color::srgb(1.0, 0.82, 0.0)), BossName(slot)));
+                b.spawn((
                     Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
+                        width: Val::Px(BAR_W),
+                        height: Val::Px(9.0),
+                        border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.75, 0.08, 0.05)),
-                    BossFill,
+                    BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.85)),
+                    BorderColor::all(Color::srgb(0.7, 0.6, 0.35)),
+                ))
+                .with_children(|bar| {
+                    bar.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(fill_color),
+                        BossFill(slot),
+                    ));
+                });
+                b.spawn((
+                    text(10.0, Color::WHITE),
+                    Node {
+                        max_width: Val::Px(BAR_W + 4.0),
+                        margin: UiRect::top(Val::Px(3.0)),
+                        display: Display::None,
+                        ..default()
+                    },
+                    BossHint(slot),
                 ));
             });
-            b.spawn((
-                text(10.0, Color::WHITE),
-                Node {
-                    max_width: Val::Px(BAR_W + 8.0),
-                    ..default()
-                },
-                BossHint,
-            ));
-        });
+    }
 }
 
-/// The boss bar shown while a boss lives: its name, health and what it does.
-#[allow(clippy::type_complexity)]
+/// How near our hero a rare at rest must be for its bar to show.
+const RARE_BAR_NEAR: f32 = 30.0;
+
+/// The bars at the top: the boss's while a boss lives, and under it the nearest rare's that is in
+/// the fight (hurt, or near our hero). Each shows its name and health; hovered, what it does;
+/// clicked, it becomes our target.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn boss_bar(
     phase: Res<State<Phase>>,
     sim: Option<Res<Sim>>,
-    mut bar: Query<&mut Visibility, With<BossBar>>,
-    mut fill: Query<&mut Node, With<BossFill>>,
-    mut name: Query<&mut Text, (With<BossName>, Without<BossHint>)>,
-    mut hint: Query<&mut Text, (With<BossHint>, Without<BossName>)>,
+    views: Res<Views>,
+    guids: Query<&crate::net::Guid>,
+    mut select: crate::target::SelectCommit,
+    mut bar: Query<(&BossBar, &mut Visibility, &Interaction, &ComputedNode, &mut Node)>,
+    mut fill: Query<(&BossFill, &mut Node), (Without<BossHint>, Without<BossBar>)>,
+    mut name: Query<(&BossName, &mut Text), Without<BossHint>>,
+    mut hint: Query<
+        (&BossHint, &mut Text, &mut Node),
+        (Without<BossName>, Without<BossFill>, Without<BossBar>),
+    >,
+    mut was: Local<[Interaction; 2]>,
 ) {
-    let boss = (*phase.get() == Phase::Playing)
+    let world = (*phase.get() == Phase::Playing)
         .then_some(())
         .and(sim.as_ref())
-        .and_then(|sim| sim.world.enemies.iter().find(|e| e.boss).cloned());
-    let want = if boss.is_some() {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
+        .map(|sim| (&sim.world, sim.me));
+    let boss = world.and_then(|(w, _)| w.enemies.iter().find(|e| e.boss).cloned());
+    let rare = world.and_then(|(w, me)| {
+        let at = w.hero(me).map(|h| h.pos)?;
+        w.enemies
+            .iter()
+            .filter(|e| w.guards.contains(&e.id))
+            .filter(|e| e.hp < e.max_hp || e.pos.distance(at) <= RARE_BAR_NEAR)
+            .min_by(|a, b| a.pos.distance(at).total_cmp(&b.pos.distance(at)))
+            .cloned()
+    });
+    let shown = |slot: BarSlot| match slot {
+        BarSlot::Boss => boss.as_ref(),
+        BarSlot::Rare => rare.as_ref(),
     };
-    for mut v in &mut bar {
+    // The rare's bar sits under the boss's when both are up.
+    let boss_height = bar
+        .iter()
+        .find(|(s, ..)| s.0 == BarSlot::Boss)
+        .map_or(0.0, |(.., c, _)| c.size().y * c.inverse_scale_factor());
+    let mut hovered = [false; 2];
+    let mut clicked = [false; 2];
+    for (slot, mut v, interaction, _, mut node) in &mut bar {
+        let i = slot.0 as usize;
+        let want = if shown(slot.0).is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *v != want {
             *v = want;
         }
-    }
-    let Some(boss) = boss else {
-        return;
-    };
-    let def = &content().enemies[boss.def];
-    let share = (boss.hp / boss.max_hp.max(1.0)).clamp(0.0, 1.0);
-    if let Ok(mut node) = fill.single_mut() {
-        node.width = Val::Percent(share * 100.0);
-    }
-    let title = format!("{}  {:.0}%", def.name, share * 100.0);
-    if let Ok(mut t) = name.single_mut() {
-        if t.0 != title {
-            t.0 = title;
+        if slot.0 == BarSlot::Rare {
+            let top = if boss.is_some() {
+                Val::Px(4.0 + boss_height + 3.0)
+            } else {
+                Val::Px(4.0)
+            };
+            if node.top != top {
+                node.top = top;
+            }
         }
+        hovered[i] = *interaction != Interaction::None;
+        clicked[i] = *interaction == Interaction::Pressed && was[i] != Interaction::Pressed;
+        was[i] = *interaction;
     }
-    let sentence = if def.hint.is_empty() {
-        def.mechanics
-            .iter()
-            .map(|m| m.hint())
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        def.hint.clone()
-    };
-    if let Ok(mut t) = hint.single_mut() {
-        if t.0 != sentence {
-            t.0 = sentence;
+    for slot in [BarSlot::Boss, BarSlot::Rare] {
+        let Some(e) = shown(slot) else {
+            continue;
+        };
+        let i = slot as usize;
+        let def = &content().enemies[e.def];
+        if clicked[i] {
+            // This very unit, by its guid, as clicking its body would: a name could pick another
+            // of the same kind.
+            let unit = views.enemies.get(&e.id).copied();
+            if let Some((entity, guid)) = unit.and_then(|u| Some((u, guids.get(u).ok()?.0))) {
+                select.commit(entity, guid);
+            }
+        }
+        let share = (e.hp / e.max_hp.max(1.0)).clamp(0.0, 1.0);
+        for (s, mut node) in &mut fill {
+            if s.0 == slot {
+                node.width = Val::Percent(share * 100.0);
+            }
+        }
+        let title = match slot {
+            BarSlot::Boss => format!("{}  {:.0}%", def.name, share * 100.0),
+            BarSlot::Rare => format!("{} (rare)  {:.0}%", def.name, share * 100.0),
+        };
+        for (s, mut t) in &mut name {
+            if s.0 == slot && t.0 != title {
+                t.0 = title.clone();
+            }
+        }
+        let sentence = super::bossintro::mechanics_text(def);
+        for (s, mut t, mut node) in &mut hint {
+            if s.0 != slot {
+                continue;
+            }
+            if t.0 != sentence {
+                t.0 = sentence.clone();
+            }
+            let display = if hovered[i] {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            if node.display != display {
+                node.display = display;
+            }
         }
     }
 }
 
-/// The spells whose WoW state kits show an enemy's statuses, as its aura slots carry them:
-/// Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Immolate's flames (Burning), Hammer
-/// of Justice's daze (Stunned), Fear, Entangling Roots, Hunter's Mark, Rend's bleeding, Deadly
-/// Poison and Corruption.
-const STATUS_AURAS: [(u16, u32); 10] = [
+/// The spells whose WoW state kits show an enemy's control statuses, as its aura slots carry
+/// them: Frost Nova's ice (Frozen), Frostbolt's chill (Chilled), Hammer of Justice's daze
+/// (Stunned), Fear, Entangling Roots and Hunter's Mark.
+const STATUS_AURAS: [(u16, u32); 6] = [
     (together_sim::status_bits::FROZEN, 122),
     (together_sim::status_bits::CHILLED, 116),
-    (together_sim::status_bits::BURNING, 348),
     (together_sim::status_bits::STUNNED, 853),
     (together_sim::status_bits::FEARED, 5782),
     (together_sim::status_bits::ROOTED, 339),
     (together_sim::status_bits::MARKED, 1130),
+];
+/// Stand-ins for damage over time whose spell is not known (a host without the `dots` list):
+/// Immolate (Burning), Rend (Bleeding), Deadly Poison and Corruption (Afflicted).
+const DOT_AURAS: [(u16, u32); 4] = [
+    (together_sim::status_bits::BURNING, 348),
     (together_sim::status_bits::BLEEDING, 772),
     (together_sim::status_bits::POISONED, 2818),
     (together_sim::status_bits::AFFLICTED, 172),
 ];
-/// `UNIT_FIELD_AURA` and `UNIT_FIELD_AURAFLAGS`, and the first of the harmful auras' slots.
+/// `UNIT_FIELD_AURA` and `UNIT_FIELD_AURAFLAGS`, and the harmful auras' slots.
 const FIELD_AURA: u16 = 47;
 const FIELD_AURAFLAGS: u16 = 95;
 const FIRST_DEBUFF_SLOT: u16 = 32;
+const DEBUFF_SLOTS: usize = 16;
 /// An occupied slot's flags nibble.
 const AURA_ON: u32 = 0x0E;
 
-/// Each enemy's statuses as auras on its unit, so the engine plays their WoW visuals: the ice
-/// block of a Freeze, a Chill's tint, a burn's flames, a stun's daze.
+/// Each enemy's statuses as auras on its unit, so the engine plays their WoW visuals (the ice
+/// block of a Freeze, a Chill's tint, a stun's daze) and its target frame shows them: control
+/// first, then each damage over time as the spell that left it (Shadow Word: Pain, not a
+/// stand-in).
 pub(super) fn status_auras(
     sim: Res<Sim>,
     views: Res<Views>,
     mut stores: Query<&mut crate::net::ObjectStore>,
-    mut shown: Local<std::collections::HashMap<u32, u16>>,
+    mut shown: Local<std::collections::HashMap<u32, (u16, Vec<u16>)>>,
 ) {
     shown.retain(|id, _| views.enemies.contains_key(id));
     for enemy in &sim.world.enemies {
-        let bits = enemy.status.bits();
-        if shown.get(&enemy.id).copied().unwrap_or(0) == bits {
+        let now = (enemy.status.bits(), enemy.status.dots());
+        if shown.get(&enemy.id) == Some(&now) {
             continue;
         }
         let Some(mut store) = views
@@ -427,16 +522,35 @@ pub(super) fn status_auras(
         else {
             continue;
         };
-        let mut pairs = Vec::new();
+        let (bits, dots) = &now;
+        let mut spells: Vec<u32> = STATUS_AURAS
+            .iter()
+            .filter(|(bit, _)| bits & bit != 0)
+            .map(|&(_, spell)| spell)
+            .collect();
+        let abilities = &content().abilities;
+        for &a in dots {
+            match abilities.get(usize::from(a)).map(|d| d.visual) {
+                Some(v) if v != 0 && !spells.contains(&v) => spells.push(v),
+                _ => {}
+            }
+        }
+        if dots.is_empty() {
+            spells.extend(
+                DOT_AURAS
+                    .iter()
+                    .filter(|(bit, _)| bits & bit != 0)
+                    .map(|&(_, spell)| spell),
+            );
+        }
+        spells.truncate(DEBUFF_SLOTS);
         // Each flags field holds eight slots, a nibble each: 32 to 39, then 40 to 47.
+        let mut pairs = Vec::new();
         let mut flags = [0u32; 2];
-        for (k, &(bit, spell)) in STATUS_AURAS.iter().enumerate() {
-            let on = bits & bit != 0;
-            pairs.push((
-                FIELD_AURA + FIRST_DEBUFF_SLOT + k as u16,
-                if on { spell } else { 0 },
-            ));
-            if on {
+        for k in 0..DEBUFF_SLOTS {
+            let spell = spells.get(k).copied().unwrap_or(0);
+            pairs.push((FIELD_AURA + FIRST_DEBUFF_SLOT + k as u16, spell));
+            if spell != 0 {
                 flags[k / 8] |= AURA_ON << (4 * (k % 8));
             }
         }
@@ -446,6 +560,21 @@ pub(super) fn status_auras(
         store
             .0
             .merge(benilla_protocol::messages::ObjectFields::from_pairs(&pairs));
-        shown.insert(enemy.id, bits);
+        shown.insert(enemy.id, now);
+    }
+}
+
+/// While the pointer is on one of our buttons (the boss and rare bars, the meter, the stat
+/// sheet), it is over UI as WoW's own frames are, so a click there is not also a click on the
+/// world behind, which would drop the target the bar just took.
+pub(super) fn buttons_hold_pointer(
+    buttons: Query<(&Interaction, &InheritedVisibility)>,
+    mut over: ResMut<crate::ui_script::PointerOverUi>,
+) {
+    if buttons
+        .iter()
+        .any(|(i, v)| *i != Interaction::None && v.get())
+    {
+        over.0 = true;
     }
 }

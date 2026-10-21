@@ -367,7 +367,7 @@ fn capture_ui_active(capture: Option<Res<crate::run_mode::CaptureMode>>) -> bool
 }
 
 /// `PointerOverUi = egui dev overlay ∨ player-UI hover`; the dev half is optional.
-fn arbitrate_pointer_over_ui(
+pub(crate) fn arbitrate_pointer_over_ui(
     egui: Option<Res<EguiPointerOver>>,
     hover: Res<PlayerUiHover>,
     plate_hover: Res<crate::vplates::PlateHover>,

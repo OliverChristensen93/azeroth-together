@@ -407,7 +407,8 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
     };
 
     // Best-effort: without it only humanoid NPCs lose their skins; the caller logs `extra_len()`.
-    let extra = load_creature_display_info_extra(chain).unwrap_or_default();
+    let mut extra = load_creature_display_info_extra(chain).unwrap_or_default();
+    dress_bare_npcs(chain, &mut extra);
 
     Ok(CreatureCatalog {
         display,
@@ -453,9 +454,102 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
     Ok(e)
 }
 
+/// A worn piece whose body textures a trimmed data set does not ship leaves the NPC bare there (a
+/// Defias wears only his bandana). Such a piece is swapped for the same slot's piece of a starting
+/// outfit the data does ship: the NPC race's Rogue set (plain leather), else the Human Rogue's.
+/// A full data set ships every texture, so nothing changes there.
+fn dress_bare_npcs(chain: &mut Chain, extra: &mut HashMap<u32, NpcAppearance>) {
+    const ROGUE: u8 = 4;
+    const HUMAN: u8 = 1;
+    let Ok(items) = crate::load_item_display_catalog(chain) else {
+        return;
+    };
+    let Ok(outfits) = crate::CharCreateCatalog::load(chain) else {
+        return;
+    };
+    // Whether a display names body textures and none of them is in the data.
+    let mut bare: HashMap<(u32, u8), bool> = HashMap::new();
+    let mut is_bare = |display: u32, sex: u8| {
+        *bare.entry((display, sex)).or_insert_with(|| {
+            let Some(d) = items.get(display) else {
+                return false;
+            };
+            let named: Vec<(usize, &String)> = d
+                .region_textures
+                .iter()
+                .enumerate()
+                .filter_map(|(l, n)| Some((l, n.as_ref()?)))
+                .collect();
+            !named.is_empty()
+                && named.iter().all(|&(layer, name)| {
+                    !crate::equip_region_candidates(layer, name, sex)
+                        .iter()
+                        .any(|p| chain.contains(p))
+                })
+        })
+    };
+    // The equipment column (head, shoulder, shirt, chest, belt, pants, boots, wrist, gloves,
+    // tabard) a body InventoryType fills.
+    let column = |inv: u8| match inv {
+        4 => Some(2),
+        5 | 20 => Some(3),
+        6 => Some(4),
+        7 => Some(5),
+        8 => Some(6),
+        9 => Some(7),
+        10 => Some(8),
+        _ => None,
+    };
+    for npc in extra.values_mut() {
+        let mut outfit = outfits.start_outfit(npc.race, ROGUE, npc.sex);
+        if outfit.is_empty() {
+            outfit = outfits.start_outfit(HUMAN, ROGUE, npc.sex);
+        }
+        let mut stand_in = [0u32; 10];
+        for item in outfit {
+            if let Some(c) = column(item.inv_type) {
+                stand_in[c] = item.display_id;
+            }
+        }
+        for (slot, worn) in npc.equipment.iter_mut().enumerate() {
+            // No stand-in for the slot (the set has no belt): the bare piece draws nothing anyway.
+            if *worn != 0 && is_bare(*worn, npc.sex) {
+                *worn = stand_in[slot];
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every worn body piece of the Defias displays resolves a texture in the data, swapped or not.
+    #[test]
+    fn defias_wear_textures_the_data_ships() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_creature_catalog(&mut chain).expect("load creature catalog");
+        let items = crate::load_item_display_catalog(&mut chain).expect("item displays");
+        for display in [5035, 2361, 2357, 2359, 4418] {
+            let npc = cat
+                .model(display)
+                .and_then(|m| m.npc_appearance)
+                .unwrap_or_else(|| panic!("display {display} is a humanoid"));
+            for &worn in &npc.equipment[2..9] {
+                let Some(d) = items.get(worn) else { continue };
+                for (layer, name) in d.region_textures.iter().enumerate() {
+                    let Some(name) = name else { continue };
+                    assert!(
+                        crate::equip_region_candidates(layer, name, npc.sex)
+                            .iter()
+                            .any(|p| chain.contains(p)),
+                        "display {display} wears {worn}, whose {name} is not in the data"
+                    );
+                }
+            }
+        }
+    }
 
     /// `BloodID = −1` is a tier-2 miss, so 595 displays reach tier 3 and bleed red.
     #[test]
@@ -765,11 +859,14 @@ mod tests {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_creature_catalog(&mut chain).expect("load creature catalog");
-        let guard = cat
-            .model(3167)
+        let row = cat
+            .display
+            .get(&3167)
             .expect("Stormwind City Guard display 3167 resolves");
-        let npc = guard
-            .npc_appearance
+        // The table's own columns, before `dress_bare_npcs` swaps what a trimmed data set lacks.
+        let raw = load_creature_display_info_extra(&mut chain).expect("CreatureDisplayInfoExtra");
+        let npc = raw
+            .get(&row.extended_id)
             .expect("display 3167 is a character-model NPC with an appearance row");
         // Body-slot order: head, shoulder, shirt, chest, belt, pants, boots, wrist, gloves, tabard.
         assert_eq!(

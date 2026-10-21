@@ -13,7 +13,7 @@ use benilla_world::world_point::{Subject, WorldPoint};
 use bevy::prelude::*;
 use together_sim::{
     Event, InteractState, InteractableKind, PickupKind, PlayerId, PotLoot, PowerUp, Target,
-    ELITE_SCALE, V2,
+    CAMP_SCALE, ELITE_SCALE, V2,
 };
 
 use super::units::{self, Fx, ShownVitals, UnitKind, UnitSpec, COLOR_HURT, COLOR_SPELL};
@@ -127,12 +127,19 @@ const SHRINE_SERIAL_BASE: u64 = 0x4000_0000;
 /// apart, ranked elite, which gives their target frame its gold dragon.
 const ELITE_ENTRY_BASE: u32 = 0x8000;
 
-/// Creature entries of bosses, the same way: ranked boss, which gives theirs a skull.
+/// Creature entries of camps' rares, the same way: ranked rare, a silver dragon.
+const RARE_ENTRY_BASE: u32 = 0xA000;
+
+/// Creature entries of bosses, the same way: ranked boss, a gold dragon and a skull for a level.
 const BOSS_ENTRY_BASE: u32 = 0xC000;
 
-/// `CreatureTemplate.rank` of an elite and of a boss.
+/// `CreatureTemplate.rank` of an elite, a boss and a rare.
 const RANK_ELITE: u32 = 1;
 const RANK_BOSS: u32 = 3;
+const RANK_RARE: u32 = 4;
+
+/// A boss is drawn at least this many times an ordinary enemy's size.
+const BOSS_MIN_SCALE: f32 = 2.0;
 
 /// The colour of gold in combat text, 0xAARRGGBB.
 const COLOR_GOLD: u32 = 0xFFFF_D100;
@@ -322,6 +329,7 @@ pub(super) fn apply_events(
             | Event::ChallengeWon { .. }
             | Event::BossCame { .. }
             | Event::BossDied { .. }
+            | Event::Surrounded { .. }
             | Event::EscortDone { .. } => {}
             Event::PotBroken { by, loot, .. } => {
                 // What came out, over whoever broke it: everyone sees what a friend found.
@@ -503,10 +511,22 @@ pub(super) fn sync(
             continue;
         }
         let def = &content.enemies[enemy.def];
-        // One creature template per enemy kind, and one more for its elites: the entry names it.
+        // One creature template per enemy kind and rank: the entry names it, the rank dresses its
+        // target frame. Elites a little bigger, camps' rares more, bosses at least twice the size.
         let base = enemy.def as u32 + 1;
+        let guard = world.guards.contains(&enemy.id);
         let (entry, rank, scale) = if enemy.boss {
-            (BOSS_ENTRY_BASE + base, RANK_BOSS, def.scale)
+            (
+                BOSS_ENTRY_BASE + base,
+                RANK_BOSS,
+                def.scale.max(BOSS_MIN_SCALE),
+            )
+        } else if guard {
+            (
+                RARE_ENTRY_BASE + base,
+                RANK_RARE,
+                def.scale * ELITE_SCALE * CAMP_SCALE,
+            )
         } else if enemy.elite {
             (ELITE_ENTRY_BASE + base, RANK_ELITE, def.scale * ELITE_SCALE)
         } else {
@@ -753,6 +773,30 @@ fn sync_shrines(
         keep
     });
 }
+/// A carried banner's model rides on its carrier, so its hull would sit around the hero's head
+/// and the camera's sweep would snap the camera in to first person: while carried it collides
+/// with nothing.
+pub(super) fn unhull_carried_banners(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    views: Res<Views>,
+    hulls: Query<(), With<avian3d::prelude::Collider>>,
+) {
+    for it in &sim.world.interactables {
+        if !matches!(it.state, InteractState::Escort { .. }) {
+            continue;
+        }
+        let Some(view) = views.interactables.get(&it.id) else {
+            continue;
+        };
+        if hulls.contains(view.model) {
+            commands
+                .entity(view.model)
+                .remove::<(avian3d::prelude::Collider, avian3d::prelude::RigidBody)>();
+        }
+    }
+}
+
 /// Whether a spot is dry ground in the open: `None` until the terrain under it has loaded.
 fn usable(world_point: &WorldPoint, at: V2) -> Option<bool> {
     let probe = units::ground_to_bevy(at, 0.0);

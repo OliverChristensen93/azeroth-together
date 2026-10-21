@@ -96,6 +96,8 @@ pub(super) struct Trigger {
 pub struct Status {
     /// On a client: the flags its snapshot carried, shown as they are.
     pub(super) mirrored: u16,
+    /// On a client: the damage over time abilities its snapshot carried.
+    mirrored_dots: Vec<u16>,
     pub chill: f32,
     /// How much the Chill slows (the strongest that hit it).
     pub slow: f32,
@@ -190,6 +192,27 @@ impl Status {
             mirrored: bits,
             ..Status::default()
         }
+    }
+
+    /// A client's status from a snapshot's flags and damage over time abilities.
+    pub fn mirror(bits: u16, dots: &[u16]) -> Status {
+        Status {
+            mirrored_dots: dots.to_vec(),
+            ..Status::from_bits(bits)
+        }
+    }
+
+    /// The abilities whose damage over time is on it, each once, oldest first (a client's
+    /// mirrored ones as they came).
+    pub fn dots(&self) -> Vec<u16> {
+        let mut out = self.mirrored_dots.clone();
+        for b in self.burns.iter().filter(|b| b.left > 0.0) {
+            let a = b.ability as u16;
+            if !out.contains(&a) {
+                out.push(a);
+            }
+        }
+        out
     }
 
     /// Whether one of `by`'s damage over time effects tagged `tag` is on it.
@@ -443,14 +466,19 @@ impl World {
                     spec.freeze = spec.freeze.max(FREEZE_SECS);
                 }
                 self.before_cast(h, &owned, &mut spec);
+                // Whatever this cast heals is its own on the meter.
+                let mark = self.heal_begin(self.heroes[h].player, owned.ability);
                 let fired = self.fire(h, &spec, Shot::plain());
+                if fired {
+                    self.after_cast(h, &owned, &spec);
+                }
+                self.heal_end(mark);
                 let o = &mut self.heroes[h].abilities[a];
                 if !fired {
                     // No target in reach: try again next step rather than waste the cooldown.
                     o.cd = 0.0;
                     continue;
                 }
-                self.after_cast(h, &owned, &spec);
                 let o = &mut self.heroes[h].abilities[a];
                 o.casts += 1;
                 o.burst += 1;
@@ -555,27 +583,46 @@ impl World {
         true
     }
 
-    /// The `count` enemies nearest `from` within `range`, elites and bosses first when
-    /// `elites_first`, never `exclude`; nearest first.
+    /// The `count` enemies nearest `from` within `range`, never `exclude`: bosses, elites and
+    /// rares first, then the rest, nearest first. (`_elites_first` is every aimed spell's way now.)
+    /// A camp's elite out of the fight (whole with no hero near, or running home) comes last of
+    /// all, so aimed spells never pull a camp on their own.
     pub(super) fn pick_targets(
         &self,
         from: V2,
         range: f32,
         count: usize,
-        elites_first: bool,
+        _elites_first: bool,
         exclude: Option<u32>,
     ) -> Vec<(u32, f32)> {
-        let mut near: Vec<(u32, f32, bool)> = self
+        let heroes: Vec<V2> = self
+            .heroes
+            .iter()
+            .filter(|h| h.alive)
+            .map(|h| h.pos)
+            .collect();
+        // 0 a boss, elite or rare, 1 anything else, 2 a camp's elite out of the fight.
+        let mut near: Vec<(u32, f32, u8)> = self
             .enemies
             .iter()
             .filter(|e| e.hp > 0.0 && Some(e.id) != exclude)
-            .map(|e| (e.id, from.distance(e.pos), e.elite || e.boss))
+            .map(|e| {
+                let guard = self.guards.contains(&e.id);
+                let alone = !heroes.iter().any(|h| h.distance(e.pos) <= ELITE_AGGRO);
+                let resting = guard
+                    && (self.evading.contains(&e.id) || (e.hp >= e.max_hp && alone));
+                let rank = if resting {
+                    2
+                } else if e.elite || e.boss {
+                    0
+                } else {
+                    1
+                };
+                (e.id, from.distance(e.pos), rank)
+            })
             .filter(|&(_, d, _)| d <= range)
             .collect();
-        near.sort_by(|a, b| {
-            let rank = |x: &(u32, f32, bool)| elites_first && !x.2;
-            rank(a).cmp(&rank(b)).then(a.1.total_cmp(&b.1))
-        });
+        near.sort_by(|a, b| a.2.cmp(&b.2).then(a.1.total_cmp(&b.1)));
         near.truncate(count);
         near.into_iter().map(|(id, d, _)| (id, d)).collect()
     }
@@ -678,9 +725,19 @@ impl World {
             .partition(|p| p.lands_at <= now);
         self.pending = flying;
         for hit in due {
+            // A missile's healing (leech, a heal on hit) is its caster's spell's, landing later.
+            let mark = self.heal_begin(hit.caster, hit.spec.ability);
+            self.land_hit(hit);
+            self.heal_end(mark);
+        }
+    }
+
+    /// One missile landing.
+    fn land_hit(&mut self, hit: PendingHit) {
+        {
             let Some(at) = self.enemy(hit.target).map(|e| e.pos) else {
                 // Its target died while the missile flew.
-                continue;
+                return;
             };
             let crit = self
                 .strike(hit.caster, &hit.spec, hit.target, 1.0, hit.from, Crit::Roll)
@@ -1153,9 +1210,9 @@ impl World {
             st.frozen_by = Some(by);
             st.permafrost |= spec.permafrost;
         }
-        if spec.stun > 0.0 && !boss {
+        if spec.stun > 0.0 {
             let elite = elite && !spec.fx.full_control;
-            st.stun = st.stun.max(control_secs(spec.stun, elite, false));
+            st.stun = st.stun.max(control_secs(spec.stun, elite, boss));
         }
         if spec.burn > 0.0 {
             // A faster burn (Quickened) ticks sooner for the same total; a faster tick rate
@@ -1309,7 +1366,9 @@ impl World {
                 .cloned()
                 .unwrap_or_else(|| Owned::new(t.ability, 0.0));
             let spec = self.spell_spec(h, &owned);
+            let mark = self.heal_begin(t.player, t.ability);
             self.fire(h, &spec, t.shot);
+            self.heal_end(mark);
         }
         self.triggers.clear();
     }
@@ -1937,10 +1996,16 @@ pub(super) struct Death {
     pub status: Status,
 }
 
-/// The slowed speed of a Chilled enemy.
-pub(super) fn chilled(speed: f32, status: &Status) -> f32 {
+/// The slowed speed of a Chilled enemy; an elite or a boss (`tough`) feels half the slow.
+pub(super) fn chilled(speed: f32, status: &Status, tough: bool) -> f32 {
     if status.chill > 0.0 {
-        speed * (1.0 - status.slow.max(CHILL_SLOW))
+        let slow = status.slow.max(CHILL_SLOW);
+        let slow = if tough {
+            slow * crate::spell::TOUGH_SLOW
+        } else {
+            slow
+        };
+        speed * (1.0 - slow)
     } else {
         speed
     }
@@ -2172,7 +2237,7 @@ mod tests {
     }
 
     #[test]
-    fn frostbolt_seeks_the_elite_and_fire_blast_the_closest_enemy() {
+    fn every_aimed_spell_seeks_the_elite_over_the_closest_enemy() {
         let mut w = mage();
         spells(&mut w, &[("frostbolt", 1, &[]), ("fire_blast", 1, &[])]);
         let close = foe(&mut w, 4.0, 0.0, 1e6);
@@ -2195,8 +2260,9 @@ mod tests {
         );
         assert_eq!(
             target_of(ability(&w, "fire_blast")),
-            Some(Target::Enemy(close))
+            Some(Target::Enemy(elite))
         );
+        assert!(w.enemy(close).is_some());
     }
 
     #[test]

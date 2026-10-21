@@ -88,11 +88,27 @@ pub(super) struct UnitSpec<'a> {
     pub extra: &'a [(u16, u32)],
 }
 
-/// The guid a unit of `kind` with `serial` gets: a player's high word is 0.
+/// The guid a unit of `kind` with `serial` gets: a player's high word is 0. A creature's carries
+/// its entry in bits 24..48, as a server's do: the client reads the creature record (and so the
+/// rank the target frame's elite dragon and `UnitClassification` go by) from there.
 pub(super) fn unit_guid(kind: UnitKind, serial: u64) -> u64 {
     match kind {
-        UnitKind::Creature { .. } => HIGH_CREATURE | serial,
+        UnitKind::Creature { entry } => {
+            HIGH_CREATURE | (u64::from(entry) & 0xFF_FFFF) << 24 | (serial & 0xFF_FFFF)
+        }
         UnitKind::Player => serial,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_creature_guid_carries_its_entry() {
+        let guid = unit_guid(UnitKind::Creature { entry: 0x8005 }, 1234);
+        assert_eq!(benilla_protocol::guid::entry(guid), Some(0x8005));
+        assert_eq!(guid & 0xFF_FFFF, 1234);
     }
 }
 

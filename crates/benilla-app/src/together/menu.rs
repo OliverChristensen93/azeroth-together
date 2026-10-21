@@ -153,7 +153,7 @@ pub(super) struct IconRow;
 
 /// One icon in [`IconRow`]: an ability of the picked class, by index into the content.
 #[derive(Component)]
-pub(super) struct SpellSlot(usize);
+pub(super) struct SpellSlot(pub(super) usize);
 
 /// An icon slot filled from the spell's `SpellIcon.dbc` icon once the client data is up.
 #[derive(Component)]
@@ -1084,7 +1084,6 @@ pub(super) fn refresh_menu_ui(
         Query<&mut Text, With<SpellHover>>,
     )>,
     rows: Query<Entity, With<IconRow>>,
-    slots: Query<(&SpellSlot, &Interaction)>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
     mut shown_class: Local<Option<usize>>,
     net: Res<super::session::Net>,
@@ -1201,9 +1200,10 @@ pub(super) fn refresh_menu_ui(
     }
     let start = &content.abilities[class.start_ix].name;
     let class_line = format!(
-        "{}\nHealth {:.0}   Speed {:.1}   Starts with {start}",
-        class.description, class.base_hp, class.speed
+        "{}\nHealth {:.0}   Regen {:.1}/s   Speed {:.1}   Starts with {start}",
+        class.description, class.base_hp, class.base_regen, class.speed
     );
+    // A race's passives show in its button's tooltip ([`super::tooltip`]).
     if let Ok(mut t) = texts.p2().single_mut() {
         if t.0 != class_line {
             t.0 = class_line;
@@ -1220,20 +1220,8 @@ pub(super) fn refresh_menu_ui(
             t.0 = zone_line;
         }
     }
-    let hover = slots
-        .iter()
-        .find(|(_, i)| **i != Interaction::None)
-        .map(|(s, _)| {
-            let a = &content.abilities[s.0];
-            if a.description.is_empty() {
-                a.name.clone()
-            } else {
-                let spec = together_sim::CastSpec::base(s.0, a);
-                let text = together_sim::describe(a, &spec, class.base_hp);
-                format!("{}: {text}", a.name)
-            }
-        })
-        .unwrap_or_else(|| "Spells: point at one to read it".into());
+    // A pointed-at spell shows its full tooltip by the cursor ([`super::tooltip`]).
+    let hover = String::new();
     if let Ok(mut t) = texts.p4().single_mut() {
         if t.0 != hover {
             t.0 = hover;

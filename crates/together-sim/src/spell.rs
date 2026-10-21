@@ -225,9 +225,11 @@ pub const FREEZE_SECS: f32 = 2.0;
 pub const BURN_SECS: f32 = 4.0;
 /// Yards a Knockback pushes before augments.
 pub const KNOCKBACK: f32 = 2.5;
-/// How long control effects hold an elite, and a boss, against a normal enemy.
-pub const ELITE_CONTROL: f32 = 0.5;
+/// How long control effects (stun, freeze, root, fear) hold an elite, and a boss, against a
+/// normal enemy; and how much of a slow they feel.
+pub const ELITE_CONTROL: f32 = 0.25;
 pub const BOSS_CONTROL: f32 = 0.25;
+pub const TOUGH_SLOW: f32 = 0.5;
 /// Below this share of health an execute bonus counts, before augments.
 pub const EXECUTE_AT: f32 = 0.3;
 /// The share of the last hit each jump of a Chain spell keeps, and how far it jumps.
@@ -807,7 +809,7 @@ mod tests {
     #[test]
     fn control_is_shorter_on_elites_and_bosses() {
         assert_eq!(control_secs(2.0, false, false), 2.0);
-        assert_eq!(control_secs(2.0, true, false), 1.0);
+        assert_eq!(control_secs(2.0, true, false), 0.5);
         assert_eq!(control_secs(2.0, true, true), 0.5);
     }
 }

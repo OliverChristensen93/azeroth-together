@@ -2,7 +2,8 @@
 // ids of the class's trainers (the bodies a hero can wear); `weapons` are the virtual item slots
 // (slot 0 main hand, 1 off hand, 2 ranged); `start` is the ability every run begins with; `pool` is
 // what level-up cards offer; `defensive` is the ability on the defensive button (F). Plate and mail
-// classes start tougher, cloth starts quicker.
+// classes start tougher, cloth starts quicker. `base_regen` is health a second before any tome: half
+// a point for cloth, more for those who fight in the thick of it.
 [
     (
         key: "warrior",
@@ -22,6 +23,7 @@
         ],
         sheath: 1,
         base_hp: 160.0,
+        base_regen: 1.2,
         speed: 7.0,
         start: "cleave",
         pool: [
@@ -47,6 +49,7 @@
         ],
         sheath: 1,
         base_hp: 160.0,
+        base_regen: 1.0,
         speed: 7.0,
         start: "hammer_of_wrath",
         pool: [
@@ -74,6 +77,7 @@
         ],
         sheath: 2,
         base_hp: 135.0,
+        base_regen: 0.7,
         speed: 7.0,
         start: "arcane_shot",
         pool: [
@@ -100,6 +104,7 @@
         ],
         sheath: 1,
         base_hp: 135.0,
+        base_regen: 1.0,
         speed: 7.0,
         start: "sinister_strike",
         pool: [
@@ -125,6 +130,7 @@
         ],
         sheath: 1,
         base_hp: 120.0,
+        base_regen: 0.5,
         speed: 7.5,
         start: "smite",
         pool: [
@@ -149,6 +155,7 @@
         ],
         sheath: 1,
         base_hp: 135.0,
+        base_regen: 0.8,
         speed: 7.0,
         start: "lightning_bolt",
         pool: [
@@ -175,6 +182,7 @@
         ],
         sheath: 1,
         base_hp: 120.0,
+        base_regen: 0.5,
         speed: 7.5,
         start: "frostbolt",
         pool: [
@@ -200,6 +208,7 @@
         ],
         sheath: 1,
         base_hp: 120.0,
+        base_regen: 0.5,
         speed: 7.5,
         start: "shadow_bolt",
         pool: [
@@ -225,6 +234,7 @@
         ],
         sheath: 1,
         base_hp: 135.0,
+        base_regen: 0.8,
         speed: 7.0,
         start: "wrath",
         pool: [

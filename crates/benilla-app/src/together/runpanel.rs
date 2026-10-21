@@ -75,6 +75,7 @@ pub(super) struct Seen {
     affixes: usize,
     boss_warned: f32,
     boss_here: bool,
+    surrounded: bool,
     warning_until: f32,
 }
 
@@ -363,14 +364,22 @@ pub(super) fn refresh(
     let mut warning: Option<String> = None;
     if let Some(name) = boss.as_deref() {
         if approaching {
+            // One timer: to the swarm halfway there, then to the boss.
+            let swarm_left = world.next_surround - world.elapsed;
+            let (label, left) = if swarm_left.is_finite() && swarm_left > 0.0 {
+                ("Swarm in".to_string(), swarm_left)
+            } else {
+                (format!("{name} in"), left)
+            };
             if let Ok(mut t) = texts.p3().single_mut() {
-                set(&mut t, name.to_string());
+                set(&mut t, label);
             }
             if let Ok(mut t) = texts.p4().single_mut() {
                 set(&mut t, clock(left));
             }
             if let Ok(mut fill) = boss_fill.single_mut() {
-                fill.width = Val::Percent((1.0 - left / BOSS_EVERY).clamp(0.0, 1.0) * 100.0);
+                let half = BOSS_EVERY * 0.5;
+                fill.width = Val::Percent((1.0 - left / half).clamp(0.0, 1.0) * 100.0);
             }
             if left <= BOSS_WARNING && seen.boss_warned != world.next_boss {
                 seen.boss_warned = world.next_boss;
@@ -388,6 +397,11 @@ pub(super) fn refresh(
         }
     }
     seen.affixes = world.affixes.len();
+    let surrounded = world.surround > 0.0;
+    if surrounded && !seen.surrounded {
+        warning = Some("Surrounded!\nThey come from every side".into());
+    }
+    seen.surrounded = surrounded;
     {
         let mut q = texts.p6();
         if let Ok((mut t, mut color)) = q.single_mut() {

@@ -48,7 +48,7 @@ pub(super) struct MoreText;
 
 /// A card, by its index in the hand.
 #[derive(Component)]
-pub(super) struct CardButton(u8);
+pub(super) struct CardButton(pub(super) u8);
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HandButton {
@@ -138,7 +138,8 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                 justify_content: JustifyContent::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),
+            // The dimming is under it, with the rays ([`super::flair`]).
+            BackgroundColor(Color::NONE),
             GlobalZIndex(300),
             Visibility::Hidden,
         ))
@@ -488,7 +489,7 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 sub,
                 badge: format!("{}/{}", rank + 1, rules.tome_max_rank),
                 bright: true,
-                description: format!("Raises your {} for the run.", stat.name().to_lowercase()),
+                description: format!("Raises your {}.", stat.name().to_lowercase()),
                 lines: vec![
                     (stat.describe(stat.tome_amount(card.rarity)), GREEN),
                     (format!("You have {}", stat_now(hero, stat)), GREY),
@@ -510,7 +511,7 @@ fn face(hero: &Hero, level: u32, card: &Card) -> Face {
                 sub: format!("Item  ·  copy {} of {max}", held + 1),
                 badge: format!("{}/{max}", held + 1),
                 bright: true,
-                description: "Kept for the rest of the run.".into(),
+                description: String::new(),
                 lines,
                 footer: "Copies stack".into(),
             }
