@@ -58,7 +58,8 @@ impl<'a> CreatureTypeSources<'a> {
 /// `ChrRaces.dbc` column 9 by race id: Humanoid on all nine shipped rows, and 0 where the table
 /// has no row (`0x6055b3`-`0x6055d1`).
 fn race_creature_type(race: u8) -> u32 {
-    if (1..=9).contains(&race) {
+    // 10 and 11: Azeroth Together's ported Blood Elf and Draenei, Humanoid too.
+    if (1..=11).contains(&race) {
         CREATURE_TYPE_HUMANOID
     } else {
         0

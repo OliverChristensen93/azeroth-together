@@ -94,6 +94,22 @@ pub(super) fn pieces(
     out
 }
 
+/// The race a hero of `race` is drawn as on this machine: itself, or, for a race only
+/// `together-port`'s archive brings (Blood Elf 10, Draenei 11) where it is not installed, a 1.12
+/// stand-in (Human, Night Elf), so a friend without the port still sees the hero.
+pub(super) fn drawn_race(char_create: &crate::entities::CharCreate, race: u8, sex: u8) -> u8 {
+    match race {
+        10 | 11 if char_create.0.body_display(race, sex).is_none() => {
+            if race == 10 {
+                1
+            } else {
+                4
+            }
+        }
+        _ => race,
+    }
+}
+
 /// A player body of `race` and `sex` (its `ChrRaces` display), in the class's starting outfit and
 /// holding the class's weapons. The hero and the menu's preview are both this.
 #[allow(clippy::too_many_arguments)]
@@ -108,6 +124,7 @@ pub(super) fn spawn_player_body(
     pos: Vec3,
     yaw: f32,
 ) -> Option<Entity> {
+    let race = drawn_race(char_create, race, sex);
     let display = char_create.0.body_display(race, sex)?;
     let outfit = char_create.0.start_outfit(race, class.class_id, sex);
     let worn = wear(items, &pieces(outfit, &class.weapons));

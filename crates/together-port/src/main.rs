@@ -1,0 +1,287 @@
+//! `together-port`: brings WotLK 3.3.5 art into Azeroth Together's 1.12 data, rewritten in 1.12's
+//! formats, as `WoW\Data\patch-W.MPQ`. What it ports is the machine's shared wish list,
+//! `WoW\wotlk-port.txt` ([`manifest`]). See `docs/WOTLK-PORT.md`.
+//!
+//! ```text
+//! together-port add <kind> <arg>   add to the wish list and rebuild (kinds: manifest.rs)
+//! together-port build              rebuild the archive from the wish list
+//! together-port list               show the wish list
+//! ```
+
+mod blp;
+mod dbc;
+mod m2;
+mod manifest;
+mod mpq_out;
+mod port;
+mod source;
+
+use std::collections::HashMap;
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
+
+use anyhow::{bail, Context, Result};
+
+use manifest::{Entry, Manifest, Paths};
+
+fn usage() -> ! {
+    eprintln!(
+        "usage:\n  together-port add <race|fill|wmo|model|creature|file|wotlk> <arg>\n  together-port build\n  together-port list\n\
+         dev:\n  together-port model <wotlk Data> <vanilla Data> <model without .m2> <out.m2>\n  together-port dbc <wotlk Data> <vanilla Data> <wotlk|vanilla> <Name> <column> <value>\n  \
+         together-port extract <wotlk Data> <path> <out>\n  together-port sizes <wotlk Data> <race>\n  together-port vlist <vanilla Data> <substring>"
+    );
+    std::process::exit(2);
+}
+
+fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("add") if args.len() >= 3 => {
+            let paths = Paths::find()?;
+            let mut m = Manifest::load(&paths.manifest())?;
+            let (kind, arg) = (args[1].as_str(), args[2..].join(" "));
+            let line = if kind == "wotlk" {
+                if !Path::new(&arg).join("common.MPQ").exists() {
+                    bail!("{arg} has no common.MPQ: give the WotLK client's Data folder");
+                }
+                format!("wotlk {arg}")
+            } else {
+                Entry::parse(kind, &arg)?.line()
+            };
+            if m.add(line.clone()) {
+                m.save()?;
+                println!("added `{line}` to {}", paths.manifest().display());
+            } else {
+                println!("`{line}` is already on the list");
+            }
+            if kind == "wotlk" {
+                return Ok(());
+            }
+            build(&paths)
+        }
+        Some("build") if args.len() == 1 => build(&Paths::find()?),
+        Some("list") if args.len() == 1 => {
+            let paths = Paths::find()?;
+            let m = Manifest::load(&paths.manifest())?;
+            println!("{}", paths.manifest().display());
+            match m.wotlk() {
+                Some(w) => println!("wotlk {}", w.display()),
+                None => println!("wotlk (not set: together-port add wotlk <Data folder>)"),
+            }
+            for e in m.entries()? {
+                println!("{}", e.line());
+            }
+            Ok(())
+        }
+        Some("model") if args.len() == 5 => {
+            let mut wotlk = source::Wotlk::open(&PathBuf::from(&args[1]))?;
+            let vanilla = benilla_formats::Chain::open(&PathBuf::from(&args[2]))?;
+            let template = m2::read_playable(&vanilla.read(port::PLAYABLE_TEMPLATE)?)?;
+            let out = port_model(&mut wotlk, &args[3], &template)?;
+            check_model(&out)?;
+            std::fs::write(&args[4], &out)?;
+            Ok(())
+        }
+        Some("dbc") if args.len() == 7 => {
+            let path = format!("DBFilesClient\\{}.dbc", args[4]);
+            let bytes = if args[3] == "wotlk" {
+                source::Wotlk::open(&PathBuf::from(&args[1]))?.read(&path)?
+            } else {
+                benilla_formats::Chain::open(&PathBuf::from(&args[2]))?.read(&path)?
+            };
+            let t = dbc::Dbc::parse(&bytes)?;
+            println!("{} rows, {} fields, {} bytes per row", t.rows.len(), t.fields, t.record_size);
+            let (col, val): (usize, u32) = (args[5].parse()?, args[6].parse()?);
+            for r in t.rows.iter().filter(|r| dbc::Dbc::u(r, col) == val) {
+                println!("{}", t.dump(r));
+            }
+            Ok(())
+        }
+        Some("extract") if args.len() == 4 => {
+            let bytes = source::Wotlk::open(&PathBuf::from(&args[1]))?.read(&args[2])?;
+            std::fs::write(&args[3], bytes)?;
+            Ok(())
+        }
+        Some("sizes") if args.len() == 3 => {
+            let mut w = source::Wotlk::open(&PathBuf::from(&args[1]))?;
+            let t = dbc::Dbc::parse(&w.read("DBFilesClient\\CharSections.dbc")?)?;
+            let race: u32 = args[2].parse()?;
+            let mut seen = std::collections::HashSet::new();
+            for r in t.rows.iter().filter(|r| dbc::Dbc::u(r, 1) == race) {
+                for i in 4..7 {
+                    let name = t.s(r, i).to_owned();
+                    let key = (dbc::Dbc::u(r, 2), dbc::Dbc::u(r, 3), i);
+                    if name.is_empty() || !seen.insert(key) {
+                        continue;
+                    }
+                    let size = w.try_read(&name)?.map(|b| {
+                        (u32::from_le_bytes(b[12..16].try_into().unwrap()), u32::from_le_bytes(b[16..20].try_into().unwrap()))
+                    });
+                    println!("sex {} section {} tex{}: {size:?} {name}", key.0, key.1, i - 4);
+                }
+            }
+            Ok(())
+        }
+        Some("vlist") if args.len() == 3 => {
+            let chain = benilla_formats::Chain::open(&PathBuf::from(&args[1]))?;
+            let want = args[2].to_ascii_lowercase();
+            for e in chain.list()?.iter().filter(|e| e.name.to_ascii_lowercase().contains(&want)) {
+                println!("{} {}", e.size, e.name);
+            }
+            Ok(())
+        }
+        _ => usage(),
+    }
+}
+
+/// Holds `WoW\wotlk-port.lock` while a build runs, so two sessions never write the archive at
+/// once; a stale lock (a killed build) is removed by hand.
+struct Lock(PathBuf);
+
+impl Lock {
+    fn take(path: PathBuf) -> Result<Self> {
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&path).with_context(|| {
+            format!("{} exists: another session is building the port. If none is, delete it.", path.display())
+        })?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Build the archive from the wish list. The archive in place is moved aside while the 1.12
+/// chain is read, so a build always starts from vanilla, and put back if the build fails.
+fn build(paths: &Paths) -> Result<()> {
+    let _lock = Lock::take(paths.lock())?;
+    let m = Manifest::load(&paths.manifest())?;
+    let wotlk_dir = m.wotlk().context(
+        "no WotLK client set: `together-port add wotlk <its Data folder>` (or set WOTLK_DATA)",
+    )?;
+    let entries = m.entries()?;
+    let out = paths.archive();
+    let aside = out.with_extension("previous");
+    if out.exists() {
+        std::fs::rename(&out, &aside)?;
+    }
+    let result = (|| -> Result<()> {
+        let mut wotlk = source::Wotlk::open(&wotlk_dir)?;
+        let vanilla = benilla_formats::Chain::open(&paths.vanilla())?;
+        let mut p = port::Port::new(&mut wotlk, &vanilla)?;
+        let mut races = false;
+        for e in &entries {
+            let done = match e {
+                Entry::Race(r) => {
+                    races = true;
+                    let faction = port::RACES.iter().find(|(id, _)| id == r).map(|&(_, f)| f).unwrap_or(1);
+                    p.race(*r, faction)
+                }
+                Entry::Fill(map) => p.fill(map),
+                Entry::Wmo(path) => p.wmo(path).and_then(|ok| if ok { Ok(()) } else { bail!("WotLK has no {path}") }),
+                Entry::Model(stem) => p.model_entry(stem),
+                Entry::Creature(id) => p.creature(*id),
+                Entry::File(path) => p.file_entry(path),
+            };
+            done.with_context(|| format!("`{}`", e.line()))?;
+        }
+        if races {
+            p.race_extras()?;
+        }
+        let (l, r, pe) = p.dropped;
+        let ids = std::mem::take(&mut p.ids);
+        let (archive, missing) = p.finish();
+        if !missing.is_empty() {
+            println!("{} named files are in neither the 1.12 nor the WotLK data (WotLK skips them too)", missing.len());
+            if std::env::var_os("TOGETHER_PORT_MISSING").is_some() {
+                missing.iter().for_each(|m| println!("  missing: {m}"));
+            }
+        }
+        if l + r + pe > 0 {
+            println!("left out of converted models: {l} lights, {r} ribbons, {pe} particle emitters");
+        }
+        let files = archive.len();
+        archive.write(&out)?;
+        verify(&out)?;
+        let mut ids_text = String::from("# Ids `together-port build` gave the wish list's entries.\n");
+        for line in &ids {
+            println!("{line}");
+            ids_text.push_str(line);
+            ids_text.push('\n');
+        }
+        std::fs::write(paths.ids(), ids_text)?;
+        println!("wrote {} ({files} files from {} wish-list entries)", out.display(), entries.len());
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&aside);
+            Ok(())
+        }
+        Err(e) => {
+            if aside.exists() {
+                let _ = std::fs::rename(&aside, &out);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Read every file of a written archive back with the client's own MPQ reader, every model with
+/// its M2 reader and every WMO with its WMO reader.
+fn verify(path: &Path) -> Result<()> {
+    let a = benilla_mpq::Archive::open(path).context("benilla-mpq rejects the archive")?;
+    let list = String::from_utf8(a.read_file("(listfile)")?)?;
+    for name in list.lines().filter(|l| !l.is_empty()) {
+        let bytes = a.read_file(name).with_context(|| format!("benilla-mpq cannot read {name}"))?;
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".m2") {
+            check_model(&bytes).with_context(|| name.to_owned())?;
+        } else if lower.ends_with(".wmo") {
+            benilla_wmo::parse_wmo(&mut Cursor::new(bytes.as_slice()))
+                .map_err(|e| anyhow::anyhow!("{e:?}"))
+                .with_context(|| format!("benilla-wmo rejects {name}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Read a WotLK model with its skins and `.anim` files and rewrite it for 1.12.
+fn port_model(wotlk: &mut source::Wotlk, stem: &str, template: &[m2::Playable]) -> Result<Vec<u8>> {
+    let bytes = wotlk.read(&format!("{stem}.m2"))?;
+    let skins = (0..m2::skin_count(&bytes)?)
+        .map(|i| wotlk.read(&format!("{stem}{i:02}.skin")))
+        .collect::<Result<Vec<_>>>()?;
+    let mut anims = HashMap::new();
+    for (id, var) in m2::anim_files(&bytes)? {
+        match wotlk.try_read(&format!("{stem}{id:04}-{var:02}.anim"))? {
+            Some(a) => {
+                anims.insert((id, var), a);
+            }
+            None => eprintln!("note: {stem}: no .anim for {id}-{var}; that sequence keeps the rest pose"),
+        }
+    }
+    let (lights, ribbons, particles) = m2::dropped(&bytes)?;
+    if lights + ribbons + particles > 0 {
+        eprintln!("note: {stem}: dropped {lights} lights, {ribbons} ribbons, {particles} particle emitters");
+    }
+    m2::convert(&m2::Wotlk { m2: &bytes, skins, anims }, template).with_context(|| format!("convert {stem}"))
+}
+
+/// Read a converted model back with the client's own readers. Quiet: an error says what failed.
+fn check_model(bytes: &[u8]) -> Result<()> {
+    let format = benilla_m2::parse_m2(&mut Cursor::new(bytes)).context("benilla-m2 rejects the model")?;
+    format.model().parse_embedded_skin(bytes, 0).context("skin 0")?;
+    let anims = benilla_formats::parse_m2_animations(bytes);
+    // Every rotation key a unit quaternion, or the decoding is wrong.
+    let worst = anims
+        .iter()
+        .flat_map(|a| &a.bones)
+        .flat_map(|b| &b.rotation)
+        .map(|(_, q)| (q.iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs())
+        .fold(0.0f32, f32::max);
+    anyhow::ensure!(worst < 0.01, "a rotation key {worst} away from unit length");
+    Ok(())
+}

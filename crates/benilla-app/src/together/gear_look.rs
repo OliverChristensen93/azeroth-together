@@ -543,6 +543,7 @@ pub(super) fn outfit_fields(
     (race, sex): (u8, u8),
     gear: &[GearPiece],
 ) -> Vec<(u16, u32)> {
+    let race = dress::drawn_race(char_create, race, sex);
     let outfit = char_create.0.start_outfit(race, class.class_id, sex);
     let mut pieces = dress::pieces(outfit, &class.weapons);
     let two_hand = gear.iter().any(GearPiece::two_hand);

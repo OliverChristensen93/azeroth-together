@@ -28,15 +28,15 @@ use crate::glue::widgets::{
 use crate::glue::GlueClicks;
 
 /// The create screen's two race columns.
-const ALLIANCE: [u8; 4] = [1, 3, 4, 7];
-const HORDE: [u8; 4] = [2, 5, 6, 8];
+const ALLIANCE: [u8; 5] = [1, 3, 4, 7, 11];
+const HORDE: [u8; 5] = [2, 5, 6, 8, 10];
 
 /// `CharacterSelectCharacterFrame`'s border and fill tints.
 const FRAME_BORDER: Color = Color::srgb(0.8, 0.8, 0.8);
 const FRAME_FILL: Color = Color::srgba(0.09, 0.09, 0.09, 0.85);
 
 /// The tower ends under the class grid and Randomize.
-const TOWER_H: f32 = 590.0;
+const TOWER_H: f32 = 643.0;
 
 /// The zone rows: the character-select row, with room under them for the zone's description.
 const ROW_TOP: f32 = 44.0;
@@ -102,6 +102,31 @@ pub(super) struct MenuRoot;
 
 #[derive(Component)]
 pub(super) struct MenuBuilt;
+
+/// WotLK's race icon sheet, which `together-port` brings over beside 1.12's: 8 columns by 4 rows,
+/// the 1.12 races where 1.12 has them at half the width, Blood Elf and Draenei in column 5.
+const WRATH_RACES: &str = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Races-Wrath";
+
+/// The [`WRATH_RACES`] sheet and its size, when the port is installed.
+#[derive(Resource)]
+pub(super) struct WrathRaces(Option<(Handle<Image>, Vec2)>);
+
+/// A race button's face for `sex`: 1.12's sheet for its own races, WotLK's for the two it lacks.
+fn race_face(art: &GlueArt, wrath: &WrathRaces, race: u8, sex: u8) -> Option<(Handle<Image>, Rect)> {
+    let female = if sex == 1 { 0.5 } else { 0.0 };
+    let (sheet, size, tc) = match race {
+        10 | 11 => {
+            let (sheet, size) = wrath.0.as_ref()?;
+            let top = if race == 10 { 0.25 } else { 0.0 } + female;
+            (sheet, size, [0.5, 0.625, top, top + 0.25])
+        }
+        _ => {
+            let (sheet, size) = art.races.as_ref()?;
+            (sheet, size, race_tc(race, sex)?)
+        }
+    };
+    Some((sheet.clone(), tc_rect(*size, tc)))
+}
 
 /// A race button's face, re-cropped to the picked gender.
 #[derive(Component)]
@@ -183,7 +208,8 @@ fn all_looks(
         .iter()
         .map(|c| {
             let mut out: Vec<(u32, u8, u8)> = Vec::new();
-            for race in 1..=8u8 {
+            // Blood Elf (10) and Draenei (11) are there once `together-port` has brought them over.
+            for race in (1..=8u8).chain([10, 11]) {
                 if !char_create.0.allows(race, c.class_id) {
                     continue;
                 }
@@ -284,11 +310,17 @@ pub(super) fn build_menu(
     let Ok(root) = roots.single() else { return };
     let Some(mut assets) = assets else { return };
     art.ensure_loaded(&mut assets, &mut images, &mut add_mats);
+    let wrath = WrathRaces(
+        assets
+            .sprite_texture(WRATH_RACES, &mut images)
+            .and_then(|h| Some((h.clone(), images.get(&h)?.size_f32()))),
+    );
+    commands.insert_resource(WrathRaces(wrath.0.clone()));
     let font = crate::char_select::wow_font(&asset_server);
     let f = &font;
     let content = content();
     commands.entity(root).insert(MenuBuilt).with_children(|ui| {
-        tower(ui, &art, f, &content);
+        tower(ui, &art, &wrath, f, &content);
         if let Some(logo) = &art.logo {
             ui.spawn((
                 ImageNode::new(logo.clone()),
@@ -447,7 +479,13 @@ pub(super) fn framed(
 
 /// `CharacterCreateConfigurationFrame`, 206×600 at TOPLEFT (28,-74): the race columns under the
 /// faction banners, the gender pair, the class grid and Randomize.
-fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>, content: &Content) {
+fn tower(
+    ui: &mut ChildSpawnerCommands,
+    art: &GlueArt,
+    wrath: &WrathRaces,
+    f: &Handle<Font>,
+    content: &Content,
+) {
     let px = Val::Px;
     ui.spawn(Node {
         position_type: PositionType::Absolute,
@@ -527,9 +565,7 @@ fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>, content
                 })
                 .with_children(|col| {
                     for race in faction {
-                        let face = art.races.as_ref().and_then(|(sheet, size)| {
-                            race_tc(race, 0).map(|tc| (sheet.clone(), tc_rect(*size, tc)))
-                        });
+                        let face = race_face(art, wrath, race, 0);
                         icon_button(
                             col,
                             f,
@@ -549,7 +585,7 @@ fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>, content
             .spawn(Node {
                 position_type: PositionType::Absolute,
                 left: px(53.0),
-                top: px(303.0),
+                top: px(356.0),
                 flex_direction: FlexDirection::Row,
                 column_gap: px(5.0),
                 ..default()
@@ -583,7 +619,7 @@ fn tower(ui: &mut ChildSpawnerCommands, art: &GlueArt, f: &Handle<Font>, content
                 position_type: PositionType::Absolute,
                 left: px(103.0 - (3.0 * 48.0 + 2.0 * 4.0) / 2.0),
                 width: px(3.0 * 48.0 + 2.0 * 4.0),
-                top: px(368.0),
+                top: px(421.0),
                 flex_direction: FlexDirection::Row,
                 flex_wrap: FlexWrap::Wrap,
                 justify_content: JustifyContent::Center,
@@ -1028,6 +1064,7 @@ pub(super) fn refresh_menu_ui(
     selection: Res<Selection>,
     char_create: Option<Res<crate::entities::CharCreate>>,
     art: Res<GlueArt>,
+    wrath: Option<Res<WrathRaces>>,
     mut buttons: Query<(
         &MenuAction,
         &Interaction,
@@ -1132,10 +1169,12 @@ pub(super) fn refresh_menu_ui(
         }
     }
 
-    if let (Some((_, size)), Some((_, sex))) = (&art.races, cur) {
+    if let Some((_, sex)) = cur {
+        let none = WrathRaces(None);
+        let wrath = wrath.as_deref().unwrap_or(&none);
         for (face, mut img) in &mut faces {
-            if let Some(tc) = race_tc(face.0, sex) {
-                let rect = Some(tc_rect(*size, tc));
+            if let Some((_, rect)) = race_face(&art, wrath, face.0, sex) {
+                let rect = Some(rect);
                 if img.rect != rect {
                     img.rect = rect;
                 }

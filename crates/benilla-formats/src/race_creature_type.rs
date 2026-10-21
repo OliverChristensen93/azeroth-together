@@ -38,17 +38,18 @@ pub fn load_race_creature_types(chain: &mut Chain) -> Result<HashMap<u8, u32>> {
 mod tests {
     use super::*;
 
-    /// Nine rows, every one Humanoid (7), the rows `race_creature_type` freezes.
+    /// Nine rows, every one Humanoid (7), the rows `race_creature_type` freezes; Azeroth
+    /// Together's `together-port` adds Blood Elf (10) and Draenei (11), Humanoid too.
     #[test]
     fn every_shipped_race_reads_humanoid() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let rows = load_race_creature_types(&mut chain).expect("load ChrRaces");
-        assert_eq!(rows.len(), 9, "ChrRaces.dbc row count");
-        for race in 1..=9u8 {
+        assert!(matches!(rows.len(), 9 | 11), "ChrRaces.dbc row count {}", rows.len());
+        for race in rows.keys().copied() {
             assert_eq!(rows.get(&race), Some(&7), "race {race}");
         }
-        for race in [0u8, 10, 255] {
+        for race in [0u8, 12, 255] {
             assert!(!rows.contains_key(&race), "race {race} has no row");
         }
     }

@@ -113,5 +113,11 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
   humanoid NPCs are composited live instead of rendering bodiless.
   Never launch a normal (fullscreen) run without asking the user first.
+- WotLK art (anything the trimmed 1.12 data lacks: Stormwind's city, missing doodads, WotLK models,
+  creatures, sounds): `crates/together-port` rewrites WotLK 3.3.5 files in 1.12's formats into
+  `WoW/Data/patch-W.MPQ`, built from the machine's shared wish list `WoW/wotlk-port.txt`. Add to it with
+  `together-port add <fill|wmo|model|creature|file|race> <arg>`; never write the archive another way.
+  [docs/WOTLK-PORT.md](docs/WOTLK-PORT.md). The engine never reads WotLK formats; races 10 and 11 exist only
+  where that archive is installed.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).

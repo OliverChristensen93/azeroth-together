@@ -28,8 +28,9 @@ const SECTION_HAIR: u8 = 3;
 /// A CharSections availability key: `(race, sex, sectionType, variation, color)`.
 type SectionKey = (u8, u8, u8, u8, u8);
 
-/// The playable races, ChrRaces ids 1–8; Goblin (9) and above are not creatable.
-const PLAYABLE_RACES: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+/// The playable races, ChrRaces ids 1–8; Goblin (9) is not creatable. Azeroth Together: Blood Elf
+/// (10) and Draenei (11), whose rows only exist where `together-port` has brought them over.
+const PLAYABLE_RACES: [u8; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
 
 /// The shipped ChrRaces fileStrings (col 15), guarding [`load_races`]' string columns.
 const KNOWN_FILES: [(u8, &str); 8] = [

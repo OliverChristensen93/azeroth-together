@@ -510,6 +510,8 @@ pub(crate) fn race_names(race: u8) -> Option<(&'static str, &'static str)> {
         6 => ("Tauren", "Tauren"),
         7 => ("Gnome", "Gnome"),
         8 => ("Troll", "Troll"),
+        10 => ("Blood Elf", "BloodElf"),
+        11 => ("Draenei", "Draenei"),
         _ => return None,
     })
 }
@@ -534,10 +536,10 @@ pub(crate) fn class_names(class: u8) -> Option<(&'static str, &'static str)> {
 /// where addons concatenate `UnitFactionGroup("player")` at file scope; [`faction_group`] reads
 /// the live template.
 pub(crate) fn race_faction_group(race: u8) -> Option<&'static str> {
-    if !(1..=8).contains(&race) {
+    if !(1..=8).contains(&race) && !matches!(race, 10 | 11) {
         return None;
     }
-    Some(if crate::char_create::ALLIANCE.contains(&race) {
+    Some(if crate::char_create::ALLIANCE.contains(&race) || race == 11 {
         "Alliance"
     } else {
         "Horde"
@@ -555,6 +557,9 @@ pub(crate) fn race_pvp_team(race: u8) -> i8 {
         1 | 3 | 4 | 7 | 9 => 1,
         // Group mask 5, Player|Horde: `& 4` set, tested first.
         2 | 5 | 6 | 8 => 0,
+        // Azeroth Together's ported Draenei and Blood Elf, under Human's and Orc's templates.
+        11 => 1,
+        10 => 0,
         // No `ChrRaces` row: the engine's bounds-failure `-1`, which names no GlobalString.
         _ => -1,
     }

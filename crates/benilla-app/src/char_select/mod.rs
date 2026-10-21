@@ -866,6 +866,8 @@ pub(crate) fn race_name(race: u8) -> &'static str {
         6 => "Tauren",
         7 => "Gnome",
         8 => "Troll",
+        10 => "Blood Elf",
+        11 => "Draenei",
         _ => "?",
     }
 }
