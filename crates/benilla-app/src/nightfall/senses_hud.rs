@@ -319,6 +319,8 @@ mod tests {
     #[test]
     fn a_rival_alerted_to_us_sets_the_heart_going_as_an_enemy_does() {
         use nightfall_sim::{RivalMark, RivalView, Side, V2};
+        // `Sim::for_test` reads the global content; set it here so the test runs alone too.
+        let _ = super::super::CONTENT.set(super::super::shipped_content());
         let mut sim = Sim::for_test(nightfall_sim::World::new(super::super::shipped_content()));
         sim.world.add_hero(0, "rogue", "Me", 1, 0).unwrap();
         sim.world.add_hero(1, "rogue", "Rival", 1, 0).unwrap();
