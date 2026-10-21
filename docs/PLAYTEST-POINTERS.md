@@ -144,6 +144,10 @@ meter's Reset and views. The first minutes aren't too hard, so enemy speed stays
 - **Spell tooltips on the menu.** Pointing at a class's spell on the main menu shows its full
   tooltip by the cursor, as in a run (Shift for the longer one), instead of a line under the
   icons. Its numbers are a new hero's: no talents or gear.
+- **Racials moved to the race buttons.** They were dark, overlapping text under the class's
+  spells. Now pointing at a race's face shows its racial passives in a tooltip. The "point at
+  one to read it" hint is gone, and a tooltip that would run off the top of the screen opens
+  below the cursor instead.
 - Engine touches for the targeting (each one line): `SelectCommit` and its `commit` are visible
   to the client, and `arbitrate_pointer_over_ui` can be ordered after.
 

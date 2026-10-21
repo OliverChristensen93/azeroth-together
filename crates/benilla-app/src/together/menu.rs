@@ -1047,7 +1047,6 @@ pub(super) fn refresh_menu_ui(
         Query<&mut Text, With<SpellHover>>,
     )>,
     rows: Query<Entity, With<IconRow>>,
-    slots: Query<(&SpellSlot, &Interaction)>,
     mut cache: Local<(Option<u32>, bool, Vec<Vec<(u32, u8, u8)>>)>,
     mut shown_class: Local<Option<usize>>,
     net: Res<super::session::Net>,
@@ -1161,17 +1160,11 @@ pub(super) fn refresh_menu_ui(
         paint(&mut t, &mut c, &class.name);
     }
     let start = &content.abilities[class.start_ix].name;
-    let mut class_line = format!(
+    let class_line = format!(
         "{}\nHealth {:.0}   Regen {:.1}/s   Speed {:.1}   Starts with {start}",
         class.description, class.base_hp, class.base_regen, class.speed
     );
-    // The race's passives, under the class.
-    if let Some(race) = cur.and_then(|(r, _)| content.race(r)) {
-        class_line += &format!("\n\n{} racials:", race.name);
-        for p in &race.passives {
-            class_line += &format!("\n  {}: {}", p.name, p.description);
-        }
-    }
+    // A race's passives show in its button's tooltip ([`super::tooltip`]).
     if let Ok(mut t) = texts.p2().single_mut() {
         if t.0 != class_line {
             t.0 = class_line;
@@ -1189,11 +1182,7 @@ pub(super) fn refresh_menu_ui(
         }
     }
     // A pointed-at spell shows its full tooltip by the cursor ([`super::tooltip`]).
-    let hover = if slots.iter().any(|(_, i)| *i != Interaction::None) {
-        String::new()
-    } else {
-        "Spells: point at one to read it".to_string()
-    };
+    let hover = String::new();
     if let Ok(mut t) = texts.p4().single_mut() {
         if t.0 != hover {
             t.0 = hover;

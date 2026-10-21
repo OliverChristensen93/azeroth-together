@@ -506,6 +506,23 @@ fn thing_lines(world: &World, h: usize, thing: TipThing) -> Vec<Line> {
     }
 }
 
+/// A race's tooltip on the menu: its name and each racial passive.
+fn race_lines(content: &together_sim::Content, race: u8) -> Option<Vec<Line>> {
+    let def = content.race(race)?;
+    let mut out = vec![Line {
+        size: 14.0,
+        ..Line::one(def.name.clone(), WHITE)
+    }];
+    out.push(Line::one("Racial passives", GREY));
+    for p in &def.passives {
+        out.push(Line::one(p.name.clone(), WHITE));
+        if !p.description.is_empty() {
+            out.push(Line::one(p.description.clone(), GOLD));
+        }
+    }
+    Some(out)
+}
+
 /// The spell under the mouse, by its index among the hero's spells: on the level-up screen's
 /// row, or on WoW's action bar (whose buttons hold the spells in order from the first).
 /// `TOGETHER_TIP_SLOT=<n>` holds button `n` for a test shot.
@@ -548,16 +565,17 @@ pub(super) fn show_tip(
     menu: (
         Query<(&super::menu::SpellSlot, &Interaction)>,
         Option<Res<super::menu::Selection>>,
+        Query<(&super::menu::MenuAction, &Interaction)>,
     ),
     (keys, scale): (Res<ButtonInput<KeyCode>>, Res<UiScale>),
     windows: Query<&Window, With<PrimaryWindow>>,
     mut menu_world: Local<Option<(usize, World)>>,
     font: Option<Res<TipFont>>,
-    mut root: Query<(&mut Node, &mut Visibility), With<TipRoot>>,
+    mut root: Query<(&mut Node, &mut Visibility, &ComputedNode), With<TipRoot>>,
     body: Query<Entity, With<TipBody>>,
     mut shown: Local<Vec<Line>>,
 ) {
-    let Ok((mut node, mut vis)) = root.single_mut() else {
+    let Ok((mut node, mut vis, computed)) = root.single_mut() else {
         return;
     };
     // `TOGETHER_TIP_SHIFT` holds Shift for a test shot.
@@ -581,7 +599,17 @@ pub(super) fn show_tip(
             let (_, world) = menu_world.as_ref()?;
             Some(lines(world, 0, &Owned::new(slot.0, 0.0), extended))
         });
-    let tip = menu_tip.or_else(|| (*phase.get() == Phase::Playing)
+    // A race's face: its racial passives.
+    let race_tip = (*phase.get() == Phase::Menu)
+        .then(|| {
+            menu.2.iter().find_map(|(a, i)| match a {
+                super::menu::MenuAction::Race(r) if *i != Interaction::None => Some(*r),
+                _ => None,
+            })
+        })
+        .flatten()
+        .and_then(|r| race_lines(&super::content(), r));
+    let tip = race_tip.or(menu_tip).or_else(|| (*phase.get() == Phase::Playing)
         .then_some(())
         .and(sim.as_ref())
         .and_then(|sim| {
@@ -621,7 +649,15 @@ pub(super) fn show_tip(
         cursor.x + 18.0
     };
     node.left = Val::Px(left.max(0.0));
-    node.bottom = Val::Px((h - cursor.y + 14.0).min(h - 40.0));
+    // Above the cursor, or below it where the screen's top would cut it off.
+    let tall = computed.size().y * computed.inverse_scale_factor() / s;
+    if cursor.y - 14.0 - tall < 0.0 {
+        node.bottom = Val::Auto;
+        node.top = Val::Px((cursor.y + 24.0).min((h - tall).max(0.0)));
+    } else {
+        node.top = Val::Auto;
+        node.bottom = Val::Px((h - cursor.y + 14.0).min(h - 40.0));
+    }
     if *vis != Visibility::Inherited {
         *vis = Visibility::Inherited;
     }
