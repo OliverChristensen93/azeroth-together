@@ -155,13 +155,12 @@ and the leash. The obstacle scan and the arena fence on the minimap also looked 
 - **F button:** now on the cooldown row under your hero, first and larger (38 vs 28), with the
   positional cooldowns to its right.
 
-**Not fixed, a decision for you: humans look half-naked.** The Defias Thug (and every Defias,
-normal ones too) has only his bandana because the trimmed game data doesn't include the Defias
-armour textures, only the bandana's model. Human rares (Thuros, Brainwashed Noble, Marisa,
-Klaven) would look the same, which is why the camps use beasts and monsters. Two ways out:
-1. Fetch the missing textures (you said more game data up to WotLK is fine).
-2. Give humanoid elites a stand-in outfit made from armour pieces that do ship. That's a small
-   engine addition that registers dressed copies of their displays.
+**Humans dressed.** The Defias (and every humanoid NPC) showed only their bandanas, because the
+trimmed game data lacks most NPC armour textures. Now each piece whose textures aren't in the
+data is swapped for the same slot's piece of the Rogue starting outfit (plain leather, which
+ships). A piece with no Rogue counterpart, like a belt, is left off, since it drew nothing
+anyway. Stormwind guards and other humans get the same leather. With full game data nothing
+changes.
 
 **Decision for you:** Westfall's third rare is Gruff Swiftbite, really an Elwynn rare. Westfall's
 own rares are mostly humans that would look bare, and its gnoll rare model is shared.

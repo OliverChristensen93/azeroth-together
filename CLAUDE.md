@@ -111,7 +111,9 @@ cargo build --release -p azeroth-together       # ~6 min incremental, ~17 min co
   the `Data` folder from their own AzerothSurvivors install next to the exe.
 - Engine change made for the trimmed data: `benilla-formats/src/creatures.rs` drops a
   CreatureDisplayInfoExtra bake name whose `Textures\BakedNpcTextures\` file is not in the data, so
-  humanoid NPCs are composited live instead of rendering bodiless.
+  humanoid NPCs are composited live instead of rendering bodiless, and (`dress_bare_npcs`) swaps
+  a worn piece whose body textures are all missing for the same slot's piece of the Rogue
+  starting outfit, so a Defias is not bare.
   Never launch a normal (fullscreen) run without asking the user first.
 - `D:` is exFAT: no symlinks (`wow-data` is a checked-out symlink stub — leave it) and cargo warns
   about hard links in the incremental cache (harmless).
