@@ -1,0 +1,21 @@
+[package]
+name = "together-port"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Ports WotLK 3.3.5 art (models, textures, sounds, DBC rows) into 1.12 formats as an extra patch MPQ"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+wow-mpq = "0.7.0"
+benilla-formats = { path = "../benilla-formats" }
+benilla-m2 = { path = "../benilla-m2" }
+benilla-mpq = { path = "../benilla-mpq" }
+flate2 = "1.1"
+benilla-blp = { path = "../benilla-blp" }
+benilla-wmo = { path = "../benilla-wmo" }
+benilla-adt = { path = "../benilla-adt" }
+benilla-wdt = { path = "../benilla-wdt" }

@@ -228,7 +228,7 @@ pub(super) fn apply_events(
     mut stores: Query<&mut ObjectStore>,
     mut fx: Fx,
     mut cooldowns: ResMut<crate::spell::Cooldowns>,
-    world_point: WorldPoint,
+    floor: super::floor::Floor,
     mut mechanics: ResMut<super::hazards::Pending>,
 ) {
     let fallback_y = sim.world.zone().center[2];
@@ -257,13 +257,7 @@ pub(super) fn apply_events(
                 let hits: Vec<Entity> = targets.iter().filter_map(|&t| views.of(t)).collect();
                 // A spell landing on a spot (a Blizzard's tick, a nova cast elsewhere, a Living
                 // Bomb) plays there, on the ground.
-                let dest = dest.map(|p| {
-                    let mut at = units::ground_to_bevy(p, fallback_y);
-                    if let Some(h) = world_point.terrain_height_under(at) {
-                        at.y = h;
-                    }
-                    at
-                });
+                let dest = dest.map(|p| floor.under(p, None, fallback_y));
                 fx.cast(me, visual, &hits, dest);
             }
             Event::Damage {
@@ -429,7 +423,7 @@ pub(super) fn sync(
     sim: Res<Sim>,
     mut views: ResMut<Views>,
     char_create: Option<Res<crate::entities::CharCreate>>,
-    world_point: WorldPoint,
+    floor: super::floor::Floor,
     mut self_guid: ResMut<SelfGuid>,
     mut names: ResMut<NameCache>,
     mut index: ResMut<GuidIndex>,
@@ -440,13 +434,7 @@ pub(super) fn sync(
 ) {
     let world = &sim.world;
     let content = world.content().clone();
-    let ground = |p: V2, fallback: f32| {
-        let mut at = units::ground_to_bevy(p, fallback);
-        if let Some(h) = world_point.terrain_height_under(at) {
-            at.y = h;
-        }
-        at
-    };
+    let ground = |p: V2, fallback: f32| floor.under(p, None, fallback);
     let fallback_y = world.zone().center[2];
 
     for hero in &world.heroes {
@@ -895,7 +883,7 @@ fn run_speeds(run: f32) -> benilla_protocol::MoveSpeeds {
 /// has no [`SimPos`]: the controller places it.
 pub(super) fn place(
     sim: Res<Sim>,
-    world_point: WorldPoint,
+    floor: super::floor::Floor,
     time: Res<Time<Real>>,
     mut bodies: Query<(&SimPos, &mut Transform, &mut MovementState)>,
 ) {
@@ -903,10 +891,8 @@ pub(super) fn place(
     let turn = (time.delta_secs() * 12.0).min(1.0);
     for (p, mut tf, mut mv) in &mut bodies {
         let at = p.prev + (p.cur - p.prev) * alpha;
-        let mut pos = units::ground_to_bevy(at, tf.translation.y);
-        if let Some(h) = world_point.terrain_height_under(pos) {
-            pos.y = h;
-        }
+        // Seated on the floor it is on (see `super::floor`); the engine's clamp settles from here.
+        let mut pos = floor.under(at, Some(tf.translation.y), tf.translation.y);
         pos.y += p.prev_air + (p.air - p.prev_air) * alpha;
         if tf.translation != pos {
             tf.translation = pos;
