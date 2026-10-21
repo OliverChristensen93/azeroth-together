@@ -162,8 +162,8 @@ ships). A piece with no Rogue counterpart, like a belt, is left off, since it dr
 anyway. Stormwind guards and other humans get the same leather. With full game data nothing
 changes.
 
-**Decision for you:** Westfall's third rare is Gruff Swiftbite, really an Elwynn rare. Westfall's
-own rares are mostly humans that would look bare, and its gnoll rare model is shared.
+**Decided:** Westfall's third rare stays Gruff Swiftbite (an Elwynn rare in WoW, but no other
+zone uses him here).
 
 ## Round 5
 
@@ -199,8 +199,7 @@ Champions are gone. The enemies are now:
 - Rewards: rares 5× XP and gold, elites 10×. Bosses leave a cache, as before.
 - Minimap: elites are larger red dots ("(elite)" on hover), rares smaller pale dots ("(rare)").
 - **Decided:** rares stay at 15× (`rare_health` in `rules.ron`).
-- **Decision for you:** "the last boss" is the third boss of a run. The run's clock goes on
-  after 15 min, so any boss after the third is also 75×.
+- **Decided:** "the last boss" is the third boss of a run, and any boss after it is also 75×.
 - **Decision for you:** Gurubashi Arena has no elite camp now. With its 30 yd leash, a 30×
   elite would stand within reach of the start, and a paladin's elite-seeking spell spent a whole
   test minute on it without killing anything.
@@ -284,9 +283,8 @@ Still open: 1-3, 13-17 and 19.
    hero without speed tomes can never open a gap, and every kite turns into a slow bleed.
    To try the full WoW feel, set `enemy_speed: 1.6` and `enemy_speed_cap: 7.0` in `rules.ron`.
    Pacts that speed up enemies still stack on top of the cap.
-2. **Spawn direction split:** 55% behind, 35% flanks, 10% ahead-and-aside, with 35° straight
-   ahead kept clear. The constants are in `world/horde.rs`; I can move them to `rules.ron` if
-   you want to tune them.
+2. **Spawn direction split (fine for now):** 55% behind, 35% flanks, 10% ahead-and-aside, with
+   35° straight ahead kept clear. The constants are in `world/horde.rs`.
 3. **Surround events every 2:30 for 12 s.** Is that too often, too long, or should it be tied to
    something like a shrine or an idol instead of a clock?
 4. **Champions:** 2:00 and every 4:00, 3× elite health, three tiers up, and a cache drop.
@@ -345,13 +343,13 @@ and minimap ring, minimap marks, the champion warning, racials (orc +6% damage /
 human crit and regen), the obstacle grid (a dump of Elwynn shows trees, the Goldshire building
 and fences), and the Main Menu Lua wiring (logged at startup). Sim tests: 419 passing.
 
+You confirmed by hand: the banner camera, and the meter's Reset and view switching.
+
 Not seen on screen:
 
 - **The coin shower**: the autoplay hero never opened a chest in the test runs.
 - **Escape pause and the Main Menu popup**: a background test window can't take key presses.
   The wiring logs that it's installed.
-- **The banner camera fix**: it relies on the explanation above, and I didn't repeat the carry.
-- **Meter Reset and view switching** (clicks).
 - **Boss-bar click to target** (it uses WoW's `TargetByName`).
 - One test run exited 15 s in with code 1 and no crash report; the same run again was fine.
 
