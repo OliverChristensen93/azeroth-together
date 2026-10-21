@@ -123,12 +123,12 @@ pub(super) const HERO_SERIAL_BASE: u64 = 0x10;
 /// the part. Gem ids share the world's id counter, so these sit far above them.
 const SHRINE_SERIAL_BASE: u64 = 0x4000_0000;
 
-/// Creature entries of rares: this plus their kind's own entry, so the name cache files them
-/// apart, ranked rare, which gives their target frame its silver dragon.
-const RARE_ENTRY_BASE: u32 = 0x8000;
+/// Creature entries of elites: this plus their kind's own entry, so the name cache files them
+/// apart, ranked elite, which gives their target frame its gold dragon.
+const ELITE_ENTRY_BASE: u32 = 0x8000;
 
-/// Creature entries of camps' elites, the same way: ranked elite, a gold dragon.
-const ELITE_ENTRY_BASE: u32 = 0xA000;
+/// Creature entries of camps' rares, the same way: ranked rare, a silver dragon.
+const RARE_ENTRY_BASE: u32 = 0xA000;
 
 /// Creature entries of bosses, the same way: ranked boss, a gold dragon and a skull for a level.
 const BOSS_ENTRY_BASE: u32 = 0xC000;
@@ -512,7 +512,7 @@ pub(super) fn sync(
         }
         let def = &content.enemies[enemy.def];
         // One creature template per enemy kind and rank: the entry names it, the rank dresses its
-        // target frame. Rares a little bigger, camps' elites more, bosses at least twice the size.
+        // target frame. Elites a little bigger, camps' rares more, bosses at least twice the size.
         let base = enemy.def as u32 + 1;
         let guard = world.guards.contains(&enemy.id);
         let (entry, rank, scale) = if enemy.boss {
@@ -523,12 +523,12 @@ pub(super) fn sync(
             )
         } else if guard {
             (
-                ELITE_ENTRY_BASE + base,
-                RANK_ELITE,
+                RARE_ENTRY_BASE + base,
+                RANK_RARE,
                 def.scale * ELITE_SCALE * CAMP_SCALE,
             )
         } else if enemy.elite {
-            (RARE_ENTRY_BASE + base, RANK_RARE, def.scale * ELITE_SCALE)
+            (ELITE_ENTRY_BASE + base, RANK_ELITE, def.scale * ELITE_SCALE)
         } else {
             (base, 0, def.scale)
         };

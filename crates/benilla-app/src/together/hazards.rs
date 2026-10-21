@@ -68,17 +68,24 @@ impl Looks {
     }
 }
 
-#[derive(Component)]
-pub(super) struct BossBar;
+/// Which bar at the top: the boss's, or a rare's under it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BarSlot {
+    Boss = 0,
+    Rare = 1,
+}
 
 #[derive(Component)]
-pub(super) struct BossName;
+pub(super) struct BossBar(BarSlot);
 
 #[derive(Component)]
-pub(super) struct BossFill;
+pub(super) struct BossName(BarSlot);
 
 #[derive(Component)]
-pub(super) struct BossHint;
+pub(super) struct BossFill(BarSlot);
+
+#[derive(Component)]
+pub(super) struct BossHint(BarSlot);
 
 /// The ground under `p`, at the terrain's height where there is terrain.
 fn on_ground(world_point: &benilla_world::world_point::WorldPoint, p: V2, fallback_y: f32) -> Vec3 {
@@ -273,129 +280,190 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
             TextLayout::new_with_justify(Justify::Center),
         )
     };
-    // Top centre, small: its name and health. Hovered, what it does drops down under it; clicked,
-    // it is our target.
-    commands
-        .spawn((
-            BossBar,
-            Button,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                top: Val::Px(4.0),
-                width: Val::Px(BAR_W + 16.0),
-                margin: UiRect::left(Val::Px(-(BAR_W + 16.0) / 2.0)),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(2.0),
-                padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.82)),
-            BorderColor::all(Color::srgb(0.72, 0.6, 0.32)),
-            Visibility::Hidden,
-        ))
-        .with_children(|b| {
-            b.spawn((text(12.0, Color::srgb(1.0, 0.82, 0.0)), BossName));
-            b.spawn((
+    // Top centre, small: the boss's name and health, and under it a rare's in the fight. Hovered,
+    // what it does drops down under it; clicked, it is our target.
+    for (slot, fill_color, border) in [
+        (
+            BarSlot::Boss,
+            Color::srgb(0.75, 0.08, 0.05),
+            Color::srgb(0.72, 0.6, 0.32),
+        ),
+        (
+            BarSlot::Rare,
+            Color::srgb(0.45, 0.5, 0.8),
+            Color::srgb(0.7, 0.72, 0.85),
+        ),
+    ] {
+        commands
+            .spawn((
+                BossBar(slot),
+                Button,
                 Node {
-                    width: Val::Px(BAR_W),
-                    height: Val::Px(9.0),
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    top: Val::Px(4.0),
+                    width: Val::Px(BAR_W + 16.0),
+                    margin: UiRect::left(Val::Px(-(BAR_W + 16.0) / 2.0)),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(2.0),
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
                     border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.85)),
-                BorderColor::all(Color::srgb(0.7, 0.6, 0.35)),
+                BackgroundColor(Color::srgba(0.02, 0.025, 0.06, 0.82)),
+                BorderColor::all(border),
+                Visibility::Hidden,
             ))
-            .with_children(|bar| {
-                bar.spawn((
+            .with_children(|b| {
+                b.spawn((text(12.0, Color::srgb(1.0, 0.82, 0.0)), BossName(slot)));
+                b.spawn((
                     Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
+                        width: Val::Px(BAR_W),
+                        height: Val::Px(9.0),
+                        border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.75, 0.08, 0.05)),
-                    BossFill,
+                    BackgroundColor(Color::srgba(0.1, 0.0, 0.0, 0.85)),
+                    BorderColor::all(Color::srgb(0.7, 0.6, 0.35)),
+                ))
+                .with_children(|bar| {
+                    bar.spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(fill_color),
+                        BossFill(slot),
+                    ));
+                });
+                b.spawn((
+                    text(10.0, Color::WHITE),
+                    Node {
+                        max_width: Val::Px(BAR_W + 4.0),
+                        margin: UiRect::top(Val::Px(3.0)),
+                        display: Display::None,
+                        ..default()
+                    },
+                    BossHint(slot),
                 ));
             });
-            b.spawn((
-                text(10.0, Color::WHITE),
-                Node {
-                    max_width: Val::Px(BAR_W + 4.0),
-                    margin: UiRect::top(Val::Px(3.0)),
-                    display: Display::None,
-                    ..default()
-                },
-                BossHint,
-            ));
-        });
+    }
 }
 
-/// The boss bar shown while a boss lives: its name and health; hovered, what it does; clicked,
-/// the boss becomes our target.
+/// How near our hero a rare at rest must be for its bar to show.
+const RARE_BAR_NEAR: f32 = 30.0;
+
+/// The bars at the top: the boss's while a boss lives, and under it the nearest rare's that is in
+/// the fight (hurt, or near our hero). Each shows its name and health; hovered, what it does;
+/// clicked, it becomes our target.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn boss_bar(
     phase: Res<State<Phase>>,
     sim: Option<Res<Sim>>,
     script: Option<NonSend<benilla_ui::script::UiScript>>,
-    mut bar: Query<(&mut Visibility, &Interaction), With<BossBar>>,
-    mut fill: Query<&mut Node, (With<BossFill>, Without<BossHint>)>,
-    mut name: Query<&mut Text, (With<BossName>, Without<BossHint>)>,
-    mut hint: Query<(&mut Text, &mut Node), (With<BossHint>, Without<BossName>, Without<BossFill>)>,
-    mut was: Local<Interaction>,
+    mut bar: Query<(&BossBar, &mut Visibility, &Interaction, &ComputedNode, &mut Node)>,
+    mut fill: Query<(&BossFill, &mut Node), (Without<BossHint>, Without<BossBar>)>,
+    mut name: Query<(&BossName, &mut Text), Without<BossHint>>,
+    mut hint: Query<
+        (&BossHint, &mut Text, &mut Node),
+        (Without<BossName>, Without<BossFill>, Without<BossBar>),
+    >,
+    mut was: Local<[Interaction; 2]>,
 ) {
-    let boss = (*phase.get() == Phase::Playing)
+    let world = (*phase.get() == Phase::Playing)
         .then_some(())
         .and(sim.as_ref())
-        .and_then(|sim| sim.world.enemies.iter().find(|e| e.boss).cloned());
-    let want = if boss.is_some() {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
+        .map(|sim| (&sim.world, sim.me));
+    let boss = world.and_then(|(w, _)| w.enemies.iter().find(|e| e.boss).cloned());
+    let rare = world.and_then(|(w, me)| {
+        let at = w.hero(me).map(|h| h.pos)?;
+        w.enemies
+            .iter()
+            .filter(|e| w.guards.contains(&e.id))
+            .filter(|e| e.hp < e.max_hp || e.pos.distance(at) <= RARE_BAR_NEAR)
+            .min_by(|a, b| a.pos.distance(at).total_cmp(&b.pos.distance(at)))
+            .cloned()
+    });
+    let shown = |slot: BarSlot| match slot {
+        BarSlot::Boss => boss.as_ref(),
+        BarSlot::Rare => rare.as_ref(),
     };
-    let mut hovered = false;
-    let mut clicked = false;
-    for (mut v, interaction) in &mut bar {
+    // The rare's bar sits under the boss's when both are up.
+    let boss_height = bar
+        .iter()
+        .find(|(s, ..)| s.0 == BarSlot::Boss)
+        .map_or(0.0, |(.., c, _)| c.size().y * c.inverse_scale_factor());
+    let mut hovered = [false; 2];
+    let mut clicked = [false; 2];
+    for (slot, mut v, interaction, _, mut node) in &mut bar {
+        let i = slot.0 as usize;
+        let want = if shown(slot.0).is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *v != want {
             *v = want;
         }
-        hovered = *interaction != Interaction::None;
-        clicked = *interaction == Interaction::Pressed && *was != Interaction::Pressed;
-        *was = *interaction;
-    }
-    let Some(boss) = boss else {
-        return;
-    };
-    let def = &content().enemies[boss.def];
-    if clicked {
-        if let Some(script) = script {
-            // WoW's own targeting by name, exact: the TargetFrame takes it as a click would.
-            let _ = script.run(&format!("TargetByName({:?}, 1)", def.name));
+        if slot.0 == BarSlot::Rare {
+            let top = if boss.is_some() {
+                Val::Px(4.0 + boss_height + 3.0)
+            } else {
+                Val::Px(4.0)
+            };
+            if node.top != top {
+                node.top = top;
+            }
         }
+        hovered[i] = *interaction != Interaction::None;
+        clicked[i] = *interaction == Interaction::Pressed && was[i] != Interaction::Pressed;
+        was[i] = *interaction;
     }
-    let share = (boss.hp / boss.max_hp.max(1.0)).clamp(0.0, 1.0);
-    if let Ok(mut node) = fill.single_mut() {
-        node.width = Val::Percent(share * 100.0);
-    }
-    let title = format!("{}  {:.0}%", def.name, share * 100.0);
-    if let Ok(mut t) = name.single_mut() {
-        if t.0 != title {
-            t.0 = title;
-        }
-    }
-    let sentence = super::bossintro::mechanics_text(def);
-    if let Ok((mut t, mut node)) = hint.single_mut() {
-        if t.0 != sentence {
-            t.0 = sentence;
-        }
-        let display = if hovered {
-            Display::Flex
-        } else {
-            Display::None
+    for slot in [BarSlot::Boss, BarSlot::Rare] {
+        let Some(e) = shown(slot) else {
+            continue;
         };
-        if node.display != display {
-            node.display = display;
+        let i = slot as usize;
+        let def = &content().enemies[e.def];
+        if clicked[i] {
+            if let Some(script) = script.as_ref() {
+                // WoW's own targeting by name, exact: the TargetFrame takes it as a click would.
+                let _ = script.run(&format!("TargetByName({:?}, 1)", def.name));
+            }
+        }
+        let share = (e.hp / e.max_hp.max(1.0)).clamp(0.0, 1.0);
+        for (s, mut node) in &mut fill {
+            if s.0 == slot {
+                node.width = Val::Percent(share * 100.0);
+            }
+        }
+        let title = match slot {
+            BarSlot::Boss => format!("{}  {:.0}%", def.name, share * 100.0),
+            BarSlot::Rare => format!("{} (rare)  {:.0}%", def.name, share * 100.0),
+        };
+        for (s, mut t) in &mut name {
+            if s.0 == slot && t.0 != title {
+                t.0 = title.clone();
+            }
+        }
+        let sentence = super::bossintro::mechanics_text(def);
+        for (s, mut t, mut node) in &mut hint {
+            if s.0 != slot {
+                continue;
+            }
+            if t.0 != sentence {
+                t.0 = sentence.clone();
+            }
+            let display = if hovered[i] {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            if node.display != display {
+                node.display = display;
+            }
         }
     }
 }

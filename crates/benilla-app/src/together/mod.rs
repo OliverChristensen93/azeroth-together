@@ -453,6 +453,7 @@ impl Plugin for TogetherPlugin {
                 (
                     marks::fill_minimap,
                     marks::build_fence,
+                    marks::leash_rings,
                     marks::shrine_circles,
                     obstacles::scan,
                 )

@@ -13,8 +13,9 @@ use together_sim::{InteractableKind, Source};
 use super::levelup::{CardButton, TextureIcon};
 use super::Sim;
 
-/// The rays' and glow's square, in the 768-unit canvas, and how many rays.
-const BURST: f32 = 1200.0;
+/// The rays' and glow's square, in the 768-unit canvas: wider than any screen, so the rays reach
+/// every corner; and how many rays.
+const BURST: f32 = 2600.0;
 const RAYS: usize = 18;
 /// Radians a second the rays turn.
 const TURN: f32 = 0.12;
@@ -99,16 +100,15 @@ fn rays(color: Color) -> BackgroundGradient {
     BackgroundGradient::from(ConicGradient::new(UiPosition::CENTER, stops))
 }
 
-/// The glow at the middle and the dark that swallows the rays toward the edges.
+/// The glow at the middle. The screen's dimming is the root's, even to the edges.
 fn glow(color: Color, strength: f32) -> BackgroundGradient {
     BackgroundGradient::from(RadialGradient::new(
         UiPosition::CENTER,
         RadialGradientShape::ClosestSide,
         vec![
             ColorStop::new(color.with_alpha(0.30 * strength), Val::Percent(0.0)),
-            ColorStop::new(color.with_alpha(0.08 * strength), Val::Percent(35.0)),
-            ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.0), Val::Percent(70.0)),
-            ColorStop::new(Color::srgba(0.0, 0.0, 0.0, 0.5), Val::Percent(100.0)),
+            ColorStop::new(color.with_alpha(0.08 * strength), Val::Percent(16.0)),
+            ColorStop::new(color.with_alpha(0.0), Val::Percent(32.0)),
         ],
     ))
 }

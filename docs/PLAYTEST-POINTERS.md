@@ -121,6 +121,51 @@ All numbers below that live in `content/*.ron` can be changed without a rebuild.
   The menu lists your race's racials under the class text.
 - **Tome text:** "Raises your armor for the run." is now "Raises your armor."
 
+## Round 6: your test pass
+
+You confirmed Escape, Main Menu, the boss bar, the meter, minimap hover, the C and N keys,
+and the leash. The obstacle scan and the arena fence on the minimap also looked good.
+
+- **Ranks flipped, camps guarded by named rares.** A camp's guard is now a **rare**:
+  - It's a classic named rare of the zone, with its own model, size and mechanics. Its health
+    follows the run (30× the kind two tiers above the horde).
+  - Elwynn: Mother Fang, Narg the Taskmaster, Fedfennel.
+  - Westfall: Lupos, Vultros, Gruff Swiftbite.
+  - Duskwood: Naraxis, Nefaru, Lupos.
+  - Gates of Ahn'Qiraj: Kurinnaxx, Princess Huhuran.
+
+  The horde's and the Challenge Idol's tough ones are now **elites** (15× their kind). The
+  target frame shows a silver dragon for rares and a gold one for elites. The lists are in
+  `zones.ron` (`rares`) and `enemies.ron`.
+- **A rare's health bar at the top.** The nearest rare that is hurt, or within 30 yd of you,
+  gets a bar under the boss's. Hover it for its mechanics, click it to target it.
+- **Every aimed spell seeks bosses, elites and rares first.** Frostbolt already did. What
+  stopped it with Defias Thug was my earlier "don't pull a resting camp" rule, which counted a
+  camp as resting whenever it was at full health. Now a camp only counts as resting while no
+  hero is within 20 yd, or while it runs home.
+- **Leash: 50 yd (was 35), with 3 s of grace.** A rare only gives up after 3 s past it.
+  - While you're near a camp, or its rare is fighting, a soft silver band of light on the
+    ground shows the leash.
+  - The minimap shows each camp's leash as a thin silver ring.
+- **The arena fence now shows in the world.** It used to wait until the terrain under the
+  whole edge had loaded. In Elwynn the far side never loads until you go there, so the fence
+  was never built. Now it's built from whatever has loaded, and filled in every few seconds.
+- **Level-up screen:** the ray burst and its glow now reach every corner on wide screens. The
+  dimming is one even layer over the whole screen.
+- **F button:** now on the cooldown row under your hero, first and larger (38 vs 28), with the
+  positional cooldowns to its right.
+
+**Not fixed, a decision for you: humans look half-naked.** The Defias Thug (and every Defias,
+normal ones too) has only his bandana because the trimmed game data doesn't include the Defias
+armour textures, only the bandana's model. Human rares (Thuros, Brainwashed Noble, Marisa,
+Klaven) would look the same, which is why the camps use beasts and monsters. Two ways out:
+1. Fetch the missing textures (you said more game data up to WotLK is fine).
+2. Give humanoid elites a stand-in outfit made from armour pieces that do ship. That's a small
+   engine addition that registers dressed copies of their displays.
+
+**Decision for you:** Westfall's third rare is Gruff Swiftbite, really an Elwynn rare. Westfall's
+own rares are mostly humans that would look bare, and its gnoll rare model is shared.
+
 ## Round 5
 
 - **Healing by spell.** The meter's Healing & Absorbed view now has a row per spell, plus

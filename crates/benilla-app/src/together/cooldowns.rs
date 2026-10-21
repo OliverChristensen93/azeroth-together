@@ -1,6 +1,6 @@
-//! Cooldowns worth watching. The movement ability's button (F): its icon, its key and how long
-//! until it is ready, above the left end of the action bar. And a cooldown manager under the
-//! hero: the spells whose reach depends on where you stand (cones, and novas around you) with a
+//! Cooldowns worth watching, on one row under the hero. First, larger, the movement ability's
+//! button (F): its icon, its key and how long until it is ready. Then a cooldown manager: the
+//! spells whose reach depends on where you stand (cones, and novas around you) with a
 //! long enough cooldown to plan around ([`min_cooldown`], 4 s by default), so you can line them
 //! up on the horde. Spells cast every second or two are left off: they would only flicker.
 
@@ -10,7 +10,7 @@ use together_sim::{AbilityKind, Owned, Tag, Targeting};
 use super::menu::SpellIcon;
 use super::{Phase, Sim};
 
-const ICON: f32 = 34.0;
+const ICON: f32 = 38.0;
 const SMALL: f32 = 28.0;
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.0);
 
@@ -83,68 +83,72 @@ fn shade() -> impl Bundle {
 pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = crate::char_select::wow_font(&asset_server);
     commands.insert_resource(CdFont(font.clone()));
-    // The movement ability: above the action bar's left end.
-    commands
-        .spawn((
-            DefenseRoot,
+    // One row under the hero, centred: the movement ability first and larger, then the
+    // manager's spells.
+    let mut outer = commands.spawn(Node {
+        position_type: PositionType::Absolute,
+        left: Val::Px(0.0),
+        right: Val::Px(0.0),
+        top: Val::Percent(60.0),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        column_gap: Val::Px(8.0),
+        ..default()
+    });
+    outer.with_children(|outer| {
+        outer
+            .spawn((
+                DefenseRoot,
+                Node {
+                    width: Val::Px(ICON),
+                    height: Val::Px(ICON),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BorderColor::all(GOLD),
+                BackgroundColor(Color::BLACK),
+                Visibility::Hidden,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    ImageNode::default(),
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    DefenseIcon,
+                ));
+                b.spawn((shade(), Shade(None)));
+                b.spawn((secs_text(&font, 13.0), Secs(None)));
+                // The key, in the corner, as the action bar shows its hotkeys.
+                b.spawn((
+                    Text::new("F"),
+                    TextFont {
+                        font: font.clone(),
+                        font_size: 10.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    TextShadow::default(),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(2.0),
+                        top: Val::Px(0.0),
+                        ..default()
+                    },
+                ));
+            });
+        outer.spawn((
+            ManagerRow,
             Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                margin: UiRect::left(Val::Px(-330.0)),
-                bottom: Val::Px(96.0),
-                width: Val::Px(ICON),
-                height: Val::Px(ICON),
-                border: UiRect::all(Val::Px(1.0)),
+                column_gap: Val::Px(4.0),
+                align_items: AlignItems::Center,
                 ..default()
             },
-            BorderColor::all(GOLD),
-            BackgroundColor(Color::BLACK),
             Visibility::Hidden,
-        ))
-        .with_children(|b| {
-            b.spawn((
-                ImageNode::default(),
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-                DefenseIcon,
-            ));
-            b.spawn((shade(), Shade(None)));
-            b.spawn((secs_text(&font, 13.0), Secs(None)));
-            // The key, in the corner, as the action bar shows its hotkeys.
-            b.spawn((
-                Text::new("F"),
-                TextFont {
-                    font: font.clone(),
-                    font_size: 10.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.9, 0.9, 0.9)),
-                TextShadow::default(),
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: Val::Px(2.0),
-                    top: Val::Px(0.0),
-                    ..default()
-                },
-            ));
-        });
-    // The manager: under the hero, centred.
-    commands.spawn((
-        ManagerRow,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(0.0),
-            right: Val::Px(0.0),
-            top: Val::Percent(60.0),
-            justify_content: JustifyContent::Center,
-            column_gap: Val::Px(4.0),
-            ..default()
-        },
-        Visibility::Hidden,
-    ));
+        ));
+    });
 }
 
 /// Whether hero's spell `def` is one the manager watches.
