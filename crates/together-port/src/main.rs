@@ -29,7 +29,9 @@ fn usage() -> ! {
     eprintln!(
         "usage:\n  together-port add <race|fill|wmo|model|creature|file|tiles|zone|wotlk> <arg>\n  together-port build\n  together-port list\n\
          dev:\n  together-port model <wotlk Data> <vanilla Data> <model without .m2> <out.m2>\n  together-port dbc <wotlk Data> <vanilla Data> <wotlk|vanilla> <Name> <column> <value>\n  \
-         together-port extract <wotlk Data> <path> <out>\n  together-port sizes <wotlk Data> <race>\n  together-port vlist <vanilla Data> <substring>\n  together-port spot <Map> <x> <y>   what the game data has at WoW (x, y): for a zone's centre"
+         together-port extract <wotlk Data> <path> <out>\n  together-port sizes <wotlk Data> <race>\n  together-port vlist <vanilla Data> <substring>\n  \
+         together-port vextract <vanilla Data> <path> <out>\n  together-port effects <file.m2>\n  \
+         together-port spot <Map> <x> <y>   what the game data has at WoW (x, y): for a zone's centre"
     );
     std::process::exit(2);
 }
@@ -120,6 +122,38 @@ fn main() -> Result<()> {
                     });
                     println!("sex {} section {} tex{}: {size:?} {name}", key.0, key.1, i - 4);
                 }
+            }
+            Ok(())
+        }
+        Some("vextract") if args.len() == 4 => {
+            let bytes = benilla_formats::Chain::open(&PathBuf::from(&args[1]))?.read(&args[2])?;
+            std::fs::write(&args[3], bytes)?;
+            Ok(())
+        }
+        Some("effects") if args.len() == 2 => {
+            // A v256 model's emitters, ribbons and lights as the client reads them.
+            let bytes = std::fs::read(&args[1])?;
+            for (i, e) in benilla_formats::parse_m2_particle_emitters(&bytes)?.iter().enumerate() {
+                let l = &e.over_life;
+                println!(
+                    "emitter {i}: flags {:#x} bone {} at {:?} {:?} {:?} lit {} tex {:?} tiles {}x{} model {:?}",
+                    e.flags, e.bone, e.position, e.shape, e.blend, e.lit, e.texture, e.tile_rows, e.tile_cols, e.geometry_model
+                );
+                println!(
+                    "  rate peak {} lifespan peak {} mid {} colour {:?} size {:?} head {:?} tail {:?} repeat {:?}",
+                    e.timing.peak_rate(), e.params.peak_lifespan(), l.mid, l.color, l.scale, l.head_cells, l.tail_cells, l.repeat
+                );
+                println!(
+                    "  tail {} twinkle {} {} {}..{} drag {} spin {} tumble {:?}..{:?} follow {} {} {} {}",
+                    e.tail_time, e.twinkle_speed, e.twinkle_percent, e.twinkle_min, e.twinkle_max, e.drag, e.spin,
+                    e.angular_velocity_min, e.angular_velocity_max, e.follow_speed1, e.follow_scale1, e.follow_speed2, e.follow_scale2
+                );
+            }
+            for (i, r) in benilla_formats::parse_m2_ribbon_emitters(&bytes)?.iter().enumerate() {
+                println!("ribbon {i}: bone {} edges/s {} life {} gravity {}", r.bone, r.edges_per_second, r.edge_lifetime, r.gravity);
+            }
+            for (i, l) in benilla_formats::parse_m2_lights(&bytes).iter().enumerate() {
+                println!("light {i}: {l:?}");
             }
             Ok(())
         }
@@ -229,7 +263,7 @@ fn build(paths: &Paths) -> Result<()> {
         if races {
             p.race_extras()?;
         }
-        let (l, r, pe) = p.dropped;
+        let (tinted, resampled) = p.approximated;
         let ids = std::mem::take(&mut p.ids);
         let (archive, missing) = p.finish();
         if !missing.is_empty() {
@@ -238,8 +272,10 @@ fn build(paths: &Paths) -> Result<()> {
                 missing.iter().for_each(|m| println!("  missing: {m}"));
             }
         }
-        if l + r + pe > 0 {
-            println!("left out of converted models: {l} lights, {r} ribbons, {pe} particle emitters");
+        if tinted + resampled > 0 {
+            println!(
+                "particle emitters carried in part: {tinted} lose their ParticleColor tint,                  {resampled} have an over-life curve resampled to three keys"
+            );
         }
         let files = archive.len();
         archive.write(&out)?;
@@ -273,11 +309,19 @@ fn build(paths: &Paths) -> Result<()> {
 fn verify(path: &Path) -> Result<()> {
     let a = benilla_mpq::Archive::open(path).context("benilla-mpq rejects the archive")?;
     let list = String::from_utf8(a.read_file("(listfile)")?)?;
+    let mut effects = [0usize; 3];
     for name in list.lines().filter(|l| !l.is_empty()) {
         let bytes = a.read_file(name).with_context(|| format!("benilla-mpq cannot read {name}"))?;
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".m2") {
             check_model(&bytes).with_context(|| name.to_owned())?;
+            let counts = [0x13c, 0x134, 0x11c].map(|at| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize);
+            if counts != [0; 3] && std::env::var_os("TOGETHER_PORT_EFFECTS").is_some() {
+                println!("  effects: {name}: {counts:?}");
+            }
+            for (n, c) in effects.iter_mut().zip(counts) {
+                *n += c;
+            }
         } else if lower.ends_with(".adt") {
             adt::check(&bytes).with_context(|| format!("benilla-adt rejects {name}"))?;
         } else if lower.ends_with(".wdt") {
@@ -288,6 +332,8 @@ fn verify(path: &Path) -> Result<()> {
                 .with_context(|| format!("benilla-wmo rejects {name}"))?;
         }
     }
+    let [particles, ribbons, lights] = effects;
+    println!("the converted models carry {particles} particle emitters, {ribbons} ribbons and {lights} lights");
     Ok(())
 }
 
@@ -306,9 +352,9 @@ fn port_model(wotlk: &mut source::Wotlk, stem: &str, template: &[m2::Playable]) 
             None => eprintln!("note: {stem}: no .anim for {id}-{var}; that sequence keeps the rest pose"),
         }
     }
-    let (lights, ribbons, particles) = m2::dropped(&bytes)?;
-    if lights + ribbons + particles > 0 {
-        eprintln!("note: {stem}: dropped {lights} lights, {ribbons} ribbons, {particles} particle emitters");
+    let (tinted, resampled) = m2::approximated(&bytes)?;
+    if tinted + resampled > 0 {
+        eprintln!("note: {stem}: {tinted} emitters lose their tint, {resampled} have curves resampled to three keys");
     }
     m2::convert(&m2::Wotlk { m2: &bytes, skins, anims }, template).with_context(|| format!("convert {stem}"))
 }
@@ -326,5 +372,46 @@ fn check_model(bytes: &[u8]) -> Result<()> {
         .map(|(_, q)| (q.iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs())
         .fold(0.0f32, f32::max);
     anyhow::ensure!(worst < 0.01, "a rotation key {worst} away from unit length");
-    Ok(())
+    m2::check_effects(bytes)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stormwind's brazier, which 1.12 and WotLK both ship: its WotLK emitters, converted and
+    /// read back with the client's reader, burn like 1.12's own. Skipped without both clients.
+    #[test]
+    fn a_ported_brazier_burns_like_the_1_12_one() {
+        let Some((paths, wotlk_dir)) = Paths::find()
+            .ok()
+            .and_then(|p| Manifest::load(&p.manifest()).ok()?.wotlk().map(|w| (p, w)))
+            .filter(|(p, w)| p.vanilla().exists() && w.exists())
+        else {
+            eprintln!("skipped: no 1.12 and WotLK data");
+            return;
+        };
+        let stem = r"World\Generic\Human\Passive Doodads\Braziers\StormwindBrazier01";
+        let mut wotlk = source::Wotlk::open(&wotlk_dir).unwrap();
+        let vanilla = benilla_formats::Chain::open(&paths.vanilla()).unwrap();
+        let template = m2::read_playable(&vanilla.read(port::PLAYABLE_TEMPLATE).unwrap()).unwrap();
+        let ported = port_model(&mut wotlk, stem, &template).unwrap();
+        check_model(&ported).unwrap();
+        let ours = benilla_formats::parse_m2_particle_emitters(&ported).unwrap();
+        let theirs = benilla_formats::parse_m2_particle_emitters(&vanilla.read(&format!("{stem}.m2")).unwrap()).unwrap();
+        assert_eq!(ours.len(), 2);
+        assert_eq!(ours.len(), theirs.len());
+        // Bones differ (WotLK's skeleton), and WotLK zeroed the follow speeds; the rest is 1.12's.
+        let look = |e: &benilla_formats::ParticleEmitterDef| {
+            format!(
+                "{:#x} {:?} {:?} {:?} {} {:?} {}x{} {} {} {:?} tail {} twinkle {} {} {} {} drag {} spin {} rate {} life {}",
+                e.flags, e.position, e.shape, e.blend, e.lit, e.texture, e.tile_rows, e.tile_cols, e.head_tail,
+                e.over_life.mid, (e.over_life.color, e.over_life.scale, e.over_life.head_cells, e.over_life.tail_cells, e.over_life.repeat),
+                e.tail_time, e.twinkle_speed, e.twinkle_percent, e.twinkle_min, e.twinkle_max, e.drag, e.spin,
+                e.timing.peak_rate(), e.params.peak_lifespan()
+            )
+        };
+        for (a, b) in ours.iter().zip(&theirs) {
+            assert_eq!(look(a), look(b));
+        }
+    }
 }
