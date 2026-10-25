@@ -1,0 +1,19 @@
+// Enemies. `display` is the CreatureDisplayInfo id. Every blow is telegraphed: `windup` seconds of
+// warning, then it lands on whoever is still in it. behaviour: Melee swings in an arc `reach`
+// long; Slam hits a circle of `reach` around itself; Ranged keeps to `reach` and throws a missile
+// (`missile_speed`, `missile_visual` a Spell.dbc id) along a marked line. `tough` halves freezes.
+[
+    (key: "kobold_tunneler", name: "Kobold Tunneler", display: 139, level: 2, hp: 45.0, speed: 5.0,
+     damage: 10.0, behaviour: Melee, reach: 2.0, windup: 0.55, recover: 0.8),
+    (key: "defias_thug", name: "Defias Thug", display: 5035, level: 4, scale: 1.15, hp: 80.0, speed: 5.5,
+     damage: 16.0, behaviour: Melee, reach: 2.4, windup: 0.6, recover: 0.9),
+    (key: "young_wolf", name: "Young Wolf", display: 447, level: 2, hp: 35.0, speed: 7.5, radius: 0.8,
+     damage: 8.0, behaviour: Melee, reach: 2.0, windup: 0.45, recover: 0.7),
+    (key: "defias_rogue_wizard", name: "Defias Rogue Wizard", display: 2359, level: 6, scale: 1.1,
+     hp: 55.0, speed: 4.5, damage: 18.0, behaviour: Ranged, reach: 18.0, windup: 0.9, recover: 1.6,
+     missile_speed: 18.0, missile_visual: 133),
+    (key: "kobold_miner", name: "Kobold Miner", display: 373, level: 7, scale: 1.3, radius: 1.0,
+     hp: 220.0, speed: 4.0, damage: 32.0, behaviour: Slam, reach: 4.5, windup: 1.2, recover: 1.4),
+    (key: "hogger", name: "Hogger", display: 384, level: 11, scale: 1.9, radius: 1.4, tough: true,
+     hp: 2200.0, speed: 4.6, damage: 55.0, behaviour: Slam, reach: 6.0, windup: 1.4, recover: 1.2),
+]

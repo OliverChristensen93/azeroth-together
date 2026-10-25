@@ -1,0 +1,16 @@
+// Zones. `start` is in WoW coordinates (x, y, z), `map` the Map.dbc id. The spawner keeps
+// `alive_start` enemies around the heroes at first, `alive_per_minute` more each minute up to
+// `alive_max`, one every `spawn_every` seconds, between `spawn_ring` yards away. A spawn entry's
+// `after` is the second of the run it first can come.
+[
+    (key: "elwynn", name: "Elwynn Forest", map: 0, start: (-9548.5, 115.0, 60.0),
+     spawns: [
+        (enemy: "kobold_tunneler", weight: 4.0),
+        (enemy: "young_wolf", weight: 3.0),
+        (enemy: "defias_thug", weight: 3.0, after: 20.0),
+        (enemy: "defias_rogue_wizard", weight: 2.0, after: 40.0),
+        (enemy: "kobold_miner", weight: 1.0, after: 75.0),
+        (enemy: "hogger", weight: 0.08, after: 180.0),
+     ],
+     alive_start: 6, alive_per_minute: 6.0, alive_max: 40, spawn_every: 1.5, spawn_ring: (20.0, 30.0)),
+]

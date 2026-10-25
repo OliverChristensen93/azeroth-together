@@ -1,0 +1,13 @@
+[package]
+name = "arpg-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Azeroth ARPG's game rules: a headless, fixed-tick top-down action RPG simulation, aimed skills and no auto-cast, with no engine or rendering dependencies"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
