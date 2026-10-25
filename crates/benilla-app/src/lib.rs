@@ -113,6 +113,7 @@ mod spell;
 mod survivors;
 /// Azeroth Together: the co-op survivors mode the `azeroth-together` launcher boots.
 mod together;
+mod arpg;
 /// The melee swing refusal's latch + 4 s repeat (`SMSG_ATTACKSWING_*`).
 mod swing_refusal;
 mod target;
@@ -241,6 +242,14 @@ pub fn run_survivors(build: BuildId) -> AppExit {
 /// its game rules in `together-sim` and its data in `content/`. Called by the `azeroth-together`
 /// launcher.
 pub fn run_together(build: BuildId) -> AppExit {
+    // `ARPG=1`: the top-down action RPG ([`arpg`]) instead, its rules in `arpg-sim`.
+    if arpg::wanted() {
+        if let Err(e) = arpg::prepare(build.project_dir) {
+            eprintln!("azeroth-together: {e}");
+            return AppExit::error();
+        }
+        return launch(build, None);
+    }
     if let Err(e) = together::prepare(build.project_dir) {
         eprintln!("azeroth-together: {e}");
         return AppExit::error();
@@ -326,6 +335,11 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     let together = together::active();
     if together {
         benilla_world::world_map::set_start_map(together::start_map());
+    }
+    // Azeroth ARPG too.
+    let arpg = arpg::active();
+    if arpg {
+        benilla_world::world_map::set_start_map(arpg::start_map());
     }
     // Every instrumented run, captures and live probes, opens in the background so it never takes
     // over a person's screen; `WOW_BG` overrides.
@@ -456,8 +470,8 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     // The game as one group on top of the engine; `game_plugins.rs` has its members, its
     // load-bearing ordering edges and the test that builds it headless.
     .add_plugins(game_plugins::GamePlugins {
-        connect: !capturing && !survivors && !together,
-        start: if survivors || together {
+        connect: !capturing && !survivors && !together && !arpg,
+        start: if survivors || together || arpg {
             char_select::ClientState::InWorld
         } else {
             run_mode::start_state()
@@ -468,6 +482,9 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     }
     if together {
         app.add_plugins(together::TogetherPlugin);
+    }
+    if arpg {
+        app.add_plugins(arpg::ArpgPlugin);
     }
 
     app.add_plugins(webbridge::WebBridgePlugin);

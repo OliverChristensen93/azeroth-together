@@ -710,6 +710,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "arpg-sim",
  "assert_no_alloc",
  "async-channel",
  "avian3d",
