@@ -211,6 +211,34 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                     }
                 });
             });
+            // The crosshair, at the middle of the screen where the camera aims.
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(50.0),
+                top: Val::Percent(50.0),
+                width: Val::Px(0.0),
+                height: Val::Px(0.0),
+                ..default()
+            })
+            .with_children(|c| {
+                let tick = |c: &mut ChildSpawnerCommands, l: f32, t: f32, w: f32, h: f32| {
+                    c.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(l),
+                            top: Val::Px(t),
+                            width: Val::Px(w),
+                            height: Val::Px(h),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.85)),
+                    ));
+                };
+                tick(c, -9.0, -1.0, 6.0, 2.0);
+                tick(c, 3.0, -1.0, 6.0, 2.0);
+                tick(c, -1.0, -9.0, 2.0, 6.0);
+                tick(c, -1.0, 3.0, 2.0, 6.0);
+            });
             root.spawn((
                 Banner,
                 Text::new(""),

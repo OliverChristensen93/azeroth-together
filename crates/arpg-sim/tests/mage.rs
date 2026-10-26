@@ -122,9 +122,9 @@ fn a_bolt_aimed_at_nothing_flies_out() {
 }
 
 #[test]
-fn casting_frostbolt_roots_and_instant_blink_moves_toward_the_aim() {
+fn casting_fireball_roots_and_instant_blink_moves_toward_the_aim() {
     let (mut w, start) = world();
-    let s = slot(&w, "frostbolt");
+    let s = slot(&w, "fireball");
     w.set_input(
         0,
         PlayerInput {
@@ -494,6 +494,26 @@ fn a_caster_s_bolt_hits_a_hero_who_stands_and_misses_one_who_steps_aside() {
             assert!(hero.hp < hero.max_hp, "the bolt struck");
         }
     }
+}
+
+#[test]
+fn frostbolt_casts_on_the_move() {
+    let (mut w, start) = world();
+    let s = slot(&w, "frostbolt");
+    w.set_input(
+        0,
+        PlayerInput {
+            move_dir: V2::new(1.0, 0.0),
+            aim: start + V2::new(0.0, 10.0),
+            cast: Some(s),
+            ..Default::default()
+        },
+    );
+    w.step();
+    assert!(matches!(w.heroes()[0].action, Action::Casting { .. }));
+    let at = w.heroes()[0].pos;
+    w.step();
+    assert!(w.heroes()[0].pos.x > at.x, "walking while it casts");
 }
 
 #[test]

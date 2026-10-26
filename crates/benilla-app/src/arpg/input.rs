@@ -1,6 +1,7 @@
 //! The keys and the mouse, read into the local player's [`PlayerInput`].
 //!
-//! WASD walks (up on the screen is north), the mouse aims, Space rolls, and each slot has its
+//! WASD walks the way the camera looks, the mouse steers the view and the crosshair aims, Space
+//! rolls, and each slot has its
 //! key: left and right mouse, Q, E, R, F, 1 and Shift. Holding a key casts its slot again as soon
 //! as it can;
 //! of several held, the last one pressed wins. Enter wakes a fallen hero at the start. While the
@@ -100,6 +101,7 @@ pub(super) fn read_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     aim: Res<AimPoint>,
+    rig: Res<super::camera::CamRig>,
     mut held: ResMut<Held>,
     mut sim: ResMut<Sim>,
     menu: Res<super::ui::Menu>,
@@ -120,20 +122,22 @@ pub(super) fn read_input(
         sim.world.set_input(ME, input);
         return;
     }
-    let mut dir = V2::ZERO;
+    // Ahead is where the camera looks.
+    let (fwd, right) = rig.ground_axes();
+    let mut walk = Vec3::ZERO;
     if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-        dir.x += 1.0;
+        walk += fwd;
     }
     if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-        dir.x -= 1.0;
+        walk -= fwd;
     }
-    // WoW's +y is west: left on a north-up screen.
     if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-        dir.y += 1.0;
+        walk -= right;
     }
     if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-        dir.y -= 1.0;
+        walk += right;
     }
+    let dir = super::view::to_ground(walk);
 
     if let Some(slot) = BINDS
         .iter()

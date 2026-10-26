@@ -37,8 +37,8 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
     templates filed in `Items`. `ui.rs`: Lua run once per UI session (chat window colour/alpha).
   - Keys 1/2/3 pick cards while cards are up (they also press the empty action buttons; harmless).
 - `crates/azeroth-together/` — the launcher binary.
-- Azeroth ARPG (branch `top-down-arpg`): a separate top-down action RPG, aimed skills and no
-  auto-cast. `crates/arpg-sim` (rules), `crates/benilla-app/src/arpg/` (client), `content/arpg/`;
+- Azeroth ARPG (branch `top-down-arpg`): a separate third-person action RPG (over-the-shoulder
+  camera, crosshair aim, dodge roll), aimed skills and no auto-cast. `crates/arpg-sim` (rules), `crates/benilla-app/src/arpg/` (client), `content/arpg/`;
   `ARPG=1` on the same exe. Controls, decisions and the test checklist: [docs/ARPG.md](docs/ARPG.md).
   Engine carries for it: `benilla_world::model_fade::SeeThrough` (doodads on the camera-hero line
   fade, read in `model_render/visibility.rs`), and the in-game UI loading under its `CaptureMode`

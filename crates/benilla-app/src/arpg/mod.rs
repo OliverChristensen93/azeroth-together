@@ -1,8 +1,9 @@
-//! Azeroth ARPG: a top-down action RPG on the benilla world, started by [`crate::run_together`]
+//! Azeroth ARPG: a third-person action RPG on the benilla world, started by [`crate::run_together`]
 //! when `ARPG=1` is set. Its game rules are `arpg-sim`; this module only reads the keys and the
 //! mouse into a [`PlayerInput`], steps the world and draws it with the engine's unit, spell-visual
 //! and combat-text systems. There is no server: the player controller is off
-//! ([`crate::run_mode::CaptureMode`]), the hero is driven from the sim, the camera looks down.
+//! ([`crate::run_mode::CaptureMode`]), the hero is driven from the sim, and the camera rides
+//! over its shoulder, steered by the mouse; skills go where the crosshair points.
 //! WoW's interface is loaded only for its game menu on Escape ([`ui`]); the HUD is our own.
 //! Trees and other doodads between the camera and the hero fade
 //! ([`benilla_world::model_fade::SeeThrough`]).
@@ -162,7 +163,9 @@ impl Plugin for ArpgPlugin {
                 Update,
                 (
                     ui::menu,
-                    camera::aim_cursor,
+                    camera::hold_cursor,
+                    camera::steer,
+                    camera::aim_crosshair,
                     input::read_input,
                     step_sim,
                     view::sync,

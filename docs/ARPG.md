@@ -1,8 +1,10 @@
 # Azeroth ARPG
 
-A top-down action RPG on WoW's world, in the spirit of Diablo and Path of Exile. It is its own
-game, not a mode of the survivors arena: nothing auto-casts and nothing needs a target. You walk
-with WASD, aim with the mouse, and press a skill: it goes where the cursor is.
+A third-person action RPG on WoW's world, in the spirit of TERA, Black Desert and Guild Wars 2's
+action camera. It is its own game, not a mode of the survivors arena: nothing auto-casts and
+nothing needs a target. The camera rides over your shoulder and the mouse always steers it; skills
+go where the crosshair points. (It began as a top-down Diablo-style game; that camera is in the
+branch history, before the commit that brought the action camera.)
 
 - Rules: `crates/arpg-sim` (headless, 30 Hz, no Bevy). Tests: `cargo test -p arpg-sim`.
 - Client: `crates/benilla-app/src/arpg/` (camera, input, drawing; decides nothing).
@@ -26,10 +28,12 @@ with WASD, aim with the mouse, and press a skill: it goes where the cursor is.
   enemy is a critical strike (Shatter); burns tick each second.
 - **Enemies telegraph every blow**: a red wedge (melee swing), circle (slam) or line (thrown
   missile) fills up, then the blow lands on whoever is still in it. Stepping out is the defence.
-- **Global cooldown**: a spell starts a 0.9 s global cooldown (its cast time counts toward it),
-  so holding a key casts about once a second; the slots darken while it runs. Blink and Ice Block
+- **Global cooldown**: a spell starts a 0.5 s global cooldown (its cast time counts toward it),
+  so holding a key casts about twice a second; the slots darken while it runs. Blink and Ice Block
   are off it (`gcd: false` in `abilities.ron`), so an escape always answers.
-- **Mana matters**: Frostbolt 8, Fireball 18, regen 6/s, so steady casting slowly drains you.
+- **Faster pacing**: Frostbolt is a 0.3 s cast you can walk during; Fireball 0.6 s and
+  Flamestrike 0.4 s still root you. Mana still matters: Frostbolt 5, Fireball 15, regen 8/s, so
+  steady casting slowly drains you.
 - **Dodge roll** (Space), every class, as in Path of Exile 2: a quick 5.5-yard roll toward where
   you walk (or ahead, standing still), 0.35 s. It breaks off a cast and takes you out of a
   telegraph; it does not make you untouchable. It costs 40 **stamina** (the yellow bar, 100):
@@ -60,7 +64,10 @@ with WASD, aim with the mouse, and press a skill: it goes where the cursor is.
 | Shift | 8 | Blink: 12 yards toward cursor |
 | Space | – | Dodge roll (every class) |
 
-WASD walks (up is north), the wheel zooms, Enter wakes you at the Abbey after you fall.
+The mouse turns the view (the cursor is locked and hidden while playing; a crosshair marks the
+middle), WASD walks the way the camera looks, the wheel brings the camera closer or farther, Enter
+wakes you at the Abbey after you fall. The crosshair aims at the first enemy along the view, else
+the ground (a ring shows where ground spells land), else 45 yards ahead.
 Escape opens WoW's own game menu (the world waits while it is up): Options, Sound, Interface,
 Key Bindings and Exit Game work as in WoW; Logout is "Return to Abbey". Trees and other doodads
 between the camera and the hero fade to a quarter, easing in and out as you walk under them. Also in the content
@@ -72,15 +79,18 @@ but not on the bar: Arcane Missiles (channel), Dragon's Breath (TBC; shown with 
 1. **Its own crate, not a toggle**: `arpg-sim` shares no code with `together-sim` (V2/Rng copied).
 2. **Key layout** above. W is walking, so skills are LMB/RMB/Q/E/R/F/1; Space is the roll (as in
    PoE2), so Blink moved to Shift.
-3. **Camera**: fixed 60° tilt, north up, 28 yards out, wheel 12–55. No rotating.
+3. **Camera**: over the right shoulder, 6 yards back (wheel 2.5–14), always steered by the mouse
+   (no right-drag); the cursor comes back with the game menu or when the window loses focus.
+   Space stays the roll (the sim has no jump), Blink stays on Shift.
 4. **The sim owns the hero's movement** (WASD in the sim, flat plane), not WoW's character
    controller; the client puts bodies on the terrain. No collision with trees, houses, the river
    or the valley walls yet: you can walk up cliffs and through the Abbey.
 5. **Missiles use WoW's own visuals**: the engine's missile flies to a marker at the end of the
    sim's flight at the spell's Spell.dbc speed, so the sim's speeds in `abilities.ron` must match
    Spell.dbc (Frostbolt 28, Fireball 24). If they look out of step, that is why.
-6. **Numbers**: mage 300 hp, 200 mana (6/s), 0.9 s global cooldown, 100 stamina (a roll 40,
-   back 25/s). Frostbolt 30 dmg 0.35 s cast, 8 mana; Fireball 55 + 16 burn, 0.8 s cast, 18 mana; Frost Nova 12 + 4 s freeze, 12 s cd; Blizzard 20/s for 6 s; Flamestrike 60 + 10/s.
+6. **Numbers**: mage 300 hp, 200 mana (8/s), 0.5 s global cooldown, 100 stamina (a roll 40,
+   back 25/s). Frostbolt 30 dmg 0.3 s cast on the move, 5 mana; Fireball 55 + 16 burn, 0.6 s
+   cast, 15 mana; Frost Nova 12 + 4 s freeze, 12 s cd; Blizzard 20/s for 6 s; Flamestrike 60 + 10/s.
    Enemies: wolves 40 hp, kobolds 50–70, laborers 140 (slam), thugs 90, Garrick 450 (slam). All
    guesses; the mage is far stronger than a level-1 WoW mage.
 7. **Camps placed by hand.** The game data has no spawn tables, so I probed the terrain over the
@@ -116,9 +126,11 @@ cargo build --release -p azeroth-together
 $env:ARPG = "1"; .\target\release\azeroth-together.exe; Remove-Item Env:ARPG
 ```
 
-1. The world loads at Northshire Abbey, the camera looks down from the south, a mage stands there.
-2. WASD walks the right way on screen; the mage faces the cursor and backpedals/strafes.
-3. A blue ring follows the cursor on the ground, on hills too.
+1. The world loads at Northshire Abbey with the camera over the mage's right shoulder; the
+   cursor is gone and a crosshair sits in the middle.
+2. The mouse turns the view smoothly, up and down too; WASD walks the way you look; the mage
+   faces the crosshair and backpedals/strafes. The wheel zooms. Esc gives the cursor back.
+3. A blue ring sits where the crosshair meets the ground, or under the enemy it is on.
 4. LMB: Frostbolt flies toward the cursor, hits the first enemy on the line, misses ones off it;
    the mage stops while casting. Holding LMB keeps casting.
 5. RMB Fireball: slower, splashes, burn numbers tick after.
@@ -130,8 +142,8 @@ $env:ARPG = "1"; .\target\release\azeroth-together.exe; Remove-Item Env:ARPG
 11. Shift Blink: jumps toward the cursor.
 12. Enemy windups show red wedges/circles/lines; stepping out in time takes no damage.
     Space rolls the way you walk, out of a windup, and breaks off a cast; two rolls empty most
-    of the yellow stamina bar and a third waits for it. Holding LMB casts about once a second and
-    the slots darken with the global cooldown; Blink still answers at once.
+    of the yellow stamina bar and a third waits for it. Holding LMB casts about twice a second
+    while you keep walking, and the slots darken with the global cooldown; Blink answers at once.
     In the vineyards the Defias casters glow while they wind up and a red line shows the bolt's
     path; walking or rolling off the line makes it miss.
     Wolves east of the Abbey stand still until you come close; hitting one brings its pack; pulled
