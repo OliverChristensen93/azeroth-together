@@ -4,7 +4,10 @@
 //! Nothing casts by itself and nothing needs a target. A player's input is where they walk, the
 //! ground point under their cursor and the skill they hold down; every ability is a shape aimed at
 //! that point (a missile that really flies, an area at the cursor, a cone, a nova, a blink).
-//! Enemies telegraph their blows, so stepping out of them is the defence.
+//! Enemies telegraph their blows, so stepping (or rolling) out of them is the defence.
+//!
+//! The world is laid out as WoW's is: enemies stand in their camps until a hero comes near, chase
+//! until pulled too far from home, then run back whole, and come back a while after they die.
 //!
 //! Nothing here knows about Bevy, rendering or WoW's file formats. The world is a flat plane in
 //! WoW's own `(x, y)` yards; the client puts every unit on the terrain and turns the [`Event`]s a
@@ -17,8 +20,8 @@ mod rng;
 mod world;
 
 pub use content::{
-    AbilityDef, Behaviour, ClassDef, Content, ContentError, Effects, EnemyDef, School, Shape,
-    SpawnEntry, ZoneDef,
+    AbilityDef, Behaviour, CampDef, ClassDef, Content, ContentError, Dodge, Effects, EnemyDef,
+    School, Shape, ZoneDef,
 };
 pub use math::V2;
 pub use rng::Rng;

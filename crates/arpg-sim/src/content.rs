@@ -139,6 +139,17 @@ pub struct ClassDef {
     /// The share of hits that are critical strikes (Shatter makes every hit on a frozen one so).
     #[serde(default = "default_crit")]
     pub crit: f32,
+    /// The dodge roll every hero has: yards covered, seconds it takes, and seconds after it before
+    /// the next. It gets the hero out of the way; it does not make them untouchable.
+    #[serde(default = "default_dodge")]
+    pub dodge: Dodge,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub struct Dodge {
+    pub distance: f32,
+    pub time: f32,
+    pub recover: f32,
 }
 
 /// How an enemy fights. Every attack is telegraphed: a windup the client draws, then the blow
@@ -183,17 +194,28 @@ pub struct EnemyDef {
     /// Bosses and the like: frozen and stunned for half as long.
     #[serde(default)]
     pub tough: bool,
+    /// How near a hero must come before it notices them, in yards.
+    #[serde(default = "default_aggro")]
+    pub aggro: f32,
+    /// How far from home it chases before it gives up and runs back, whole again.
+    #[serde(default = "default_leash")]
+    pub leash: f32,
 }
 
-/// One kind the spawner may bring, and how often.
+/// A camp: enemies of one kind standing around a spot, as WoW places them, each coming back
+/// `respawn` seconds after it dies.
 #[derive(Clone, Debug, Deserialize)]
-pub struct SpawnEntry {
+pub struct CampDef {
     pub enemy: String,
-    #[serde(default = "one_f")]
-    pub weight: f32,
-    /// Seconds into the run before it can come.
-    #[serde(default)]
-    pub after: f32,
+    /// The camp's middle, in WoW coordinates (x, y).
+    pub at: (f32, f32),
+    #[serde(default = "one")]
+    pub count: u32,
+    /// How far from the middle they stand, at most.
+    #[serde(default = "default_spread")]
+    pub spread: f32,
+    #[serde(default = "default_respawn")]
+    pub respawn: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -202,17 +224,9 @@ pub struct ZoneDef {
     pub name: String,
     /// The Map.dbc id (0 Eastern Kingdoms, 1 Kalimdor).
     pub map: u32,
-    /// Where the heroes start, in WoW coordinates (x, y, z).
+    /// Where the heroes start, and where they wake after falling, in WoW coordinates (x, y, z).
     pub start: (f32, f32, f32),
-    pub spawns: Vec<SpawnEntry>,
-    /// Enemies alive at the start, and the most alive at once at the start and after each minute.
-    pub alive_start: u32,
-    pub alive_per_minute: f32,
-    pub alive_max: u32,
-    /// Seconds between new enemies while there are fewer than the most allowed.
-    pub spawn_every: f32,
-    /// How far from a hero new enemies come, nearest and farthest.
-    pub spawn_ring: (f32, f32),
+    pub camps: Vec<CampDef>,
 }
 
 /// The game's data, every key resolved.
@@ -224,8 +238,8 @@ pub struct Content {
     pub zones: Vec<ZoneDef>,
     /// Each class's slots as ability indices.
     pub(crate) class_slots: Vec<Vec<usize>>,
-    /// Each zone's spawn table as (enemy index, weight, after).
-    pub(crate) zone_spawns: Vec<Vec<(usize, f32, f32)>>,
+    /// Each zone's camps' enemies, as enemy indices.
+    pub(crate) zone_camps: Vec<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -290,15 +304,15 @@ impl Content {
                     .collect::<Result<Vec<_>, _>>()
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let zone_spawns = zones
+        let zone_camps = zones
             .iter()
             .map(|z| {
-                z.spawns
+                z.camps
                     .iter()
                     .map(|s| {
                         enemy_ix
                             .get(s.enemy.as_str())
-                            .map(|&i| (i, s.weight, s.after))
+                            .copied()
                             .ok_or_else(|| ContentError::UnknownEnemy {
                                 zone: z.key.clone(),
                                 enemy: s.enemy.clone(),
@@ -314,7 +328,7 @@ impl Content {
             enemies,
             zones,
             class_slots,
-            zone_spawns,
+            zone_camps,
         })
     }
 
@@ -392,4 +406,23 @@ fn default_crit() -> f32 {
 }
 fn default_radius() -> f32 {
     0.7
+}
+fn default_dodge() -> Dodge {
+    Dodge {
+        distance: 5.5,
+        time: 0.35,
+        recover: 0.3,
+    }
+}
+fn default_aggro() -> f32 {
+    9.0
+}
+fn default_leash() -> f32 {
+    35.0
+}
+fn default_spread() -> f32 {
+    5.0
+}
+fn default_respawn() -> f32 {
+    60.0
 }

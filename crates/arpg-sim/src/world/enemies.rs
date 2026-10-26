@@ -1,5 +1,6 @@
-//! Enemies: burns ticking, walking to the nearest hero, telegraphed blows, and the spawner that
-//! keeps the field full.
+//! Enemies, as WoW's stand: at home in their camps until a hero comes near (or hits them, which
+//! brings their camp-mates too), then after the nearest hero with telegraphed blows, and home
+//! again, whole, when pulled past their leash. A camp's dead come back after a while.
 
 use super::{
     Burn, Enemy, EnemyState, Event, Owner, Projectile, Telegraph, World, BURN_TICK, CHILL_SLOW,
@@ -7,6 +8,7 @@ use super::{
 };
 use crate::content::{Behaviour, School};
 use crate::math::V2;
+use crate::PlayerId;
 
 /// How wide a melee swing is, in radians.
 const SWING_ARC: f32 = 2.1;
@@ -14,6 +16,10 @@ const SWING_ARC: f32 = 2.1;
 const TOO_CLOSE: f32 = 0.45;
 /// How far a Ranged enemy's missile flies, as a share of its reach.
 const THROW_RANGE: f32 = 1.6;
+/// Enemies this near one that notices a hero notice too, as WoW's social aggro.
+const SOCIAL: f32 = 7.0;
+/// How much faster an evading enemy runs home.
+const EVADE_SPEED: f32 = 1.6;
 
 impl World {
     pub(super) fn step_enemies(&mut self) {
@@ -53,7 +59,36 @@ impl World {
         } else {
             1.0
         };
-        let Some(h) = self.nearest_hero(self.enemies[e].pos) else {
+        let enemy = &self.enemies[e];
+        let (pos, home) = (enemy.pos, enemy.home);
+        match enemy.state {
+            EnemyState::Idle => {
+                if let Some(h) = self.nearest_hero(pos) {
+                    if self.heroes[h].pos.distance(pos) <= def.aggro {
+                        self.aggro(e);
+                    }
+                }
+                return;
+            }
+            EnemyState::Evade => {
+                let to = home - pos;
+                let step = def.speed * EVADE_SPEED * DT;
+                let enemy = &mut self.enemies[e];
+                if to.length() <= step {
+                    enemy.pos = home;
+                    enemy.state = EnemyState::Idle;
+                } else {
+                    enemy.facing = to.normalize_or_zero();
+                    enemy.pos += enemy.facing * step;
+                }
+                return;
+            }
+            _ => {}
+        }
+        let nearest = self.nearest_hero(pos);
+        let leashed = pos.distance(home) > def.leash;
+        let Some(h) = nearest.filter(|_| !leashed) else {
+            self.evade(e);
             return;
         };
         let target = self.heroes[h].pos;
@@ -67,6 +102,7 @@ impl World {
         let body = def.radius + HERO_RADIUS;
 
         match enemy.state {
+            EnemyState::Idle | EnemyState::Evade => {}
             EnemyState::Chase => {
                 let enemy = &mut self.enemies[e];
                 if dir != V2::ZERO {
@@ -213,59 +249,57 @@ impl World {
         }
     }
 
-    /// Keeps the field filled: more enemies the longer the run lasts, up to the zone's most.
-    pub(super) fn step_spawner(&mut self) {
-        let zone = &self.content.zones[self.zone];
-        let minutes = self.time / 60.0;
-        let cap = ((zone.alive_start as f32 + zone.alive_per_minute * minutes) as u32)
-            .min(zone.alive_max) as usize;
-        let every = zone.spawn_every;
-        self.spawn_timer -= DT;
-        let alive = self.enemies.len();
-        if alive >= cap {
+    /// An enemy notices the heroes, and so does every idle one near it.
+    pub(super) fn aggro(&mut self, e: usize) {
+        if self.enemies[e].state != EnemyState::Idle {
             return;
         }
-        // The opening crowd comes at once; after that one every so often.
-        if self.time > DT * 1.5 && self.spawn_timer > 0.0 {
-            return;
-        }
-        self.spawn_timer = every;
-        let count = if self.time <= DT * 1.5 { cap - alive } else { 1 };
-        for _ in 0..count {
-            self.spawn_one();
+        let pos = self.enemies[e].pos;
+        for o in 0..self.enemies.len() {
+            let other = &mut self.enemies[o];
+            if other.state == EnemyState::Idle
+                && other.hp > 0.0
+                && (o == e || other.pos.distance(pos) <= SOCIAL)
+            {
+                other.state = EnemyState::Chase;
+                let id = other.id;
+                self.events.push(Event::EnemyAggro { id });
+            }
         }
     }
 
-    fn spawn_one(&mut self) {
-        let Some(h) = self.nearest_hero(self.start()) else {
-            return;
-        };
-        let zone = &self.content.zones[self.zone];
-        let table: Vec<(usize, f32)> = self.content.zone_spawns[self.zone]
-            .iter()
-            .filter(|&&(_, _, after)| after <= self.time)
-            .map(|&(k, w, _)| (k, w))
-            .collect();
-        let total: f32 = table.iter().map(|(_, w)| w).sum();
-        if total <= 0.0 {
-            return;
-        }
-        let (near, far) = zone.spawn_ring;
-        let mut roll = self.rng.f32() * total;
-        let kind = table
-            .iter()
-            .find(|&&(_, w)| {
-                roll -= w;
-                roll <= 0.0
-            })
-            .map_or(table[0].0, |&(k, _)| k);
-        let angle = self.rng.range(0.0, std::f32::consts::TAU);
-        let dist = self.rng.range(near, far);
-        let pos = self.heroes[h].pos + V2::from_angle(angle, dist);
-        self.spawn_enemy(kind, pos);
+    /// An enemy gives up: home, whole, rid of what was on it.
+    fn evade(&mut self, e: usize) {
+        let enemy = &mut self.enemies[e];
+        enemy.state = EnemyState::Evade;
+        enemy.hp = enemy.max_hp;
+        enemy.burn = None;
+        enemy.chill_until = 0.0;
+        enemy.frozen_until = 0.0;
+        let id = enemy.id;
+        self.events.push(Event::EnemyEvade { id });
     }
 
-    /// Puts an enemy of `kind` at `pos`; returns its id.
+    /// Fills every empty camp place whose time has come.
+    pub(super) fn step_camps(&mut self) {
+        for s in 0..self.slots.len() {
+            let slot = &self.slots[s];
+            if slot.alive.is_some() || self.time < slot.back_at {
+                continue;
+            }
+            let (kind, home) = (slot.kind, slot.home);
+            let id = self.spawn_enemy(kind, home);
+            let facing = V2::from_angle(self.rng.range(0.0, std::f32::consts::TAU), 1.0);
+            let enemy = self.enemies.last_mut().expect("just spawned");
+            enemy.camp = Some(s);
+            enemy.state = EnemyState::Idle;
+            enemy.facing = facing;
+            self.slots[s].alive = Some(id);
+        }
+    }
+
+    /// Puts an enemy of `kind` at `pos`, its home, already after the heroes (a camp's starts
+    /// idle); returns its id.
     pub fn spawn_enemy(&mut self, kind: usize, pos: V2) -> u32 {
         let hp = self.content.enemies[kind].hp;
         let id = self.id();
@@ -280,9 +314,25 @@ impl World {
             chill_until: 0.0,
             frozen_until: 0.0,
             burn: None,
+            home: pos,
+            camp: None,
         });
         self.events.push(Event::EnemySpawned { id });
         id
+    }
+
+    /// Puts an enemy of `kind` at home at `pos`, not yet aware of anyone; returns its id.
+    pub fn spawn_idle(&mut self, kind: usize, pos: V2) -> u32 {
+        let id = self.spawn_enemy(kind, pos);
+        self.enemies.last_mut().expect("just spawned").state = EnemyState::Idle;
+        id
+    }
+
+    /// `amount` of damage on enemy `id` from `by`'s hand, with no ability's effects.
+    pub fn hurt_enemy(&mut self, id: u32, amount: f32, by: PlayerId) {
+        if let Some(e) = self.enemies.iter().position(|e| e.id == id) {
+            self.damage_enemy(e, amount, false, School::Physical, Some(by));
+        }
     }
 
     /// What an enemy's windup looks like on the ground, while it winds up.

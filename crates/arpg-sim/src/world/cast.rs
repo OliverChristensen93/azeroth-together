@@ -1,4 +1,4 @@
-//! A hero's turn: walking, aiming, and the ability on the held key going off at the aim.
+//! A hero's turn: walking, rolling, aiming, and the ability on the held key going off at the aim.
 
 use super::{Action, Area, Event, Projectile, World, DT};
 use crate::content::Shape;
@@ -12,7 +12,7 @@ impl World {
         let player = self.heroes[h].player;
         let input = self.inputs.get(&player).copied().unwrap_or_default();
         let class = &self.content.classes[self.heroes[h].class];
-        let (regen, speed) = (class.mana_regen, class.speed);
+        let (regen, speed, dodge) = (class.mana_regen, class.speed, class.dodge);
         let hero = &mut self.heroes[h];
         if !hero.alive {
             return;
@@ -23,10 +23,46 @@ impl World {
             hero.absorb = 0.0;
             hero.immune = false;
         }
+        hero.roll_cooldown = (hero.roll_cooldown - DT).max(0.0);
         if hero.is_immune(now) {
             // Ice Block: frozen in place, nothing to do but wait.
             return;
         }
+        // A roll under way carries the hero; nothing else happens until it ends.
+        if let Some((dir, left)) = hero.roll {
+            hero.pos += dir * (dodge.distance / dodge.time.max(DT) * DT);
+            let left = left - DT;
+            if left <= 1e-4 {
+                hero.roll = None;
+                hero.roll_cooldown = dodge.recover;
+            } else {
+                hero.roll = Some((dir, left));
+            }
+            return;
+        }
+        if input.dodge && hero.roll_cooldown <= 0.0 {
+            let dir = {
+                let d = input.move_dir.normalize_or_zero();
+                if d == V2::ZERO {
+                    hero.facing
+                } else {
+                    d
+                }
+            };
+            let from = hero.pos;
+            hero.roll = Some((dir, dodge.time));
+            // A roll breaks off any cast or channel.
+            if hero.action != Action::Idle {
+                self.stop_channel(h);
+            }
+            self.events.push(Event::Dodged {
+                hero: player,
+                from,
+                to: from + dir * dodge.distance,
+            });
+            return;
+        }
+        let hero = &mut self.heroes[h];
         let to_aim = input.aim - hero.pos;
         if to_aim.length() > 0.05 {
             hero.facing = to_aim.normalize_or_zero();

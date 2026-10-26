@@ -309,9 +309,8 @@ pub(super) fn refresh(
     for mut t in &mut texts.p2() {
         let s = if world.is_over() {
             format!(
-                "You have fallen after {}:{:02}.\nPress Enter to begin again.",
-                world.time() as u32 / 60,
-                world.time() as u32 % 60
+                "You have fallen.\nPress Enter to wake at {}.",
+                world.content().zones[world.zone()].name
             )
         } else {
             String::new()

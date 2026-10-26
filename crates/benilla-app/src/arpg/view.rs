@@ -361,9 +361,7 @@ pub(super) fn apply_events(
                 }
             }
             Event::Restarted => {
-                for (_, e) in views.enemies.drain() {
-                    commands.entity(e).despawn();
-                }
+                // The enemies keep their bodies and stand home again.
                 for (_, (e, _)) in views.markers.drain() {
                     commands.entity(e).despawn();
                 }
@@ -378,8 +376,15 @@ pub(super) fn apply_events(
                 views.prev_enemies.clear();
                 views.casting.clear();
             }
+            Event::EnemyEvade { id } => {
+                if let Some(&e) = views.enemies.get(&id) {
+                    fx.text(e, "Evade", units::COLOR_MELEE);
+                }
+            }
             Event::EnemySpawned { .. }
             | Event::EnemyWindup { .. }
+            | Event::EnemyAggro { .. }
+            | Event::Dodged { .. }
             | Event::Frozen { .. } => {}
         }
     }
@@ -446,7 +451,13 @@ pub(super) fn place(
         };
         let prev = views.prev_heroes.get(&h.player).copied();
         let moved = prev.is_some_and(|p| p.distance(h.pos) > 1e-3);
-        let speed = world.content().classes[h.class].speed;
+        let class = &world.content().classes[h.class];
+        // A roll runs the legs at the roll's speed.
+        let speed = if h.is_rolling() {
+            class.dodge.distance / class.dodge.time.max(0.01)
+        } else {
+            class.speed
+        };
         let dir = prev.map_or(h.facing, |p| (h.pos - p).normalize_or_zero());
         // The hero faces the aim, and runs forward, back or sideways under it.
         let walk = (moved && h.alive).then(|| gait(h.facing, dir));

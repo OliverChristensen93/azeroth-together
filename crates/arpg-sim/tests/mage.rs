@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use arpg_sim::{Action, Content, Event, PlayerInput, World, DT, V2};
+use arpg_sim::{Action, Content, EnemyState, Event, PlayerInput, World, DT, V2};
 
 fn content() -> Content {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/arpg");
@@ -12,8 +12,8 @@ fn content() -> Content {
 
 /// A world with one mage at the start and no spawner; returns it and the start.
 fn world() -> (World, V2) {
-    let mut w = World::new(content(), "elwynn", 7).unwrap();
-    w.set_spawning(false);
+    let mut w = World::new(content(), "northshire", 7).unwrap();
+    w.set_camps(false);
     w.add_hero(0, "mage").unwrap();
     let start = w.start();
     (w, start)
@@ -96,7 +96,7 @@ fn nothing_casts_without_a_key() {
 #[test]
 fn frostbolt_hits_what_is_on_its_line_and_misses_what_is_not() {
     let (mut w, start) = world();
-    let k = kind(&w, "kobold_miner");
+    let k = kind(&w, "kobold_laborer");
     let on = w.spawn_enemy(k, start + V2::new(15.0, 0.0));
     let off = w.spawn_enemy(k, start + V2::new(10.0, 8.0));
     let s = slot(&w, "frostbolt");
@@ -131,7 +131,7 @@ fn casting_frostbolt_roots_and_instant_blink_moves_toward_the_aim() {
             move_dir: V2::new(1.0, 0.0),
             aim: start + V2::new(0.0, 10.0),
             cast: Some(s),
-            restart: false,
+            ..Default::default()
         },
     );
     w.step();
@@ -152,10 +152,10 @@ fn casting_frostbolt_roots_and_instant_blink_moves_toward_the_aim() {
 #[test]
 fn flamestrike_lands_at_the_cursor_pulled_in_to_its_range() {
     let (mut w, start) = world();
-    let k = kind(&w, "kobold_miner");
+    let k = kind(&w, "kobold_laborer");
     let s = slot(&w, "flamestrike");
     let range = w.content().abilities[w.content().ability("flamestrike").unwrap()].range;
-    let far = w.spawn_enemy(k, start + V2::new(range, 0.0));
+    let far = w.spawn_idle(k, start + V2::new(range, 0.0));
     let near = w.spawn_enemy(k, start + V2::new(8.0, 0.0));
     cast(&mut w, s, start + V2::new(range * 3.0, 0.0));
     let area = &w.areas()[0];
@@ -169,7 +169,7 @@ fn flamestrike_lands_at_the_cursor_pulled_in_to_its_range() {
 #[test]
 fn cone_of_cold_points_at_the_cursor() {
     let (mut w, start) = world();
-    let k = kind(&w, "kobold_miner");
+    let k = kind(&w, "kobold_laborer");
     let ahead = w.spawn_enemy(k, start + V2::new(0.0, 6.0));
     let behind = w.spawn_enemy(k, start + V2::new(0.0, -6.0));
     let s = slot(&w, "cone_of_cold");
@@ -182,7 +182,7 @@ fn cone_of_cold_points_at_the_cursor() {
 #[test]
 fn frost_nova_freezes_and_frozen_enemies_take_crits() {
     let (mut w, start) = world();
-    let k = kind(&w, "kobold_miner");
+    let k = kind(&w, "kobold_laborer");
     let id = w.spawn_enemy(k, start + V2::new(5.0, 0.0));
     let s = slot(&w, "frost_nova");
     let events = cast(&mut w, s, start);
@@ -203,7 +203,7 @@ fn frost_nova_freezes_and_frozen_enemies_take_crits() {
 #[test]
 fn blizzard_ticks_while_channelled_and_stops_when_the_mage_walks() {
     let (mut w, start) = world();
-    let k = kind(&w, "kobold_miner");
+    let k = kind(&w, "kobold_laborer");
     let id = w.spawn_enemy(k, start + V2::new(15.0, 0.0));
     let s = slot(&w, "blizzard");
     let aim = start + V2::new(15.0, 0.0);
@@ -226,7 +226,7 @@ fn blizzard_ticks_while_channelled_and_stops_when_the_mage_walks() {
             aim,
             move_dir: V2::new(-1.0, 0.0),
             cast: Some(s),
-            restart: false,
+            ..Default::default()
         },
     );
     run(&mut w, 2.0);
@@ -251,7 +251,7 @@ fn ice_block_turns_away_every_blow() {
 #[test]
 fn stepping_out_of_a_telegraph_dodges_it() {
     let (mut w, start) = world();
-    let k = kind(&w, "kobold_miner");
+    let k = kind(&w, "kobold_laborer");
     let id = w.spawn_enemy(k, start + V2::new(3.0, 0.0));
     // Wait for the windup to begin.
     for _ in 0..30 {
@@ -274,16 +274,180 @@ fn stepping_out_of_a_telegraph_dodges_it() {
 }
 
 #[test]
-fn the_spawner_fills_the_field_and_a_restart_clears_it() {
-    let mut w = World::new(content(), "elwynn", 3).unwrap();
-    w.add_hero(0, "mage").unwrap();
+fn a_roll_carries_the_hero_and_breaks_off_a_cast() {
+    let (mut w, start) = world();
+    let s = slot(&w, "fireball");
+    w.set_input(
+        0,
+        PlayerInput {
+            aim: start + V2::new(10.0, 0.0),
+            cast: Some(s),
+            ..Default::default()
+        },
+    );
     w.step();
+    assert!(matches!(w.heroes()[0].action, Action::Casting { .. }));
+    // The press lands between ticks and is kept for the next.
+    w.set_input(
+        0,
+        PlayerInput {
+            move_dir: V2::new(0.0, 1.0),
+            dodge: true,
+            ..Default::default()
+        },
+    );
+    w.set_input(
+        0,
+        PlayerInput {
+            move_dir: V2::new(0.0, 1.0),
+            ..Default::default()
+        },
+    );
+    let mut events = run(&mut w, 0.4);
+    let dodge = w.content().classes[0].dodge;
+    let hero = &w.heroes()[0];
+    assert!(events.iter().any(|e| matches!(e, Event::Dodged { .. })));
+    assert!(events.iter().any(|e| matches!(e, Event::CastStopped { .. })));
+    assert!(hero.pos.y - start.y >= dodge.distance - 0.01, "rolled its distance");
+    assert_eq!(hero.action, Action::Idle);
+    events.clear();
+}
+
+/// A world with the zone's camps, one mage at the start.
+fn camped() -> (World, V2) {
+    let mut w = World::new(content(), "northshire", 11).unwrap();
+    w.add_hero(0, "mage").unwrap();
+    let start = w.start();
+    w.step();
+    (w, start)
+}
+
+#[test]
+fn camps_stand_idle_until_a_hero_comes_near() {
+    let (mut w, start) = camped();
     let zone = &w.content().zones[0];
-    assert_eq!(w.enemies().len(), zone.alive_start as usize);
-    for e in w.enemies() {
-        let d = e.pos.distance(w.start());
-        assert!(d >= zone.spawn_ring.0 - 0.01 && d <= zone.spawn_ring.1 + 0.01);
+    let count: u32 = zone.camps.iter().map(|c| c.count).sum();
+    assert_eq!(w.enemies().len(), count as usize);
+    assert!(w.enemies().iter().all(|e| e.state == EnemyState::Idle));
+    assert!(w.enemies().iter().all(|e| e.pos.distance(start) > 20.0), "none on the Abbey's steps");
+    run(&mut w, 3.0);
+    assert!(w.enemies().iter().all(|e| e.state == EnemyState::Idle));
+    // Walk up to the nearest.
+    let target = w
+        .enemies()
+        .iter()
+        .min_by(|a, b| a.pos.distance(start).total_cmp(&b.pos.distance(start)))
+        .unwrap()
+        .id;
+    for _ in 0..600 {
+        let e = w.enemies().iter().find(|e| e.id == target).unwrap();
+        if e.state != EnemyState::Idle {
+            break;
+        }
+        let me = w.heroes()[0].pos;
+        w.set_input(
+            0,
+            PlayerInput {
+                move_dir: e.pos - me,
+                ..Default::default()
+            },
+        );
+        w.step();
     }
-    w.restart();
-    assert!(w.enemies().is_empty());
+    let e = w.enemies().iter().find(|e| e.id == target).unwrap();
+    assert_ne!(e.state, EnemyState::Idle, "it noticed the hero");
+    assert!(e.pos.distance(w.heroes()[0].pos) <= w.content().enemies[e.kind].aggro + 0.5);
+}
+
+#[test]
+fn a_hit_brings_the_camp_mates_too() {
+    let (mut w, _) = camped();
+    let k = kind(&w, "kobold_vermin");
+    let a = w.spawn_idle(k, V2::new(0.0, 0.0));
+    let b = w.spawn_idle(k, V2::new(3.0, 0.0));
+    let far = w.spawn_idle(k, V2::new(40.0, 0.0));
+    w.hurt_enemy(a, 5.0, 0);
+    let state = |w: &World, id: u32| w.enemies().iter().find(|e| e.id == id).unwrap().state;
+    assert_ne!(state(&w, a), EnemyState::Idle);
+    assert_ne!(state(&w, b), EnemyState::Idle, "its neighbour comes too");
+    assert_eq!(state(&w, far), EnemyState::Idle);
+}
+
+#[test]
+fn pulled_past_its_leash_it_runs_home_whole() {
+    let (mut w, start) = world();
+    let k = kind(&w, "young_wolf");
+    let id = w.spawn_enemy(k, start + V2::new(5.0, 0.0));
+    let leash = w.content().enemies[k].leash;
+    w.hurt_enemy(id, 10.0, 0);
+    // Freeze it, then run.
+    let nova = slot(&w, "frost_nova");
+    cast(&mut w, nova, start);
+    let mut saw_evade = false;
+    for _ in 0..(12.0 / DT) as usize {
+        w.set_input(
+            0,
+            PlayerInput {
+                move_dir: V2::new(-1.0, 0.0),
+                ..Default::default()
+            },
+        );
+        w.step();
+        if w.drain_events().iter().any(|e| matches!(e, Event::EnemyEvade { .. })) {
+            saw_evade = true;
+            break;
+        }
+    }
+    assert!(saw_evade, "a leash of {leash} yards");
+    let e = w.enemies().iter().find(|e| e.id == id).unwrap();
+    assert_eq!(e.hp, e.max_hp, "whole again");
+    // Untouchable on the way.
+    w.hurt_enemy(id, 10.0, 0);
+    let e = w.enemies().iter().find(|e| e.id == id).unwrap();
+    assert_eq!(e.hp, e.max_hp);
+    run(&mut w, 10.0);
+    let e = w.enemies().iter().find(|e| e.id == id).unwrap();
+    assert_eq!(e.state, EnemyState::Idle);
+    assert!(e.pos.distance(start + V2::new(5.0, 0.0)) < 0.5, "back home");
+}
+
+#[test]
+fn a_camp_s_dead_come_back() {
+    let (mut w, _) = camped();
+    let first = w.enemies()[0].clone();
+    let respawn = w.content().zones[0].camps[0].respawn;
+    w.hurt_enemy(first.id, 10_000.0, 0);
+    w.step();
+    assert!(w.enemies().iter().all(|e| e.id != first.id));
+    let before = w.enemies().len();
+    run(&mut w, respawn + 0.5);
+    assert_eq!(w.enemies().len(), before + 1);
+    assert!(w.enemies().iter().any(|e| e.pos == first.home && e.id != first.id));
+}
+
+#[test]
+fn a_fallen_hero_wakes_at_the_abbey_and_the_enemies_go_home() {
+    let (mut w, start) = world();
+    let k = kind(&w, "defias_thug");
+    let id = w.spawn_enemy(k, start + V2::new(2.0, 0.0));
+    for _ in 0..(120.0 / DT) as usize {
+        w.step();
+        if w.is_over() {
+            break;
+        }
+    }
+    assert!(w.is_over());
+    w.set_input(
+        0,
+        PlayerInput {
+            restart: true,
+            ..Default::default()
+        },
+    );
+    w.step();
+    let hero = &w.heroes()[0];
+    assert!(hero.alive && hero.pos == start && hero.hp == hero.max_hp);
+    let e = w.enemies().iter().find(|e| e.id == id).unwrap();
+    assert_eq!(e.state, EnemyState::Idle);
+    assert_eq!(e.hp, e.max_hp);
 }

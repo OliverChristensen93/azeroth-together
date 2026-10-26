@@ -48,7 +48,7 @@ fn class_key() -> String {
 }
 
 fn zone_key() -> String {
-    std::env::var("ARPG_ZONE").unwrap_or_else(|_| "elwynn".into())
+    std::env::var("ARPG_ZONE").unwrap_or_else(|_| "northshire".into())
 }
 
 /// The folder the RON files are read from, if one exists on disk.

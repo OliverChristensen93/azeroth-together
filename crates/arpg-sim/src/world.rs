@@ -38,7 +38,11 @@ pub struct PlayerInput {
     pub aim: V2,
     /// The slot whose key is held down; held, it casts again as soon as it can.
     pub cast: Option<u8>,
-    /// Start over, once every hero has fallen.
+    /// Roll: a quick dodge toward `move_dir` (or ahead, standing still). A press, kept until a
+    /// tick takes it.
+    #[serde(default)]
+    pub dodge: bool,
+    /// Wake at the start again, once every hero has fallen.
     #[serde(default)]
     pub restart: bool,
 }
@@ -80,9 +84,17 @@ pub struct Hero {
     /// Until when a Guard holds (world time), and whether it makes the hero untouchable.
     pub guard_until: f32,
     pub immune: bool,
+    /// A dodge roll under way: its direction (length 1) and seconds left.
+    pub roll: Option<(V2, f32)>,
+    /// Seconds before the next roll.
+    pub roll_cooldown: f32,
 }
 
 impl Hero {
+    pub fn is_rolling(&self) -> bool {
+        self.roll.is_some()
+    }
+
     /// Untouchable, and unable to act, under an immune Guard (Ice Block).
     pub fn is_immune(&self, now: f32) -> bool {
         self.immune && now < self.guard_until
@@ -92,6 +104,11 @@ impl Hero {
 /// What an enemy is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum EnemyState {
+    /// At home, not yet aware of any hero.
+    Idle,
+    /// Pulled too far from home (or with no hero left standing): running back, untouchable,
+    /// healing as it goes.
+    Evade,
     /// Walking to (or, for a Ranged one, keeping its distance from) the nearest hero.
     Chase,
     /// Telegraphing a blow at `at` (a point on the ground); it lands when `left` runs out.
@@ -121,6 +138,9 @@ pub struct Enemy {
     pub chill_until: f32,
     pub frozen_until: f32,
     pub burn: Option<Burn>,
+    /// Where it stands when no hero bothers it, and the camp slot it fills, if any.
+    pub home: V2,
+    pub camp: Option<usize>,
 }
 
 impl Enemy {
@@ -233,6 +253,12 @@ pub enum Event {
     Absorbed { hero: PlayerId, amount: f32 },
     Frozen { enemy: u32 },
     Blinked { hero: PlayerId, from: V2, to: V2 },
+    /// A hero rolled from `from` toward `to`.
+    Dodged { hero: PlayerId, from: V2, to: V2 },
+    /// An enemy noticed a hero (or was hit) and comes for them.
+    EnemyAggro { id: u32 },
+    /// An enemy gave up and runs home.
+    EnemyEvade { id: u32 },
     EnemySpawned { id: u32 },
     /// An enemy began a telegraphed blow.
     EnemyWindup { id: u32 },
@@ -240,7 +266,7 @@ pub enum Event {
     EnemyStrike { id: u32 },
     EnemyDied { id: u32, by: Option<PlayerId> },
     HeroDied { hero: PlayerId },
-    /// Everything was put back to the start.
+    /// The fallen heroes woke at the start; the enemies went home.
     Restarted,
 }
 
@@ -268,7 +294,6 @@ pub struct World {
     zone: usize,
     time: f32,
     rng: Rng,
-    seed: u64,
     heroes: Vec<Hero>,
     enemies: Vec<Enemy>,
     projectiles: Vec<Projectile>,
@@ -276,9 +301,22 @@ pub struct World {
     inputs: HashMap<PlayerId, PlayerInput>,
     events: Vec<Event>,
     next_id: u32,
-    spawn_timer: f32,
-    /// Whether the spawner brings enemies (tests turn it off and place their own).
-    spawning: bool,
+    /// Every camp's places: who stands there now, and when the next comes if nobody does.
+    slots: Vec<CampSlot>,
+    /// Whether the camps are filled (tests turn it off and place their own).
+    camps_on: bool,
+}
+
+/// One place in a camp.
+#[derive(Clone, Debug)]
+struct CampSlot {
+    kind: usize,
+    home: V2,
+    respawn: f32,
+    /// The enemy standing there, if one is.
+    alive: Option<u32>,
+    /// World time the next one comes, once it is empty.
+    back_at: f32,
 }
 
 impl World {
@@ -286,12 +324,35 @@ impl World {
         let zone = content
             .zone(zone)
             .ok_or_else(|| WorldError::UnknownZone(zone.to_string()))?;
+        let mut rng = Rng::new(seed);
+        let mut slots = Vec::new();
+        for (c, camp) in content.zones[zone].camps.iter().enumerate() {
+            let kind = content.zone_camps[zone][c];
+            let at = V2::new(camp.at.0, camp.at.1);
+            for i in 0..camp.count {
+                // The first in the middle, the rest around it.
+                let home = if i == 0 {
+                    at
+                } else {
+                    at + V2::from_angle(
+                        rng.range(0.0, std::f32::consts::TAU),
+                        rng.range(camp.spread * 0.4, camp.spread),
+                    )
+                };
+                slots.push(CampSlot {
+                    kind,
+                    home,
+                    respawn: camp.respawn,
+                    alive: None,
+                    back_at: 0.0,
+                });
+            }
+        }
         Ok(World {
             content,
             zone,
             time: 0.0,
-            rng: Rng::new(seed),
-            seed,
+            rng,
             heroes: Vec::new(),
             enemies: Vec::new(),
             projectiles: Vec::new(),
@@ -299,8 +360,8 @@ impl World {
             inputs: HashMap::new(),
             events: Vec::new(),
             next_id: 1,
-            spawn_timer: 0.0,
-            spawning: true,
+            slots,
+            camps_on: true,
         })
     }
 
@@ -331,17 +392,24 @@ impl World {
             absorb: 0.0,
             guard_until: 0.0,
             immune: false,
+            roll: None,
+            roll_cooldown: 0.0,
         });
         Ok(())
     }
 
-    /// Whether the spawner brings enemies; off, the world has only those [`World::spawn_enemy`]
-    /// puts in.
-    pub fn set_spawning(&mut self, on: bool) {
-        self.spawning = on;
+    /// Whether the zone's camps are filled; off, the world has only those
+    /// [`World::spawn_enemy`] puts in.
+    pub fn set_camps(&mut self, on: bool) {
+        self.camps_on = on;
     }
 
-    pub fn set_input(&mut self, player: PlayerId, input: PlayerInput) {
+    /// The player's controls from now on. A dodge press stays until a tick takes it, so one that
+    /// comes between ticks is not lost.
+    pub fn set_input(&mut self, player: PlayerId, mut input: PlayerInput) {
+        if self.inputs.get(&player).is_some_and(|i| i.dodge) {
+            input.dodge = true;
+        }
         self.inputs.insert(player, input);
     }
 
@@ -352,16 +420,20 @@ impl World {
             return;
         }
         self.time += DT;
+        if self.camps_on {
+            self.step_camps();
+        }
         for h in 0..self.heroes.len() {
             self.step_hero(h);
+            let player = self.heroes[h].player;
+            if let Some(i) = self.inputs.get_mut(&player) {
+                i.dodge = false;
+            }
         }
         self.step_projectiles();
         self.step_areas();
         self.step_enemies();
         self.enemies.retain(|e| e.hp > 0.0);
-        if self.spawning {
-            self.step_spawner();
-        }
     }
 
     /// Takes the events since the last call.
@@ -428,7 +500,8 @@ impl World {
         self.is_over() && self.inputs.values().any(|i| i.restart)
     }
 
-    /// Puts every hero back at the start, whole, and clears the field.
+    /// Every hero wakes at the start, whole, as a WoW player released to the graveyard would;
+    /// the enemies go home, whole, and forget them. Missiles and areas are gone.
     pub fn restart(&mut self) {
         let start = self.start();
         for (n, h) in self.heroes.iter_mut().enumerate() {
@@ -442,13 +515,19 @@ impl World {
             h.absorb = 0.0;
             h.guard_until = 0.0;
             h.immune = false;
+            h.roll = None;
+            h.roll_cooldown = 0.0;
         }
-        self.enemies.clear();
+        for e in &mut self.enemies {
+            e.pos = e.home;
+            e.hp = e.max_hp;
+            e.state = EnemyState::Idle;
+            e.burn = None;
+            e.chill_until = 0.0;
+            e.frozen_until = 0.0;
+        }
         self.projectiles.clear();
         self.areas.clear();
-        self.time = 0.0;
-        self.spawn_timer = 0.0;
-        self.rng = Rng::new(self.seed.wrapping_add(self.next_id as u64));
         self.events.push(Event::Restarted);
     }
 
@@ -456,7 +535,7 @@ impl World {
     /// one: Shatter), then leaves the ability's effects. `from` is where it came from, for
     /// knockback.
     fn hit_enemy(&mut self, e: usize, by: PlayerId, ability: usize, damage: f32, from: V2) {
-        if self.enemies[e].hp <= 0.0 {
+        if self.enemies[e].hp <= 0.0 || self.enemies[e].state == EnemyState::Evade {
             return;
         }
         let crit_chance = self
@@ -513,7 +592,7 @@ impl World {
         by: Option<PlayerId>,
     ) {
         let enemy = &mut self.enemies[e];
-        if enemy.hp <= 0.0 {
+        if enemy.hp <= 0.0 || enemy.state == EnemyState::Evade {
             return;
         }
         enemy.hp -= amount;
@@ -527,6 +606,12 @@ impl World {
         });
         if died {
             self.events.push(Event::EnemyDied { id, by });
+            if let Some(slot) = self.enemies[e].camp {
+                self.slots[slot].alive = None;
+                self.slots[slot].back_at = self.time + self.slots[slot].respawn;
+            }
+        } else if by.is_some() {
+            self.aggro(e);
         }
     }
 

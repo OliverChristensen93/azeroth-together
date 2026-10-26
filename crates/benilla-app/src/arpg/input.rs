@@ -1,10 +1,11 @@
 //! The keys and the mouse, read into the local player's [`PlayerInput`].
 //!
-//! WASD walks (up on the screen is north), the mouse aims, and each slot has its key: left and
-//! right mouse, Q, E, R, F, 1 and Space. Holding a key casts its slot again as soon as it can;
+//! WASD walks (up on the screen is north), the mouse aims, Space rolls, and each slot has its
+//! key: left and right mouse, Q, E, R, F, 1 and Shift. Holding a key casts its slot again as soon
+//! as it can;
 //! of several held, the last one pressed wins. Enter starts over once the hero has fallen.
 //! `ARPG_AUTOPLAY=1` plays by itself instead, for test runs: it circles, aims at the nearest
-//! enemy and goes through the slots.
+//! enemy, goes through the slots and rolls out of telegraphs.
 
 use arpg_sim::{PlayerInput, V2};
 use bevy::prelude::*;
@@ -27,12 +28,12 @@ pub(super) const BINDS: [Bind; 8] = [
     Bind::Key(KeyCode::KeyR),
     Bind::Key(KeyCode::KeyF),
     Bind::Key(KeyCode::Digit1),
-    Bind::Key(KeyCode::Space),
+    Bind::Key(KeyCode::ShiftLeft),
 ];
 
 /// The label a slot's key shows on the bar.
 pub(super) fn label(slot: usize) -> &'static str {
-    ["LMB", "RMB", "Q", "E", "R", "F", "1", "Space"]
+    ["LMB", "RMB", "Q", "E", "R", "F", "1", "Shift"]
         .get(slot)
         .copied()
         .unwrap_or("")
@@ -58,14 +59,13 @@ impl Bind {
     }
 }
 
-/// The autoplay's input: circling the start, aiming at the nearest enemy, each slot in turn,
-/// starting over when it falls.
+/// The autoplay's input: off to the nearest enemy, circling it while it fights, each slot in
+/// turn, a roll out of any telegraph near, and up again when it falls.
 fn autoplay(world: &arpg_sim::World) -> PlayerInput {
     let Some(hero) = world.hero(ME) else {
         return PlayerInput::default();
     };
     let t = world.time();
-    let around = world.start() + V2::from_angle(t * 0.15, 8.0);
     let nearest = world
         .enemies()
         .iter()
@@ -76,10 +76,21 @@ fn autoplay(world: &arpg_sim::World) -> PlayerInput {
     let cycle: [u8; 6] = [0, 0, 1, 2, 3, 5];
     let slot = cycle[(t / 1.5) as usize % cycle.len()];
     let cast = (near < 25.0).then_some(slot).filter(|&s| s != 2 || near < 7.0);
+    // Closer while far; then round it at a distance.
+    let move_dir = match nearest {
+        Some(e) if near > 16.0 => e.pos - hero.pos,
+        Some(e) => (hero.pos - e.pos).rotate(1.2),
+        None => V2::ZERO,
+    };
+    let threat = world
+        .enemies()
+        .iter()
+        .any(|e| world.telegraph(e).is_some() && e.pos.distance(hero.pos) < 6.0);
     PlayerInput {
-        move_dir: around - hero.pos,
+        move_dir,
         aim,
         cast: cast.or((near < 25.0).then_some(0)),
+        dodge: threat,
         restart: world.is_over(),
     }
 }
@@ -139,6 +150,7 @@ pub(super) fn read_input(
         move_dir: dir,
         aim,
         cast: held.0,
+        dodge: keys.just_pressed(KeyCode::Space),
         restart: false,
     };
     sim.world.set_input(ME, input);

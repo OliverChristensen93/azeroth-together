@@ -1,7 +1,9 @@
 // Classes. `abilities` are the slots in order; the client binds them to
-// left mouse, right mouse, Q, E, R, F, 1, Space.
+// left mouse, right mouse, Q, E, R, F, 1, Shift. Every class also has the dodge roll (Space):
+// `dodge` is how far it goes, how long it takes and the pause before the next.
 [
     (key: "mage", name: "Mage",
      abilities: ["frostbolt", "fireball", "frost_nova", "cone_of_cold", "blizzard", "flamestrike", "ice_block", "blink"],
-     hp: 300.0, mana: 200.0, mana_regen: 9.0, speed: 7.0, crit: 0.08),
+     hp: 300.0, mana: 200.0, mana_regen: 9.0, speed: 7.0, crit: 0.08,
+     dodge: (distance: 5.5, time: 0.35, recover: 0.3)),
 ]
