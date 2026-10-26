@@ -74,7 +74,8 @@ pub(super) fn aim_cursor(
 }
 
 /// Looks down on the hero from the south at a fixed tilt, so up on the screen is north and WASD
-/// lines up with it; the wheel zooms. Also keeps the terrain streaming around the hero.
+/// lines up with it; the wheel zooms. Also keeps the terrain streaming around the hero, and the
+/// see-through line from the eye to the hero's chest, along which trees fade.
 pub(super) fn place_camera(
     mut rig: ResMut<CamRig>,
     mut wheel: MessageReader<MouseWheel>,
@@ -83,6 +84,7 @@ pub(super) fn place_camera(
     hero: Query<&Transform, (With<HeroBody>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
     mut player: ResMut<crate::player::Player>,
+    mut see_through: ResMut<benilla_world::model_fade::SeeThrough>,
 ) {
     for w in wheel.read() {
         let notches = match w.unit {
@@ -113,6 +115,10 @@ pub(super) fn place_camera(
     let placed = Transform::from_translation(eye).looking_at(look, Vec3::Y);
     for mut cam in &mut cams {
         *cam = placed;
+    }
+    let line = hero.single().ok().map(|t| (eye, t.translation + Vec3::Y * 1.2));
+    if see_through.line != line {
+        see_through.line = line;
     }
     // The terrain streams and the loading screen waits on the ground under this.
     player.active = true;

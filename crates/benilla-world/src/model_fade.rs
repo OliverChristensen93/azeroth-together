@@ -26,6 +26,52 @@ pub struct DoodadFade {
     pub(crate) blend: Handle<WowModelMaterial>,
 }
 
+/// A game's see-through rule (none of the 1.12 client's): a doodad whose bounds the line from
+/// `eye` to `target` passes through, short of `target`, draws at `alpha`, so a top-down camera
+/// sees its hero under a tree. The fade ramps with how near the line passes to the doodad's
+/// centre, from `alpha` within `inner` of its radius to opaque past `outer`, so a doodad eases in
+/// and out as the line sweeps across it. Absent, or with no line, nothing changes.
+#[derive(Resource, Clone, Debug, PartialEq)]
+pub struct SeeThrough {
+    pub line: Option<(Vec3, Vec3)>,
+    pub alpha: f32,
+    pub inner: f32,
+    pub outer: f32,
+}
+
+impl Default for SeeThrough {
+    fn default() -> Self {
+        Self {
+            line: None,
+            alpha: 0.25,
+            inner: 0.45,
+            outer: 0.85,
+        }
+    }
+}
+
+impl SeeThrough {
+    /// The alpha a doodad whose bounding sphere is `center`, `radius` draws at.
+    pub fn alpha_for(&self, center: Vec3, radius: f32) -> f32 {
+        let Some((eye, target)) = self.line else {
+            return 1.0;
+        };
+        let ab = target - eye;
+        let len2 = ab.length_squared();
+        if len2 < 1e-6 || radius <= 0.0 {
+            return 1.0;
+        }
+        let t = (center - eye).dot(ab) / len2;
+        // Behind the eye or beyond the target: nothing of it stands between them.
+        if !(0.0..1.0).contains(&t) {
+            return 1.0;
+        }
+        let d = center.distance(eye + ab * t) / radius;
+        let k = ((d - self.inner) / (self.outer - self.inner).max(1e-3)).clamp(0.0, 1.0);
+        self.alpha + (1.0 - self.alpha) * k
+    }
+}
+
 /// Above this bounding radius (yd) a doodad never distance-fades; only the far clip drops it.
 pub const NEVER_FADE_RADIUS: f32 = 7.0;
 
@@ -50,6 +96,29 @@ pub fn doodad_fade_alpha(radius: f32, horiz_dist: f32) -> f32 {
         // Unreached: the last row's bound is `NEVER_FADE_RADIUS`.
         .unwrap_or((NEVER_FADE_RADIUS, 150.0, 50.0));
     (1.0 - (d - start) / range).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod see_through_tests {
+    use super::*;
+
+    #[test]
+    fn a_doodad_on_the_line_fades_and_one_off_it_or_behind_the_target_does_not() {
+        let s = SeeThrough {
+            line: Some((Vec3::new(0.0, 20.0, 20.0), Vec3::ZERO)),
+            ..default()
+        };
+        // Halfway along the line, right on it.
+        assert_eq!(s.alpha_for(Vec3::new(0.0, 10.0, 10.0), 4.0), s.alpha);
+        // Well off to the side.
+        assert_eq!(s.alpha_for(Vec3::new(10.0, 10.0, 10.0), 4.0), 1.0);
+        // Past the target (behind the hero, as the camera sees it).
+        assert_eq!(s.alpha_for(Vec3::new(0.0, 0.0, -3.0), 4.0), 1.0);
+        // Between: partly faded.
+        let mid = s.alpha_for(Vec3::new(2.6, 10.0, 10.0), 4.0);
+        assert!(mid > s.alpha && mid < 1.0, "{mid}");
+        assert_eq!(SeeThrough::default().alpha_for(Vec3::ZERO, 4.0), 1.0);
+    }
 }
 
 /// The `(near, far)` centre distances between which [`doodad_fade_alpha`] feathers, from the same

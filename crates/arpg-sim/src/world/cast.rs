@@ -13,6 +13,7 @@ impl World {
         let input = self.inputs.get(&player).copied().unwrap_or_default();
         let class = &self.content.classes[self.heroes[h].class];
         let (regen, speed, dodge) = (class.mana_regen, class.speed, class.dodge);
+        let (stamina_regen, stamina_delay) = (class.stamina_regen, class.stamina_delay);
         let hero = &mut self.heroes[h];
         if !hero.alive {
             return;
@@ -24,6 +25,12 @@ impl World {
             hero.immune = false;
         }
         hero.roll_cooldown = (hero.roll_cooldown - DT).max(0.0);
+        hero.gcd = (hero.gcd - DT).max(0.0);
+        if hero.stamina_wait > 0.0 {
+            hero.stamina_wait -= DT;
+        } else {
+            hero.stamina = (hero.stamina + stamina_regen * DT).min(hero.max_stamina);
+        }
         if hero.is_immune(now) {
             // Ice Block: frozen in place, nothing to do but wait.
             return;
@@ -40,7 +47,9 @@ impl World {
             }
             return;
         }
-        if input.dodge && hero.roll_cooldown <= 0.0 {
+        if input.dodge && hero.roll_cooldown <= 0.0 && hero.stamina >= dodge.cost {
+            hero.stamina -= dodge.cost;
+            hero.stamina_wait = stamina_delay;
             let dir = {
                 let d = input.move_dir.normalize_or_zero();
                 if d == V2::ZERO {
@@ -146,13 +155,17 @@ impl World {
             return;
         };
         let def = &self.content.abilities[ab];
-        let (cost, cooldown, cast_time) = (def.mana, def.cooldown, def.cast_time);
+        let (cost, cooldown, cast_time, on_gcd) = (def.mana, def.cooldown, def.cast_time, def.gcd);
+        let gcd = self.content.classes[self.heroes[h].class].gcd;
         let hero = &mut self.heroes[h];
-        if hero.cooldowns[slot as usize] > 0.0 || hero.mana < cost {
+        if hero.cooldowns[slot as usize] > 0.0 || hero.mana < cost || (on_gcd && hero.gcd > 0.0) {
             return;
         }
         hero.mana -= cost;
         hero.cooldowns[slot as usize] = cooldown;
+        if on_gcd {
+            hero.gcd = gcd;
+        }
         if cast_time > 0.0 {
             hero.action = Action::Casting {
                 slot,

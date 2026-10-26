@@ -9,16 +9,18 @@
 // stands still (a Ground shape lasts that long instead). `cast_time` roots the caster unless
 // `move_while_casting`. effects: chill/freeze seconds, burn (damage) over burn_secs, knockback yards.
 // A hit on a Frozen enemy is always a critical strike (Shatter).
+// Every spell starts and waits for the class's global cooldown (its cast time counts toward it)
+// unless `gcd: false`, which the escapes (Blink, Ice Block) are, so they always answer.
 [
     // --- Mage ---
     (key: "frostbolt", name: "Frostbolt", visual: 116, school: Frost,
      shape: Projectile(speed: 30.0, radius: 0.6),
-     damage: 30.0, mana: 4.0, cast_time: 0.35, range: 32.0,
+     damage: 30.0, mana: 8.0, cast_time: 0.35, range: 32.0,
      effects: (chill: 3.0),
      description: "Launches a bolt of frost where you aim for {damage} Frost damage, Chilling the first enemy it hits."),
     (key: "fireball", name: "Fireball", visual: 133, school: Fire,
      shape: Projectile(speed: 24.0, radius: 0.8, splash: 3.0),
-     damage: 55.0, mana: 12.0, cast_time: 0.8, range: 32.0,
+     damage: 55.0, mana: 18.0, cast_time: 0.8, range: 32.0,
      effects: (burn: 16.0, burn_secs: 4.0),
      description: "Hurls a fiery ball for {damage} Fire damage that splashes nearby enemies and burns its target."),
     (key: "arcane_missiles", name: "Arcane Missiles", visual: 7268, school: Arcane,
@@ -51,7 +53,7 @@
      description: "Breathes fire toward the cursor for {damage} Fire damage, leaving enemies dazed."),
     (key: "ice_block", name: "Ice Block", visual: 11958, school: Frost,
      shape: Guard(duration: 4.0, immune: true),
-     cooldown: 40.0,
+     cooldown: 40.0, gcd: false,
      description: "Encases you in ice: nothing can touch you, and you can do nothing, for 4 sec."),
     (key: "mana_shield", name: "Mana Shield", visual: 1463, school: Arcane,
      shape: Guard(duration: 30.0, absorb: 80.0),
@@ -59,6 +61,6 @@
      description: "Absorbs the next 80 damage you take."),
     (key: "blink", name: "Blink", visual: 1953, school: Arcane,
      shape: Blink,
-     mana: 8.0, cooldown: 5.0, range: 12.0,
+     mana: 8.0, cooldown: 5.0, range: 12.0, gcd: false,
      description: "Teleports you toward the cursor, up to {range} yards."),
 ]

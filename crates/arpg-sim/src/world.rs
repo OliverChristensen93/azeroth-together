@@ -88,6 +88,12 @@ pub struct Hero {
     pub roll: Option<(V2, f32)>,
     /// Seconds before the next roll.
     pub roll_cooldown: f32,
+    /// Seconds left on the global cooldown.
+    pub gcd: f32,
+    pub stamina: f32,
+    pub max_stamina: f32,
+    /// Seconds before stamina starts coming back.
+    pub stamina_wait: f32,
 }
 
 impl Hero {
@@ -394,6 +400,10 @@ impl World {
             immune: false,
             roll: None,
             roll_cooldown: 0.0,
+            gcd: 0.0,
+            stamina: c.stamina,
+            max_stamina: c.stamina,
+            stamina_wait: 0.0,
         });
         Ok(())
     }
@@ -517,6 +527,9 @@ impl World {
             h.immune = false;
             h.roll = None;
             h.roll_cooldown = 0.0;
+            h.gcd = 0.0;
+            h.stamina = h.max_stamina;
+            h.stamina_wait = 0.0;
         }
         for e in &mut self.enemies {
             e.pos = e.home;

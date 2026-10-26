@@ -1,8 +1,11 @@
 //! Azeroth ARPG: a top-down action RPG on the benilla world, started by [`crate::run_together`]
 //! when `ARPG=1` is set. Its game rules are `arpg-sim`; this module only reads the keys and the
 //! mouse into a [`PlayerInput`], steps the world and draws it with the engine's unit, spell-visual
-//! and combat-text systems. There is no server and no FrameXML: the player controller is off
+//! and combat-text systems. There is no server: the player controller is off
 //! ([`crate::run_mode::CaptureMode`]), the hero is driven from the sim, the camera looks down.
+//! WoW's interface is loaded only for its game menu on Escape ([`ui`]); the HUD is our own.
+//! Trees and other doodads between the camera and the hero fade
+//! ([`benilla_world::model_fade::SeeThrough`]).
 //!
 //! Content is read from `ARPG_CONTENT`, else `content/arpg` in the project, else the copy compiled
 //! in. `ARPG_CLASS` and `ARPG_ZONE` pick the class and zone.
@@ -11,6 +14,7 @@ mod camera;
 mod hud;
 mod input;
 mod telegraph;
+mod ui;
 mod units;
 mod view;
 
@@ -94,6 +98,14 @@ pub(crate) fn prepare(project_dir: &str) -> Result<(), String> {
         None => println!("arpg: content compiled in"),
     }
     START_MAP.store(content.zones[zone].map, Ordering::Relaxed);
+    // Doodads drawn as plain entities, not the retained static pass or its merged cells: only
+    // those can fade when they stand between the camera and the hero. Set before any thread
+    // starts; an explicit setting wins.
+    for var in ["WOW_STATIC_GX", "WOW_STATIC_MERGE"] {
+        if std::env::var_os(var).is_none() {
+            std::env::set_var(var, "0");
+        }
+    }
     let _ = CONTENT.set(content);
     ACTIVE.store(true, Ordering::Relaxed);
     Ok(())
@@ -142,11 +154,14 @@ impl Plugin for ArpgPlugin {
             .init_resource::<input::Held>()
             .init_resource::<view::Views>()
             .init_resource::<telegraph::Shown>()
+            .init_resource::<ui::Menu>()
+            .init_resource::<benilla_world::model_fade::SeeThrough>()
             .add_systems(Startup, hud::setup)
             .add_systems(Update, camera::daylight)
             .add_systems(
                 Update,
                 (
+                    ui::menu,
                     camera::aim_cursor,
                     input::read_input,
                     step_sim,
@@ -173,11 +188,13 @@ impl Plugin for ArpgPlugin {
 fn step_sim(
     time: Res<Time<Real>>,
     loading: Res<crate::loading_screen::LoadingScreen>,
+    menu: Res<ui::Menu>,
     mut sim: ResMut<Sim>,
     mut pending: ResMut<Pending>,
     mut views: ResMut<view::Views>,
 ) {
-    if loading.covering() {
+    // The world waits behind the loading screen and while the game menu is up.
+    if loading.covering() || menu.open {
         return;
     }
     sim.acc += time.delta_secs().min(0.25);

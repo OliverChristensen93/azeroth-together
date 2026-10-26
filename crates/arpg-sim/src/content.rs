@@ -114,6 +114,10 @@ pub struct AbilityDef {
     /// The caster keeps walking while it casts (instants always may).
     #[serde(default)]
     pub move_while_casting: bool,
+    /// It starts the global cooldown and waits for it, as most spells do; escapes (Blink, Ice
+    /// Block) are off it so they always answer.
+    #[serde(default = "yes")]
+    pub gcd: bool,
     /// How far from the caster it reaches: a missile's flight, a ground spell's farthest aim, a
     /// cone's length, a blink's jump.
     #[serde(default = "default_range")]
@@ -139,10 +143,21 @@ pub struct ClassDef {
     /// The share of hits that are critical strikes (Shatter makes every hit on a frozen one so).
     #[serde(default = "default_crit")]
     pub crit: f32,
+    /// Seconds of global cooldown a spell on it starts (its cast time counts toward it).
+    #[serde(default = "default_gcd")]
+    pub gcd: f32,
     /// The dodge roll every hero has: yards covered, seconds it takes, and seconds after it before
     /// the next. It gets the hero out of the way; it does not make them untouchable.
     #[serde(default = "default_dodge")]
     pub dodge: Dodge,
+    /// Stamina, which the roll spends: the most there is, and how much comes back a second once
+    /// `stamina_delay` seconds have passed since the last roll.
+    #[serde(default = "default_stamina")]
+    pub stamina: f32,
+    #[serde(default = "default_stamina_regen")]
+    pub stamina_regen: f32,
+    #[serde(default = "default_stamina_delay")]
+    pub stamina_delay: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -150,6 +165,9 @@ pub struct Dodge {
     pub distance: f32,
     pub time: f32,
     pub recover: f32,
+    /// Stamina it spends.
+    #[serde(default = "default_dodge_cost")]
+    pub cost: f32,
 }
 
 /// How an enemy fights. Every attack is telegraphed: a windup the client draws, then the blow
@@ -415,7 +433,26 @@ fn default_dodge() -> Dodge {
         distance: 5.5,
         time: 0.35,
         recover: 0.3,
+        cost: default_dodge_cost(),
     }
+}
+fn default_dodge_cost() -> f32 {
+    40.0
+}
+fn default_gcd() -> f32 {
+    0.9
+}
+fn default_stamina() -> f32 {
+    100.0
+}
+fn default_stamina_regen() -> f32 {
+    25.0
+}
+fn default_stamina_delay() -> f32 {
+    0.8
+}
+fn yes() -> bool {
+    true
 }
 fn default_missile_school() -> School {
     School::Fire

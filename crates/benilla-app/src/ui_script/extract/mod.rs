@@ -607,6 +607,8 @@ pub(super) fn paint_script(
     pass: Res<super::UiPassState>,
 ) {
     let (capture, ui_cost_wanted) = run;
+    // Azeroth ARPG's `CaptureMode` only turns the player controller off: its UI is a live one.
+    let capture = capture.filter(|_| !crate::arpg::active());
     // Stand down with the tick half, which already cleared the booth panes.
     if !pass.live {
         return;

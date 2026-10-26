@@ -3,7 +3,8 @@
 //! WASD walks (up on the screen is north), the mouse aims, Space rolls, and each slot has its
 //! key: left and right mouse, Q, E, R, F, 1 and Shift. Holding a key casts its slot again as soon
 //! as it can;
-//! of several held, the last one pressed wins. Enter starts over once the hero has fallen.
+//! of several held, the last one pressed wins. Enter wakes a fallen hero at the start. While the
+//! game menu is up nothing reaches the hero, and a click on WoW's interface casts nothing.
 //! `ARPG_AUTOPLAY=1` plays by itself instead, for test runs: it circles, aims at the nearest
 //! enemy, goes through the slots and rolls out of telegraphs.
 
@@ -101,8 +102,19 @@ pub(super) fn read_input(
     aim: Res<AimPoint>,
     mut held: ResMut<Held>,
     mut sim: ResMut<Sim>,
+    menu: Res<super::ui::Menu>,
+    over_ui: Res<crate::ui_script::PointerOverUi>,
     mut auto: Local<Option<bool>>,
 ) {
+    if menu.open {
+        held.0 = None;
+        let idle = PlayerInput {
+            aim: sim.world.hero(ME).map_or(V2::ZERO, |h| h.pos + h.facing),
+            ..Default::default()
+        };
+        sim.world.set_input(ME, idle);
+        return;
+    }
     if *auto.get_or_insert_with(|| std::env::var_os("ARPG_AUTOPLAY").is_some()) {
         let input = autoplay(&sim.world);
         sim.world.set_input(ME, input);
@@ -126,6 +138,8 @@ pub(super) fn read_input(
     if let Some(slot) = BINDS
         .iter()
         .position(|b| b.just_pressed(&keys, &mouse))
+        // A click on WoW's interface is the interface's.
+        .filter(|&s| !(over_ui.0 && matches!(BINDS[s], Bind::Mouse(_))))
     {
         held.0 = Some(slot as u8);
     }

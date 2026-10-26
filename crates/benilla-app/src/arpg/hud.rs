@@ -1,4 +1,5 @@
-//! The HUD: health and mana over a bar of the class's slots (icon, key, cooldown), a cast bar
+//! The HUD: health, mana and stamina over a bar of the class's slots (icon, key, cooldown and
+//! the global cooldown), a cast bar
 //! while casting, and a word when the hero falls. Plain Bevy UI: FrameXML is off in this game.
 
 use std::collections::HashMap;
@@ -16,6 +17,8 @@ const BAR_W: f32 = 8.0 * SLOT + 7.0 * GAP;
 pub(super) struct HealthFill;
 #[derive(Component)]
 pub(super) struct ManaFill;
+#[derive(Component)]
+pub(super) struct StaminaFill;
 #[derive(Component)]
 pub(super) struct HealthText;
 #[derive(Component)]
@@ -93,11 +96,13 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                         BackgroundColor(Color::srgb(1.0, 0.75, 0.1)),
                     ));
                 });
-                let bar = |col: &mut ChildSpawnerCommands, color: Color, fill: bool| {
+                // 0 health, 1 mana, 2 stamina (thinner).
+                let bar = |col: &mut ChildSpawnerCommands, color: Color, which: u8| {
                     col.spawn((
                         Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Px(14.0),
+                            width: Val::Percent(if which == 2 { 50.0 } else { 100.0 }),
+                            height: Val::Px(if which == 2 { 7.0 } else { 14.0 }),
+                            align_self: AlignSelf::Center,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             ..default()
@@ -115,15 +120,16 @@ pub(super) fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
                             },
                             BackgroundColor(color),
                         ));
-                        if fill {
-                            f.insert(HealthFill);
-                        } else {
-                            f.insert(ManaFill);
-                        }
+                        match which {
+                            0 => f.insert(HealthFill),
+                            1 => f.insert(ManaFill),
+                            _ => f.insert(StaminaFill),
+                        };
                     });
                 };
-                bar(col, Color::srgb(0.1, 0.75, 0.15), true);
-                bar(col, Color::srgb(0.15, 0.35, 0.95), false);
+                bar(col, Color::srgb(0.1, 0.75, 0.15), 0);
+                bar(col, Color::srgb(0.15, 0.35, 0.95), 1);
+                bar(col, Color::srgb(1.0, 0.82, 0.1), 2);
                 col.spawn((
                     HealthText,
                     Text::new(""),
@@ -229,6 +235,7 @@ pub(super) fn refresh(
         Query<&mut Node, With<ManaFill>>,
         Query<&mut Node, With<CastFill>>,
         Query<(&mut Node, &SlotCooldown)>,
+        Query<&mut Node, With<StaminaFill>>,
     )>,
     mut cast_bar: Query<&mut Visibility, With<CastBar>>,
     mut texts: ParamSet<(
@@ -253,13 +260,23 @@ pub(super) fn refresh(
     for mut n in &mut nodes.p1() {
         n.width = pct(hero.mana, hero.max_mana);
     }
+    for mut n in &mut nodes.p4() {
+        n.width = pct(hero.stamina, hero.max_stamina);
+    }
+    let gcd = world.content().classes[hero.class].gcd.max(0.01);
     let slots = world.content().slots(hero.class);
     for (mut n, cd) in &mut nodes.p3() {
-        let total = slots
-            .get(cd.0)
-            .map_or(1.0, |&a| world.content().abilities[a].cooldown.max(0.01));
+        let def = slots.get(cd.0).map(|&a| &world.content().abilities[a]);
+        let total = def.map_or(1.0, |d| d.cooldown.max(0.01));
         let left = hero.cooldowns.get(cd.0).copied().unwrap_or(0.0);
-        n.height = Val::Percent((left / total * 100.0).clamp(0.0, 100.0));
+        // The longer of its own cooldown and, for a spell on it, the global one.
+        let own = left / total;
+        let global = if def.is_some_and(|d| d.gcd) {
+            hero.gcd / gcd
+        } else {
+            0.0
+        };
+        n.height = Val::Percent((own.max(global) * 100.0).clamp(0.0, 100.0));
     }
     let casting = match hero.action {
         Action::Casting { left, total, .. } => Some(1.0 - left / total.max(1e-3)),

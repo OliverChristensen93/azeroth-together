@@ -1,9 +1,12 @@
 // Classes. `abilities` are the slots in order; the client binds them to
 // left mouse, right mouse, Q, E, R, F, 1, Shift. Every class also has the dodge roll (Space):
-// `dodge` is how far it goes, how long it takes and the pause before the next.
+// `dodge` is how far it goes, how long it takes, the pause before the next and the stamina it
+// costs; stamina comes back `stamina_regen` a second once `stamina_delay` has passed since a roll.
+// `gcd` is the global cooldown a spell starts.
 [
     (key: "mage", name: "Mage",
      abilities: ["frostbolt", "fireball", "frost_nova", "cone_of_cold", "blizzard", "flamestrike", "ice_block", "blink"],
-     hp: 300.0, mana: 200.0, mana_regen: 9.0, speed: 7.0, crit: 0.08,
-     dodge: (distance: 5.5, time: 0.35, recover: 0.3)),
+     hp: 300.0, mana: 200.0, mana_regen: 6.0, speed: 7.0, crit: 0.08, gcd: 0.9,
+     dodge: (distance: 5.5, time: 0.35, recover: 0.3, cost: 40.0),
+     stamina: 100.0, stamina_regen: 25.0, stamina_delay: 0.8),
 ]

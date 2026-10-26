@@ -40,6 +40,9 @@ A co-op survivors game built on the benilla engine. The plan and phase checklist
 - Azeroth ARPG (branch `top-down-arpg`): a separate top-down action RPG, aimed skills and no
   auto-cast. `crates/arpg-sim` (rules), `crates/benilla-app/src/arpg/` (client), `content/arpg/`;
   `ARPG=1` on the same exe. Controls, decisions and the test checklist: [docs/ARPG.md](docs/ARPG.md).
+  Engine carries for it: `benilla_world::model_fade::SeeThrough` (doodads on the camera-hero line
+  fade, read in `model_render/visibility.rs`), and the in-game UI loading under its `CaptureMode`
+  (`ui_script/lifecycle.rs` `ui_wanted`, `ui_script/extract/mod.rs`).
 - `crates/benilla-app/src/survivors/` — the upstream fork's own single-player mode, kept as reference.
   Our mode does not depend on it.
 - Keep engine crates untouched where possible so upstream merges stay easy.

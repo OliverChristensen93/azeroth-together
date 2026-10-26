@@ -495,3 +495,81 @@ fn a_caster_s_bolt_hits_a_hero_who_stands_and_misses_one_who_steps_aside() {
         }
     }
 }
+
+#[test]
+fn holding_the_key_casts_once_per_global_cooldown_and_blink_is_off_it() {
+    let (mut w, start) = world();
+    let bolt = slot(&w, "frostbolt");
+    w.set_input(
+        0,
+        PlayerInput {
+            aim: start + V2::new(0.0, 20.0),
+            cast: Some(bolt),
+            ..Default::default()
+        },
+    );
+    let events = run(&mut w, 3.0);
+    let casts = events
+        .iter()
+        .filter(|e| matches!(e, Event::CastStart { .. }))
+        .count();
+    let gcd = w.content().classes[0].gcd;
+    // Casts start at 0, gcd, 2 gcd...: 3 s holds four at a 0.9 s global cooldown.
+    assert_eq!(casts, (3.0 / gcd).ceil() as usize, "one per {gcd} s");
+    // Blink answers on the global cooldown's heels.
+    let blink = slot(&w, "blink");
+    w.set_input(
+        0,
+        PlayerInput {
+            aim: start + V2::new(0.0, 20.0),
+            cast: Some(bolt),
+            ..Default::default()
+        },
+    );
+    w.step();
+    w.drain_events();
+    assert!(w.heroes()[0].gcd > 0.0 || matches!(w.heroes()[0].action, Action::Casting { .. }));
+    w.set_input(
+        0,
+        PlayerInput {
+            aim: start + V2::new(0.0, 20.0),
+            cast: Some(blink),
+            ..Default::default()
+        },
+    );
+    // Once the bolt in hand is out, Blink goes at once whatever the global cooldown says.
+    let events = run(&mut w, 0.5);
+    assert!(events.iter().any(|e| matches!(e, Event::Blinked { .. })));
+}
+
+#[test]
+fn two_rolls_in_a_row_then_a_breather() {
+    let (mut w, _) = world();
+    let class = w.content().classes[0].clone();
+    let roll = |w: &mut World| {
+        w.set_input(
+            0,
+            PlayerInput {
+                move_dir: V2::new(1.0, 0.0),
+                dodge: true,
+                ..Default::default()
+            },
+        );
+        w.set_input(
+            0,
+            PlayerInput {
+                move_dir: V2::new(1.0, 0.0),
+                ..Default::default()
+            },
+        );
+        // The roll and its pause.
+        run(w, class.dodge.time + class.dodge.recover + 0.05)
+            .iter()
+            .any(|e| matches!(e, Event::Dodged { .. }))
+    };
+    assert!(roll(&mut w));
+    assert!(roll(&mut w));
+    assert!(!roll(&mut w), "out of stamina");
+    run(&mut w, class.stamina_delay + class.dodge.cost / class.stamina_regen + 0.2);
+    assert!(roll(&mut w), "back after a breather");
+}

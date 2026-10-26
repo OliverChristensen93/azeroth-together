@@ -125,6 +125,8 @@ fn install_addon_asset_resolvers(world: &mut World, script: &mut UiScript) {
 fn ui_wanted(world: &World) -> bool {
     !world.contains_resource::<crate::run_mode::CaptureMode>()
         || crate::run_mode::capture_ui_opted_in()
+        // Azeroth ARPG drives its own hero (so `CaptureMode`), but wants WoW's game menu.
+        || crate::arpg::active()
 }
 
 /// The world-entry UI load still owed: armed at `OnEnter(InWorld)`, run by

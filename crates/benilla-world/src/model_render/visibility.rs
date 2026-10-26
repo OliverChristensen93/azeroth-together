@@ -45,6 +45,8 @@ pub(super) fn apply_model_visibility(
     // Billboard card owners (a model root or a rig joint): a card is a world root, so nothing
     // else carries its owner's hide to it.
     card_owners: Query<&InheritedVisibility>,
+    // A game's see-through rule over the distance fade (`model_fade::SeeThrough`); absent in WoW.
+    see_through: Option<Res<crate::model_fade::SeeThrough>>,
     mut q: Query<(
         Entity,
         &ModelPart,
@@ -87,6 +89,7 @@ pub(super) fn apply_model_visibility(
         && !windows.is_changed()
         && !claim.is_changed()
         && !far_twins.is_changed()
+        && !see_through.as_ref().is_some_and(|s| s.is_changed())
         && new_portals.is_empty()
         && owner_flips.is_empty();
     let cam_pos = cam_t.map(|t| t.translation());
@@ -159,6 +162,9 @@ pub(super) fn apply_model_visibility(
                     let center = xf.transform_point(f.local_center);
                     let (dx, dz) = (center.x - c.x, center.z - c.z);
                     doodad_fade_alpha(f.radius, (dx * dx + dz * dz).sqrt())
+                        * see_through
+                            .as_ref()
+                            .map_or(1.0, |s| s.alpha_for(center, f.radius))
                 }
                 _ => 1.0,
             };
