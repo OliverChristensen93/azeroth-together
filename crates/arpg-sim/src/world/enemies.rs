@@ -185,7 +185,8 @@ impl World {
             }
             Behaviour::Ranged => {
                 let dir = (at - pos).normalize_or_zero();
-                let (speed, visual) = (def.missile_speed.max(1.0), def.missile_visual);
+                let (speed, visual, school) =
+                    (def.missile_speed.max(1.0), def.missile_visual, def.missile_school);
                 let pid = self.id();
                 self.projectiles.push(Projectile {
                     id: pid,
@@ -198,7 +199,7 @@ impl World {
                     range_left: reach * THROW_RANGE,
                     pierce_left: 0,
                     damage,
-                    school: School::Fire,
+                    school,
                     hit: Vec::new(),
                 });
                 self.events.push(Event::MissileLaunched { id: pid });

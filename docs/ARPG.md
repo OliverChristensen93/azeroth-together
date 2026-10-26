@@ -33,7 +33,9 @@ with WASD, aim with the mouse, and press a skill: it goes where the cursor is.
 - **The world is laid out like WoW's**, not a survivors arena: you start at Northshire Abbey and
   the valley's camps stand where WoW's do. Young wolves on the slopes east of the Abbey, kobold
   vermin in the fields north, kobold workers and laborers at Echo Ridge Mine, Defias thugs and
-  Garrick Padfoot in the vineyards across the river. An enemy stays home until you come within
+  Garrick Padfoot in the vineyards across the river, with Defias casters among them: Rogue
+  Wizards throw Frostbolts, Apprentices slower, harder Fireballs (not in WoW's Northshire; there
+  to dodge missiles). Their windup shows WoW's casting glow and a red line where the bolt goes. An enemy stays home until you come within
   its aggro range (9 yards) or hit it, which brings its idle neighbours too. Pulled more than 35
   yards from home it gives up ("Evade"), runs back whole and can't be hurt on the way. The dead
   come back after a minute (laborers 90 s, Garrick 5 min). No spawner, shrines, chests or bosses.
@@ -80,8 +82,9 @@ but not on the bar: Arcane Missiles (channel), Dragon's Breath (TBC; shown with 
    kobold models (displays 139 and 373); Garrick wears a Defias Cutpurse's.
 8. **The roll has no invulnerability** (PoE2's way): it only moves you. There is no WoW roll
    animation, so the mage runs at the roll's speed for 0.35 s.
-9. **Northshire has no ranged enemies**, so the dodge-a-missile part (the Ranged behaviour) is in
-   the sim but unused here. Elwynn's Defias wizards would bring it back.
+9. **Ranged enemies are Defias casters**, added to the vineyards for testing (WoW's Northshire has
+   none). Knife throwers or archers were left out: WoW draws a thrown knife or arrow from the
+   thrower's own ranged weapon, which these units have none of yet. Their bolts don't chill you.
 10. **Look**: a human mage trainer's model in robes with a staff (`ARPG_LOOK` picks another).
 11. **No progression yet**: no levels, loot, quests or talents.
 12. **Co-op left for later**; inputs and state are serde types so `together-net`'s pattern can carry them.
@@ -111,6 +114,8 @@ $env:ARPG = "1"; .\target\release\azeroth-together.exe; Remove-Item Env:ARPG
 11. Space Blink: jumps toward the cursor.
 12. Enemy windups show red wedges/circles/lines; stepping out in time takes no damage.
     Space rolls the way you walk, out of a windup, and breaks off a cast.
+    In the vineyards the Defias casters glow while they wind up and a red line shows the bolt's
+    path; walking or rolling off the line makes it miss.
     Wolves east of the Abbey stand still until you come close; hitting one brings its pack; pulled
     far away they say "Evade" and run home; the dead come back after a minute. The mine and the
     vineyards have their camps.

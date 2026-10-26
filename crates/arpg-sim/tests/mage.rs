@@ -451,3 +451,47 @@ fn a_fallen_hero_wakes_at_the_abbey_and_the_enemies_go_home() {
     assert_eq!(e.state, EnemyState::Idle);
     assert_eq!(e.hp, e.max_hp);
 }
+
+#[test]
+fn a_caster_s_bolt_hits_a_hero_who_stands_and_misses_one_who_steps_aside() {
+    for step_aside in [false, true] {
+        let (mut w, start) = world();
+        let k = kind(&w, "defias_rogue_wizard");
+        w.spawn_enemy(k, start + V2::new(15.0, 0.0));
+        // Wait for the throw's windup.
+        for _ in 0..90 {
+            w.step();
+            if w.drain_events().iter().any(|e| matches!(e, Event::EnemyWindup { .. })) {
+                break;
+            }
+        }
+        if step_aside {
+            w.set_input(
+                0,
+                PlayerInput {
+                    move_dir: V2::new(0.0, 1.0),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut thrown = false;
+        for _ in 0..(2.0 / DT) as usize {
+            w.step();
+            thrown |= w
+                .drain_events()
+                .iter()
+                .any(|e| matches!(e, Event::MissileLaunched { .. }));
+            if thrown && step_aside {
+                // Out of the line: stand again.
+                w.set_input(0, PlayerInput::default());
+            }
+        }
+        assert!(thrown, "it threw");
+        let hero = &w.heroes()[0];
+        if step_aside {
+            assert_eq!(hero.hp, hero.max_hp, "the bolt flew past");
+        } else {
+            assert!(hero.hp < hero.max_hp, "the bolt struck");
+        }
+    }
+}

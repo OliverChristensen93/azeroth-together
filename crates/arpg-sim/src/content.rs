@@ -191,6 +191,9 @@ pub struct EnemyDef {
     pub missile_speed: f32,
     #[serde(default)]
     pub missile_visual: u32,
+    /// The missile's school.
+    #[serde(default = "default_missile_school")]
+    pub missile_school: School,
     /// Bosses and the like: frozen and stunned for half as long.
     #[serde(default)]
     pub tough: bool,
@@ -413,6 +416,9 @@ fn default_dodge() -> Dodge {
         time: 0.35,
         recover: 0.3,
     }
+}
+fn default_missile_school() -> School {
+    School::Fire
 }
 fn default_aggro() -> f32 {
     9.0

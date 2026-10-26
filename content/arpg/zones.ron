@@ -22,6 +22,11 @@
         (enemy: "defias_thug", at: (-9060.0, -340.0), count: 2),
         (enemy: "defias_thug", at: (-9085.0, -390.0), count: 3),
         (enemy: "defias_thug", at: (-9120.0, -450.0), count: 3),
+        // Defias casters among them, throwing Frostbolts and Fireballs from range.
+        (enemy: "defias_rogue_wizard", at: (-9045.0, -365.0), count: 2, spread: 4.0),
+        (enemy: "defias_rogue_wizard", at: (-9075.0, -415.0), count: 2, spread: 4.0),
+        (enemy: "defias_apprentice", at: (-9100.0, -360.0), count: 2, spread: 4.0),
+        (enemy: "defias_apprentice", at: (-9065.0, -440.0), count: 2, spread: 4.0),
         (enemy: "garrick_padfoot", at: (-9140.0, -405.0), respawn: 300.0),
      ]),
 ]

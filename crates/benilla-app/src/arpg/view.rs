@@ -343,6 +343,11 @@ pub(super) fn apply_events(
                 }
             }
             Event::EnemyDied { id, .. } => {
+                if let Some(e) = views.enemies.get(&id).copied() {
+                    if let Some(visual) = caster_visual(world, id) {
+                        fx.fail(e, visual);
+                    }
+                }
                 if let Some(e) = views.enemies.remove(&id) {
                     if let Ok(mut store) = stores.get_mut(e) {
                         units::kill_unit(&mut store);
@@ -381,13 +386,40 @@ pub(super) fn apply_events(
                     fx.text(e, "Evade", units::COLOR_MELEE);
                 }
             }
+            Event::EnemyWindup { id } => {
+                // A caster's windup is its cast: the hands glow until the bolt flies.
+                let Some(&e) = views.enemies.get(&id) else {
+                    continue;
+                };
+                let def = world
+                    .enemies()
+                    .iter()
+                    .find(|x| x.id == id)
+                    .map(|x| &world.content().enemies[x.kind]);
+                if let Some(def) = def.filter(|d| d.behaviour == arpg_sim::Behaviour::Ranged) {
+                    fx.start(e, def.missile_visual);
+                }
+            }
+            // A freeze breaks off a caster's windup.
+            Event::Frozen { enemy } => {
+                if let (Some(&e), Some(visual)) =
+                    (views.enemies.get(&enemy), caster_visual(world, enemy))
+                {
+                    fx.fail(e, visual);
+                }
+            }
             Event::EnemySpawned { .. }
-            | Event::EnemyWindup { .. }
             | Event::EnemyAggro { .. }
-            | Event::Dodged { .. }
-            | Event::Frozen { .. } => {}
+            | Event::Dodged { .. } => {}
         }
     }
+}
+
+/// A caster enemy's missile visual, if `id` is a caster still in the world.
+fn caster_visual(world: &World, id: u32) -> Option<u32> {
+    let enemy = world.enemies().iter().find(|x| x.id == id)?;
+    let def = &world.content().enemies[enemy.kind];
+    (def.behaviour == arpg_sim::Behaviour::Ranged).then_some(def.missile_visual)
 }
 
 fn nearest_body(views: &Views, world: &World, at: V2) -> Option<Entity> {
